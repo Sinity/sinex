@@ -86,13 +86,8 @@ in {
   };
   
   config = mkIf cfg.enable {
-    # Ensure PostgreSQL user exists
-    users.users.${cfg.database.user} = mkIf (cfg.database.user != "postgres") {
-      isSystemUser = true;
-      group = cfg.database.user;
-    };
-    
-    users.groups.${cfg.database.user} = mkIf (cfg.database.user != "postgres") {};
+    # Don't create users - assume they already exist
+    # The database user should be created by PostgreSQL configuration
     
     # Database initialization
     systemd.services.sinnix-exocortex-init = mkIf cfg.database.ensureExists {
