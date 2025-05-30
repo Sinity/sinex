@@ -1,0 +1,49 @@
+# ── Generated / non-code ─────────────────────────────────────────────
+# GitHub language stats (linguist-generated): excluded from stats
+# -diff: suppressed in git diff output (shows "Binary files differ")
+# tokei: respects linguist-generated since v12.1
+
+# Lock files
+Cargo.lock linguist-generated -diff
+flake.lock linguist-generated -diff
+
+# SQLx offline cache (query metadata, not source code)
+.sqlx/** linguist-generated -diff binary
+
+# JSON schemas (generated from Rust types)
+schemas/**/*.json linguist-generated
+
+# Agent context (auto-generated from .claude/includes/ transclusions)
+AGENTS.md linguist-generated
+
+# ── Better diffs ─────────────────────────────────────────────────────
+*.json diff=json
+*.toml diff=toml
+*.yml diff=yaml
+*.yaml diff=yaml
+*.nix diff
+*.sql diff
+
+# ── Line endings ─────────────────────────────────────────────────────
+* text=auto
+*.rs text eol=lf
+*.nix text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+
+# ── Binary files ─────────────────────────────────────────────────────
+*.age binary
+
+# ── Export control (git archive) ─────────────────────────────────────
+.github/ export-ignore
+.claude/ export-ignore
+secret/ export-ignore
+
+# ── Merge strategies ─────────────────────────────────────────────────
+Cargo.lock merge=ours
+flake.lock merge=ours

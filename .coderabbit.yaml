@@ -1,0 +1,171 @@
+# CodeRabbit config — tuned for large historical-rebuild PRs.
+# See https://docs.coderabbit.ai/reference/yaml-template for full schema.
+#
+# Design goals:
+# - Minimize per-review token cost so rate limits bite less often
+# - Aggressively path-filter noise so "too many files" PRs shrink
+# - Disable features that don't add value for a private solo repo
+# - Keep the useful core: high-level summary, file summary, walkthrough,
+#   effort estimate, linked-issue assessment, clippy, shellcheck
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+
+  # Keep the essentials, drop the noise.
+  high_level_summary: true
+  high_level_summary_in_walkthrough: false
+  changed_files_summary: true
+  collapse_walkthrough: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  review_status: true
+  review_details: false
+  commit_status: true
+  fail_commit_status: false
+
+  # Keep these on — low cost, reasonable value.
+  poem: true
+  sequence_diagrams: true
+
+  # Features that consume tokens without proportional value on a solo repo.
+  in_progress_fortune: false
+  related_prs: false
+  related_issues: false
+  suggested_reviewers: false
+  suggested_labels: false
+  auto_apply_labels: false
+
+  # Don't abort on close — we want CodeRabbit to finish reviewing even if the
+  # PR ends up in a closed-but-not-merged state (which is the polylogue
+  # pattern: every PR stays "open" because master advances via an unrelated
+  # squash commit, but if GitHub ever flips one to closed we still want its
+  # review to land).
+  abort_on_close: false
+  disable_cache: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Leave auto_incremental_review at default (true). Historical PRs are
+    # frozen snapshots so it's a no-op; if we ever do push a fixup to
+    # address a review comment, we want CodeRabbit to re-review it.
+
+  # Path filters — everything here is either generated, binary, mechanical,
+  # or not part of the reviewable surface. The shorter the file list reaches
+  # CodeRabbit, the less likely it is to choke on a large PR.
+  path_filters:
+    # Lockfiles and generated package metadata
+    - "!**/*.lock"
+    - "!**/Cargo.lock"
+    - "!**/package-lock.json"
+    - "!**/pnpm-lock.yaml"
+    - "!**/yarn.lock"
+    - "!**/flake.lock"
+
+    # Binary and media
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.svg"
+    - "!**/*.ico"
+    - "!**/*.pdf"
+    - "!**/*.mp4"
+    - "!**/*.webm"
+
+    # Archives and compressed artifacts
+    - "!**/*.gz"
+    - "!**/*.zip"
+    - "!**/*.tar"
+    - "!**/*.zst"
+    - "!**/*.age"
+
+    # Databases and data files
+    - "!**/*.sqlite"
+    - "!**/*.sqlite-wal"
+    - "!**/*.sqlite-shm"
+    - "!**/*.db"
+    - "!**/*.parquet"
+    - "!**/*.arrow"
+
+    # Generated caches
+    - "!.sqlx/**"
+    - "!**/target/**"
+    - "!**/node_modules/**"
+
+    # Schema generation output and fixtures
+    - "!schemas/**/*.json"
+    - "!**/schema-cache/**"
+    - "!**/*.generated.*"
+    - "!**/generated/**"
+
+    # Test snapshots — reviewing these is counterproductive
+    - "!**/*.snap"
+    - "!**/snapshots/**"
+    - "!**/__snapshots__/**"
+    - "!**/testdata/**"
+
+    # Secrets and local env state
+    - "!.agent/**"
+    - "!secret/**"
+    - "!**/.envrc.local"
+    - "!**/.env"
+
+  # Pre-merge checks — lighten defaults. docstrings/description in warning
+  # mode would block every historical PR we file.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "warning"
+      requirements: "Must follow Conventional Commits (type(scope): subject)."
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "warning"
+
+  tools:
+    clippy:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    # Disable noisy/off-topic tools
+    languagetool:
+      enabled: false
+    hadolint:
+      enabled: false
+    yamllint:
+      enabled: true
+
+# Finishing touches — disable the LLM post-passes. Each is its own token
+# budget hit, and none are useful for frozen historical PRs.
+finishing_touches:
+  docstrings:
+    enabled: false
+  unit_tests:
+    enabled: false
+  simplify:
+    enabled: false
+
+# Knowledge base — opt out globally. This is a private repo; we don't want
+# the PRs contributing to a shared knowledge index, and we don't need
+# web_search firing on every review.
+knowledge_base:
+  opt_out: true
+  web_search:
+    enabled: false
+  code_guidelines:
+    enabled: true
+  learnings:
+    scope: "local"
+  issues:
+    scope: "local"
+  pull_requests:
+    scope: "local"
+
+chat:
+  auto_reply: true
