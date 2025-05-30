@@ -5,8 +5,9 @@ with lib;
 let
   cfg = config.services.sinnix-exocortex;
   
-  # Get packages from the flake's overlay or build them
-  hyprlandIngestor = pkgs.sinnixExocortex.hyprlandIngestor or (pkgs.callPackage ../ingestors/hyprland {});
+  # Get packages from the flake's overlay
+  # The overlay is applied by the flake, so these packages should be available
+  hyprlandIngestor = pkgs.sinnixExocortex.hyprlandIngestor;
   
   # Schema file location
   schemaFile = ../schema/mvp_schema.sql;
