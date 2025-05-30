@@ -3,7 +3,7 @@
 with lib;
 
 let
-  cfg = config.services.sinnix-exocortex;
+  cfg = config.services.sinex;
   
   # Get packages from the flake's overlay
   # The overlay is applied by the flake, so these packages should be available
@@ -31,7 +31,7 @@ let
   '';
 
 in {
-  options.services.sinnix-exocortex = {
+  options.services.sinex = {
     enable = mkEnableOption "Sinnix Exocortex universal data capture and query system";
     
     systemUser = mkOption {
@@ -91,7 +91,7 @@ in {
     # The database user should be created by PostgreSQL configuration
     
     # Database initialization
-    systemd.services.sinnix-exocortex-init = mkIf cfg.database.ensureExists {
+    systemd.services.sinex-init = mkIf cfg.database.ensureExists {
       description = "Initialize Sinnix Exocortex database";
       wantedBy = [ "multi-user.target" ];
       after = [ "postgresql.service" ];
@@ -106,10 +106,10 @@ in {
     };
     
     # Hyprland ingestor service
-    systemd.services.sinnix-exocortex-hyprland = mkIf cfg.ingestors.hyprland.enable {
+    systemd.services.sinex-hyprland = mkIf cfg.ingestors.hyprland.enable {
       description = "Sinnix Exocortex Hyprland activity ingestor";
       wantedBy = [ "multi-user.target" ];
-      after = [ "sinnix-exocortex-init.service" "sinnix-exocortex-grant-permissions.service" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
       
       environment = {
         DATABASE_URL = cfg.database.url;
@@ -152,11 +152,11 @@ in {
     };
     
     # Grant database permissions to the system user
-    systemd.services.sinnix-exocortex-grant-permissions = mkIf cfg.database.ensureExists {
+    systemd.services.sinex-grant-permissions = mkIf cfg.database.ensureExists {
       description = "Grant Sinnix Exocortex database permissions";
       wantedBy = [ "multi-user.target" ];
-      after = [ "sinnix-exocortex-init.service" ];
-      requires = [ "sinnix-exocortex-init.service" ];
+      after = [ "sinex-init.service" ];
+      requires = [ "sinex-init.service" ];
       
       serviceConfig = {
         Type = "oneshot";
