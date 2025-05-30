@@ -33,6 +33,15 @@ in {
   options.services.sinnix-exocortex = {
     enable = mkEnableOption "Sinnix Exocortex universal data capture and query system";
     
+    systemUser = mkOption {
+      type = types.str;
+      description = ''
+        The system user that should run the exocortex services.
+        This should be the user running the graphical session (e.g., the one running Hyprland).
+      '';
+      example = "sinity";
+    };
+    
     database = {
       url = mkOption {
         type = types.str;
@@ -101,10 +110,10 @@ in {
     };
     
     # Hyprland ingestor service
-    systemd.user.services.sinnix-exocortex-hyprland = mkIf cfg.ingestors.hyprland.enable {
+    systemd.services.sinnix-exocortex-hyprland = mkIf cfg.ingestors.hyprland.enable {
       description = "Sinnix Exocortex Hyprland activity ingestor";
-      wantedBy = [ "graphical-session.target" ];
-      after = [ "graphical-session.target" ];
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinnix-exocortex-init.service" "sinnix-exocortex-grant-permissions.service" ];
       
       environment = {
         DATABASE_URL = cfg.database.url;
@@ -112,16 +121,69 @@ in {
       };
       
       serviceConfig = {
-        ExecStart = "${hyprlandIngestor}/bin/hyprland-ingestor";
-        Restart = "on-failure";
+        Type = "simple";
+        User = cfg.systemUser;
+        ExecStart = "${pkgs.writeShellScript "hyprland-ingestor-wrapper" ''
+          #!/usr/bin/env bash
+          # Wait for Hyprland to be available
+          while ! pgrep -x Hyprland > /dev/null; do
+            echo "Waiting for Hyprland to start..."
+            sleep 5
+          done
+          
+          # Get the user's runtime directory
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          
+          # Find the Hyprland instance socket
+          export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | grep -v '\.lock$' | head -n1)
+          
+          if [ -z "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
+            echo "Error: Could not find Hyprland instance"
+            exit 1
+          fi
+          
+          echo "Found Hyprland instance: $HYPRLAND_INSTANCE_SIGNATURE"
+          
+          # Start the actual ingestor
+          exec ${hyprlandIngestor}/bin/hyprland-ingestor
+        ''}";
+        Restart = "always";
         RestartSec = 10;
+        
+        # Run in user's login session context
+        PAMName = "login";
       };
     };
     
-    # Ensure services are restarted on configuration changes
-    system.activationScripts.sinnix-exocortex = mkIf cfg.enable ''
-      # Restart user services if configuration changed
-      ${pkgs.systemd}/bin/systemctl --user daemon-reload || true
-    '';
+    # Grant database permissions to the system user
+    systemd.services.sinnix-exocortex-grant-permissions = mkIf cfg.database.ensureExists {
+      description = "Grant Sinnix Exocortex database permissions";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinnix-exocortex-init.service" ];
+      requires = [ "sinnix-exocortex-init.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "grant-exocortex-permissions" ''
+          set -e
+          # Create role if it doesn't exist
+          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '${cfg.systemUser}'" | grep -q 1 || \
+            ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE ROLE \"${cfg.systemUser}\" WITH LOGIN"
+          
+          # Grant permissions
+          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "
+            GRANT CONNECT ON DATABASE \"${cfg.database.name}\" TO \"${cfg.systemUser}\";
+            GRANT USAGE ON SCHEMA public TO \"${cfg.systemUser}\";
+            GRANT CREATE ON SCHEMA public TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
+          " || true
+        '';
+        User = "postgres";
+      };
+    };
   };
 }
