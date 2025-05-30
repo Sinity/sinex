@@ -1,4 +1,4 @@
-# Sinnix Exocortex
+# Sinnix Exocortex (sinex)
 
 A universal data capture and query system for Linux desktop environments, designed to create a searchable memory of all digital interactions.
 
@@ -39,6 +39,10 @@ cargo run
 # Query recent events
 ./cli/exo.py query --last 1h
 ```
+
+## Installation via Nix
+
+The project is available at https://github.com/Sinity/sinex and can be integrated into NixOS configurations.
 
 ## Philosophy
 

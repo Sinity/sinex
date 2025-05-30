@@ -1,4 +1,4 @@
-# Example usage of the sinnix-exocortex NixOS module
+# Example usage of the sinex NixOS module
 { config, pkgs, ... }:
 
 {
@@ -8,7 +8,7 @@
   ];
 
   # Enable and configure the service
-  services.sinnix-exocortex = {
+  services.sinex = {
     enable = true;
     
     # Specify the user who runs the graphical session

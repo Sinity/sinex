@@ -90,12 +90,12 @@
       # NixOS module
       nixosModules = {
         default = ./nixos;
-        sinnix-exocortex = ./nixos;
+        sinex = ./nixos;
       };
       
       # Overlay providing our packages
       overlays.default = final: prev: {
-        sinnixExocortex = {
+        sinex = {
           hyprlandIngestor = systemOutputs.packages.${final.system}.hyprlandIngestor;
         };
       };

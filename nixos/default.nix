@@ -7,7 +7,7 @@ let
   
   # Get packages from the flake's overlay
   # The overlay is applied by the flake, so these packages should be available
-  hyprlandIngestor = pkgs.sinnixExocortex.hyprlandIngestor;
+  hyprlandIngestor = pkgs.sinex.hyprlandIngestor;
   
   # Schema file location
   schemaFile = ../schema/mvp_schema.sql;
