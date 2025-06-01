@@ -1,5 +1,5 @@
 [package]
-name = "hyprland-ingestor"
+name = "kitty-ingestor"
 version = "0.2.0"
 edition = "2021"
 authors = ["Sinity"]
@@ -16,16 +16,14 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-hyprland = "0.3"
 gethostname = { workspace = true }
-config = "0.14"
 clap = { workspace = true }
-tokio-util = "0.7"
-futures = "0.3"
-async-trait = "0.1"
-url = "2.4"
+async-trait = { workspace = true }
+config = "0.14"
 toml = "0.8"
 serde_yaml = "0.9"
+regex = "1.10"
+tempfile = "3.8"
 
 [dev-dependencies]
 pretty_assertions = "1"

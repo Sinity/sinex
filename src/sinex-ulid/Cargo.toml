@@ -1,0 +1,23 @@
+[package]
+name = "sinex-ulid"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "ULID support for Sinex with PostgreSQL compatibility"
+
+[dependencies]
+ulid = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true, optional = true }
+
+[features]
+default = ["sqlx"]
+sqlx = ["dep:sqlx"]
+
+[dev-dependencies]
+proptest = { workspace = true }
