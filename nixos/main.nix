@@ -150,8 +150,8 @@ in {
   config = mkIf cfg.enable {
     # System tuning for filesystem monitoring
     boot.kernel.sysctl = mkIf cfg.ingestors.filesystem.enable {
-      "fs.inotify.max_user_watches" = mkDefault 524288;
-      "fs.inotify.max_user_instances" = mkDefault 256;
+      "fs.inotify.max_user_watches" = mkForce 1048576;
+      "fs.inotify.max_user_instances" = mkForce 512;
     };
     
     # Ensure PostgreSQL is enabled with required extensions
