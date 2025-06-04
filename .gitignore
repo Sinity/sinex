@@ -50,4 +50,5 @@ result-*
 # Project specific
 /data/
 /logs/
-/tmp/
+/spec/combo/
+.direnv/

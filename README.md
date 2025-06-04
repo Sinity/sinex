@@ -12,10 +12,16 @@ nix develop
 ./scripts/db_reset.sh
 
 # Run tests
-cargo test --all-features
+./scripts/test_pipeline.sh
+
+# Test with real data (ephemeral setup)
+./scripts/full_system_test.sh auto
+
+# Interactive testing with live monitoring
+./scripts/full_system_test.sh interactive
 
 # Check system status
-exo query --limit 1
+./cli/exo.py query --limit 1
 ```
 
 See the devShell banner for available commands.
@@ -76,11 +82,49 @@ sqlx migrate add create_new_feature
 
 ### Testing
 
-The project includes comprehensive tests:
-- Unit tests for core functionality
-- Integration tests for database operations
-- Property tests for schema validation
-- Concurrency tests for worker patterns
+The project includes comprehensive testing at multiple levels:
+
+#### Quick Testing
+```bash
+# Run all tests
+./scripts/test_pipeline.sh
+
+# Test specific components
+cargo test --package sinex-shared
+cargo test --test schema_validation_tests
+```
+
+#### Real-World Testing
+```bash
+# Ephemeral full system test (recommended)
+./scripts/full_system_test.sh auto
+
+# Interactive testing with live monitoring
+./scripts/full_system_test.sh interactive
+
+# Monitor production system
+DATABASE_URL=... ./scripts/live_monitor.sh
+```
+
+#### Assumption Validation
+```bash
+# Detect configuration issues in production data
+./scripts/diagnose_assumptions.sh
+
+# Test resilience against common bugs
+./scripts/chaos_test.sh
+
+# Test with real system data sources
+./scripts/real_world_test.sh
+```
+
+**Test Types:**
+- Unit tests for validation logic
+- Integration tests with real database operations  
+- Assumption mismatch detection tests
+- Real-time monitoring and validation
+- Chaos testing for failure scenarios
+- Performance and concurrency testing
 
 ## 🔧 Configuration
 

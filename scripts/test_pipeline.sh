@@ -99,6 +99,12 @@ echo "========================"
 
 if [ $failed_tests -eq 0 ]; then
     echo -e "${GREEN}All tests passed! The pipeline is working correctly.${NC}"
+    echo
+    echo "🚀 Want to test the full system with real data?"
+    echo "Run one of these:"
+    echo "  ./scripts/full_system_test.sh auto        # Automated full test"
+    echo "  ./scripts/full_system_test.sh interactive # Interactive monitoring"
+    echo "  ./scripts/live_monitor.sh                 # Monitor running system"
     exit 0
 else
     echo -e "${RED}Some tests failed. Please check the output above.${NC}"
