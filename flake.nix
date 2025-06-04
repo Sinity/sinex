@@ -46,7 +46,7 @@
               owner = "pksunkara";
               repo = "pgx_ulid";
               rev = "v${version}";
-              sha256 = "sha256-h6CN5DLrE7s5Zy7SQFiq3y3eLqqQdxvyQsJKNgfaqCw=";
+              sha256 = "sha256-zql7wtZQ+GDEpM0kld7vHCbWNHSpPKjYZgVWhx1GtvU=";
             };
 
             nativeBuildInputs = with pkgs; [
@@ -75,8 +75,7 @@
           postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
             p.timescaledb
             p.pgvector
-            p.pg_jsonschema
-            pgx_ulid
+            # pgx_ulid  # Temporarily disabled due to network build issues
           ]);
 
           # Build individual ingestors
@@ -119,7 +118,10 @@
               pkg-config
             ];
 
-            cargoBuildFlags = [ "-p" "sinex-promo-worker" ];
+            cargoBuildFlags = [
+              "-p"
+              "sinex-promo-worker"
+            ];
           };
         in
         {
@@ -189,4 +191,3 @@
       };
     };
 }
-

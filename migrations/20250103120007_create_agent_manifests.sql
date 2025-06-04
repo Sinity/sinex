@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS sinex_schemas.agent_manifests (
                             -- e.g., 'ingestor', 'promoter', 'enricher', 'analytical', 'ui_backend', 'system_utility'
     
     config_template_json    JSONB NULLABLE, -- Example JSON/YAML structure of expected config file
-    -- config_schema_id     UUID REFERENCES sinex_schemas.event_payload_schemas(id) NULLABLE, 
+    config_schema_id        ULID REFERENCES sinex_schemas.event_payload_schemas(id) NULLABLE, 
                             -- FK to a JSON Schema defining agent's config file structure (Alternative to config_template_json)
 
     -- Describes events this agent GENERATES
