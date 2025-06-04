@@ -48,10 +48,10 @@
           hyprlandIngestor = pkgs.rustPlatform.buildRustPackage {
             pname = "hyprland-ingestor";
             version = "0.1.0";
-            src = ./ingestors/hyprland;
+            src = ./.;
 
             cargoLock = {
-              lockFile = ./ingestors/hyprland/Cargo.lock;
+              lockFile = ./Cargo.lock;
             };
 
             buildInputs = with pkgs; [
@@ -61,6 +61,11 @@
 
             nativeBuildInputs = with pkgs; [
               pkg-config
+            ];
+
+            cargoBuildFlags = [
+              "-p"
+              "hyprland-ingestor"
             ];
           };
 
