@@ -157,7 +157,7 @@ in {
     # Ensure PostgreSQL is enabled with required extensions
     services.postgresql = {
       enable = mkDefault true;
-      package = mkDefault pkgs.postgresql_16;
+      package = mkForce pkgs.postgresql_16;
       extensions = ps: with ps; [
         timescaledb
         pgvector  
