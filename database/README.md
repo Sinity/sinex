@@ -1,59 +1,86 @@
 # Sinex Database Schema
 
-This directory contains the database schema definitions for the Sinex project.
+This directory contains database-related documentation for the Sinex project.
 
-## Schema Management (Phase 2)
+## Schema Management
 
-**IMPORTANT:** For Phase 2, we use a pragmatic approach to schema management:
+Sinex uses **sqlx migrations** for proper database schema management:
 
-- All schema definitions are contained in `master_schema.sql`
-- This file is idempotent and can be run multiple times
-- The NixOS `initDbScript` executes this file to set up the database
-- **Formal database migrations (e.g., Sqitch) will be adopted in a future phase** when persistent data needs to be preserved across schema changes
+- Migration files are in `/migrations/` directory  
+- Run `sqlx migrate run` to apply migrations
+- Each migration includes both up and down SQL
+- ULID support via pgx_ulid PostgreSQL extension
 
-## Phase 2 Schema Overview
+## Core Schema Overview
 
-### Core Tables
+### Main Tables
 
-1. **`raw.events`** - The main event storage table with enhanced fields:
-   - ULID primary keys for distributed-safe unique IDs
-   - Enhanced provenance fields (host, ingestor_version, ts_orig)
-   - Schema versioning support via payload_schema_id
+1. **`raw.events`** - Universal event storage:
+   - ULID primary keys via pgx_ulid extension
+   - Universal event structure with JSONB payloads
+   - TimescaleDB hypertable for time-series optimization
    - Comprehensive indexing for query performance
 
-2. **`sinex_schemas.event_payload_schemas`** - Registry of event payload schemas:
-   - JSON Schema definitions for each event type
-   - Version tracking for schema evolution
-   - Active/inactive status for deprecation
+2. **`sinex_schemas.event_payload_schemas`** - Schema registry:
+   - JSON Schema definitions for event validation
+   - Version tracking and lifecycle management
+   - Validation via pg_jsonschema extension
 
-3. **`sinex_schemas.agent_manifests`** - Registry of ingestors/agents:
-   - Self-registration of all data sources
-   - Tracking of produced event types
-   - Health monitoring via last_seen_heartbeat
+3. **`sinex_schemas.agent_manifests`** - Agent registry:
+   - Agent self-registration and capabilities
+   - Event subscription and production definitions
+   - Health monitoring and status tracking
 
-### Event Namespaces
-
-- **`hyprland`** - Window manager events
-- **`terminal.kitty`** - Terminal command execution
-- **`filesystem`** - File system activity
-- **`sinex`** - System operational events (agent.*, schema.*)
+4. **`sinex_schemas.promotion_queue`** - Event processing queue:
+   - Worker-safe concurrent processing
+   - Retry logic with exponential backoff
+   - Dead letter queue for permanent failures
 
 ## Usage
 
-To reset the database with the latest schema:
+### Database Setup
 
 ```bash
-# Drop and recreate the database
-sudo -u postgres dropdb sinex
-sudo -u postgres createdb sinex -O sinex
+# Reset database with latest migrations
+./scripts/db_reset.sh
 
-# Apply the schema
-psql -U sinex -d sinex -f database/master_schema.sql
+# Or manually:
+sqlx migrate run
 ```
 
-## Development Notes
+### Development
 
-- ULIDs are implemented as a custom domain with generation function
-- All timestamps use TIMESTAMPTZ for proper timezone handling
-- JSONB is used for flexible payload storage with GIN indexing
-- Foreign key constraints ensure referential integrity between events and schemas
+```bash
+# Run migration tests
+cargo test --test migration_tests
+
+# Test ULID functionality  
+cargo test --test ulid_integration_tests
+
+# Test full pipeline
+cargo test --test event_pipeline_integration_tests
+```
+
+## Extensions Used
+
+- **pgx_ulid**: Native ULID support with PostgreSQL functions
+- **TimescaleDB**: Hypertables for time-series data optimization
+- **pgvector**: Vector similarity search capabilities
+- **pg_jsonschema**: JSON Schema validation in database
+
+## Event Structure
+
+All events follow a consistent structure:
+
+```sql
+raw.events:
+- id: ULID (distributed-safe unique identifier)
+- source: TEXT (event source/producer)
+- event_type: TEXT (specific event type)
+- ts_ingest: TIMESTAMPTZ (ingestion timestamp, partitioning key)
+- ts_orig: TIMESTAMPTZ (original event timestamp)
+- host: TEXT (originating host)
+- ingestor_version: TEXT (producer version)
+- payload_schema_id: ULID (optional schema reference)
+- payload: JSONB (event-specific data)
+```

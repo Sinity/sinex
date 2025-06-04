@@ -10,10 +10,7 @@ let
   hyprlandIngestor = pkgs.sinex.hyprlandIngestor;
   promoWorker = pkgs.sinex.promoWorker;
   
-  # Schema file location
-  schemaFile = ../schema/mvp_schema.sql;
-
-  # Database initialization script
+  # Database initialization script using sqlx migrations
   initDbScript = pkgs.writeShellScript "init-sinex-db" ''
     set -e
     
@@ -27,8 +24,10 @@ let
     ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | grep -q 1 || \
       ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
     
-    # Run schema migrations
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -f ${schemaFile} || true
+    # Run migrations using sqlx
+    export DATABASE_URL="postgresql://postgres@localhost/${cfg.database.name}"
+    cd ${../.}
+    ${pkgs.sqlx-cli}/bin/sqlx migrate run
   '';
 
 in {
@@ -174,14 +173,24 @@ in {
             GRANT USAGE ON SCHEMA public TO \"${cfg.systemUser}\";
             GRANT CREATE ON SCHEMA public TO \"${cfg.systemUser}\";
             GRANT USAGE ON SCHEMA raw TO \"${cfg.systemUser}\";
+            GRANT USAGE ON SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
+            GRANT USAGE ON SCHEMA core TO \"${cfg.systemUser}\";
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${cfg.systemUser}\";
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${cfg.systemUser}\";
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO \"${cfg.systemUser}\";
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO \"${cfg.systemUser}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO \"${cfg.systemUser}\";
             ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
             ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
             ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
             ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
           " || true
         '';
         User = "postgres";
