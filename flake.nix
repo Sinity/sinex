@@ -37,37 +37,46 @@
             ];
           };
 
-          # Build pgx_ulid from source
-          pgx_ulid = pkgs.stdenv.mkDerivation rec {
-            pname = "pgx_ulid";
+          # For now, create a stub pgx_ulid until we can build it properly
+          pgx_ulid = pkgs.stdenv.mkDerivation {
+            pname = "pgx_ulid-stub";
             version = "0.1.5";
-
-            src = pkgs.fetchFromGitHub {
-              owner = "pksunkara";
-              repo = "pgx_ulid";
-              rev = "v${version}";
-              sha256 = "sha256-zql7wtZQ+GDEpM0kld7vHCbWNHSpPKjYZgVWhx1GtvU=";
-            };
-
-            nativeBuildInputs = with pkgs; [
-              cargo
-              rustc
-              postgresql_16
-              pkg-config
-            ];
-
-            buildPhase = ''
-              export PGRX_HOME=$(mktemp -d)
-              cargo install --locked cargo-pgrx --version 0.11.3
-              export PATH=$PATH:$HOME/.cargo/bin
-              cargo pgrx init --pg16 ${pkgs.postgresql_16}/bin/pg_config
-              cargo pgrx package --pg-config ${pkgs.postgresql_16}/bin/pg_config
-            '';
-
+            
+            dontUnpack = true;
+            
             installPhase = ''
               mkdir -p $out/lib $out/share/postgresql/extension
-              cp target/release/ulid-pg16/usr/pgsql-16/lib/ulid.so $out/lib/
-              cp target/release/ulid-pg16/usr/pgsql-16/share/extension/* $out/share/postgresql/extension/
+              
+              # Create stub control file
+              cat > $out/share/postgresql/extension/ulid.control << 'EOF'
+# ulid extension
+comment = 'ULID support for PostgreSQL (stub)'
+default_version = '0.1.5'
+module_pathname = '$libdir/ulid'
+relocatable = true
+EOF
+              
+              # Create stub SQL file
+              cat > $out/share/postgresql/extension/ulid--0.1.5.sql << 'EOF'
+-- ULID extension stub
+-- This is a placeholder until the full pgx_ulid extension can be built
+CREATE OR REPLACE FUNCTION ulid_generate()
+RETURNS text
+LANGUAGE sql
+AS $$
+  SELECT encode(gen_random_bytes(16), 'hex');
+$$;
+
+CREATE OR REPLACE FUNCTION ulid_to_uuid(ulid text)
+RETURNS uuid
+LANGUAGE sql
+AS $$
+  SELECT decode(ulid, 'hex')::uuid;
+$$;
+EOF
+              
+              # Create stub shared library (empty file)
+              touch $out/lib/ulid.so
             '';
           };
 
@@ -75,7 +84,7 @@
           postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
             p.timescaledb
             p.pgvector
-            # pgx_ulid  # Temporarily disabled due to network build issues
+            pgx_ulid
           ]);
 
           # Build individual ingestors
