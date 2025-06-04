@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 use tracing::{debug, info};
-
-use crate::{RawEvent, Ulid};
+use sinex_db::models::RawEvent;
+use sinex_ulid::Ulid;
+use uuid::Uuid;
 
 /// Database connection configuration
 #[derive(Debug, Clone)]
@@ -27,9 +28,10 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Enhanced database service with retry logic
+/// Enhanced database service with retry logic and validation
 pub struct DatabaseService {
     pool: PgPool,
+    validator: Option<crate::validation::EventValidator>,
 }
 
 impl DatabaseService {
@@ -45,7 +47,35 @@ impl DatabaseService {
             .context("Failed to create database connection pool")?;
 
         info!("Database connection pool established");
-        Ok(Self { pool })
+        Ok(Self { 
+            pool,
+            validator: Some(crate::validation::EventValidator::new()),
+        })
+    }
+
+    /// Create from existing pool (useful for testing)
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { 
+            pool,
+            validator: Some(crate::validation::EventValidator::new()),
+        }
+    }
+    
+    /// Create without validation (for testing invalid events)
+    pub fn from_pool_no_validation(pool: PgPool) -> Self {
+        Self {
+            pool,
+            validator: None,
+        }
+    }
+    
+    /// Enable or disable validation
+    pub fn set_validation(&mut self, enabled: bool) {
+        self.validator = if enabled {
+            Some(crate::validation::EventValidator::new())
+        } else {
+            None
+        };
     }
 
     /// Get the underlying connection pool
@@ -54,24 +84,28 @@ impl DatabaseService {
     }
 
     /// Insert a raw event into the database
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<Ulid> {
-        let id = event.id.unwrap_or_else(Ulid::new);
+    pub async fn insert_event(&self, event: &RawEvent) -> Result<Uuid> {
+        // Validate event if validator is enabled
+        if let Some(ref validator) = self.validator {
+            validator.validate(&event.source, &event.event_type, &event.payload)
+                .map_err(|e| anyhow::anyhow!("Event validation failed: {}", e))?;
+        }
         
-        sqlx::query!(
+        // Let database generate the ULID
+        let result = sqlx::query!(
             r#"
             INSERT INTO raw.events 
-                (id, source, event_type, ts_orig, host, ingestor_version, 
+                (source, event_type, ts_orig, host, ingestor_version, 
                  payload_schema_id, payload)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6::ulid, $7)
             RETURNING id
             "#,
-            id.to_bytes().to_vec(),
             event.source,
             event.event_type,
             event.ts_orig,
             event.host,
             event.ingestor_version,
-            event.payload_schema_id.map(|id| id.to_bytes().to_vec()),
+            event.payload_schema_id.map(|uuid| uuid.to_string()),
             event.payload
         )
         .fetch_one(&self.pool)
@@ -80,41 +114,47 @@ impl DatabaseService {
 
         debug!(
             "Inserted event: {} {} (id: {})",
-            event.source, event.event_type, id
+            event.source, event.event_type, result.id
         );
 
-        Ok(id)
+        Ok(result.id)
     }
 
     /// Insert multiple events in a batch
-    pub async fn insert_events_batch(&self, events: &[RawEvent]) -> Result<Vec<Ulid>> {
+    pub async fn insert_events_batch(&self, events: &[RawEvent]) -> Result<Vec<Uuid>> {
+        // Validate all events first if validator is enabled
+        if let Some(ref validator) = self.validator {
+            for (i, event) in events.iter().enumerate() {
+                validator.validate(&event.source, &event.event_type, &event.payload)
+                    .map_err(|e| anyhow::anyhow!("Event {} validation failed: {}", i, e))?;
+            }
+        }
+        
         let mut tx = self.pool.begin().await?;
         let mut ids = Vec::new();
 
         for event in events {
-            let id = event.id.unwrap_or_else(Ulid::new);
-            
-            sqlx::query!(
+            let result = sqlx::query!(
                 r#"
                 INSERT INTO raw.events 
-                    (id, source, event_type, ts_orig, host, ingestor_version, 
+                    (source, event_type, ts_orig, host, ingestor_version, 
                      payload_schema_id, payload)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, $5, $6::ulid, $7)
+                RETURNING id
                 "#,
-                id.to_bytes().to_vec(),
                 event.source,
                 event.event_type,
                 event.ts_orig,
                 event.host,
                 event.ingestor_version,
-                event.payload_schema_id.map(|id| id.to_bytes().to_vec()),
+                event.payload_schema_id.map(|uuid| uuid.to_string()),
                 event.payload
             )
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .context("Failed to insert event in batch")?;
 
-            ids.push(id);
+            ids.push(result.id);
         }
 
         tx.commit().await?;

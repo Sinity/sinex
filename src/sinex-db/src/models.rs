@@ -18,6 +18,17 @@ pub struct RawEvent {
     pub payload: serde_json::Value,
 }
 
+impl RawEvent {
+    /// Convert database UUID to ULID for application layer
+    pub fn id_as_ulid(&self) -> Result<Ulid, sinex_ulid::Error> {
+        Ulid::from_bytes(*self.id.as_bytes())
+    }
+    
+    pub fn payload_schema_id_as_ulid(&self) -> Option<Result<Ulid, sinex_ulid::Error>> {
+        self.payload_schema_id.map(|uuid| Ulid::from_bytes(*uuid.as_bytes()))
+    }
+}
+
 /// Event payload schema
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EventPayloadSchema {

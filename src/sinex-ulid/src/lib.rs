@@ -14,6 +14,8 @@ pub enum UlidError {
     UuidConversion(String),
 }
 
+pub type Error = UlidError;
+
 /// A wrapper around ULID that provides PostgreSQL compatibility via UUID
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -76,6 +78,21 @@ impl Ulid {
     /// Get the inner ULID
     pub fn inner(&self) -> &InnerUlid {
         &self.0
+    }
+
+    /// Convert to bytes
+    pub fn to_bytes(&self) -> [u8; 16] {
+        self.0.to_bytes()
+    }
+
+    /// Create from bytes
+    pub fn from_bytes(bytes: [u8; 16]) -> Result<Self, UlidError> {
+        Ok(Self(InnerUlid::from_bytes(bytes)))
+    }
+
+    /// Check if this is a nil/zero ULID
+    pub fn is_nil(&self) -> bool {
+        self.0.to_bytes().iter().all(|&b| b == 0)
     }
 }
 

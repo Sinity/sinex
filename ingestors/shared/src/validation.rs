@@ -1,0 +1,462 @@
+use serde_json::Value;
+use std::collections::HashMap;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ValidationError {
+    #[error("Missing required field: {field}")]
+    MissingField { field: String },
+    
+    #[error("Invalid field type: {field} should be {expected}, got {actual}")]
+    InvalidType {
+        field: String,
+        expected: String,
+        actual: String,
+    },
+    
+    #[error("Invalid value: {field} - {reason}")]
+    InvalidValue { field: String, reason: String },
+    
+    #[error("Unknown source/event_type combination: {source}/{event_type}")]
+    UnknownEventType { source: String, event_type: String },
+    
+    #[error("Schema validation failed: {0}")]
+    SchemaValidation(String),
+}
+
+/// Event validation rules for each source/event_type combination
+pub struct EventValidator {
+    rules: HashMap<(String, String), Box<dyn Fn(&Value) -> Result<(), ValidationError> + Send + Sync>>,
+}
+
+impl EventValidator {
+    pub fn new() -> Self {
+        let mut validator = Self {
+            rules: HashMap::new(),
+        };
+        
+        // Register validation rules
+        validator.register_filesystem_rules();
+        validator.register_hyprland_rules();
+        validator.register_terminal_rules();
+        validator.register_sinex_rules();
+        
+        validator
+    }
+    
+    /// Validate an event payload
+    pub fn validate(&self, source: &str, event_type: &str, payload: &Value) -> Result<(), ValidationError> {
+        let key = (source.to_string(), event_type.to_string());
+        
+        match self.rules.get(&key) {
+            Some(validator) => validator(payload),
+            None => {
+                // For unknown event types, just ensure it's an object
+                if !payload.is_object() {
+                    return Err(ValidationError::InvalidType {
+                        field: "payload".to_string(),
+                        expected: "object".to_string(),
+                        actual: format!("{:?}", payload),
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
+    
+    fn register_rule<F>(&mut self, source: &str, event_type: &str, validator: F)
+    where
+        F: Fn(&Value) -> Result<(), ValidationError> + Send + Sync + 'static,
+    {
+        self.rules.insert(
+            (source.to_string(), event_type.to_string()),
+            Box::new(validator),
+        );
+    }
+    
+    fn register_filesystem_rules(&mut self) {
+        use crate::{sources, event_type_constants};
+        
+        // file_created validation
+        self.register_rule(
+            sources::FILESYSTEM,
+            event_type_constants::filesystem::FILE_CREATED,
+            |payload| {
+                // Required: path (string), size (number >= 0)
+                let path = payload.get("path")
+                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "path".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("path")),
+                    })?;
+                
+                if path.is_empty() {
+                    return Err(ValidationError::InvalidValue {
+                        field: "path".to_string(),
+                        reason: "cannot be empty".to_string(),
+                    });
+                }
+                
+                let size = payload.get("size")
+                    .ok_or_else(|| ValidationError::MissingField { field: "size".to_string() })?
+                    .as_u64()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "size".to_string(),
+                        expected: "positive integer".to_string(),
+                        actual: format!("{:?}", payload.get("size")),
+                    })?;
+                
+                // Optional: permissions (string matching pattern)
+                if let Some(perms) = payload.get("permissions") {
+                    let perms_str = perms.as_str()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "permissions".to_string(),
+                            expected: "string".to_string(),
+                            actual: format!("{:?}", perms),
+                        })?;
+                    
+                    if !perms_str.chars().all(|c| c >= '0' && c <= '7') || 
+                       (perms_str.len() != 3 && perms_str.len() != 4) {
+                        return Err(ValidationError::InvalidValue {
+                            field: "permissions".to_string(),
+                            reason: "must be 3 or 4 octal digits".to_string(),
+                        });
+                    }
+                }
+                
+                Ok(())
+            },
+        );
+        
+        // file_modified validation
+        self.register_rule(
+            sources::FILESYSTEM,
+            event_type_constants::filesystem::FILE_MODIFIED,
+            |payload| {
+                // Required: path
+                payload.get("path")
+                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "path".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("path")),
+                    })?;
+                
+                // At least one of: old_size/new_size, modification_type
+                let has_size_info = payload.get("old_size").is_some() || payload.get("new_size").is_some();
+                let has_mod_type = payload.get("modification_type").is_some();
+                
+                if !has_size_info && !has_mod_type {
+                    return Err(ValidationError::MissingField {
+                        field: "modification info (old_size/new_size or modification_type)".to_string(),
+                    });
+                }
+                
+                Ok(())
+            },
+        );
+        
+        // file_deleted validation
+        self.register_rule(
+            sources::FILESYSTEM,
+            event_type_constants::filesystem::FILE_DELETED,
+            |payload| {
+                // Required: path
+                payload.get("path")
+                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "path".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("path")),
+                    })?;
+                
+                // Optional: was_directory (boolean)
+                if let Some(was_dir) = payload.get("was_directory") {
+                    was_dir.as_bool()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "was_directory".to_string(),
+                            expected: "boolean".to_string(),
+                            actual: format!("{:?}", was_dir),
+                        })?;
+                }
+                
+                Ok(())
+            },
+        );
+        
+        // file_renamed validation
+        self.register_rule(
+            sources::FILESYSTEM,
+            event_type_constants::filesystem::FILE_RENAMED,
+            |payload| {
+                // Required: old_path, new_path
+                payload.get("old_path")
+                    .ok_or_else(|| ValidationError::MissingField { field: "old_path".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "old_path".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("old_path")),
+                    })?;
+                
+                payload.get("new_path")
+                    .ok_or_else(|| ValidationError::MissingField { field: "new_path".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "new_path".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("new_path")),
+                    })?;
+                
+                Ok(())
+            },
+        );
+    }
+    
+    fn register_hyprland_rules(&mut self) {
+        use crate::{sources, event_type_constants};
+        
+        // window_focused validation
+        self.register_rule(
+            sources::HYPRLAND,
+            event_type_constants::hyprland::WINDOW_FOCUSED,
+            |payload| {
+                // Required: window (object or string)
+                payload.get("window")
+                    .ok_or_else(|| ValidationError::MissingField { field: "window".to_string() })?;
+                
+                // Optional but common: workspace
+                if let Some(workspace) = payload.get("workspace") {
+                    if !workspace.is_number() && !workspace.is_string() {
+                        return Err(ValidationError::InvalidType {
+                            field: "workspace".to_string(),
+                            expected: "number or string".to_string(),
+                            actual: format!("{:?}", workspace),
+                        });
+                    }
+                }
+                
+                Ok(())
+            },
+        );
+        
+        // workspace_changed validation
+        self.register_rule(
+            sources::HYPRLAND,
+            event_type_constants::hyprland::WORKSPACE_CHANGED,
+            |payload| {
+                // Required: workspace (number or string)
+                let workspace = payload.get("workspace")
+                    .ok_or_else(|| ValidationError::MissingField { field: "workspace".to_string() })?;
+                
+                if !workspace.is_number() && !workspace.is_string() {
+                    return Err(ValidationError::InvalidType {
+                        field: "workspace".to_string(),
+                        expected: "number or string".to_string(),
+                        actual: format!("{:?}", workspace),
+                    });
+                }
+                
+                Ok(())
+            },
+        );
+    }
+    
+    fn register_terminal_rules(&mut self) {
+        use crate::{sources, event_type_constants};
+        
+        // command_executed validation
+        self.register_rule(
+            sources::TERMINAL_KITTY,
+            event_type_constants::terminal::COMMAND_EXECUTED,
+            |payload| {
+                // Required: command
+                payload.get("command")
+                    .ok_or_else(|| ValidationError::MissingField { field: "command".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "command".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("command")),
+                    })?;
+                
+                // Optional: exit_code (number), duration (number)
+                if let Some(exit_code) = payload.get("exit_code") {
+                    exit_code.as_i64()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "exit_code".to_string(),
+                            expected: "integer".to_string(),
+                            actual: format!("{:?}", exit_code),
+                        })?;
+                }
+                
+                Ok(())
+            },
+        );
+    }
+    
+    fn register_sinex_rules(&mut self) {
+        use crate::{sources, event_type_constants};
+        
+        // agent.heartbeat validation
+        self.register_rule(
+            sources::SINEX,
+            event_type_constants::sinex::AGENT_HEARTBEAT,
+            |payload| {
+                // Required: agent_name, timestamp_iso
+                payload.get("agent_name")
+                    .ok_or_else(|| ValidationError::MissingField { field: "agent_name".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "agent_name".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("agent_name")),
+                    })?;
+                
+                let timestamp = payload.get("timestamp_iso")
+                    .ok_or_else(|| ValidationError::MissingField { field: "timestamp_iso".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "timestamp_iso".to_string(),
+                        expected: "ISO8601 string".to_string(),
+                        actual: format!("{:?}", payload.get("timestamp_iso")),
+                    })?;
+                
+                // Validate ISO8601 format
+                chrono::DateTime::parse_from_rfc3339(timestamp)
+                    .map_err(|_| ValidationError::InvalidValue {
+                        field: "timestamp_iso".to_string(),
+                        reason: "must be valid ISO8601/RFC3339 timestamp".to_string(),
+                    })?;
+                
+                Ok(())
+            },
+        );
+        
+        // agent.error validation
+        self.register_rule(
+            sources::SINEX,
+            event_type_constants::sinex::AGENT_ERROR,
+            |payload| {
+                // Required: agent_name, error_message
+                payload.get("agent_name")
+                    .ok_or_else(|| ValidationError::MissingField { field: "agent_name".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "agent_name".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("agent_name")),
+                    })?;
+                
+                payload.get("error_message")
+                    .ok_or_else(|| ValidationError::MissingField { field: "error_message".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "error_message".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("error_message")),
+                    })?;
+                
+                // Optional: severity (must be valid level)
+                if let Some(severity) = payload.get("severity") {
+                    let sev = severity.as_str()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "severity".to_string(),
+                            expected: "string".to_string(),
+                            actual: format!("{:?}", severity),
+                        })?;
+                    
+                    if !["low", "medium", "high", "critical"].contains(&sev) {
+                        return Err(ValidationError::InvalidValue {
+                            field: "severity".to_string(),
+                            reason: "must be one of: low, medium, high, critical".to_string(),
+                        });
+                    }
+                }
+                
+                Ok(())
+            },
+        );
+    }
+}
+
+impl Default for EventValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    
+    #[test]
+    fn test_filesystem_validation() {
+        let validator = EventValidator::new();
+        
+        // Valid file_created
+        let valid = json!({
+            "path": "/test.txt",
+            "size": 1024,
+            "permissions": "644"
+        });
+        assert!(validator.validate("filesystem", "file_created", &valid).is_ok());
+        
+        // Invalid - missing size
+        let invalid = json!({
+            "path": "/test.txt"
+        });
+        assert!(validator.validate("filesystem", "file_created", &invalid).is_err());
+        
+        // Invalid - wrong type for size
+        let invalid = json!({
+            "path": "/test.txt",
+            "size": "not a number"
+        });
+        assert!(validator.validate("filesystem", "file_created", &invalid).is_err());
+        
+        // Invalid - bad permissions
+        let invalid = json!({
+            "path": "/test.txt",
+            "size": 1024,
+            "permissions": "999" // Invalid octal
+        });
+        assert!(validator.validate("filesystem", "file_created", &invalid).is_err());
+    }
+    
+    #[test]
+    fn test_cross_source_validation() {
+        let validator = EventValidator::new();
+        
+        // This should NOT validate - wrong payload for event type
+        let wrong = json!({
+            "window": "terminal",
+            "workspace": 1
+        });
+        
+        // This is a hyprland payload being used for filesystem event
+        let result = validator.validate("filesystem", "file_created", &wrong);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ValidationError::MissingField { .. }));
+    }
+    
+    #[test]
+    fn test_unknown_event_type() {
+        let validator = EventValidator::new();
+        
+        // Unknown events should pass if they're objects
+        let unknown = json!({
+            "custom_field": "value"
+        });
+        assert!(validator.validate("unknown_source", "unknown_type", &unknown).is_ok());
+        
+        // But not if they're not objects
+        let invalid = json!("just a string");
+        assert!(validator.validate("unknown_source", "unknown_type", &invalid).is_err());
+    }
+}

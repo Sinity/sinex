@@ -1,24 +1,20 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sinex_db::models::RawEvent;
+use sinex_ulid::Ulid;
 
-use crate::Ulid;
-
-/// Core event structure for raw.events table
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawEvent {
-    pub id: Option<Ulid>, // None for new events, Some for existing
-    pub source: String,
-    pub event_type: String,
-    pub ts_ingest: Option<DateTime<Utc>>, // None for new events
-    pub ts_orig: Option<DateTime<Utc>>,
-    pub host: String,
-    pub ingestor_version: String,
-    pub payload_schema_id: Option<Ulid>,
-    pub payload: JsonValue,
+/// Builder for creating new raw events
+pub struct RawEventBuilder {
+    source: String,
+    event_type: String,
+    ts_orig: Option<DateTime<Utc>>,
+    host: String,
+    ingestor_version: String,
+    payload_schema_id: Option<Ulid>,
+    payload: JsonValue,
 }
 
-impl RawEvent {
+impl RawEventBuilder {
     pub fn new(
         source: impl Into<String>,
         event_type: impl Into<String>,
@@ -29,10 +25,8 @@ impl RawEvent {
             .into_owned();
 
         Self {
-            id: None,
             source: source.into(),
             event_type: event_type.into(),
-            ts_ingest: None,
             ts_orig: None,
             host: hostname,
             ingestor_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -54,6 +48,21 @@ impl RawEvent {
     pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
         self.ingestor_version = version.into();
         self
+    }
+
+    /// Build the event (ID and ts_ingest will be set by database)
+    pub fn build(self) -> RawEvent {
+        RawEvent {
+            id: uuid::Uuid::new_v4(), // Will be replaced by database gen_ulid()
+            source: self.source,
+            event_type: self.event_type,
+            ts_ingest: Utc::now(), // Will be replaced by database now()
+            ts_orig: self.ts_orig,
+            host: self.host,
+            ingestor_version: Some(self.ingestor_version),
+            payload_schema_id: self.payload_schema_id.map(|ulid| uuid::Uuid::from_bytes(ulid.to_bytes())),
+            payload: self.payload,
+        }
     }
 }
 
