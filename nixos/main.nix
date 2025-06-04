@@ -8,7 +8,12 @@ let
   # Get packages from the flake's overlay
   # The overlay is applied by the flake, so these packages should be available
   hyprlandIngestor = pkgs.sinex.hyprlandIngestor;
+  filesystemIngestor = pkgs.sinex.filesystemIngestor;
+  kittyIngestor = pkgs.sinex.kittyIngestor;
   promoWorker = pkgs.sinex.promoWorker;
+  
+  # Sinex monitoring script
+  sinexMonitor = pkgs.writeShellScriptBin "sinex-monitor" (builtins.readFile ../scripts/sinex-monitor.sh);
   
   # Database initialization script using sqlx migrations
   initDbScript = pkgs.writeShellScript "init-sinex-db" ''
@@ -20,12 +25,17 @@ let
       sleep 2
     done
     
-    # Create database if it doesn't exist
+    # Create database if it doesn't exist (should be handled by ensureDatabases)
     ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | grep -q 1 || \
       ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
     
+    # Create required extensions
+    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
+    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+    
     # Run migrations using sqlx
-    export DATABASE_URL="postgresql://postgres@localhost/${cfg.database.name}"
+    export DATABASE_URL="postgresql://${cfg.systemUser}@localhost/${cfg.database.name}"
     cd ${../.}
     ${pkgs.sqlx-cli}/bin/sqlx migrate run
   '';
@@ -43,10 +53,21 @@ in {
       example = "sinity";
     };
     
+    autoConfigureSystem = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Automatically configure system requirements for Sinex ingestors:
+        - Configure kitty terminal for remote control
+        - Set up shell integration for command tracking
+        - Increase inotify limits for filesystem monitoring
+      '';
+    };
+    
     database = {
       url = mkOption {
         type = types.str;
-        default = "postgresql://localhost/${cfg.database.name}";
+        default = "postgresql://${cfg.systemUser}@localhost/${cfg.database.name}";
         description = "PostgreSQL database URL";
       };
       
@@ -80,13 +101,98 @@ in {
         };
       };
       
-      # Future ingestors can be added here
-      # browser.enable = mkEnableOption "Browser activity ingestor";
-      # filesystem.enable = mkEnableOption "Filesystem activity ingestor";
+      filesystem = {
+        enable = mkEnableOption "Filesystem activity ingestor";
+        
+        watchDirectories = mkOption {
+          type = types.listOf types.str;
+          default = [ "~" ];
+          description = "Directories to watch recursively";
+        };
+        
+        excludePatterns = mkOption {
+          type = types.listOf types.str;
+          default = [ "*.tmp" "*.log" "*.cache" ".git/**" "node_modules/**" "__pycache__/**" ];
+          description = "Glob patterns to exclude from monitoring";
+        };
+        
+        debounceMs = mkOption {
+          type = types.int;
+          default = 500;
+          description = "Debounce delay in milliseconds";
+        };
+      };
+      
+      kitty = {
+        enable = mkEnableOption "Kitty terminal activity ingestor";
+        
+        captureCommands = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Capture command execution events";
+        };
+        
+        captureOutput = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Capture command output (privacy consideration)";
+        };
+        
+        shellIntegration = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable shell integration for better command tracking";
+        };
+      };
     };
   };
   
   config = mkIf cfg.enable {
+    # System tuning for filesystem monitoring
+    boot.kernel.sysctl = mkIf cfg.ingestors.filesystem.enable {
+      "fs.inotify.max_user_watches" = mkDefault 524288;
+      "fs.inotify.max_user_instances" = mkDefault 256;
+    };
+    
+    # Ensure PostgreSQL is enabled with required extensions
+    services.postgresql = {
+      enable = mkDefault true;
+      package = mkDefault pkgs.postgresql_16;
+      extensions = ps: with ps; [
+        timescaledb
+        pgvector  
+        pgx_ulid
+      ];
+      
+      # Ensure basic authentication and database setup
+      authentication = mkOverride 999 ''
+        # TYPE  DATABASE        USER            ADDRESS                 METHOD
+        local   all             all                                     trust
+        host    all             all             127.0.0.1/32            trust
+        host    all             all             ::1/128                 trust
+      '';
+      
+      # Ensure our database exists
+      ensureDatabases = [ cfg.database.name ];
+      
+      # Ensure database user exists
+      ensureUsers = [
+        {
+          name = cfg.systemUser;
+          ensureClauses = {
+            login = true;
+          };
+        }
+      ];
+      
+      # Basic performance settings
+      settings = mkDefault {
+        shared_preload_libraries = "timescaledb";
+        max_connections = 100;
+        shared_buffers = "256MB";
+        effective_cache_size = "1GB";
+      };
+    };
     # Don't create users - assume they already exist
     # The database user should be created by PostgreSQL configuration
     
@@ -102,8 +208,20 @@ in {
         RemainAfterExit = true;
         ExecStart = initDbScript;
         User = "postgres";
+        Environment = "PATH=${pkgs.postgresql}/bin:${pkgs.sqlx-cli}/bin";
       };
     };
+    
+    # Install monitoring tools system-wide
+    environment.systemPackages = [ sinexMonitor ];
+    
+    # Enhanced logging configuration for journald
+    services.journald.extraConfig = mkIf cfg.enable ''
+      # Increase retention for Sinex services
+      SystemMaxUse=1G
+      SystemKeepFree=500M
+      MaxRetentionSec=1month
+    '';
     
     # Hyprland ingestor service
     systemd.services.sinex-hyprland = mkIf cfg.ingestors.hyprland.enable {
@@ -143,6 +261,111 @@ in {
           # Start the actual ingestor
           exec ${hyprlandIngestor}/bin/hyprland-ingestor
         ''}";
+        Restart = "always";
+        RestartSec = 10;
+        
+        # Run in user's login session context
+        PAMName = "login";
+      };
+    };
+    
+    # Filesystem ingestor service
+    systemd.services.sinex-filesystem = mkIf cfg.ingestors.filesystem.enable {
+      description = "Sinex Filesystem activity ingestor";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
+      
+      environment = {
+        DATABASE_URL = cfg.database.url;
+        RUST_LOG = "info";
+      };
+      
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.systemUser;
+        ExecStart = pkgs.writeShellScript "filesystem-ingestor-wrapper" ''
+          #!/usr/bin/env bash
+          
+          # Create config directory
+          mkdir -p ~/.config/sinex
+          
+          # Generate configuration file
+          cat > ~/.config/sinex/filesystem-ingestor.toml <<EOF
+[database]
+url = "${cfg.database.url}"
+max_connections = 5
+
+[logging]
+level = "info"
+format = "json"
+
+[filesystem]
+watch_directories = [${builtins.concatStringsSep ", " (map (dir: '"${dir}"') cfg.ingestors.filesystem.watchDirectories)}]
+exclude_patterns = [${builtins.concatStringsSep ", " (map (pattern: '"${pattern}"') cfg.ingestors.filesystem.excludePatterns)}]
+debounce_ms = ${toString cfg.ingestors.filesystem.debounceMs}
+batch_size_events = 50
+batch_timeout_ms = 5000
+hash_files = true
+max_hash_size_bytes = 10485760
+heartbeat_interval_secs = 60
+max_retries = 3
+retry_delay_secs = 5
+EOF
+          
+          # Start the actual ingestor
+          exec ${filesystemIngestor}/bin/filesystem-ingestor run
+        '';
+        Restart = "always";
+        RestartSec = 10;
+        
+        # Run in user's login session context
+        PAMName = "login";
+      };
+    };
+    
+    # Kitty ingestor service
+    systemd.services.sinex-kitty = mkIf cfg.ingestors.kitty.enable {
+      description = "Sinex Kitty terminal activity ingestor";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
+      
+      environment = {
+        DATABASE_URL = cfg.database.url;
+        RUST_LOG = "info";
+      };
+      
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.systemUser;
+        ExecStart = pkgs.writeShellScript "kitty-ingestor-wrapper" ''
+          #!/usr/bin/env bash
+          
+          # Create config directory
+          mkdir -p ~/.config/sinex
+          
+          # Generate configuration file
+          cat > ~/.config/sinex/kitty-ingestor.toml <<EOF
+[database]
+url = "${cfg.database.url}"
+max_connections = 5
+
+[logging]
+level = "info"
+format = "json"
+
+[kitty]
+socket_path = "/tmp/kitty-*"
+polling_interval_secs = 5
+command_timeout_secs = 30
+heartbeat_interval_secs = 60
+capture_commands = ${if cfg.ingestors.kitty.captureCommands then "true" else "false"}
+capture_output = ${if cfg.ingestors.kitty.captureOutput then "true" else "false"}
+shell_integration = ${if cfg.ingestors.kitty.shellIntegration then "true" else "false"}
+EOF
+          
+          # Start the actual ingestor
+          exec ${kittyIngestor}/bin/kitty-ingestor run
+        '';
         Restart = "always";
         RestartSec = 10;
         
@@ -196,5 +419,15 @@ in {
         User = "postgres";
       };
     };
+    
+    # User information about manual configuration
+    warnings = mkIf (cfg.enable && !cfg.autoConfigureSystem) [
+      ''
+        Sinex auto-configuration is disabled. You may need to manually configure:
+        1. Kitty terminal: allow_remote_control = "yes" and listen_on = "unix:/tmp/kitty"
+        2. Shell integration for command tracking (see Sinex documentation)
+        3. Filesystem monitoring: increase inotify limits if needed
+      ''
+    ];
   };
 }
