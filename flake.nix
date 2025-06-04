@@ -37,7 +37,6 @@
             ];
           };
 
-
           # PostgreSQL with all required extensions
           postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
             p.timescaledb
