@@ -50,9 +50,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-            };
+            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
 
             buildInputs = with pkgs; [
               openssl
@@ -75,9 +73,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-            };
+            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
 
             buildInputs = with pkgs; [
               openssl

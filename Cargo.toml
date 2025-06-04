@@ -50,6 +50,7 @@ prometheus = "0.13"
 # Utils
 rand = "0.8"
 once_cell = "1"
+blake3 = "1"
 
 # Testing
 proptest = "1"
