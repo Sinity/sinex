@@ -37,54 +37,12 @@
             ];
           };
 
-          # For now, create a stub pgx_ulid until we can build it properly
-          pgx_ulid = pkgs.stdenv.mkDerivation {
-            pname = "pgx_ulid-stub";
-            version = "0.1.5";
-            
-            dontUnpack = true;
-            
-            installPhase = ''
-              mkdir -p $out/lib $out/share/postgresql/extension
-              
-              # Create stub control file
-              cat > $out/share/postgresql/extension/ulid.control << 'EOF'
-# ulid extension
-comment = 'ULID support for PostgreSQL (stub)'
-default_version = '0.1.5'
-module_pathname = '$libdir/ulid'
-relocatable = true
-EOF
-              
-              # Create stub SQL file
-              cat > $out/share/postgresql/extension/ulid--0.1.5.sql << 'EOF'
--- ULID extension stub
--- This is a placeholder until the full pgx_ulid extension can be built
-CREATE OR REPLACE FUNCTION ulid_generate()
-RETURNS text
-LANGUAGE sql
-AS $$
-  SELECT encode(gen_random_bytes(16), 'hex');
-$$;
-
-CREATE OR REPLACE FUNCTION ulid_to_uuid(ulid text)
-RETURNS uuid
-LANGUAGE sql
-AS $$
-  SELECT decode(ulid, 'hex')::uuid;
-$$;
-EOF
-              
-              # Create stub shared library (empty file)
-              touch $out/lib/ulid.so
-            '';
-          };
 
           # PostgreSQL with all required extensions
           postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
             p.timescaledb
             p.pgvector
-            pgx_ulid
+            p.pgx_ulid
           ]);
 
           # Build individual ingestors
