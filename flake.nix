@@ -67,6 +67,52 @@
             ];
           };
 
+          # Build filesystem ingestor
+          filesystemIngestor = pkgs.rustPlatform.buildRustPackage {
+            pname = "filesystem-ingestor";
+            version = "0.1.0";
+            src = ./.;
+
+            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+
+            buildInputs = with pkgs; [
+              openssl
+              pkg-config
+            ];
+
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+            ];
+
+            cargoBuildFlags = [
+              "-p"
+              "filesystem-ingestor"
+            ];
+          };
+
+          # Build kitty ingestor
+          kittyIngestor = pkgs.rustPlatform.buildRustPackage {
+            pname = "kitty-ingestor";
+            version = "0.1.0";
+            src = ./.;
+
+            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+
+            buildInputs = with pkgs; [
+              openssl
+              pkg-config
+            ];
+
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+            ];
+
+            cargoBuildFlags = [
+              "-p"
+              "kitty-ingestor"
+            ];
+          };
+
           # Build promotion worker
           sinexPromoWorker = pkgs.rustPlatform.buildRustPackage {
             pname = "sinex-promo-worker";
@@ -93,7 +139,7 @@
         in
         {
           packages = {
-            inherit hyprlandIngestor sinexPromoWorker;
+            inherit hyprlandIngestor filesystemIngestor kittyIngestor sinexPromoWorker;
             default = sinexPromoWorker;
           };
 
@@ -153,6 +199,8 @@
       overlays.default = final: prev: {
         sinex = {
           hyprlandIngestor = systemOutputs.packages.${final.system}.hyprlandIngestor;
+          filesystemIngestor = systemOutputs.packages.${final.system}.filesystemIngestor;
+          kittyIngestor = systemOutputs.packages.${final.system}.kittyIngestor;
           promoWorker = systemOutputs.packages.${final.system}.sinexPromoWorker;
         };
       };
