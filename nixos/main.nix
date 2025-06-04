@@ -300,8 +300,8 @@ level = "info"
 format = "json"
 
 [filesystem]
-watch_directories = [${builtins.concatStringsSep ", " (map (dir: '\"${dir}\"') cfg.ingestors.filesystem.watchDirectories)}]
-exclude_patterns = [${builtins.concatStringsSep ", " (map (pattern: '\"${pattern}\"') cfg.ingestors.filesystem.excludePatterns)}]
+watch_directories = [${builtins.concatStringsSep ", " (map (dir: "\"${dir}\"") cfg.ingestors.filesystem.watchDirectories)}]
+exclude_patterns = [${builtins.concatStringsSep ", " (map (pattern: "\"${pattern}\"") cfg.ingestors.filesystem.excludePatterns)}]
 debounce_ms = ${toString cfg.ingestors.filesystem.debounceMs}
 batch_size_events = 50
 batch_timeout_ms = 5000
