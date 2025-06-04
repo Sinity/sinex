@@ -73,7 +73,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+            cargoHash = "";
 
             buildInputs = with pkgs; [
               openssl
