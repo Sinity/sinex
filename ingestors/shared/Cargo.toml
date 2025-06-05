@@ -13,12 +13,17 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1"
 thiserror = "1"
 async-trait = "0.1"
 blake3 = "1.5"
 gethostname = "0.4"
 directories = "5.0"
+clap = { version = "4", features = ["derive", "env"] }
+toml = "0.8"
+regex = "1"
+jsonschema = "0.16"
 
 [dev-dependencies]
 pretty_assertions = "1"

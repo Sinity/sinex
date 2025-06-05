@@ -6,6 +6,7 @@ pub mod database;
 pub mod error;
 pub mod validation;
 pub mod assumption_detector;
+pub mod ingestor_framework;
 
 pub use sinex_ulid::Ulid;
 pub use sinex_db::models::RawEvent;

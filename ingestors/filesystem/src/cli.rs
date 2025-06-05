@@ -1,60 +1,30 @@
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use clap::Subcommand;
+use sinex_shared::ingestor_framework::CommonCommands;
 
-/// Filesystem Activity Ingestor for Sinex
-#[derive(Parser)]
-#[command(
-    name = "filesystem-ingestor",
-    about = "Monitors filesystem activity and captures file operations",
-    version = env!("CARGO_PKG_VERSION"),
-    author = "Sinity"
-)]
-pub struct Cli {
-    /// Configuration file path
-    #[arg(short, long, value_name = "FILE")]
-    pub config: Option<PathBuf>,
-
-    /// Database URL (overrides config file)
-    #[arg(long, value_name = "URL")]
-    pub database_url: Option<String>,
-
-    /// Log level (overrides config file)
-    #[arg(long, value_name = "LEVEL")]
-    pub log_level: Option<String>,
-
-    /// Subcommand
-    #[command(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(Subcommand)]
+/// Filesystem-specific commands (we're just using the common ones)
+#[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Run the event ingestor (default)
+    /// Run the ingestor (default)
     Run,
-
-    /// Check database connection
+    /// Check database connectivity
     Check,
-
-    /// Display current configuration
+    /// Show current configuration
     Config,
-
     /// Generate example configuration file
     GenerateConfig {
-        /// Output file path
-        #[arg(short, long, value_name = "FILE")]
-        output: Option<PathBuf>,
+        /// Output file path (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
     },
 }
 
-impl Default for Commands {
-    fn default() -> Self {
-        Commands::Run
-    }
-}
-
-impl Cli {
-    /// Parse command line arguments
-    pub fn parse() -> Self {
-        <Self as Parser>::parse()
+impl From<Commands> for CommonCommands {
+    fn from(cmd: Commands) -> Self {
+        match cmd {
+            Commands::Run => CommonCommands::Run,
+            Commands::Check => CommonCommands::Check,
+            Commands::Config => CommonCommands::Config,
+            Commands::GenerateConfig { output } => CommonCommands::GenerateConfig { output },
+        }
     }
 }
