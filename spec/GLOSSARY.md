@@ -1,0 +1,185 @@
+# Sinnix Exocortex: Project Glossary
+
+This glossary provides definitions for key terms used throughout the Sinnix Exocortex documentation.
+
+## A
+
+*   **ADR (Architectural Decision Record):** A document that captures a single significant architectural decision, including its context, rationale, and consequences. Stored in `docs/adr/`.
+*   **Agent:** A modular software component, often a systemd service, responsible for a specific task such as data ingestion, enrichment, analysis, or automation within the Exocortex.
+*   **Agent Manifest (`sinex_schemas.agent_manifests`):** A database record (and corresponding static JSON file bundled with an agent) describing an agent's capabilities, version, configuration schema, and operational status. Serves as the Agent Registry.
+*   **Agenix:** The chosen tool for managing encrypted secrets within the NixOS configuration. (See `ADR-006`)
+*   **Architectural Module Document:** A detailed document focusing on the architecture of a specific domain of the Exocortex (e.g., Data Substrate, Ingestion). Stored in `docs/arch_modules/`.
+*   **Artifact (`core.artifacts` & `core.artifact_contents`):** A canonical representation of a significant piece of knowledge or data, such as a PKM note, an archived web page, an email, or a task. Artifacts have content that is versioned, typically in `core.artifact_contents`.
+*   **ASR (Automatic Speech Recognition):** The process of converting spoken audio into text. Whisper.cpp is the primary tool used.
+*   **Asciinema:** A tool for recording and replaying terminal PTY sessions, capturing full textual I/O with timings. Used as part of the layered terminal capture strategy.
+*   **AT-SPI2 (Assistive Technology Service Provider Interface):** A Linux desktop framework for making applications accessible, used by Exocortex to query UI hierarchies and capture UI events.
+*   **Atuin:** A tool for enhanced shell history, storing commands in a local SQLite database with rich metadata. Used as part of the layered terminal capture strategy.
+
+## B
+
+*   **BLAKE3:** A cryptographic hash function, generally preferred for content hashing within Exocortex due to its speed and security.
+*   **Blob (`core.blobs` & `git-annex`):** A large binary object (e.g., image, video, audio, PDF, WARC file) managed by `git-annex` for content-addressed storage and deduplication. Metadata is stored in the `core.blobs` PostgreSQL table.
+*   **Browsertrix Crawler:** A high-fidelity dynamic web archiver used for creating WARC/WACZ files from JavaScript-heavy and complex websites.
+
+## C
+
+*   **CDDG (Claude-Driven Development Guide):** The document outlining the methodology for using an AI agent (like Claude) for Test-Driven Development of the Exocortex.
+*   **CDP (Chrome DevTools Protocol):** A protocol allowing programmatic interaction with Chromium-based browsers, used for advanced web archiving and page interaction.
+*   **Cognitive Habitat:** (Original Vision term, now generally "empowering digital environment for thought") The Exocortex conceptualized as an active, adaptive digital environment supporting and extending user cognition.
+*   **Content-Addressing:** Storing data based on a cryptographic hash of its content, providing inherent integrity checking and deduplication (e.g., `git-annex`).
+*   **Correlation ID (`payload._provenance.workflow_correlation_id_custom`):** (Revised usage) An identifier *optionally* propagated by specific agent workflows across a series of related `raw.events` to trace a single logical operation. Not universally mandated in all events.
+*   **CRDT (Conflict-Free Replicated Data Type):** Data structures designed to allow concurrent modifications from multiple sources to eventually converge to the same state without requiring complex conflict resolution logic. Yjs is used for PKM note and Living Document textual content.
+
+## D
+
+*   **Data Substrate:** The foundational layer of the Exocortex responsible for data storage, event logging, and basic structuring (PostgreSQL, TimescaleDB, `raw.events`, etc.).
+*   **DLQ (Dead Letter Queue):** A persistent store (`core.dead_letter_queue` in PostgreSQL, or local file-based for ingestors) for messages or tasks that agents failed to process after exhausting retries.
+*   **Domain Table:** A PostgreSQL table with a strong schema, holding data promoted and structured from `raw.events` for a specific domain (e.g., `domain_hyprland.focus_changes`, `domain_terminal.commands_atuin`).
+*   **DSPy:** A Python framework for programming with language models, focusing on prompt optimization and module composition. Considered for building complex LLM agent flows.
+
+## E
+
+*   **eBPF (extended Berkeley Packet Filter):** Linux kernel technology allowing sandboxed programs to run in kernel space, used for low-level system tracing (e.g., syscalls for terminal monitoring).
+*   **Embedding (`artifact_embeddings`, `event_embeddings`):** A dense vector representation of textual (or other modal) data, generated by an LLM or embedding model, capturing semantic meaning for similarity search.
+*   **Entity (`core.entities`):** A node in the Exocortex Knowledge Graph representing a canonical concept, person, project, topic, application, etc.
+*   **Event (`raw.events`):** The atomic unit of data in the Exocortex. An immutable record with `source`, `event_type`, timestamps, `host`, `payload_schema_id`, and a JSONB `payload`.
+*   **Event Relation (`event_relations`):** A typed, directed link between two events or between an event and another Exocortex object, capturing semantic relationships.
+*   **Evdev (Linux Event Device):** Kernel interface exposing raw input device events (keyboard, mouse). Used for secondary/redundant input capture.
+*   **`exo` CLI:** The command-line interface for interacting with the Exocortex.
+
+## F
+
+*   **Friction-Driven Development:** The principle of prioritizing Exocortex development based on alleviating personally felt pain points or inefficiencies in the user's workflow.
+*   **FTS (Full-Text Search):** Keyword-based search capabilities provided by PostgreSQL.
+
+## G
+
+*   **Git-Annex:** A distributed file synchronization system suited for managing large files with Git, using content-addressing. Used for Exocortex `core.blobs`.
+*   **Grafana:** An open-source platform for monitoring and observability, used for Exocortex dashboards.
+
+## H
+
+*   **HLC (Hybrid Logical Clock):** A clock synchronization mechanism combining physical time with a logical counter to provide causal ordering in distributed systems.
+*   **HNSW (Hierarchical Navigable Small World):** An algorithm for approximate nearest neighbor search, used as the primary index type for `pgvector`. (See `ADR-005`)
+*   **Hyprland:** A dynamic tiling Wayland compositor, a primary source for desktop interaction telemetry.
+
+## I
+
+*   **Ingestor:** An Exocortex agent specifically responsible for capturing data from an external source and writing it as events into `raw.events`.
+*   **Interception Tools:** A suite of Linux utilities (`intercept`, `uinput`, `udevmon`) for capturing and manipulating `evdev` input events.
+*   **IVFFlat:** An algorithm for approximate nearest neighbor search in `pgvector` (alternative to HNSW).
+
+## J
+
+*   **JSON Schema:** A vocabulary that allows you to annotate and validate JSON documents. Used for defining `raw.events.payload` structures.
+
+## K
+
+*   **Kafka (Apache Kafka):** A distributed event streaming platform. Considered as a future option for very high-throughput event pipelines or CDC, but not part of MVP.
+*   **Kitty:** A GPU-based terminal emulator with a remote control protocol used for detailed terminal semantic capture.
+*   **Knowledge Graph:** The network of `core.entities` and their `core.entity_relations`, representing structured knowledge within the Exocortex.
+
+## L
+
+*   **LangGraph:** A library for building stateful, multi-actor applications with LLMs, often used with LangChain.
+*   **Living Document:** A dynamic, event-sourced, AI-augmented cognitive workspace within Exocortex for stream-of-consciousness capture, planning, and active thought. Content primarily managed via Yjs.
+*   **LLM (Large Language Model):** AI models like GPT, Llama, Mistral, used extensively by Exocortex agents for various text processing and generation tasks.
+*   **LLM Router:** A conceptual Exocortex component for routing LLM inference requests to appropriate local or remote models based on various criteria.
+*   **Loki:** A log aggregation system by Grafana Labs, used with Promtail.
+*   **LUKS (Linux Unified Key Setup):** Standard for full-disk encryption on Linux.
+
+## M
+
+*   **Manifest V3:** The current manifest version for browser extensions (Chrome, Firefox), imposing restrictions like service workers and limited `webRequest` API.
+*   **Meta-Cognitive Event:** An Exocortex event logged by the user to capture subjective states, thoughts about thoughts, or self-observations (e.g., `meta.friction_logged`, `meta.insight_captured`).
+*   **Meta-Observability:** The Exocortex principle and practice of capturing its own operational data (health, performance, errors) as first-class events within the system.
+*   **Milvus:** An open-source vector database, considered for future GPU-accelerated large-scale vector search.
+*   **MQTT (Message Queuing Telemetry Transport):** A lightweight publish/subscribe messaging protocol, preferred for IoT and mobile device data ingestion.
+
+## N
+
+*   **Native Messaging (Browser):** A mechanism for browser extensions to communicate with a local native application (host).
+*   **NER (Named Entity Recognition):** The NLP task of identifying named entities (persons, organizations, locations, etc.) in text.
+*   **NixOS:** The declarative Linux distribution used as the operating system foundation for the Exocortex, ensuring reproducible environments.
+*   **NTP (Network Time Protocol):** Used to synchronize clocks across user devices for consistent timestamping.
+
+## O
+
+*   **OCR (Optical Character Recognition):** The process of converting images of text into machine-readable text. Tesseract OCR is the primary tool used.
+*   **Ollama:** A tool for running open-source LLMs locally on the user's machine.
+*   **OpenTelemetry (OTel):** An observability framework for generating, collecting, and exporting telemetry data (traces, metrics, logs). Considered for distributed tracing in Exocortex.
+*   **OSC (Open Sound Control):** A protocol for communication among computers, multimedia devices, and other musical instruments. Used by Kitty for some clipboard operations.
+
+## P
+
+*   **`pgBackRest`:** A backup and restore tool for PostgreSQL, used for Exocortex database backups.
+*   **`pgcrypto`:** A PostgreSQL extension providing cryptographic functions (legacy/limited use in Exocortex).
+*   **`pg_jsonschema`:** A PostgreSQL extension for validating JSONB data against JSON Schemas.
+*   **`pgsodium`:** A PostgreSQL extension using libsodium for modern cryptography, used for field-level encryption.
+*   **`pg_trgm`:** A PostgreSQL extension providing functions and operators for trigram-based fuzzy string matching.
+*   **`pgvector`:** A PostgreSQL extension for vector similarity search.
+*   **`pgx_ulid`:** A PostgreSQL extension providing a native `ulid` data type and generator functions.
+*   **PipeWire:** A server and API for handling audio and video streams on Linux, used for screen and audio capture.
+*   **PKM (Personal Knowledge Management):** The user's system of notes, documents, and curated knowledge, integrated into Exocortex.
+*   **PlatformIO:** A cross-platform build system and IDE for embedded development, used for ESP32.
+*   **Prometheus:** An open-source monitoring system with a time-series database, used for Exocortex metrics.
+*   **Promotion (Event Promotion):** The process by which raw events from `raw.events` are transformed by agents into more structured data in domain tables or knowledge graph entities.
+*   **Promotion Queue (`sinex_schemas.promotion_queue`):** The PostgreSQL table used to manage the asynchronous processing of raw events by agents.
+*   **Promtail:** The log collection agent for Loki.
+*   **PTY (Pseudo-Terminal):** A pair of virtual character devices providing a terminal interface to a process, used by terminal emulators and session recorders like Asciinema.
+
+## Q
+
+*   **Qdrant:** An open-source vector database, considered for future GPU-accelerated vector search.
+
+## R
+
+*   **`raw.events`:** The central, immutable, append-only PostgreSQL table where all captured data is initially logged as events.
+*   **RRF (Reciprocal Rank Fusion):** An algorithm for combining ranked lists from multiple search systems (e.g., vector search and FTS) to produce a single, improved ranking.
+
+## S
+
+*   **SADI (System Architecture & Document Interrelation):** This meta-document, mapping all other canonical project documents and summarizing key decisions.
+*   **Schema Registry (`sinex_schemas.event_payload_schemas`):** The PostgreSQL table storing versioned JSON Schema definitions for `raw.events.payload` structures.
+*   **Seccomp-bpf (Secure Computing mode with BPF):** A Linux kernel feature used via Systemd's `SystemCallFilter` to restrict the system calls a process can make, enhancing security.
+*   **Semantic Desktop Stream:** A conceptual, synthesized, real-time model of the user's current desktop context and available actions, enabling advanced AI agency. (TIM: `TIM-SemanticDesktopStream.md`)
+*   **Sentient Archive:** A metaphorical description of the Exocortex, emphasizing its comprehensive awareness of user context and its capacity for intelligent assistance.
+*   **SingleFile:** A tool/extension for saving web pages as a single, self-contained HTML file with high fidelity.
+*   **STAD (System Technical Architecture Document):** The high-level architectural map of the Exocortex, replacing the monolithic Unified Guide. It links to Architectural Modules, TIMs, and ADRs.
+*   **Syncthing:** A decentralized P2P continuous file synchronization tool.
+
+## T
+
+*   **Tag (`core.tags`, `artifact_tags`):** A descriptive label applied to Exocortex objects for organization and faceted search. Tags can be hierarchical.
+*   **Telescope.nvim:** A highly extensible fuzzy finder an_FrameworkInfrastructure.md`d picker for Neovim, used by `sinnix-nvim` plugin.
+*   **Testcontainers:** A library for managing ephemeral Docker containers (e.g., databases) during integration tests.
+*   **TIM (Technical Implementation Module):** A granular document providing detailed technical specifications for implementing a single component, feature, or core concern. Stored in `docs/tims/`.
+*   **TimescaleDB:** A PostgreSQL extension that turns tables into hypertables for efficient time-series data management. Used for `raw.events`.
+*   **Trafilatura:** A Python library for extracting main text content and metadata from web pages.
+*   **Treesitter (nvim-treesitter):** A Neovim plugin and parsing library for incremental parsing of code and text, used by `sinnix-nvim` for semantic analysis of buffers.
+
+## U
+
+*   **ULID (Universally Unique Lexicographically Sortable Identifier):** The standard for primary keys in Exocortex, providing global uniqueness and time-based sortability. Implemented via `pgx_ulid`. (See `ADR-001`)
+
+## V
+
+*   **Vector Clock:** A mechanism for determining partial ordering of events in a distributed system, precisely capturing causality.
+*   **Vision Document (`VISION.md`):** The foundational document outlining the project's philosophy, core conceptual capabilities, and long-term ethos.
+
+## W
+
+*   **WACZ (Web Archive Collection Zipped):** A format bundling WARC files, metadata, and indexes into a single ZIP for web archive collections.
+*   **WARC (Web ARChive):** An ISO standard file format for storing web crawls.
+*   **Wayland:** A display server protocol for Linux, replacing X11. Hyprland is a Wayland compositor.
+*   **Whisper.cpp:** A high-performance C++ port of OpenAI's Whisper ASR models for local speech-to-text.
+*   **`wl-clipboard`:** Command-line tools (`wl-copy`, `wl-paste`) for interacting with the Wayland clipboard.
+
+## X
+
+*   **`xdg-desktop-portal`:** A Linux desktop framework that allows sandboxed applications (and regular apps) to request access to resources like screen capture or file dialogs via a user-controlled portal UI.
+
+## Y
+
+*   **Yjs:** A CRDT implementation for building collaborative, real-time editing applications. Used in Exocortex for managing textual content of PKM notes and the Living Document. (See `ADR-004`)
+

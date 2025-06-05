@@ -1,0 +1,25 @@
+# Development configuration for Hyprland Ingestor
+# This file contains settings optimized for development and testing
+
+[app]
+name = "hyprland-ingestor"
+version = "0.1.0"
+shutdown_timeout_secs = 10
+
+[database]
+url = "postgresql://localhost/sinex_dev"
+max_connections = 5
+connection_timeout_secs = 10
+query_timeout_secs = 10
+
+[logging]
+level = "debug"
+format = "pretty"
+include_location = true
+
+[hyprland]
+max_retries = 3
+retry_delay_secs = 2
+capture_workspace_events = true
+capture_window_events = true
+capture_fullscreen_events = true

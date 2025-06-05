@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 **/*.rs.bk
 *.pdb
 
@@ -50,4 +49,5 @@ result-*
 # Project specific
 /data/
 /logs/
-/tmp/
+/spec/combo/
+.direnv/
