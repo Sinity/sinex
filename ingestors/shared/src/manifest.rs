@@ -18,7 +18,7 @@ pub struct AgentManifest {
     pub config_schema_id: Option<Ulid>,
     pub produces_event_types: HashMap<String, Vec<String>>, // source -> [event_types]
     pub repo_url: Option<String>,
-    pub last_seen_heartbeat: Option<DateTime<Utc>>,
+    pub last_heartbeat_ts: Option<DateTime<Utc>>,
     pub registered_at: Option<DateTime<Utc>>,
 }
 
@@ -54,8 +54,8 @@ impl ManifestManager {
             r#"
             INSERT INTO sinex_schemas.agent_manifests 
                 (agent_name, description, version, status, config_schema_id, 
-                 produces_event_types, repo_url, last_seen_heartbeat)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 produces_event_types, repo_url, last_heartbeat_ts)
+            VALUES ($1, $2, $3, $4, $5::uuid::ulid, $6, $7, $8)
             ON CONFLICT (agent_name) DO UPDATE SET
                 description = EXCLUDED.description,
                 version = EXCLUDED.version,
@@ -63,16 +63,16 @@ impl ManifestManager {
                 config_schema_id = EXCLUDED.config_schema_id,
                 produces_event_types = EXCLUDED.produces_event_types,
                 repo_url = EXCLUDED.repo_url,
-                last_seen_heartbeat = COALESCE(EXCLUDED.last_seen_heartbeat, agent_manifests.last_seen_heartbeat)
+                last_heartbeat_ts = COALESCE(EXCLUDED.last_heartbeat_ts, agent_manifests.last_heartbeat_ts)
             "#,
             manifest.agent_name,
             manifest.description,
             manifest.version,
             format!("{:?}", manifest.status).to_lowercase(),
-            manifest.config_schema_id.map(|id| id.to_bytes().to_vec()),
+            manifest.config_schema_id.map(|id| uuid::Uuid::from_bytes(id.to_bytes())),
             produces_json,
             manifest.repo_url,
-            manifest.last_seen_heartbeat
+            manifest.last_heartbeat_ts
         )
         .execute(&self.pool)
         .await
@@ -87,7 +87,7 @@ impl ManifestManager {
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.agent_manifests 
-            SET last_seen_heartbeat = NOW()
+            SET last_heartbeat_ts = NOW()
             WHERE agent_name = $1
             "#,
             agent_name
@@ -103,8 +103,9 @@ impl ManifestManager {
     pub async fn get_agent(&self, agent_name: &str) -> Result<Option<AgentManifest>> {
         let row = sqlx::query!(
             r#"
-            SELECT agent_name, description, version, status, config_schema_id,
-                   produces_event_types, repo_url, last_seen_heartbeat, registered_at
+            SELECT agent_name, description, version, status, 
+                   config_schema_id::uuid as "config_schema_id?",
+                   produces_event_types, repo_url, last_heartbeat_ts, registered_at
             FROM sinex_schemas.agent_manifests
             WHERE agent_name = $1
             "#,
@@ -114,30 +115,23 @@ impl ManifestManager {
         .await?;
 
         if let Some(row) = row {
+            let config_schema_id: Option<Ulid> = row.config_schema_id
+                .map(|uuid| Ulid::from_uuid(uuid));
             let manifest = AgentManifest {
                 agent_name: row.agent_name,
                 description: row.description.unwrap_or_default(),
                 version: row.version,
-                status: match row.status.as_deref() {
-                    Some("stable") => AgentManifestStatus::Stable,
-                    Some("deprecated") => AgentManifestStatus::Deprecated,
+                status: match row.status.as_str() {
+                    "stable" => AgentManifestStatus::Stable,
+                    "deprecated" => AgentManifestStatus::Deprecated,
                     _ => AgentManifestStatus::Development,
                 },
-                config_schema_id: row.config_schema_id
-                    .and_then(|bytes| {
-                        if bytes.len() == 16 {
-                            let mut array = [0u8; 16];
-                            array.copy_from_slice(&bytes);
-                            Some(Ulid::from_bytes(array))
-                        } else {
-                            None
-                        }
-                    }),
+                config_schema_id,
                 produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
                     .unwrap_or_default(),
                 repo_url: row.repo_url,
-                last_seen_heartbeat: row.last_seen_heartbeat,
-                registered_at: row.registered_at,
+                last_heartbeat_ts: row.last_heartbeat_ts,
+                registered_at: Some(row.registered_at),
             };
             Ok(Some(manifest))
         } else {
@@ -149,8 +143,9 @@ impl ManifestManager {
     pub async fn list_agents(&self) -> Result<Vec<AgentManifest>> {
         let rows = sqlx::query!(
             r#"
-            SELECT agent_name, description, version, status, config_schema_id,
-                   produces_event_types, repo_url, last_seen_heartbeat, registered_at
+            SELECT agent_name, description, version, status, 
+                   config_schema_id::uuid as "config_schema_id?",
+                   produces_event_types, repo_url, last_heartbeat_ts, registered_at
             FROM sinex_schemas.agent_manifests
             ORDER BY agent_name
             "#
@@ -160,30 +155,25 @@ impl ManifestManager {
 
         let manifests = rows
             .into_iter()
-            .map(|row| AgentManifest {
-                agent_name: row.agent_name,
-                description: row.description.unwrap_or_default(),
-                version: row.version,
-                status: match row.status.as_deref() {
-                    Some("stable") => AgentManifestStatus::Stable,
-                    Some("deprecated") => AgentManifestStatus::Deprecated,
-                    _ => AgentManifestStatus::Development,
-                },
-                config_schema_id: row.config_schema_id
-                    .and_then(|bytes| {
-                        if bytes.len() == 16 {
-                            let mut array = [0u8; 16];
-                            array.copy_from_slice(&bytes);
-                            Some(Ulid::from_bytes(array))
-                        } else {
-                            None
-                        }
-                    }),
+            .map(|row| {
+                let config_schema_id: Option<Ulid> = row.config_schema_id
+                    .map(|uuid| Ulid::from_uuid(uuid));
+                AgentManifest {
+                    agent_name: row.agent_name,
+                    description: row.description.unwrap_or_default(),
+                    version: row.version,
+                    status: match row.status.as_str() {
+                        "stable" => AgentManifestStatus::Stable,
+                        "deprecated" => AgentManifestStatus::Deprecated,
+                        _ => AgentManifestStatus::Development,
+                    },
+                    config_schema_id,
                 produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
                     .unwrap_or_default(),
-                repo_url: row.repo_url,
-                last_seen_heartbeat: row.last_seen_heartbeat,
-                registered_at: row.registered_at,
+                    repo_url: row.repo_url,
+                    last_heartbeat_ts: row.last_heartbeat_ts,
+                    registered_at: Some(row.registered_at),
+                }
             })
             .collect();
 
@@ -206,7 +196,7 @@ pub fn create_agent_manifest(
         config_schema_id: None,
         produces_event_types: produces,
         repo_url: Some("https://github.com/sinity/sinex".to_string()),
-        last_seen_heartbeat: None,
+        last_heartbeat_ts: None,
         registered_at: None,
     }
 }

@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sinex_shared::{
-    agent_events::*, create_error_event, create_heartbeat_event, event_types, sources,
-    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity, RawEvent,
-    RetryConfig, Ulid, retry_db_operation,
+    agent_events::*, create_error_event, create_heartbeat_event, event_types::{self, RawEventBuilder}, sources,
+    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity,
+    RetryConfig, retry_db_operation,
 };
+use sinex_db::models::RawEvent;
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -32,8 +31,10 @@ pub struct CommandExecutedPayload {
 #[derive(Debug, Clone)]
 struct KittyWindow {
     id: u32,
+    #[allow(dead_code)]
     pid: u32,
     cwd: String,
+    #[allow(dead_code)]
     title: String,
 }
 
@@ -173,26 +174,27 @@ impl KittyListener {
                 if let Ok(commands) = Self::get_window_commands(&socket, window.id) {
                     let now = Utc::now();
                     let last_time = {
-                        let mut times = last_command_times.lock().unwrap();
+                        let times = last_command_times.lock().unwrap();
                         times.get(&window.id).cloned().unwrap_or(now - chrono::Duration::hours(1))
                     };
 
-                    for cmd in commands {
+                    for cmd in &commands {
                         if cmd.ts_end_orig > last_time {
                             let payload = CommandExecutedPayload {
-                                command_string: cmd.command_string,
+                                command_string: cmd.command_string.clone(),
                                 cwd: window.cwd.clone(),
                                 exit_code: cmd.exit_code,
                                 ts_start_orig: cmd.ts_start_orig,
                                 ts_end_orig: cmd.ts_end_orig,
                             };
 
-                            let event = RawEvent::new(
+                            let event = RawEventBuilder::new(
                                 sources::TERMINAL_KITTY,
-                                event_types::terminal::COMMAND_EXECUTED,
+                                event_types::event_types::terminal::COMMAND_EXECUTED,
                                 serde_json::to_value(payload)?,
                             )
-                            .with_orig_timestamp(cmd.ts_end_orig);
+                            .with_orig_timestamp(cmd.ts_end_orig)
+                            .build();
 
                             tx.send(event).await?;
                         }
@@ -280,7 +282,7 @@ impl KittyListener {
     }
 
     /// Get command history for a window (mock implementation)
-    fn get_window_commands(socket: &str, window_id: u32) -> Result<Vec<CommandExecutedPayload>> {
+    fn get_window_commands(_socket: &str, _window_id: u32) -> Result<Vec<CommandExecutedPayload>> {
         // Note: Kitty doesn't directly expose command history via remote control
         // This is a simplified implementation that could be enhanced with:
         // 1. Shell integration markers

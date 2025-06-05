@@ -7,18 +7,20 @@ mod shutdown;
 
 use std::error::Error;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::cli::{Cli, Commands, ConfigFormat};
 use crate::config::Config;
 use crate::error::{IngestorError, Result};
 use crate::event_listener::HyprlandEventListener;
 use crate::logging::{log_error_with_context, log_shutdown_info, log_startup_info};
-use crate::shutdown::{ShutdownComponent, ShutdownCoordinator, ShutdownManager};
+use crate::shutdown::ShutdownCoordinator;
 
 use sinex_shared::{
-    DatabaseConfig as SharedDatabaseConfig, DatabaseService, manifest,
+    DatabaseConfig as SharedDatabaseConfig, DatabaseService, ManifestManager,
+    create_agent_manifest, sources, event_types,
 };
+use std::collections::HashMap;
 
 /// Main application structure
 pub struct Application {
@@ -62,27 +64,43 @@ impl Application {
         let database = Arc::new(DatabaseService::new(db_config).await?);
 
         // Register agent manifest
-        manifest::register_agent_manifest(
-            &database,
-            "hyprland-ingestor",
-            env!("CARGO_PKG_VERSION"),
-            Some("Captures Hyprland window manager events via IPC socket2"),
-            manifest::AgentStatus::Stable,
+        let manifest_manager = ManifestManager::new(database.pool().clone());
+        
+        let mut produces = HashMap::new();
+        produces.insert(
+            sources::HYPRLAND.to_string(),
             vec![
-                ("hyprland".to_string(), vec![
-                    "workspace", "workspacev2", "createworkspace", "createworkspacev2",
-                    "destroyworkspace", "destroyworkspacev2", "moveworkspace", "moveworkspacev2",
-                    "renameworkspace", "activespecial", "activespecialv2", "focusedmon", 
-                    "focusedmonv2", "monitoradded", "monitoraddedv2", "monitorremoved",
-                    "monitorremovedv2", "activewindow", "activewindowv2", "openwindow",
-                    "closewindow", "movewindow", "movewindowv2", "windowtitle", "windowtitlev2",
-                    "fullscreen", "changefloatingmode", "urgent", "minimized", "pin",
-                    "togglegroup", "moveintogroup", "moveoutofgroup", "ignoregrouplock",
-                    "lockgroups", "openlayer", "closelayer", "activelayout", "submap",
-                    "screencast", "configreloaded", "bell", "state_snapshot"
-                ]),
-            ].into_iter().collect(),
-        ).await?;
+                "workspace", "workspacev2", "createworkspace", "createworkspacev2",
+                "destroyworkspace", "destroyworkspacev2", "moveworkspace", "moveworkspacev2",
+                "renameworkspace", "activespecial", "activespecialv2", "focusedmon", 
+                "focusedmonv2", "monitoradded", "monitoraddedv2", "monitorremoved",
+                "monitorremovedv2", "activewindow", "activewindowv2", "openwindow",
+                "closewindow", "movewindow", "movewindowv2", "windowtitle", "windowtitlev2",
+                "fullscreen", "changefloatingmode", "urgent", "minimized", "pin",
+                "togglegroup", "moveintogroup", "moveoutofgroup", "ignoregrouplock",
+                "lockgroups", "openlayer", "closelayer", "activelayout", "submap",
+                "screencast", "configreloaded", "bell", "state_snapshot"
+            ].into_iter().map(|s| s.to_string()).collect(),
+        );
+        produces.insert(
+            sources::SINEX.to_string(),
+            vec![
+                event_types::event_types::sinex::AGENT_HEARTBEAT.to_string(),
+                event_types::event_types::sinex::AGENT_ERROR.to_string(),
+                event_types::event_types::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
+                "agent.startup".to_string(),
+                "agent.shutdown".to_string(),
+            ],
+        );
+
+        let manifest = create_agent_manifest(
+            "hyprland-ingestor",
+            "Captures Hyprland window manager events via IPC socket2",
+            env!("CARGO_PKG_VERSION"),
+            produces,
+        );
+        
+        manifest_manager.register_agent(&manifest).await?;
 
         Ok(Self {
             config,
@@ -118,7 +136,7 @@ impl Application {
 
         // Set up shutdown handling
         let shutdown_coordinator = self.shutdown_coordinator.clone();
-        let shutdown_signal = shutdown_coordinator.subscribe();
+        let mut shutdown_signal = shutdown_coordinator.subscribe();
 
         // Start event listener with shutdown signal
         tokio::select! {
@@ -131,7 +149,7 @@ impl Application {
                     }
                 }
             }
-            _ = shutdown_signal => {
+            _ = shutdown_signal.recv() => {
                 info!("Received shutdown signal");
             }
         }

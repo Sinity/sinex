@@ -1,9 +1,7 @@
 pub mod cli;
 pub mod config;
-pub mod database;
 pub mod error;
-pub mod events;
-pub mod enhanced_events;
+pub mod event_listener;
 pub mod logging;
 pub mod shutdown;
 
@@ -13,7 +11,6 @@ pub use error::{IngestorError, Result};
 mod integration_tests {
     use super::*;
     use crate::config::Config;
-    use crate::database::{DatabaseService, EventRecord};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -23,7 +20,9 @@ mod integration_tests {
     #[tokio::test]
     #[ignore] // Ignore by default since it requires a database
     async fn test_database_integration() {
-        let config = config::DatabaseConfig {
+        use sinex_shared::{DatabaseConfig, DatabaseService, event_types::RawEventBuilder, sources};
+        
+        let config = DatabaseConfig {
             url: "postgresql://localhost/sinex_test".to_string(),
             ..Default::default()
         };
@@ -34,18 +33,13 @@ mod integration_tests {
         db.health_check().await.unwrap();
 
         // Test event insertion
-        let event = EventRecord::new(
-            "test",
+        let event = RawEventBuilder::new(
+            sources::SINEX,
+            "test_event",
             json!({"type": "test_event", "data": {"message": "hello"}}),
-            json!({"test": true}),
-        );
+        ).build();
 
-        db.insert_event(event).await.unwrap();
-
-        // Test statistics
-        let stats = db.get_stats().await.unwrap();
-        assert!(stats.total_events > 0);
-        assert!(stats.sources.contains(&"test".to_string()));
+        db.insert_event(&event).await.unwrap();
     }
 
     #[test]

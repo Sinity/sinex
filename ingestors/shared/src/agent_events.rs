@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::{event_types, sources, RawEvent};
+use sinex_db::models::RawEvent;
+use crate::{event_types::{self, RawEventBuilder}, sources};
 
 /// Agent status enum
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -53,27 +54,30 @@ pub struct DlqEventWritten {
 
 /// Helper functions to create agent events
 pub fn create_heartbeat_event(heartbeat: AgentHeartbeat) -> RawEvent {
-    RawEvent::new(
+    RawEventBuilder::new(
         sources::SINEX,
         event_types::event_types::sinex::AGENT_HEARTBEAT,
         serde_json::to_value(heartbeat).unwrap(),
     )
+    .build()
 }
 
 pub fn create_error_event(error: AgentError) -> RawEvent {
-    RawEvent::new(
+    RawEventBuilder::new(
         sources::SINEX,
         event_types::event_types::sinex::AGENT_ERROR,
         serde_json::to_value(error).unwrap(),
     )
+    .build()
 }
 
 pub fn create_dlq_event(dlq: DlqEventWritten) -> RawEvent {
-    RawEvent::new(
+    RawEventBuilder::new(
         sources::SINEX,
         event_types::event_types::sinex::AGENT_DLQ_EVENT_WRITTEN,
         serde_json::to_value(dlq).unwrap(),
     )
+    .build()
 }
 
 /// Agent metrics tracker

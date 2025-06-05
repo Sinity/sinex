@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::{mpsc, oneshot};
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
@@ -18,10 +17,11 @@ use crate::config::{HyprlandConfig, WindowAugmentation, WorkspaceTracking};
 use crate::error::{IngestorError, Result as IngestorResult};
 
 use sinex_shared::{
-    agent_events::*, create_error_event, create_heartbeat_event, event_types, sources,
-    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity, RawEvent,
-    RetryConfig, Ulid, retry_db_operation,
+    create_heartbeat_event, event_types::RawEventBuilder, sources,
+    AgentMetrics, AgentStatus, DatabaseService, DlqManager,
+    RetryConfig, retry_db_operation,
 };
+use sinex_db::models::RawEvent;
 
 /// Hyprland instance info
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ pub struct HyprlandEventListener {
     dlq: Arc<DlqManager>,
     metrics: Arc<Mutex<AgentMetrics>>,
     retry_config: RetryConfig,
-    hyprland_instance_sig: String,
+    _hyprland_instance_sig: String,
     socket_path: PathBuf,
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
     focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
@@ -78,11 +78,11 @@ impl HyprlandEventListener {
 
         // Get Hyprland instance signature
         let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE")
-            .map_err(|_| IngestorError::configuration("HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?"))?;
+            .map_err(|_| IngestorError::application("HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?"))?;
         
         // Build socket path
         let xdg_runtime = env::var("XDG_RUNTIME_DIR")
-            .map_err(|_| IngestorError::configuration("XDG_RUNTIME_DIR not set"))?;
+            .map_err(|_| IngestorError::application("XDG_RUNTIME_DIR not set"))?;
         let socket_path = PathBuf::from(xdg_runtime)
             .join("hypr")
             .join(&hyprland_instance_sig)
@@ -94,7 +94,7 @@ impl HyprlandEventListener {
             dlq,
             metrics,
             retry_config,
-            hyprland_instance_sig,
+            _hyprland_instance_sig: hyprland_instance_sig,
             socket_path,
             hyprctl_cache: Arc::new(Mutex::new(HashMap::new())),
             focus_history: Arc::new(Mutex::new(VecDeque::new())),
@@ -127,12 +127,13 @@ impl HyprlandEventListener {
         let socket_result = self.listen_socket_events().await;
 
         // Emit shutdown event
+        let shutdown_reason = match &socket_result {
+            Ok(_) => "normal".to_string(),
+            Err(e) => format!("error: {}", e),
+        };
         let shutdown_event = create_shutdown_event(
             "hyprland-ingestor",
-            match &socket_result {
-                Ok(_) => "normal",
-                Err(e) => &format!("error: {}", e),
-            },
+            &shutdown_reason,
         );
         let _ = self.insert_event(shutdown_event).await;
 
@@ -309,12 +310,13 @@ impl HyprlandEventListener {
             }
         }
 
-        Ok(Some(RawEvent::new(
+        Ok(Some(RawEventBuilder::new(
             sources::HYPRLAND,
             event_type,
             payload,
         )
-        .with_orig_timestamp(ts)))
+        .with_orig_timestamp(ts)
+        .build()))
     }
 
     /// Parse event data into JSON
@@ -432,7 +434,7 @@ impl HyprlandEventListener {
                 let parts: Vec<&str> = data.splitn(2, ',').collect();
                 json!({
                     "window_address": parts.get(0).unwrap_or(&""),
-                    "floating": parts.get(1).unwrap_or(&"") == "1",
+                    "floating": parts.get(1).unwrap_or(&"") == &"1",
                 })
             }
             "urgent" => json!({ "window_address": data }),
@@ -440,14 +442,14 @@ impl HyprlandEventListener {
                 let parts: Vec<&str> = data.splitn(2, ',').collect();
                 json!({
                     "window_address": parts.get(0).unwrap_or(&""),
-                    "minimized": parts.get(1).unwrap_or(&"") == "1",
+                    "minimized": parts.get(1).unwrap_or(&"") == &"1",
                 })
             }
             "pin" => {
                 let parts: Vec<&str> = data.splitn(2, ',').collect();
                 json!({
                     "window_address": parts.get(0).unwrap_or(&""),
-                    "pinned": parts.get(1).unwrap_or(&"") == "1",
+                    "pinned": parts.get(1).unwrap_or(&"") == &"1",
                 })
             }
             
@@ -457,7 +459,7 @@ impl HyprlandEventListener {
                 let state = parts.get(0).unwrap_or(&"");
                 let addresses: Vec<&str> = parts.get(1).unwrap_or(&"").split(',').collect();
                 json!({
-                    "group_created": state == "1",
+                    "group_created": state == &"1",
                     "window_addresses": addresses,
                 })
             }
@@ -479,8 +481,8 @@ impl HyprlandEventListener {
             "screencast" => {
                 let parts: Vec<&str> = data.splitn(2, ',').collect();
                 json!({
-                    "state": parts.get(0).unwrap_or(&"") == "1",
-                    "owner": match parts.get(1).unwrap_or(&"") {
+                    "state": parts.get(0).unwrap_or(&"") == &"1",
+                    "owner": match *parts.get(1).unwrap_or(&"") {
                         "0" => "monitor",
                         "1" => "window",
                         _ => "unknown",
@@ -594,7 +596,8 @@ impl HyprlandEventListener {
     /// Augment workspace events
     async fn augment_workspace_event(&self, _event_type: &str, payload: &mut Value) -> Result<()> {
         let workspace_id = payload["workspace_id"].as_str()
-            .or_else(|| payload["workspace_name"].as_str());
+            .or_else(|| payload["workspace_name"].as_str())
+            .map(|s| s.to_string());
         
         if let Some(ws_id) = workspace_id {
             match self.config.workspace_tracking {
@@ -603,7 +606,7 @@ impl HyprlandEventListener {
                     if let Ok(clients) = self.get_cached_hyprctl("clients").await {
                         let windows: Vec<&Value> = clients.as_array()
                             .map(|arr| arr.iter()
-                                .filter(|c| c["workspace"]["name"] == ws_id || c["workspace"]["id"].to_string() == ws_id)
+                                .filter(|c| c["workspace"]["name"] == ws_id.as_str() || c["workspace"]["id"].to_string() == ws_id)
                                 .collect())
                             .unwrap_or_default();
                         
@@ -622,7 +625,7 @@ impl HyprlandEventListener {
                     // Get full workspace state
                     if let Ok(workspaces) = self.get_cached_hyprctl("workspaces").await {
                         if let Some(workspace) = workspaces.as_array()
-                            .and_then(|arr| arr.iter().find(|w| w["name"] == ws_id || w["id"].to_string() == ws_id))
+                            .and_then(|arr| arr.iter().find(|w| w["name"] == ws_id.as_str() || w["id"].to_string() == ws_id))
                         {
                             payload["workspace_state"] = workspace.clone();
                         }
@@ -632,7 +635,7 @@ impl HyprlandEventListener {
                     if let Ok(clients) = self.get_cached_hyprctl("clients").await {
                         let windows: Vec<Value> = clients.as_array()
                             .map(|arr| arr.iter()
-                                .filter(|c| c["workspace"]["name"] == ws_id || c["workspace"]["id"].to_string() == ws_id)
+                                .filter(|c| c["workspace"]["name"] == ws_id.as_str() || c["workspace"]["id"].to_string() == ws_id)
                                 .cloned()
                                 .collect())
                             .unwrap_or_default();
@@ -786,7 +789,7 @@ impl HyprlandEventListener {
             *last_descriptions.lock().unwrap() = snapshot_timestamp;
         }
 
-        let event = RawEvent::new(
+        let event = RawEventBuilder::new(
             sources::HYPRLAND,
             "state_snapshot",
             json!({
@@ -795,7 +798,8 @@ impl HyprlandEventListener {
                 "includes_descriptions": include_descriptions,
             }),
         )
-        .with_orig_timestamp(snapshot_timestamp);
+        .with_orig_timestamp(snapshot_timestamp)
+        .build();
 
         db.insert_event(&event).await?;
         Ok(())
@@ -902,9 +906,9 @@ impl HyprlandEventListener {
 
 /// Create a startup event
 fn create_startup_event(agent_name: &str, version: &str) -> RawEvent {
-    RawEvent::new(
+    RawEventBuilder::new(
         sources::SINEX,
-        event_types::agent::STARTUP,
+        "agent.startup",
         json!({
             "agent_name": agent_name,
             "version": version,
@@ -914,16 +918,18 @@ fn create_startup_event(agent_name: &str, version: &str) -> RawEvent {
             },
         }),
     )
+    .build()
 }
 
 /// Create a shutdown event
 fn create_shutdown_event(agent_name: &str, reason: &str) -> RawEvent {
-    RawEvent::new(
+    RawEventBuilder::new(
         sources::SINEX,
-        event_types::agent::SHUTDOWN,
+        "agent.shutdown",
         json!({
             "agent_name": agent_name,
             "reason": reason,
         }),
     )
+    .build()
 }

@@ -53,7 +53,7 @@ pub struct LoggingConfig {
 }
 
 /// Window augmentation level
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowAugmentation {
     /// No augmentation - just socket events as-is
@@ -250,7 +250,7 @@ impl Config {
 
     /// Load configuration from a specific file
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
-        let mut cfg = config::Config::builder()
+        let cfg = config::Config::builder()
             // Start with default values
             .add_source(config::Config::try_from(&Config::default())?)
             // Add the specified config file

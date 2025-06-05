@@ -4,7 +4,7 @@ mod kitty_listener;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use sinex_shared::{
     create_agent_manifest, DatabaseConfig as SharedDbConfig, DatabaseService, ManifestManager,
@@ -98,15 +98,15 @@ async fn run_ingestor(
     produces.insert(
         sources::TERMINAL_KITTY.to_string(),
         vec![
-            event_types::terminal::COMMAND_EXECUTED.to_string(),
+            event_types::event_types::terminal::COMMAND_EXECUTED.to_string(),
         ],
     );
     produces.insert(
         sources::SINEX.to_string(),
         vec![
-            event_types::sinex::AGENT_HEARTBEAT.to_string(),
-            event_types::sinex::AGENT_ERROR.to_string(),
-            event_types::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
+            event_types::event_types::sinex::AGENT_HEARTBEAT.to_string(),
+            event_types::event_types::sinex::AGENT_ERROR.to_string(),
+            event_types::event_types::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
         ],
     );
 

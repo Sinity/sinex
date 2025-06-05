@@ -3,7 +3,6 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 use tracing::{debug, info};
 use sinex_db::models::RawEvent;
-use sinex_ulid::Ulid;
 use uuid::Uuid;
 
 /// Database connection configuration
@@ -97,15 +96,15 @@ impl DatabaseService {
             INSERT INTO raw.events 
                 (source, event_type, ts_orig, host, ingestor_version, 
                  payload_schema_id, payload)
-            VALUES ($1, $2, $3, $4, $5, $6::ulid, $7)
-            RETURNING id
+            VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
+            RETURNING id::uuid as "id!"
             "#,
             event.source,
             event.event_type,
             event.ts_orig,
             event.host,
             event.ingestor_version,
-            event.payload_schema_id.map(|uuid| uuid.to_string()),
+            event.payload_schema_id,
             event.payload
         )
         .fetch_one(&self.pool)
@@ -139,15 +138,15 @@ impl DatabaseService {
                 INSERT INTO raw.events 
                     (source, event_type, ts_orig, host, ingestor_version, 
                      payload_schema_id, payload)
-                VALUES ($1, $2, $3, $4, $5, $6::ulid, $7)
-                RETURNING id
+                VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
+                RETURNING id::uuid as "id!"
                 "#,
                 event.source,
                 event.event_type,
                 event.ts_orig,
                 event.host,
                 event.ingestor_version,
-                event.payload_schema_id.map(|uuid| uuid.to_string()),
+                event.payload_schema_id,
                 event.payload
             )
             .fetch_one(&mut *tx)

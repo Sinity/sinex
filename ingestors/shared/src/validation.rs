@@ -17,8 +17,8 @@ pub enum ValidationError {
     #[error("Invalid value: {field} - {reason}")]
     InvalidValue { field: String, reason: String },
     
-    #[error("Unknown source/event_type combination: {source}/{event_type}")]
-    UnknownEventType { source: String, event_type: String },
+    #[error("Unknown source/event_type combination: {event_source}/{event_type}")]
+    UnknownEventType { event_source: String, event_type: String },
     
     #[error("Schema validation failed: {0}")]
     SchemaValidation(String),
@@ -99,7 +99,7 @@ impl EventValidator {
                     });
                 }
                 
-                let size = payload.get("size")
+                let _size = payload.get("size")
                     .ok_or_else(|| ValidationError::MissingField { field: "size".to_string() })?
                     .as_u64()
                     .ok_or_else(|| ValidationError::InvalidType {

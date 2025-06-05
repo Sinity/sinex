@@ -38,6 +38,10 @@ pub enum IngestorError {
     /// Generic application errors
     #[error("Application error: {0}")]
     Application(String),
+    
+    /// Anyhow errors
+    #[error("Error: {0}")]
+    Other(#[from] anyhow::Error),
 }
 
 /// Result type alias for the ingestor
