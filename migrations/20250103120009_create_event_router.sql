@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS sinex_router;
 COMMENT ON SCHEMA sinex_router IS 'Schema for event routing functions and infrastructure.';
 
 -- Create routing function
-CREATE OR REPLACE FUNCTION sinex_router.route_raw_event_to_promotion_queue(p_raw_event_id UUID)
+CREATE OR REPLACE FUNCTION sinex_router.route_raw_event_to_promotion_queue(p_raw_event_id ULID)
 RETURNS VOID AS $$
 DECLARE
     v_event_source TEXT;
@@ -36,7 +36,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION sinex_router.route_raw_event_to_promotion_queue(UUID) IS 'Routes raw events to appropriate agents based on their subscription manifests.';
+COMMENT ON FUNCTION sinex_router.route_raw_event_to_promotion_queue(ULID) IS 'Routes raw events to appropriate agents based on their subscription manifests.';
 
 -- Create trigger function for routing
 CREATE OR REPLACE FUNCTION raw.trigger_router_on_event_insert() 

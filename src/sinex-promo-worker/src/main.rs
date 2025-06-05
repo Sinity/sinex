@@ -7,7 +7,7 @@ use sinex_db::{
 };
 use sinex_worker::{metrics::start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 use tokio::{signal, task};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -57,7 +57,20 @@ impl EventProcessor for ExampleProcessor {
         // Fetch the raw event
         let event: RawEvent = sqlx::query_as!(
             RawEvent,
-            "SELECT * FROM raw.events WHERE id = $1",
+            r#"
+            SELECT 
+                id::uuid as "id!", 
+                source as "source!", 
+                event_type as "event_type!", 
+                ts_ingest as "ts_ingest!",
+                ts_orig as "ts_orig?",
+                host as "host!", 
+                ingestor_version as "ingestor_version?", 
+                payload_schema_id::uuid as "payload_schema_id?", 
+                payload as "payload!"
+            FROM raw.events 
+            WHERE id = $1::uuid::ulid
+            "#,
             item.raw_event_id
         )
         .fetch_one(pool)

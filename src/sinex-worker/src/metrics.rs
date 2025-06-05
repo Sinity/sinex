@@ -71,21 +71,21 @@ impl WorkerMetrics {
 /// Start metrics server on specified port
 pub async fn start_metrics_server(port: u16) -> anyhow::Result<()> {
     use axum::{routing::get, Router};
-    use prometheus::{Encoder, TextEncoder};
     
     let app = Router::new().route("/metrics", get(metrics_handler));
     
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Metrics server listening on {}", addr);
     
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
     
     Ok(())
 }
 
 async fn metrics_handler() -> String {
+    use prometheus::{Encoder, TextEncoder};
+    
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];

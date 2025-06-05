@@ -19,8 +19,17 @@ pub async fn insert_raw_event(
         RawEvent,
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, source, event_type, ts_orig, host, ingestor_version, payload_schema_id, payload
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid::ulid)
+        RETURNING 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig as "ts_orig?",
+            host as "host!", 
+            ingestor_version as "ingestor_version?", 
+            payload_schema_id::uuid as "payload_schema_id?", 
+            payload as "payload!"
         "#,
         source,
         event_type,
@@ -61,7 +70,23 @@ pub async fn upsert_agent_manifest(
             produces_event_types = EXCLUDED.produces_event_types,
             subscribes_to_event_types = EXCLUDED.subscribes_to_event_types,
             updated_at = NOW()
-        RETURNING *
+        RETURNING 
+            agent_name as "agent_name!", 
+            description as "description?", 
+            version as "version!", 
+            status as "status!", 
+            agent_type as "agent_type!",
+            config_template_json as "config_template_json?", 
+            produces_event_types as "produces_event_types?", 
+            subscribes_to_event_types as "subscribes_to_event_types?",
+            required_capabilities as "required_capabilities?", 
+            llm_dependencies as "llm_dependencies?", 
+            repo_url as "repo_url?",
+            last_heartbeat_ts as "last_heartbeat_ts?", 
+            last_error_ts as "last_error_ts?", 
+            last_error_summary as "last_error_summary?",
+            registered_at as "registered_at!", 
+            updated_at as "updated_at!"
         "#,
         agent_name,
         version,
@@ -82,7 +107,7 @@ pub async fn claim_promotion_queue_items(
     pool: &PgPool,
     target_agent_name: &str,
     worker_id: &str,
-    batch_size: i32,
+    batch_size: i64,
 ) -> Result<Vec<PromotionQueueItem>> {
     let items = sqlx::query_as!(
         PromotionQueueItem,
@@ -103,7 +128,18 @@ pub async fn claim_promotion_queue_items(
             LIMIT $2
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING *
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts as "last_attempt_ts?", 
+            next_retry_ts as "next_retry_ts?", 
+            error_message_last as "error_message_last?",
+            created_at as "created_at!", 
+            processing_worker_id as "processing_worker_id?"
         "#,
         target_agent_name,
         batch_size,
@@ -118,7 +154,7 @@ pub async fn claim_promotion_queue_items(
 /// Mark a promotion queue item as successfully processed
 pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Uuid) -> Result<()> {
     sqlx::query!(
-        "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1",
+        "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
         queue_id
     )
     .execute(pool)
@@ -143,7 +179,7 @@ pub async fn fail_promotion_queue_item(
             error_message_last = $2,
             next_retry_ts = $3,
             processing_worker_id = NULL
-        WHERE queue_id = $1
+        WHERE queue_id = $1::uuid::ulid
         "#,
         queue_id,
         error_message,

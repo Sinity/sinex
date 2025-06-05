@@ -65,7 +65,7 @@ impl Worker {
             &self.pool,
             self.processor.agent_name(),
             &self.worker_id,
-            self.processor.batch_size(),
+            self.processor.batch_size() as i64,
         )
         .await?;
 
@@ -79,7 +79,7 @@ impl Worker {
             count = count,
             "Claimed items for processing"
         );
-        self.metrics.items_claimed.inc_by(count as u64);
+        self.metrics.items_claimed.inc_by(count as f64);
 
         for item in items {
             let start = std::time::Instant::now();

@@ -5,12 +5,19 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- Convert raw.events to hypertable
--- This must be done AFTER the table is created
--- The challenge: TimescaleDB requires unique constraints to include the partitioning column,
--- but we want to keep ULID as the sole primary key
+-- This partitions by ULID using a custom function, keeping ULID as sole primary key
+-- The ts_ingest GENERATED column is used for fast queries, not partitioning
 
--- Solution: Since we can't use custom partitioning functions with ULID directly,
--- we'll partition by ts_ingest but handle the primary key constraint issue
+-- Create function for ULID to timestamp conversion for partitioning
+CREATE OR REPLACE FUNCTION ulid_to_timestamptz(ulid_val ULID) 
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN ulid_val::timestamp;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
+
+COMMENT ON FUNCTION ulid_to_timestamptz(ULID) IS 'Extracts timestamp from ULID for TimescaleDB partitioning';
+
 DO $$
 BEGIN
   -- Check if already a hypertable
@@ -22,48 +29,30 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Since TimescaleDB 2.x enforces that unique constraints include the partitioning column,
-  -- and we want to keep ULID as the primary key, we need to work around this.
-  -- The ULID contains timestamp information and is time-ordered, which aligns with ts_ingest.
-  
-  -- Drop the primary key temporarily
-  ALTER TABLE raw.events DROP CONSTRAINT raw_events_pkey;
-  
-  -- Create hypertable without default indexes
+  -- Create hypertable partitioned by ULID using custom time extraction
   PERFORM create_hypertable(
     'raw.events',
-    'ts_ingest',
-    chunk_time_interval => INTERVAL '1 day',
-    migrate_data => TRUE,
-    create_default_indexes => FALSE
+    by_range('id', partition_func => 'ulid_to_timestamptz'::regproc)
   );
   
-  -- Add a composite primary key that includes the partitioning column
-  -- This satisfies TimescaleDB's requirement
-  ALTER TABLE raw.events ADD CONSTRAINT raw_events_pkey PRIMARY KEY (id, ts_ingest);
+  -- The primary key remains as just 'id' (ULID) - no composite key needed!
   
-  -- Create a non-unique index on id for efficient lookups
-  -- NOTE: We cannot create a unique index on just 'id' in partitioned tables
-  CREATE INDEX idx_raw_events_id ON raw.events (id);
+  -- Create indexes on ts_ingest (GENERATED column) for fast time-based queries
+  CREATE INDEX IF NOT EXISTS idx_raw_events_ts_ingest ON raw.events (ts_ingest DESC);
   
-  -- Re-create the other indexes
-  CREATE INDEX idx_raw_events_ts_orig_desc ON raw.events (ts_orig DESC NULLS LAST);
-  CREATE INDEX idx_raw_events_source_type_ts_ingest_desc ON raw.events (source, event_type, ts_ingest DESC);
-  CREATE INDEX idx_raw_events_host_ts_ingest_desc ON raw.events (host, ts_ingest DESC);
-  CREATE INDEX idx_raw_events_payload_schema_id ON raw.events (payload_schema_id) WHERE payload_schema_id IS NOT NULL;
-  CREATE INDEX idx_raw_events_payload_gin_path_ops ON raw.events USING GIN (payload jsonb_path_ops);
+  -- Composite indexes for efficient filtering
+  CREATE INDEX IF NOT EXISTS idx_raw_events_source_ts ON raw.events (source, ts_ingest DESC);
+  CREATE INDEX IF NOT EXISTS idx_raw_events_host_ts ON raw.events (host, ts_ingest DESC);
+  CREATE INDEX IF NOT EXISTS idx_raw_events_source_type_ts ON raw.events (source, event_type, ts_ingest DESC);
+  
+  -- Keep existing non-time indexes if they don't exist
+  CREATE INDEX IF NOT EXISTS idx_raw_events_ts_orig_desc ON raw.events (ts_orig DESC NULLS LAST);
+  CREATE INDEX IF NOT EXISTS idx_raw_events_payload_schema_id ON raw.events (payload_schema_id) WHERE payload_schema_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_raw_events_payload_gin_path_ops ON raw.events USING GIN (payload jsonb_path_ops);
 END;
 $$;
 
--- Set compression policy (compress chunks older than 7 days)
--- This is based on TIM-TimescaleDBConfiguration recommendations
-SELECT add_compression_policy('raw.events', INTERVAL '7 days', if_not_exists => TRUE);
+-- Note: Compression configuration moved to a separate migration
+-- to avoid issues during initial setup
 
--- Configure compression settings
-ALTER TABLE raw.events SET (
-  timescaledb.compress,
-  timescaledb.compress_segmentby = 'source,event_type',
-  timescaledb.compress_orderby = 'ts_ingest DESC'
-);
-
-COMMENT ON TABLE raw.events IS 'Universal log for all captured raw events (TimescaleDB hypertable). Immutable by principle.';
+COMMENT ON TABLE raw.events IS 'TimescaleDB hypertable for event storage. Partitioned by ULID-extracted timestamp while maintaining ULID as sole primary key.';

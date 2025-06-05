@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS raw.events (
     id                      ULID PRIMARY KEY DEFAULT gen_ulid(),
     source                  TEXT NOT NULL,
     event_type              TEXT NOT NULL,
-    ts_ingest               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ts_ingest               TIMESTAMPTZ GENERATED ALWAYS AS (id::timestamp) STORED,
     ts_orig                 TIMESTAMPTZ, -- Can be NULL if truly unknown, but highly encouraged
     host                    TEXT NOT NULL,
     ingestor_version        TEXT,
@@ -31,7 +31,7 @@ COMMENT ON TABLE raw.events IS 'Universal log for all captured raw events before
 COMMENT ON COLUMN raw.events.id IS 'Globally unique identifier for the event using ULID (Universally Unique Lexicographically Sortable Identifier).';
 COMMENT ON COLUMN raw.events.source IS 'Canonical identifier for the event origin/producer (e.g., "desktop.hyprland.ipc_ingestor", "sinex.pkm.sync_agent").';
 COMMENT ON COLUMN raw.events.event_type IS 'Type string for the event, often namespaced by source (e.g., "window_focused", "note_updated", "agent.heartbeat").';
-COMMENT ON COLUMN raw.events.ts_ingest IS 'Timestamp of ingestion into this table (database server time). Primary TimescaleDB partitioning key.';
+COMMENT ON COLUMN raw.events.ts_ingest IS 'Timestamp of ingestion extracted from ULID (GENERATED column). Primary TimescaleDB partitioning key.';
 COMMENT ON COLUMN raw.events.ts_orig IS 'Original timestamp from the source system/sensor when the event occurred; best effort for accuracy.';
 COMMENT ON COLUMN raw.events.host IS 'Identifier of the machine or device where the event originated.';
 COMMENT ON COLUMN raw.events.ingestor_version IS 'Version of the ingestor code/binary that produced this event.';

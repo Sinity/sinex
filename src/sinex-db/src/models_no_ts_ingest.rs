@@ -5,12 +5,12 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Raw event from the events table
+/// Note: ts_ingest removed as ULID contains ingestion timestamp
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RawEvent {
     pub id: Uuid,
     pub source: String,
     pub event_type: String,
-    pub ts_ingest: DateTime<Utc>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub host: String,
     pub ingestor_version: Option<String>,
@@ -24,12 +24,21 @@ impl RawEvent {
         Ulid::from_bytes(*self.id.as_bytes())
     }
     
+    /// Extract ingestion timestamp from ULID
+    pub fn ts_ingest(&self) -> Result<DateTime<Utc>, sinex_ulid::Error> {
+        let ulid = self.id_as_ulid()?;
+        // Extract timestamp from ULID (first 48 bits contain milliseconds since epoch)
+        let timestamp_ms = ulid.timestamp_ms();
+        Ok(DateTime::from_timestamp_millis(timestamp_ms as i64)
+            .expect("valid timestamp from ULID"))
+    }
+    
     pub fn payload_schema_id_as_ulid(&self) -> Option<Result<Ulid, sinex_ulid::Error>> {
         self.payload_schema_id.map(|uuid| Ulid::from_bytes(*uuid.as_bytes()))
     }
 }
 
-/// Event payload schema
+// Rest of the models remain the same...
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Uuid,
@@ -42,7 +51,6 @@ pub struct EventPayloadSchema {
     pub is_active: bool,
 }
 
-/// Agent manifest
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AgentManifest {
     pub agent_name: String,
@@ -63,7 +71,6 @@ pub struct AgentManifest {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Promotion queue item
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PromotionQueueItem {
     pub queue_id: Uuid,
@@ -79,7 +86,7 @@ pub struct PromotionQueueItem {
     pub processing_worker_id: Option<String>,
 }
 
-/// Status values for promotion queue
+// Enums remain the same
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueStatus {
@@ -120,7 +127,6 @@ impl From<&str> for QueueStatus {
     }
 }
 
-/// Agent status values
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
@@ -175,7 +181,6 @@ impl From<&str> for AgentStatus {
     }
 }
 
-/// Event for agent heartbeat
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHeartbeat {
     pub agent_name: String,
@@ -187,7 +192,6 @@ pub struct AgentHeartbeat {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_queue_status_conversion() {
@@ -254,5 +258,26 @@ mod tests {
         assert_eq!(deserialized.timestamp_iso, heartbeat.timestamp_iso);
         assert_eq!(deserialized.status_reported, heartbeat.status_reported);
         assert_eq!(deserialized.metrics_snapshot, heartbeat.metrics_snapshot);
+    }
+    
+    #[test]
+    fn test_raw_event_ts_ingest_extraction() {
+        // Create a test ULID with known timestamp
+        let ulid = Ulid::new();
+        let expected_ts = ulid.timestamp_ms();
+        
+        let event = RawEvent {
+            id: Uuid::from_bytes(*ulid.as_bytes()),
+            source: "test".to_string(),
+            event_type: "test".to_string(),
+            ts_orig: None,
+            host: "localhost".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({}),
+        };
+        
+        let extracted_ts = event.ts_ingest().unwrap();
+        assert_eq!(extracted_ts.timestamp_millis() as u64, expected_ts);
     }
 }

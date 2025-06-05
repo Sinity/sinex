@@ -8,11 +8,11 @@ CREATE TABLE IF NOT EXISTS sinex_schemas.promotion_queue (
   status                  TEXT NOT NULL DEFAULT 'pending', -- Values: 'pending', 'processing', 'failed_retryable'
   attempts                INT NOT NULL DEFAULT 0,
   max_attempts            INT NOT NULL DEFAULT 5, -- Default, can be overridden by agent config/logic
-  last_attempt_ts         TIMESTAMPTZ NULLABLE,
-  next_retry_ts           TIMESTAMPTZ NULLABLE, -- For exponential backoff
-  error_message_last      TEXT NULLABLE,
+  last_attempt_ts         TIMESTAMPTZ,
+  next_retry_ts           TIMESTAMPTZ, -- For exponential backoff
+  error_message_last      TEXT,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-  processing_worker_id    TEXT NULLABLE, -- Identifier of worker instance currently processing
+  processing_worker_id    TEXT, -- Identifier of worker instance currently processing
   CONSTRAINT uq_promotion_queue_event_agent UNIQUE (raw_event_id, target_agent_name)
 );
 
