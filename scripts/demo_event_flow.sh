@@ -2,17 +2,23 @@
 set -euo pipefail
 
 # Demo script showing event flow through the system
+# Updated to work with flake apps
 
 echo "=== Sinex Event Flow Demo ==="
 echo
 echo "This demo will:"
-echo "1. Insert a test event into the database"
-echo "2. Show the event in raw.events table"
-echo "3. Show any promotion queue entries created"
+echo "1. Ensure database is set up"
+echo "2. Insert a test event into the database"
+echo "3. Show the event in raw.events table"
+echo "4. Show any promotion queue entries created"
 echo
 
-# Database URL
-DB_URL="${DATABASE_URL:-postgresql://sinex:sinex@localhost:5432/sinex}"
+# Ensure database is set up
+echo "🗄️ Setting up database..."
+nix run .#db-setup dev >/dev/null 2>&1
+
+# Database URL for development
+DB_URL="${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
 
 # First, create a test agent that subscribes to events
 echo "Setting up test agent..."

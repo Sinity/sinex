@@ -171,61 +171,110 @@
                 case "$MODE" in
                   dev)
                     log "Setting up development database"
-                    export PGDATA="$PWD/.postgres"
-                    export DATABASE_URL="postgresql:///sinex?host=$PGDATA"
+                    export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
                     
-                    if [[ ! -d "$PGDATA" ]]; then
-                      log "Initializing PostgreSQL"
-                      ${postgresqlWithExtensions}/bin/initdb --no-locale --encoding=UTF8 -D "$PGDATA" >/dev/null
-                      
-                      cat >> "$PGDATA/postgresql.conf" << EOL
-                shared_preload_libraries = 'timescaledb'
-                max_connections = 100
-                shared_buffers = 256MB
-                effective_cache_size = 1GB
-                EOL
+                    # Check if PostgreSQL is running
+                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
+                      error "PostgreSQL is not running on localhost:5432"
+                      error "Please ensure PostgreSQL is installed and running"
+                      error "On NixOS: services.postgresql.enable = true;"
+                      exit 1
                     fi
                     
-                    if ! ${postgresqlWithExtensions}/bin/pg_ctl status -D "$PGDATA" >/dev/null 2>&1; then
-                      log "Starting PostgreSQL"
-                      ${postgresqlWithExtensions}/bin/pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" -o "--unix_socket_directories='$PGDATA'" start >/dev/null
-                      sleep 1
+                    # Create database if it doesn't exist
+                    if ! ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+                      log "Creating database sinex_dev"
+                      ${postgresqlWithExtensions}/bin/createdb -h localhost -p 5432 sinex_dev || {
+                        error "Failed to create database. You may need to run:"
+                        error "  sudo -u postgres createdb sinex_dev"
+                        error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
+                        exit 1
+                      }
                     fi
                     
-                    ${postgresqlWithExtensions}/bin/createdb -h "$PGDATA" sinex 2>/dev/null || true
-                    ${postgresqlWithExtensions}/bin/psql -h "$PGDATA" -d postgres -c "CREATE ROLE sinex WITH LOGIN;" 2>/dev/null || true
-                    
-                    ${postgresqlWithExtensions}/bin/psql -h "$PGDATA" -d sinex -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
-                    ${postgresqlWithExtensions}/bin/psql -h "$PGDATA" -d sinex -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
-                    ${postgresqlWithExtensions}/bin/psql -h "$PGDATA" -d sinex -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
+                    # Create extensions
+                    log "Ensuring extensions are available"
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || {
+                      warning "Could not create ulid extension. May need superuser privileges."
+                    }
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
+                      warning "Could not create vector extension. May need superuser privileges."
+                    }
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || {
+                      warning "Could not create timescaledb extension. May need superuser privileges."
+                    }
                     
                     log "Running migrations"
-                    ${pkgs.sqlx-cli}/bin/sqlx migrate run
-                    success "Development database ready"
+                    DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
+                    success "Development database ready at $DATABASE_URL"
                     ;;
                   test)
                     log "Setting up test database"
-                    export TEST_DATABASE_URL="postgres://sinex_test:testpass@localhost:5433/sinex_test"
-                    ${postgresqlWithExtensions}/bin/createdb --if-not-exists sinex_test 2>/dev/null || true
-                    ${postgresqlWithExtensions}/bin/psql "$TEST_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null 2>&1 || true
-                    ${postgresqlWithExtensions}/bin/psql "$TEST_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1 || true
-                    ${postgresqlWithExtensions}/bin/psql "$TEST_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null 2>&1 || true
-                    DATABASE_URL="$TEST_DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
-                    success "Test database ready"
+                    export DATABASE_URL="postgresql://localhost:5432/sinex_test"
+                    
+                    # Check PostgreSQL
+                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
+                      error "PostgreSQL is not running on localhost:5432"
+                      exit 1
+                    fi
+                    
+                    # Create test database
+                    if ! ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -lqt | cut -d \| -f 1 | grep -qw sinex_test; then
+                      log "Creating database sinex_test"
+                      ${postgresqlWithExtensions}/bin/createdb -h localhost -p 5432 sinex_test || {
+                        error "Failed to create test database"
+                        exit 1
+                      }
+                    fi
+                    
+                    # Extensions
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
+                    
+                    # Migrations
+                    DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
+                    success "Test database ready at $DATABASE_URL"
                     ;;
                   reset)
                     log "Resetting development database"
-                    rm -rf "$PWD/.postgres"
+                    export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
+                    
+                    warning "This will DROP and recreate the sinex_dev database"
+                    read -p "Continue? [y/N] " -n 1 -r
+                    echo
+                    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                      log "Reset cancelled"
+                      exit 0
+                    fi
+                    
+                    # Drop and recreate
+                    ${postgresqlWithExtensions}/bin/dropdb -h localhost -p 5432 sinex_dev 2>/dev/null || true
                     exec "$0" dev
                     ;;
                   check)
                     log "Checking database connectivity"
-                    PGDATA="$PWD/.postgres"
-                    if ${postgresqlWithExtensions}/bin/psql -h "$PGDATA" -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
-                      success "Database connection OK"
+                    
+                    # Check PostgreSQL server
+                    if ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
+                      success "PostgreSQL server: Running on localhost:5432"
                     else
-                      error "Database connection failed"
+                      error "PostgreSQL server: Not available"
                       exit 1
+                    fi
+                    
+                    # Check dev database
+                    if ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_dev -c "SELECT 1;" >/dev/null 2>&1; then
+                      success "Development database: sinex_dev accessible"
+                    else
+                      warning "Development database: sinex_dev not found (run 'nix run .#db-setup dev')"
+                    fi
+                    
+                    # Check test database  
+                    if ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_test -c "SELECT 1;" >/dev/null 2>&1; then
+                      success "Test database: sinex_test accessible"
+                    else
+                      warning "Test database: sinex_test not found (run 'nix run .#db-setup test')"
                     fi
                     ;;
                   *)
@@ -320,8 +369,7 @@
                 MODE="''${1:-dashboard}"
                 
                 check_database() {
-                  local pgdata="$PWD/.postgres"
-                  if ${postgresqlWithExtensions}/bin/psql -h "$pgdata" -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
+                  if ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_dev -c "SELECT 1;" >/dev/null 2>&1; then
                     return 0
                   else
                     return 1
@@ -339,8 +387,8 @@
                     echo -e "┃ 🗄️  Database: ''${GREEN}●''${NC} CONNECTED                              ┃"
                     
                     # Event counts
-                    local total_events=$(${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -t -c "SELECT COUNT(*) FROM raw.events;" 2>/dev/null | xargs)
-                    local recent_events=$(${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -t -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour';" 2>/dev/null | xargs)
+                    local total_events=$(${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_dev -t -c "SELECT COUNT(*) FROM raw.events;" 2>/dev/null | xargs)
+                    local recent_events=$(${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_dev -t -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour';" 2>/dev/null | xargs)
                     
                     echo "┃ 📈 Total Events: $total_events                                  ┃"
                     echo "┃ 🕐 Last Hour: $recent_events                                     ┃"
@@ -348,7 +396,7 @@
                     # Event sources breakdown
                     echo "┃                                                            ┃"
                     echo "┃ 📁 Recent Events by Source:                               ┃"
-                    ${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -t -c "
+                    ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -d sinex_dev -t -c "
                       SELECT '┃   ' || RPAD(source, 15) || ': ' || LPAD(count::text, 8) || '                         ┃'
                       FROM (
                         SELECT source, COUNT(*) as count 
@@ -378,7 +426,7 @@
                   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                   
                   if check_database; then
-                    ${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -c "
+                    ${postgresqlWithExtensions}/bin/psql -h "localhost -p 5432" -d sinex -c "
                       SELECT 
                         LEFT(id::text, 8) as id,
                         source,
@@ -406,12 +454,12 @@
                     # Simple polling implementation
                     local last_id=""
                     while true; do
-                      local new_events=$(${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -t -c "
+                      local new_events=$(${postgresqlWithExtensions}/bin/psql -h "localhost -p 5432" -d sinex -t -c "
                         SELECT COUNT(*) FROM raw.events WHERE id > '''$last_id'''
                       " 2>/dev/null | xargs)
                       
                       if [[ "$new_events" -gt 0 ]]; then
-                        ${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -c "
+                        ${postgresqlWithExtensions}/bin/psql -h "localhost -p 5432" -d sinex -c "
                           SELECT 
                             '[' || ts_ingest::timestamp(0) || '] ' ||
                             source || ':' || event_type ||
@@ -421,7 +469,7 @@
                           ORDER BY ts_ingest DESC
                         " 2>/dev/null
                         
-                        last_id=$(${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -t -c "
+                        last_id=$(${postgresqlWithExtensions}/bin/psql -h "localhost -p 5432" -d sinex -t -c "
                           SELECT id FROM raw.events ORDER BY ts_ingest DESC LIMIT 1
                         " 2>/dev/null | xargs)
                       fi
@@ -440,7 +488,7 @@
                   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                   
                   # Show postgres status
-                  if ${postgresqlWithExtensions}/bin/pg_ctl status -D "$PWD/.postgres" >/dev/null 2>&1; then
+                  if ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
                     success "PostgreSQL: Running"
                   else
                     warning "PostgreSQL: Not running"
@@ -472,7 +520,7 @@
                   if check_database; then
                     echo ""
                     echo "🗄️  Database Size:"
-                    ${postgresqlWithExtensions}/bin/psql -h "$PWD/.postgres" -d sinex -c "
+                    ${postgresqlWithExtensions}/bin/psql -h "localhost -p 5432" -d sinex -c "
                       SELECT 
                         schemaname, 
                         tablename,
@@ -551,7 +599,7 @@
                     cwd: "$PWD"
                     env:
                       RUST_LOG: info
-                      DATABASE_URL: "postgresql:///sinex?host=$PWD/.postgres"
+                      DATABASE_URL: "postgresql://localhost:5432/sinex_dev"
                     autostart: false
                   
                   kitty:
@@ -559,7 +607,7 @@
                     cwd: "$PWD"
                     env:
                       RUST_LOG: info
-                      DATABASE_URL: "postgresql:///sinex?host=$PWD/.postgres"
+                      DATABASE_URL: "postgresql://localhost:5432/sinex_dev"
                     autostart: false
                   
                   hyprland:
@@ -567,7 +615,7 @@
                     cwd: "$PWD"
                     env:
                       RUST_LOG: info
-                      DATABASE_URL: "postgresql:///sinex?host=$PWD/.postgres"
+                      DATABASE_URL: "postgresql://localhost:5432/sinex_dev"
                     autostart: false
                   
                   monitor:
@@ -613,18 +661,18 @@
                     
                     # Start ingestors in background
                     log "Starting filesystem ingestor..."
-                    RUST_LOG=info DATABASE_URL="postgresql:///sinex?host=$PWD/.postgres" \
+                    RUST_LOG=info DATABASE_URL="postgresql://localhost:5432/sinex_dev" \
                       ${filesystemIngestor}/bin/filesystem-ingestor run &
                     
                     if command -v kitty >/dev/null 2>&1; then
                       log "Starting kitty ingestor..."
-                      RUST_LOG=info DATABASE_URL="postgresql:///sinex?host=$PWD/.postgres" \
+                      RUST_LOG=info DATABASE_URL="postgresql://localhost:5432/sinex_dev" \
                         ${kittyIngestor}/bin/kitty-ingestor run &
                     fi
                     
                     if [[ -n "''${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
                       log "Starting hyprland ingestor..."
-                      RUST_LOG=info DATABASE_URL="postgresql:///sinex?host=$PWD/.postgres" \
+                      RUST_LOG=info DATABASE_URL="postgresql://localhost:5432/sinex_dev" \
                         ${hyprlandIngestor}/bin/hyprland-ingestor run &
                     fi
                     
@@ -639,6 +687,156 @@
                     echo "  full       - Interactive mprocs session (default)"
                     echo "  db-only    - Just setup database"
                     echo "  background - Start all services in background"
+                    exit 1
+                    ;;
+                esac
+              '');
+            };
+            
+            # Ephemeral isolated test environment
+            ephemeral = {
+              type = "app";
+              program = toString (pkgs.writeShellScript "ephemeral-test" ''
+                set -euo pipefail
+                
+                # Colors
+                GREEN='\033[0;32m'
+                RED='\033[0;31m'
+                YELLOW='\033[1;33m'
+                BLUE='\033[0;34m'
+                CYAN='\033[0;36m'
+                NC='\033[0m'
+                
+                TEST_ID="sinex_ephemeral_$(date +%s)"
+                TEST_DIR="/tmp/$TEST_ID"
+                DB_PORT=$((5433 + RANDOM % 1000))
+                TEST_DB_URL="postgresql://sinex_test:testpass@localhost:$DB_PORT/sinex_test"
+                
+                log() { echo -e "''${BLUE}🧪''${NC} $*"; }
+                success() { echo -e "''${GREEN}✅''${NC} $*"; }
+                warning() { echo -e "''${YELLOW}⚠️''${NC} $*"; }
+                error() { echo -e "''${RED}❌''${NC} $*" >&2; }
+                
+                echo -e "''${CYAN}=== Sinex Ephemeral Test Environment ===''${NC}"
+                echo "Test ID: $TEST_ID"
+                echo "Database Port: $DB_PORT"
+                echo "Test Directory: $TEST_DIR"
+                echo ""
+                
+                cleanup() {
+                  warning "Cleaning up ephemeral environment..."
+                  
+                  # Stop all background processes
+                  jobs -p | xargs -r kill 2>/dev/null || true
+                  
+                  # Stop test database
+                  if [[ -n "''${POSTGRES_PID:-}" ]]; then
+                    kill $POSTGRES_PID 2>/dev/null || true
+                    wait $POSTGRES_PID 2>/dev/null || true
+                  fi
+                  
+                  # Cleanup directories
+                  rm -rf "$TEST_DIR" 2>/dev/null || true
+                  
+                  success "Cleanup complete"
+                }
+                
+                trap cleanup EXIT INT TERM
+                
+                # Setup ephemeral environment
+                setup_environment() {
+                  log "Setting up ephemeral environment..."
+                  
+                  mkdir -p "$TEST_DIR"/{data,logs,watch}
+                  
+                  # Start ephemeral PostgreSQL instance
+                  log "Starting ephemeral PostgreSQL on port $DB_PORT"
+                  ${postgresqlWithExtensions}/bin/initdb -D "$TEST_DIR/data" --no-locale --encoding=UTF8 >/dev/null
+                  
+                  # Configure PostgreSQL
+                  cat >> "$TEST_DIR/data/postgresql.conf" << EOL
+                port = $DB_PORT
+                shared_preload_libraries = 'timescaledb'
+                max_connections = 50
+                shared_buffers = 128MB
+                EOL
+                  
+                  # Start PostgreSQL
+                  ${postgresqlWithExtensions}/bin/pg_ctl -D "$TEST_DIR/data" -l "$TEST_DIR/logs/postgres.log" start >/dev/null
+                  POSTGRES_PID=$(cat "$TEST_DIR/data/postmaster.pid" | head -n 1)
+                  
+                  # Wait for startup
+                  for i in {1..10}; do
+                    if ${postgresqlWithExtensions}/bin/pg_isready -p $DB_PORT >/dev/null 2>&1; then
+                      break
+                    fi
+                    sleep 0.5
+                  done
+                  
+                  # Create database and extensions
+                  ${postgresqlWithExtensions}/bin/createdb -p $DB_PORT sinex_test
+                  ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
+                  ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
+                  ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
+                  
+                  # Run migrations
+                  log "Running migrations on ephemeral database"
+                  DATABASE_URL="$TEST_DB_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
+                  
+                  success "Ephemeral environment ready"
+                  echo ""
+                  echo "Environment Details:"
+                  echo "  Database URL: $TEST_DB_URL"
+                  echo "  Test Directory: $TEST_DIR"
+                  echo "  PostgreSQL PID: $POSTGRES_PID"
+                  echo ""
+                }
+                
+                run_tests() {
+                  log "Running tests in ephemeral environment"
+                  
+                  # Set environment for tests
+                  export TEST_DATABASE_URL="$TEST_DB_URL"
+                  export RUST_LOG="''${RUST_LOG:-info}"
+                  
+                  # Run tests
+                  ${rustToolchain}/bin/cargo test --all-features "''${@}"
+                  
+                  success "Tests completed"
+                }
+                
+                interactive_mode() {
+                  echo -e "''${CYAN}Ephemeral environment is ready!''${NC}"
+                  echo ""
+                  echo "Available commands:"
+                  echo "  Export database URL: export TEST_DATABASE_URL='$TEST_DB_URL'"
+                  echo "  Connect to database: ${postgresqlWithExtensions}/bin/psql '$TEST_DB_URL'"
+                  echo "  Run tests: TEST_DATABASE_URL='$TEST_DB_URL' cargo test"
+                  echo "  Monitor: nix run .#monitor"
+                  echo ""
+                  echo "Press Ctrl+C to cleanup and exit"
+                  
+                  # Keep running until interrupted
+                  while true; do
+                    sleep 1
+                  done
+                }
+                
+                # Main execution
+                setup_environment
+                
+                MODE="''${1:-interactive}"
+                shift || true
+                
+                case "$MODE" in
+                  test)
+                    run_tests "''${@}"
+                    ;;
+                  interactive|shell)
+                    interactive_mode
+                    ;;
+                  *)
+                    error "Usage: nix run .#ephemeral [test|interactive] [test-args...]"
                     exit 1
                     ;;
                 esac
@@ -678,10 +876,9 @@
             ];
 
             shellHook = ''
-              export PGDATA="$PWD/.postgres"
-              export PGHOST="$PGDATA"
-              export DATABASE_URL="postgresql:///sinex?host=$PGDATA"
-              export TEST_DATABASE_URL="postgres://sinex_test:testpass@localhost:5433/sinex_test"
+              # Use system PostgreSQL on standard port
+              export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
+              export TEST_DATABASE_URL="postgresql://localhost:5432/sinex_test"
               
               cat <<'EOF'
               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -697,6 +894,7 @@
               ┃                                                            ┃
               ┃ 🧪 TESTING                                                  ┃
               ┃   run      : nix run .#test [unit|integration|all]         ┃
+              ┃   isolated : nix run .#ephemeral [test|interactive]        ┃
               ┃   watch    : cargo watch -x test                           ┃
               ┃                                                            ┃
               ┃ 🔧 BUILD & CHECK                                            ┃
