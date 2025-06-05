@@ -50,13 +50,12 @@ impl RawEventBuilder {
         self
     }
 
-    /// Build the event (ID and ts_ingest will be set by database)
+    /// Build the event (ID will be set by database gen_ulid())
     pub fn build(self) -> RawEvent {
         RawEvent {
             id: uuid::Uuid::new_v4(), // Will be replaced by database gen_ulid()
             source: self.source,
             event_type: self.event_type,
-            ts_ingest: Utc::now(), // Will be replaced by database now()
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: Some(self.ingestor_version),

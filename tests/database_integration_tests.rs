@@ -51,7 +51,7 @@ async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dy
     let retrieved = sqlx::query_as!(
         RawEvent,
         r#"
-        SELECT id, source, event_type, ts_ingest, ts_orig, host, 
+        SELECT id, source, event_type, ts_orig, host, 
                ingestor_version, payload_schema_id, payload
         FROM raw.events
         WHERE id = $1
@@ -66,7 +66,9 @@ async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dy
     assert_eq!(retrieved.event_type, event_type_constants::filesystem::FILE_CREATED);
     assert_eq!(retrieved.payload["path"], "/test/file.txt");
     assert_eq!(retrieved.payload["test_marker"], "database_integration_test");
-    assert!(retrieved.ts_ingest > Utc::now() - chrono::Duration::seconds(5));
+    // Verify ingestion timestamp from ULID
+    let ts_ingest = retrieved.ts_ingest().expect("extract timestamp from ULID");
+    assert!(ts_ingest > Utc::now() - chrono::Duration::seconds(5));
 
     Ok(())
 }
@@ -227,7 +229,6 @@ async fn test_event_schema_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn 
         id: uuid::Uuid::new_v4(),
         source: "test".to_string(),
         event_type: "structured_event".to_string(),
-        ts_ingest: Utc::now(),
         ts_orig: None,
         host: "test-host".to_string(),
         ingestor_version: Some("1.0.0".to_string()),

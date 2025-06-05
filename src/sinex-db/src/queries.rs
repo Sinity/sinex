@@ -20,7 +20,7 @@ pub async fn insert_raw_event(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, source, event_type, ts_ingest, ts_orig, host, ingestor_version, payload_schema_id, payload
+        RETURNING id, source, event_type, ts_orig, host, ingestor_version, payload_schema_id, payload
         "#,
         source,
         event_type,
