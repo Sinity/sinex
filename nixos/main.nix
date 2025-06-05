@@ -12,8 +12,6 @@ let
   kittyIngestor = pkgs.sinex.kittyIngestor;
   promoWorker = pkgs.sinex.promoWorker;
   
-  # Sinex monitoring script
-  sinexMonitor = pkgs.writeShellScriptBin "sinex-monitor" (builtins.readFile ../scripts/sinex-monitor.sh);
   
   # Database initialization script using sqlx migrations
   initDbScript = pkgs.writeShellScript "init-sinex-db" ''
@@ -212,8 +210,7 @@ in {
       };
     };
     
-    # Install monitoring tools system-wide
-    environment.systemPackages = [ sinexMonitor ];
+    # Monitoring available via flake apps: nix run .#monitor
     
     # Enhanced logging configuration for journald
     services.journald.extraConfig = mkIf cfg.enable ''
