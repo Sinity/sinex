@@ -50,7 +50,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
+            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -73,7 +73,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
+            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -96,7 +96,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
+            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -119,7 +119,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
+            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
 
             buildInputs = with pkgs; [
               openssl
