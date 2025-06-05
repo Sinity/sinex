@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Nix Flake Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Nix
+      uses: cachix/install-nix-action@v24
+      with:
+        nix_path: nixpkgs=channel:nixos-unstable
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          
+    - name: Setup Cachix
+      uses: cachix/cachix-action@v14
+      with:
+        name: sinex
+        skipPush: ${{ github.event_name == 'pull_request' }}
+        
+    - name: Nix Flake Check
+      run: nix flake check --accept-flake-config
+
+  test:
+    name: Cargo Test
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16-latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        
+    - name: Cache Cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+        
+    - name: Setup test database
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
+        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
+        
+    - name: Run migrations
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        cargo install sqlx-cli --no-default-features --features postgres
+        sqlx migrate run
+        
+    - name: Run tests
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+        RUST_LOG: debug
+      run: cargo test --all-features
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16-latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        components: llvm-tools-preview
+        
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+      
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+        
+    - name: Setup test database
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
+        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
+        
+    - name: Run migrations
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        cargo install sqlx-cli --no-default-features --features postgres
+        sqlx migrate run
+        
+    - name: Generate code coverage
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: lcov.info
+        fail_ci_if_error: false

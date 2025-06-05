@@ -16,8 +16,8 @@
     
     # Database configuration (optional, these are defaults)
     database = {
-      name = "exocortex";
-      url = "postgresql://localhost/exocortex";
+      name = "sinex";
+      url = "postgresql://localhost/sinex";
       ensureExists = true;
     };
     

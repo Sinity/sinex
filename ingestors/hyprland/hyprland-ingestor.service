@@ -1,0 +1,29 @@
+[Unit]
+Description=Sinex Hyprland Event Ingestor
+Documentation=https://github.com/Sinity/sinex
+After=postgresql.service
+Requires=postgresql.service
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=simple
+Environment="DATABASE_URL=postgresql://localhost/sinex"
+Environment="RUST_LOG=hyprland_ingestor=info"
+ExecStart=%h/.nix-profile/bin/hyprland-ingestor
+Restart=on-failure
+RestartSec=5
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+
+# Resource limits
+MemoryLimit=512M
+CPUQuota=20%
+
+[Install]
+WantedBy=default.target

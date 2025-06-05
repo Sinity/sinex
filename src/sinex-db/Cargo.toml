@@ -1,0 +1,24 @@
+[package]
+name = "sinex-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Database connection and query utilities for Sinex"
+
+[dependencies]
+sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
