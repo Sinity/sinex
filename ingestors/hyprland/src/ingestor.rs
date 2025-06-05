@@ -5,12 +5,16 @@ use std::sync::Arc;
 
 use sinex_shared::{
     ingestor_framework::{Ingestor, IngestorConfig},
-    DatabaseService, sources, event_types,
+    DatabaseService, sources, event_type_constants,
 };
+use crate::cli::ConfigFormat;
+use crate::error::IngestorError;
 
 use crate::config::Config;
 use crate::event_listener::HyprlandEventListener;
 use crate::cli::Commands;
+
+type HyprResult<T> = Result<T, IngestorError>;
 
 /// The hyprland ingestor implementation
 pub struct HyprlandIngestor {
@@ -20,11 +24,11 @@ pub struct HyprlandIngestor {
 
 impl IngestorConfig for Config {
     fn load() -> Result<Self> {
-        Config::load()
+        Ok(Config::load()?)
     }
     
     fn load_from_file(path: &std::path::Path) -> Result<Self> {
-        Config::load_from_file(&path.to_path_buf())
+        Ok(Config::load_from_file(&path.to_path_buf())?)
     }
     
     fn database_url(&self) -> &str {

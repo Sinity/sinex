@@ -4,8 +4,8 @@ use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, Recur
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer};
 use serde::{Deserialize, Serialize};
 use sinex_shared::{
-    agent_events::*, create_error_event, create_heartbeat_event, event_types, sources,
-    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity, RawEvent,
+    agent_events::*, create_error_event, create_heartbeat_event, event_type_constants, sources,
+    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity, RawEvent, RawEventBuilder,
     RetryConfig, Ulid, retry_db_operation,
 };
 use std::collections::HashMap;
@@ -228,7 +228,7 @@ impl FilesystemWatcher {
                 };
 
                 (
-                    event_types::filesystem::FILE_CREATED,
+                    event_type_constants::filesystem::FILE_CREATED,
                     serde_json::to_value(FileCreatedPayload {
                         path: path_str,
                         object_type,
@@ -244,7 +244,7 @@ impl FilesystemWatcher {
                 };
 
                 (
-                    event_types::filesystem::FILE_MODIFIED,
+                    event_type_constants::filesystem::FILE_MODIFIED,
                     serde_json::to_value(FileModifiedPayload {
                         path: path_str,
                         object_type,
@@ -254,7 +254,7 @@ impl FilesystemWatcher {
             }
             EventKind::Remove(_) => {
                 (
-                    event_types::filesystem::FILE_DELETED,
+                    event_type_constants::filesystem::FILE_DELETED,
                     serde_json::to_value(FileDeletedPayload {
                         path: path_str,
                         object_type,
@@ -265,8 +265,9 @@ impl FilesystemWatcher {
         };
 
         Some(
-            RawEvent::new(sources::FILESYSTEM, event_type, payload)
+            RawEventBuilder::new(sources::FILESYSTEM, event_type, payload)
                 .with_orig_timestamp(Utc::now())
+                .build()
         )
     }
 
