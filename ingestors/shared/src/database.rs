@@ -12,7 +12,7 @@ pub struct DatabaseConfig {
     pub url: String,
     pub max_connections: u32,
     pub min_connections: u32,
-    pub connect_timeout: Duration,
+    pub acquire_timeout: Duration,
     pub idle_timeout: Duration,
 }
 
@@ -22,7 +22,7 @@ impl Default for DatabaseConfig {
             url: "postgresql://localhost/sinex".to_string(),
             max_connections: 10,
             min_connections: 2,
-            connect_timeout: Duration::from_secs(10),
+            acquire_timeout: Duration::from_secs(10),
             idle_timeout: Duration::from_secs(600),
         }
     }
@@ -40,7 +40,7 @@ impl DatabaseService {
         let pool = PgPoolOptions::new()
             .max_connections(config.max_connections)
             .min_connections(config.min_connections)
-            .acquire_timeout(config.connect_timeout)
+            .acquire_timeout(config.acquire_timeout)
             .idle_timeout(config.idle_timeout)
             .connect(&config.url)
             .await

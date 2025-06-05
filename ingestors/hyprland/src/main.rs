@@ -55,7 +55,7 @@ impl Application {
             url: config.database.url.clone(),
             max_connections: config.database.max_connections,
             min_connections: 2,
-            connect_timeout: std::time::Duration::from_secs(config.database.connection_timeout_secs),
+            acquire_timeout: std::time::Duration::from_secs(config.database.connection_timeout_secs),
             idle_timeout: std::time::Duration::from_secs(600),
         };
         

@@ -13,7 +13,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .min_connections(5)
-        .connect_timeout(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(600))
         .connect(database_url)
         .await?;
@@ -33,7 +33,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 /// Run database migrations
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("../../migrations")
         .run(pool)
         .await?;
     

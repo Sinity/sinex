@@ -50,7 +50,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
 
             buildInputs = with pkgs; [
               openssl
@@ -73,7 +73,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "";
+            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
 
             buildInputs = with pkgs; [
               openssl
@@ -96,7 +96,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
 
             buildInputs = with pkgs; [
               openssl
@@ -119,7 +119,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-59AZVhe8dt/5XTPQ7wDAib0P9q66d+QFZrAJyGvSGdI=";
+            cargoHash = "sha256-eLjONo10zuqdkFrUzd3nlrgJ9FEJePxXlFGvuB7MRQE=";
 
             buildInputs = with pkgs; [
               openssl
@@ -139,7 +139,12 @@
         in
         {
           packages = {
-            inherit hyprlandIngestor filesystemIngestor kittyIngestor sinexPromoWorker;
+            inherit
+              hyprlandIngestor
+              filesystemIngestor
+              kittyIngestor
+              sinexPromoWorker
+              ;
             default = sinexPromoWorker;
           };
 

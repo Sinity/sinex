@@ -147,7 +147,7 @@ impl From<Uuid> for Ulid {
 mod sqlx_impl {
     use super::*;
     use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef};
-    use sqlx::{Database, Postgres, Type};
+    use sqlx::{Postgres, Type};
 
     impl Type<Postgres> for Ulid {
         fn type_info() -> PgTypeInfo {
