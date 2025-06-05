@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use std::path::PathBuf;
+use sinex_shared::ingestor_framework::CommonCommands;
 
 /// Hyprland Event Ingestor for Sinex
 #[derive(Parser)]
@@ -31,7 +32,7 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Run the event ingestor (default)
     Run,
@@ -73,20 +74,14 @@ pub enum ConfigFormat {
     Yaml,
 }
 
-impl Default for Commands {
-    fn default() -> Self {
-        Commands::Run
-    }
-}
-
-impl Cli {
-    /// Parse command line arguments
-    pub fn parse_args() -> Self {
-        Cli::parse()
-    }
-
-    /// Get the command to execute, with default
-    pub fn get_command(&self) -> &Commands {
-        self.command.as_ref().unwrap_or(&Commands::Run)
+impl From<Commands> for CommonCommands {
+    fn from(cmd: Commands) -> Self {
+        match cmd {
+            Commands::Run => CommonCommands::Run,
+            Commands::Check => CommonCommands::Check,
+            Commands::Config { .. } => CommonCommands::Config,
+            Commands::GenerateConfig { output, .. } => CommonCommands::GenerateConfig { output },
+            Commands::Validate { .. } => CommonCommands::Config, // Map to Config for now
+        }
     }
 }
