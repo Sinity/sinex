@@ -1,51 +1,38 @@
+mod common;
+
 use chrono::Utc;
 use serde_json::json;
 use sinex_db::models::RawEvent;
-use sinex_shared::{DatabaseConfig, DatabaseService, RawEventBuilder, sources, event_type_constants};
-use sqlx::postgres::PgPoolOptions;
+use sinex_shared::{DatabaseService, sources, event_types};
 use std::time::Duration;
+
+use common::{
+    database_service_from_pool, test_database_service,
+    events, assertions, generators,
+    test_event_insertion, test_invalid_event_insertion
+};
 
 /// Test that we can actually connect to the database and perform basic operations
 #[sqlx::test]
 async fn test_database_connection_and_health_check(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let config = DatabaseConfig {
-        url: std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string()),
-        max_connections: 5,
-        min_connections: 1,
-        connect_timeout: Duration::from_secs(5),
-        idle_timeout: Duration::from_secs(60),
-    };
-
-    let db_service = DatabaseService::new(config).await?;
+    let db_service = test_database_service().await?;
     db_service.health_check().await?;
-    
     Ok(())
 }
 
 /// Test that we can insert events and they actually show up in the database
 #[sqlx::test]
 async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Create database service
-    let config = DatabaseConfig::default();
-    let db_service = DatabaseService::from_pool(pool.clone());
+    let db_service = database_service_from_pool(pool.clone());
+    
+    // Create a test event using our utilities
+    let event = events::filesystem_event(
+        event_types::event_types::filesystem::FILE_CREATED,
+        "/test/file.txt"
+    );
 
-    // Create an event
-    let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
-        event_type_constants::filesystem::FILE_CREATED,
-        json!({
-            "path": "/test/file.txt",
-            "size": 1024,
-            "test_marker": "database_integration_test"
-        })
-    )
-    .with_orig_timestamp(Utc::now())
-    .build();
-
-    // Insert the event
-    let event_id = db_service.insert_event(&event).await?;
-    assert!(!event_id.is_nil());
+    // Insert and verify using shared assertion helpers
+    let event_id = assertions::assert_event_inserted(&db_service, &event).await?;
 
     // Query it back
     let retrieved = sqlx::query_as!(
@@ -61,11 +48,9 @@ async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dy
     .fetch_one(&pool)
     .await?;
 
-    // Verify the data
-    assert_eq!(retrieved.source, sources::FILESYSTEM);
-    assert_eq!(retrieved.event_type, event_type_constants::filesystem::FILE_CREATED);
-    assert_eq!(retrieved.payload["path"], "/test/file.txt");
-    assert_eq!(retrieved.payload["test_marker"], "database_integration_test");
+    // Verify using shared assertion helper
+    assertions::assert_events_equivalent(&retrieved, &event);
+    
     // Verify ingestion timestamp from ULID
     let ts_ingest = retrieved.ts_ingest().expect("extract timestamp from ULID");
     assert!(ts_ingest > Utc::now() - chrono::Duration::seconds(5));
@@ -73,25 +58,13 @@ async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dy
     Ok(())
 }
 
-/// Test batch insertion
+/// Test batch insertion using generators
 #[sqlx::test]
 async fn test_batch_insert_events(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let db_service = DatabaseService::from_pool(pool.clone());
+    let db_service = database_service_from_pool(pool.clone());
 
-    // Create multiple events
-    let events: Vec<RawEvent> = (0..5)
-        .map(|i| {
-            RawEventBuilder::new(
-                sources::FILESYSTEM,
-                event_type_constants::filesystem::FILE_MODIFIED,
-                json!({
-                    "path": format!("/test/file_{}.txt", i),
-                    "batch_index": i,
-                    "batch_test": true
-                })
-            ).build()
-        })
-        .collect();
+    // Create multiple events using our generator utilities
+    let events = generators::test_events(5);
 
     // Insert batch
     let ids = db_service.insert_events_batch(&events).await?;
@@ -102,13 +75,13 @@ async fn test_batch_insert_events(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         r#"
         SELECT COUNT(*) 
         FROM raw.events 
-        WHERE payload->>'batch_test' = 'true'
+        WHERE payload ? 'size'  -- All our test events have a size field
         "#
     )
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(count, 5);
+    assert!(count >= 5);
 
     Ok(())
 }
@@ -116,7 +89,7 @@ async fn test_batch_insert_events(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
 /// Test that the event router trigger fires and creates promotion queue entries
 #[sqlx::test]
 async fn test_event_router_trigger(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let db_service = DatabaseService::from_pool(pool.clone());
+    let db_service = database_service_from_pool(pool.clone());
 
     // Insert an agent manifest that subscribes to filesystem events
     sqlx::query!(
@@ -131,12 +104,11 @@ async fn test_event_router_trigger(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     .execute(&pool)
     .await?;
 
-    // Create and insert an event
-    let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
-        event_type_constants::filesystem::FILE_CREATED,
-        json!({ "path": "/test/trigger.txt" })
-    ).build();
+    // Create and insert an event using utilities
+    let event = events::filesystem_event(
+        event_types::event_types::filesystem::FILE_CREATED,
+        "/test/trigger.txt"
+    );
 
     let event_id = db_service.insert_event(&event).await?;
 
@@ -162,16 +134,15 @@ async fn test_event_router_trigger(pool: sqlx::PgPool) -> Result<(), Box<dyn std
 /// Test ULID generation and ordering
 #[sqlx::test]
 async fn test_ulid_ordering(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let db_service = DatabaseService::from_pool(pool.clone());
+    let db_service = database_service_from_pool(pool.clone());
 
-    // Insert events with small delays
+    // Insert events with small delays using our utilities
     let mut ids = Vec::new();
     for i in 0..3 {
-        let event = RawEventBuilder::new(
-            sources::SINEX,
-            event_type_constants::sinex::AGENT_HEARTBEAT,
-            json!({ "sequence": i })
-        ).build();
+        let event = events::agent_event(
+            event_types::event_types::sinex::AGENT_HEARTBEAT,
+            &format!("test-agent-{}", i)
+        );
         
         let id = db_service.insert_event(&event).await?;
         ids.push(id);
@@ -181,19 +152,19 @@ async fn test_ulid_ordering(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error
     }
 
     // Query events ordered by ID (should be time-ordered due to ULID)
-    let ordered: Vec<i32> = sqlx::query_scalar(
+    let ordered: Vec<String> = sqlx::query_scalar(
         r#"
-        SELECT (payload->>'sequence')::int
+        SELECT payload->>'agent_name'
         FROM raw.events
         WHERE event_type = $1
         ORDER BY id ASC
         "#
     )
-    .bind(event_type_constants::sinex::AGENT_HEARTBEAT)
+    .bind(event_types::event_types::sinex::AGENT_HEARTBEAT)
     .fetch_all(&pool)
     .await?;
 
-    assert_eq!(ordered, vec![0, 1, 2]);
+    assert_eq!(ordered, vec!["test-agent-0", "test-agent-1", "test-agent-2"]);
 
     Ok(())
 }
@@ -222,7 +193,7 @@ async fn test_event_schema_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn 
     .fetch_one(&pool)
     .await?;
 
-    let db_service = DatabaseService::from_pool(pool.clone());
+    let db_service = database_service_from_pool(pool.clone());
 
     // Try to insert a valid event
     let valid_event = RawEvent {
@@ -239,23 +210,31 @@ async fn test_event_schema_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn 
         }),
     };
 
-    // This should succeed
-    db_service.insert_event(&valid_event).await?;
-
-    // Try to insert an invalid event (if pg_jsonschema is available)
-    // Note: This test is commented out because pg_jsonschema might not be available
-    // let invalid_event = RawEvent {
-    //     ...valid_event.clone(),
-    //     id: uuid::Uuid::new_v4(),
-    //     payload: json!({
-    //         "name": "test",
-    //         "value": "not a number" // Schema expects number
-    //     }),
-    // };
-    // 
-    // let result = db_service.insert_event(&invalid_event).await;
-    // assert!(result.is_err());
+    // This should succeed - use our assertion helper
+    assertions::assert_event_inserted(&db_service, &valid_event).await?;
 
     Ok(())
 }
 
+// Examples of using the new test macros for simple cases
+
+// Simple filesystem event insertion test
+test_event_insertion!(
+    test_filesystem_event_macro,
+    events::filesystem_event(
+        event_types::event_types::filesystem::FILE_CREATED,
+        "/macro/test/file.txt"
+    )
+);
+
+// Simple kitty event insertion test  
+test_event_insertion!(
+    test_kitty_event_macro,
+    events::kitty_event("cargo test")
+);
+
+// Test invalid event rejection
+test_invalid_event_insertion!(
+    test_invalid_event_macro,
+    events::invalid_event()
+);

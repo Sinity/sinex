@@ -175,16 +175,32 @@
             ];
 
             shellHook = ''
+              export PGDATA="$PWD/.postgres"
+              export PGHOST="$PGDATA"
+              export DATABASE_URL="postgresql:///sinex?host=$PGDATA"
+              export TEST_DATABASE_URL="postgres://sinex_test:testpass@localhost:5433/sinex_test"
+              
               cat <<'EOF'
               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
               ┃  Sinex Exocortex devShell                                  ┃
               ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
-              ┃ psql     : connect → $DATABASE_URL                         ┃
-              ┃ test DB  : ./scripts/setup_test_db.sh                      ┃
-              ┃ migrate  : sqlx migrate run                                ┃
-              ┃ run unit : cargo test --all-features                       ┃
-              ┃ run e2e  : cargo test --test e2e                           ┃
-              ┃ lint     : nix flake check                                 ┃
+              ┃ 🗄️  DATABASE                                               ┃
+              ┃   setup    : ./scripts/setup_database.sh [--dev|--test]    ┃
+              ┃   reset    : ./scripts/setup_database.sh --reset           ┃
+              ┃   connect  : psql $DATABASE_URL                            ┃
+              ┃   migrate  : sqlx migrate run                              ┃
+              ┃                                                            ┃
+              ┃ 🧪 TESTING                                                  ┃
+              ┃   unit     : ./scripts/run_tests.sh unit                   ┃
+              ┃   integrate: ./scripts/run_tests.sh integration            ┃
+              ┃   all      : ./scripts/run_tests.sh all                    ┃
+              ┃   watch    : cargo watch -x test                           ┃
+              ┃                                                            ┃
+              ┃ 🔧 DEVELOPMENT                                              ┃
+              ┃   build    : cargo build --all-features                    ┃
+              ┃   check    : cargo check --all-features                    ┃
+              ┃   lint     : nix flake check                               ┃
+              ┃   query    : ./cli/exo.py query --limit 10                 ┃
               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
               EOF
             '';
