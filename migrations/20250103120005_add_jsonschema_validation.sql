@@ -1,46 +1,39 @@
--- Migration: Add pg_jsonschema extension and validation constraint
+-- Migration: Add pg_jsonschema extension and validation trigger
 -- Up Migration
 
--- Enable pg_jsonschema extension if available
-DO $$
+-- Enable pg_jsonschema extension (required)
+CREATE EXTENSION IF NOT EXISTS pg_jsonschema;
+
+-- Create a function to validate JSON schema
+CREATE OR REPLACE FUNCTION raw.validate_event_payload_schema()
+RETURNS TRIGGER AS $$
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_available_extensions 
-        WHERE name = 'pg_jsonschema'
+    -- If no schema is specified, validation is skipped
+    IF NEW.payload_schema_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    
+    -- Check if the payload conforms to the schema
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM sinex_schemas.event_payload_schemas ps
+        WHERE ps.id = NEW.payload_schema_id
+        AND ps.is_active = TRUE
+        AND jsonb_matches_schema(ps.json_schema_definition, NEW.payload)
     ) THEN
-        CREATE EXTENSION IF NOT EXISTS pg_jsonschema;
-    ELSE
-        RAISE NOTICE 'pg_jsonschema extension not available, skipping JSON schema validation';
+        RAISE EXCEPTION 'Event payload does not conform to schema % or schema is inactive', NEW.payload_schema_id;
     END IF;
-END $$;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Add CHECK constraint for JSON schema validation only if pg_jsonschema is available
-DO $$
-BEGIN
-    -- Check if pg_jsonschema extension exists
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_jsonschema') THEN
-        ALTER TABLE raw.events
-        DROP CONSTRAINT IF EXISTS chk_payload_conforms_to_schema;
+-- Create trigger to validate on insert/update
+CREATE TRIGGER trg_validate_event_payload_schema
+    BEFORE INSERT OR UPDATE OF payload, payload_schema_id
+    ON raw.events
+    FOR EACH ROW
+    EXECUTE FUNCTION raw.validate_event_payload_schema();
 
-        ALTER TABLE raw.events
-        ADD CONSTRAINT chk_payload_conforms_to_schema
-        CHECK (
-            payload_schema_id IS NULL OR -- If no schema is specified, validation is skipped
-            EXISTS (
-                SELECT 1 
-                FROM sinex_schemas.event_payload_schemas ps
-                WHERE ps.id = raw.events.payload_schema_id
-                AND ps.is_active = TRUE
-                AND jsonb_matches_schema(
-                    ps.json_schema_definition,
-                    raw.events.payload
-                )
-            )
-        );
-
-        EXECUTE 'COMMENT ON CONSTRAINT chk_payload_conforms_to_schema ON raw.events IS ' ||
-                quote_literal('Ensures that raw.events.payload conforms to the JSON schema specified by payload_schema_id, if that schema is active.');
-    ELSE
-        RAISE NOTICE 'pg_jsonschema not available, skipping payload validation constraint';
-    END IF;
-END $$;
+COMMENT ON TRIGGER trg_validate_event_payload_schema ON raw.events IS 
+    'Ensures that raw.events.payload conforms to the JSON schema specified by payload_schema_id, if that schema is active.';

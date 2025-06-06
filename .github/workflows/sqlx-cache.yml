@@ -1,0 +1,71 @@
+name: SQLx Query Cache Validation
+
+on:
+  push:
+    paths:
+      - 'src/**/*.rs'
+      - 'ingestors/**/*.rs'
+      - 'migrations/**/*.sql'
+      - '.sqlx/**'
+  pull_request:
+    paths:
+      - 'src/**/*.rs'
+      - 'ingestors/**/*.rs'
+      - 'migrations/**/*.sql'
+      - '.sqlx/**'
+
+jobs:
+  validate-cache:
+    name: Validate SQLx Query Cache
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sinex_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+        
+      - name: Setup database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
+        run: |
+          # Install PostgreSQL extensions (simplified for CI)
+          sudo apt-get update && sudo apt-get install -y postgresql-contrib
+          
+          # Run migrations
+          sqlx migrate run
+          
+      - name: Check query cache is current
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
+        run: |
+          cargo sqlx prepare --check --workspace
+          
+      - name: Update cache if outdated
+        if: failure()
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
+        run: |
+          echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace' locally and commit the changes."
+          cargo sqlx prepare --workspace
+          git diff --exit-code .sqlx || (echo "::error::Cache would be updated with these changes:" && git diff .sqlx && exit 1)

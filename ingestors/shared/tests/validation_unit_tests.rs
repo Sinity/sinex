@@ -165,21 +165,25 @@ fn test_sinex_event_validation() {
         event_type_constants::sinex::AGENT_HEARTBEAT,
         &json!({
             "agent_name": "test-agent",
-            "timestamp_iso": "2024-01-01T12:00:00Z",
-            "status_reported": "healthy"
+            "status": "running",
+            "version": "1.0.0",
+            "uptime_seconds": 3600,
+            "events_processed_session": 100,
+            "dlq_size": 0
         })
     ).is_ok());
     
-    // Invalid timestamp format
+    // Invalid status type (should be string)
     let result = validator.validate(
         sources::SINEX,
         event_type_constants::sinex::AGENT_HEARTBEAT,
         &json!({
             "agent_name": "test-agent",
-            "timestamp_iso": "not a timestamp"
+            "status": 123,  // Should be string
+            "version": "1.0.0"
         })
     );
-    assert!(matches!(result.unwrap_err(), ValidationError::InvalidValue { field, .. } if field == "timestamp_iso"));
+    assert!(matches!(result.unwrap_err(), ValidationError::InvalidType { field, .. } if field == "status"));
     
     // Valid error event
     assert!(validator.validate(
@@ -356,7 +360,8 @@ fn test_event_builder_creates_valid_events() {
             event_type_constants::sinex::AGENT_HEARTBEAT,
             json!({
                 "agent_name": "test",
-                "timestamp_iso": chrono::Utc::now().to_rfc3339()
+                "status": "running",
+                "version": "1.0.0"
             })
         ).build(),
     ];

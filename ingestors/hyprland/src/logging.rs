@@ -7,6 +7,7 @@ use crate::config::LoggingConfig;
 use crate::error::Result;
 
 /// Initialize the logging system based on configuration
+#[allow(dead_code)]
 pub fn init_logging(config: &LoggingConfig) -> Result<()> {
     let _level = parse_log_level(&config.level)?;
     
@@ -50,6 +51,7 @@ pub fn init_logging(config: &LoggingConfig) -> Result<()> {
 }
 
 /// Parse log level string into tracing Level
+#[allow(dead_code)]
 fn parse_log_level(level: &str) -> Result<Level> {
     match level.to_lowercase().as_str() {
         "trace" => Ok(Level::TRACE),
@@ -68,6 +70,7 @@ fn parse_log_level(level: &str) -> Result<Level> {
 }
 
 /// Create a structured log context for the application startup
+#[allow(dead_code)]
 pub fn log_startup_info(config: &crate::config::Config) {
     info!(
         app_name = config.app.name,
@@ -80,6 +83,7 @@ pub fn log_startup_info(config: &crate::config::Config) {
 }
 
 /// Create a structured log context for shutdown
+#[allow(dead_code)]
 pub fn log_shutdown_info(reason: &str) {
     info!(
         reason = reason,
@@ -88,6 +92,7 @@ pub fn log_shutdown_info(reason: &str) {
 }
 
 /// Mask sensitive information in URLs for logging
+#[allow(dead_code)]
 fn mask_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         let mut masked = parsed.clone();
@@ -101,6 +106,7 @@ fn mask_url(url: &str) -> String {
 }
 
 /// Log an error with context
+#[allow(dead_code)]
 pub fn log_error_with_context(error: &dyn std::error::Error, context: &str) {
     let mut source_chain = Vec::new();
     let mut current_error: &dyn std::error::Error = error;

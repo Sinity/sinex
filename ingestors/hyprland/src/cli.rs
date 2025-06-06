@@ -1,4 +1,4 @@
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use sinex_shared::ingestor_framework::CommonCommands;
 

@@ -12,30 +12,29 @@ let
   kittyIngestor = pkgs.sinex.kittyIngestor;
   promoWorker = pkgs.sinex.promoWorker;
   
-  # Sinex monitoring script
-  sinexMonitor = pkgs.writeShellScriptBin "sinex-monitor" (builtins.readFile ../scripts/sinex-monitor.sh);
   
   # Database initialization script using sqlx migrations
   initDbScript = pkgs.writeShellScript "init-sinex-db" ''
     set -e
     
     # Wait for PostgreSQL to be available
-    until ${pkgs.postgresql}/bin/pg_isready -h localhost -U postgres; do
+    until ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql; do
       echo "Waiting for PostgreSQL to be ready..."
       sleep 2
     done
     
     # Create database if it doesn't exist (should be handled by ensureDatabases)
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | grep -q 1 || \
-      ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || \
+      ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
     
     # Create required extensions
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;"
     
-    # Run migrations using sqlx
-    export DATABASE_URL="postgresql://${cfg.systemUser}@localhost/${cfg.database.name}"
+    # Run migrations using sqlx as postgres user
+    export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
     cd ${../.}
     ${pkgs.sqlx-cli}/bin/sqlx migrate run
   '';
@@ -46,11 +45,12 @@ in {
     
     systemUser = mkOption {
       type = types.str;
+      default = "sinex";
       description = ''
         The system user that should run the sinex services.
-        This should be the user running the graphical session (e.g., the one running Hyprland).
+        Defaults to dedicated 'sinex' user for security isolation.
       '';
-      example = "sinity";
+      example = "sinex";
     };
     
     autoConfigureSystem = mkOption {
@@ -61,14 +61,15 @@ in {
         - Configure kitty terminal for remote control
         - Set up shell integration for command tracking
         - Increase inotify limits for filesystem monitoring
+        - Configure system-level settings for optimal performance
       '';
     };
     
     database = {
       url = mkOption {
         type = types.str;
-        default = "postgresql://${cfg.systemUser}@localhost/${cfg.database.name}";
-        description = "PostgreSQL database URL";
+        default = "postgresql:///${cfg.database.name}?host=/run/postgresql&user=${cfg.database.user}";
+        description = "PostgreSQL database URL using local peer authentication";
       };
       
       name = mkOption {
@@ -148,6 +149,31 @@ in {
   };
   
   config = mkIf cfg.enable {
+    # Create sinex system user and group
+    users.users.sinex = {
+      isSystemUser = true;
+      group = "sinex";
+      home = "/var/lib/sinex";
+      createHome = true;
+      description = "Sinex data capture system user";
+      extraGroups = [ "users" ]; # Need access to user runtime directories
+    };
+    
+    users.groups.sinex = {};
+    
+    # Create necessary directories for Sinex services
+    systemd.tmpfiles.rules = [
+      "d /var/lib/sinex 0755 ${cfg.systemUser} sinex -"
+      "d /var/lib/sinex/dlq 0755 ${cfg.systemUser} sinex -"
+      "d /var/lib/sinex/dlq/filesystem-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/lib/sinex/dlq/hyprland-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/lib/sinex/dlq/kitty-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/log/sinex 0755 ${cfg.systemUser} sinex -"
+      "d /var/log/sinex/filesystem-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/log/sinex/hyprland-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/log/sinex/kitty-ingestor 0755 ${cfg.systemUser} sinex -"
+    ];
+    
     # System tuning for filesystem monitoring
     boot.kernel.sysctl = mkIf cfg.ingestors.filesystem.enable {
       "fs.inotify.max_user_watches" = mkForce 1048576;
@@ -157,11 +183,14 @@ in {
     # Ensure PostgreSQL is enabled with required extensions
     services.postgresql = {
       enable = mkDefault true;
-      package = mkForce pkgs.postgresql_16;
-      extensions = ps: with ps; [
+      package = mkDefault pkgs.postgresql_16;
+      extraPlugins = with pkgs.postgresql16Packages; [
         timescaledb
         pgvector  
         pgx_ulid
+      ] ++ [ 
+        # pg_jsonschema from our flake's overlay
+        pkgs.pg_jsonschema
       ];
       
       # Ensure basic authentication and database setup
@@ -178,7 +207,7 @@ in {
       # Ensure database user exists
       ensureUsers = [
         {
-          name = cfg.systemUser;
+          name = cfg.database.user;
           ensureClauses = {
             login = true;
           };
@@ -212,8 +241,7 @@ in {
       };
     };
     
-    # Install monitoring tools system-wide
-    environment.systemPackages = [ sinexMonitor ];
+    # Monitoring available via flake apps: nix run .#monitor
     
     # Enhanced logging configuration for journald
     services.journald.extraConfig = mkIf cfg.enable ''
@@ -227,7 +255,7 @@ in {
     systemd.services.sinex-hyprland = mkIf cfg.ingestors.hyprland.enable {
       description = "Sinex Hyprland activity ingestor";
       wantedBy = [ "multi-user.target" ];
-      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
       
       environment = {
         DATABASE_URL = cfg.database.url;
@@ -245,8 +273,12 @@ in {
             sleep 5
           done
           
-          # Get the user's runtime directory
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          # Find the actual user running Hyprland
+          HYPRLAND_USER=$(pgrep -x Hyprland -o | xargs ps -o user= -p | tr -d ' ')
+          HYPRLAND_UID=$(id -u "$HYPRLAND_USER" 2>/dev/null || echo "1000")
+          
+          # Get the user's runtime directory  
+          export XDG_RUNTIME_DIR="/run/user/$HYPRLAND_UID"
           
           # Find the Hyprland instance socket
           export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | grep -v '\.lock$' | head -n1)
@@ -263,9 +295,6 @@ in {
         ''}";
         Restart = "always";
         RestartSec = 10;
-        
-        # Run in user's login session context
-        PAMName = "login";
       };
     };
     
@@ -273,7 +302,7 @@ in {
     systemd.services.sinex-filesystem = mkIf cfg.ingestors.filesystem.enable {
       description = "Sinex Filesystem activity ingestor";
       wantedBy = [ "multi-user.target" ];
-      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
       
       environment = {
         DATABASE_URL = cfg.database.url;
@@ -317,9 +346,6 @@ EOF
         '';
         Restart = "always";
         RestartSec = 10;
-        
-        # Run in user's login session context
-        PAMName = "login";
       };
     };
     
@@ -327,7 +353,7 @@ EOF
     systemd.services.sinex-kitty = mkIf cfg.ingestors.kitty.enable {
       description = "Sinex Kitty terminal activity ingestor";
       wantedBy = [ "multi-user.target" ];
-      after = [ "sinex-init.service" "sinex-grant-permissions.service" ];
+      after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
       
       environment = {
         DATABASE_URL = cfg.database.url;
@@ -368,12 +394,32 @@ EOF
         '';
         Restart = "always";
         RestartSec = 10;
-        
-        # Run in user's login session context
-        PAMName = "login";
       };
     };
     
+    # Fix ownership of existing directories to sinex user
+    systemd.services.sinex-fix-ownership = mkIf cfg.enable {
+      description = "Fix ownership of Sinex directories";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "local-fs.target" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "fix-sinex-ownership" ''
+          set -e
+          # Fix ownership of existing directories if they exist
+          for dir in /var/lib/sinex /var/log/sinex; do
+            if [ -d "$dir" ]; then
+              echo "Fixing ownership of $dir"
+              chown -R sinex:sinex "$dir" || true
+            fi
+          done
+        '';
+        User = "root";
+      };
+    };
+
     # Grant database permissions to the system user
     systemd.services.sinex-grant-permissions = mkIf cfg.database.ensureExists {
       description = "Grant Sinex database permissions";
@@ -387,33 +433,33 @@ EOF
         ExecStart = pkgs.writeShellScript "grant-sinex-permissions" ''
           set -e
           # Create role if it doesn't exist
-          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '${cfg.systemUser}'" | grep -q 1 || \
-            ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE ROLE \"${cfg.systemUser}\" WITH LOGIN"
+          ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '${cfg.database.user}'" | ${pkgs.gnugrep}/bin/grep -q 1 || \
+            ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -c "CREATE ROLE \"${cfg.database.user}\" WITH LOGIN"
           
           # Grant permissions
-          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "
-            GRANT CONNECT ON DATABASE \"${cfg.database.name}\" TO \"${cfg.systemUser}\";
-            GRANT USAGE ON SCHEMA public TO \"${cfg.systemUser}\";
-            GRANT CREATE ON SCHEMA public TO \"${cfg.systemUser}\";
-            GRANT USAGE ON SCHEMA raw TO \"${cfg.systemUser}\";
-            GRANT USAGE ON SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
-            GRANT USAGE ON SCHEMA core TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO \"${cfg.systemUser}\";
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON TABLES TO \"${cfg.systemUser}\";
-            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON SEQUENCES TO \"${cfg.systemUser}\";
+          ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "
+            GRANT CONNECT ON DATABASE \"${cfg.database.name}\" TO \"${cfg.database.user}\";
+            GRANT USAGE ON SCHEMA public TO \"${cfg.database.user}\";
+            GRANT CREATE ON SCHEMA public TO \"${cfg.database.user}\";
+            GRANT USAGE ON SCHEMA raw TO \"${cfg.database.user}\";
+            GRANT USAGE ON SCHEMA sinex_schemas TO \"${cfg.database.user}\";
+            GRANT USAGE ON SCHEMA core TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO \"${cfg.database.user}\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON TABLES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON SEQUENCES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON TABLES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON SEQUENCES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON TABLES TO \"${cfg.database.user}\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON SEQUENCES TO \"${cfg.database.user}\";
           " || true
         '';
         User = "postgres";

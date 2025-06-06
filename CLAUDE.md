@@ -43,6 +43,11 @@ sqlx migrate run                    # Apply migrations
 sqlx migrate add new_feature        # Create new migration
 ./scripts/setup_test_db.sh         # Test database setup
 
+# SQLX offline cache management
+./scripts/update-sqlx-cache.sh     # Update SQLX cache manually
+cargo sqlx prepare --workspace     # Regenerate entire cache
+nix run .#sqlx-prepare              # Update cache via nix
+
 # Building and testing
 cargo build --release              # Build all workspace members
 cargo test --test migration_tests  # Run specific test file
@@ -52,6 +57,45 @@ cargo test --package sinex-ulid    # Test specific crate
 cargo watch -x check               # Watch for changes
 bacon                              # Continuous testing
 ```
+
+## SQLX Offline Mode
+
+The project uses SQLX's offline mode for reproducible builds. This means:
+
+1. **Query Cache**: All SQL queries are cached in `.sqlx/` directory
+2. **Automatic Updates**: Pre-commit hooks update cache when queries change
+3. **CI Verification**: GitHub Actions verify cache is up-to-date
+4. **Nix Builds**: Work offline using `SQLX_OFFLINE=true`
+
+### When to Update SQLX Cache
+
+The cache needs updating when:
+- You modify any `sqlx::query!()` macros
+- You change database schema (migrations)
+- You add new SQL queries
+
+### How to Update SQLX Cache
+
+```bash
+# Automatic (recommended)
+git add .                           # Stage your changes
+git commit                          # Pre-commit hook runs automatically
+
+# Manual update
+./scripts/update-sqlx-cache.sh      # Updates and stages cache
+
+# Force regeneration
+rm -rf .sqlx/                       # Remove existing cache
+cargo sqlx prepare --workspace      # Regenerate from scratch
+```
+
+### Troubleshooting SQLX
+
+If you see "no cached data for this query":
+1. Ensure database is running: `psql $DATABASE_URL`
+2. Run migrations: `sqlx migrate run`
+3. Update cache: `./scripts/update-sqlx-cache.sh`
+4. Commit the `.sqlx/` changes
 
 ## Database Schema Architecture
 
@@ -174,3 +218,10 @@ Comprehensive domain deep-dives:
 3. **Read ADRs** to understand why certain technical choices were made
 4. **All new documentation** should go under `spec/docs/claude/` if needed
 5. **TIMs include actual code** - SQL DDL, configuration examples, implementation details
+
+## Important Memories and Notes
+
+- THERE IS NO pg_jsonschema IN THE NIXPKGS
+- Always check authentication methods (local socket vs network) before attempting database connections
+- When working with Nix packages, check the package structure and available outputs first
+- For local PostgreSQL on NixOS, use postgresql:///dbname?host=/run/postgresql

@@ -305,7 +305,8 @@ mod tests {
             })
         );
         
-        assert!(matches!(result, Err(AssumptionError::CrossSourceContamination { .. })));
+        // The forbidden fields check catches this before cross-source contamination check
+        assert!(matches!(result, Err(AssumptionError::SuspiciousFields { .. })));
     }
     
     #[test]

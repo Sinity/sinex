@@ -10,9 +10,8 @@ pub use error::{IngestorError, Result};
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, WindowAugmentation};
     use serde_json::json;
-    use std::sync::Arc;
 
     // These tests require a running PostgreSQL instance
     // They should be run with: cargo test --features integration-tests
@@ -47,7 +46,7 @@ mod integration_tests {
         let config = Config::default();
         assert_eq!(config.database.url, "postgresql://localhost/sinex");
         assert_eq!(config.logging.level, "info");
-        assert!(config.hyprland.capture_window_events);
+        assert_eq!(config.hyprland.window_augmentation, WindowAugmentation::Basic);
     }
 
     #[test]

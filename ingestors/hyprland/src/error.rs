@@ -2,6 +2,7 @@ use thiserror::Error;
 
 /// Application-specific errors for the Hyprland ingestor
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum IngestorError {
     /// Database connection or query errors
     #[error("Database error: {0}")]
@@ -49,6 +50,7 @@ pub type Result<T> = std::result::Result<T, IngestorError>;
 
 impl IngestorError {
     /// Create a new event ingestion error
+    #[allow(dead_code)]
     pub fn event_ingestion<E>(event_type: impl Into<String>, error: E) -> Self
     where
         E: std::error::Error + Send + Sync + 'static,
@@ -60,6 +62,7 @@ impl IngestorError {
     }
 
     /// Create a new database connection error
+    #[allow(dead_code)]
     pub fn database_connection(msg: impl Into<String>) -> Self {
         Self::DatabaseConnection(msg.into())
     }
