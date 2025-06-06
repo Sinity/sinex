@@ -67,7 +67,7 @@ in {
     database = {
       url = mkOption {
         type = types.str;
-        default = "postgresql://${cfg.systemUser}@localhost/${cfg.database.name}?host=/run/postgresql";
+        default = "postgresql:///${cfg.database.name}?host=/run/postgresql&user=${cfg.systemUser}";
         description = "PostgreSQL database URL using local peer authentication";
       };
       
@@ -150,11 +150,15 @@ in {
   config = mkIf cfg.enable {
     # Create necessary directories for Sinex services
     systemd.tmpfiles.rules = [
-      "d /var/lib/sinex 0755 ${cfg.systemUser} ${cfg.systemUser} -"
-      "d /var/lib/sinex/dlq 0755 ${cfg.systemUser} ${cfg.systemUser} -"
-      "d /var/lib/sinex/dlq/filesystem-ingestor 0755 ${cfg.systemUser} ${cfg.systemUser} -"
-      "d /var/lib/sinex/dlq/hyprland-ingestor 0755 ${cfg.systemUser} ${cfg.systemUser} -"
-      "d /var/lib/sinex/dlq/kitty-ingestor 0755 ${cfg.systemUser} ${cfg.systemUser} -"
+      "d /var/lib/sinex 0755 ${cfg.systemUser} users -"
+      "d /var/lib/sinex/dlq 0755 ${cfg.systemUser} users -"
+      "d /var/lib/sinex/dlq/filesystem-ingestor 0755 ${cfg.systemUser} users -"
+      "d /var/lib/sinex/dlq/hyprland-ingestor 0755 ${cfg.systemUser} users -"
+      "d /var/lib/sinex/dlq/kitty-ingestor 0755 ${cfg.systemUser} users -"
+      "d /var/log/sinex 0755 ${cfg.systemUser} users -"
+      "d /var/log/sinex/filesystem-ingestor 0755 ${cfg.systemUser} users -"
+      "d /var/log/sinex/hyprland-ingestor 0755 ${cfg.systemUser} users -"
+      "d /var/log/sinex/kitty-ingestor 0755 ${cfg.systemUser} users -"
     ];
     
     # System tuning for filesystem monitoring
