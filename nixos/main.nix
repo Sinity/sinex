@@ -67,7 +67,7 @@ in {
     database = {
       url = mkOption {
         type = types.str;
-        default = "postgresql://${cfg.systemUser}@/${cfg.database.name}?host=/run/postgresql";
+        default = "postgresql://${cfg.systemUser}@localhost/${cfg.database.name}?host=/run/postgresql";
         description = "PostgreSQL database URL using local peer authentication";
       };
       
