@@ -66,10 +66,12 @@
               "hyprland-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation
+            # Set DATABASE_URL for sqlx compilation  
             preBuild = ''
               export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
               export SQLX_OFFLINE=true
+              # Ensure .sqlx directory is available
+              ls -la .sqlx/ || echo "No .sqlx directory found"
             '';
           };
 
@@ -95,10 +97,12 @@
               "filesystem-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation
+            # Set DATABASE_URL for sqlx compilation  
             preBuild = ''
               export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
               export SQLX_OFFLINE=true
+              # Ensure .sqlx directory is available
+              ls -la .sqlx/ || echo "No .sqlx directory found"
             '';
           };
 
@@ -124,10 +128,12 @@
               "kitty-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation
+            # Set DATABASE_URL for sqlx compilation  
             preBuild = ''
               export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
               export SQLX_OFFLINE=true
+              # Ensure .sqlx directory is available
+              ls -la .sqlx/ || echo "No .sqlx directory found"
             '';
           };
 
@@ -154,10 +160,12 @@
               "sinex-promo-worker"
             ];
 
-            # Set DATABASE_URL for sqlx compilation
+            # Set DATABASE_URL for sqlx compilation  
             preBuild = ''
               export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
               export SQLX_OFFLINE=true
+              # Ensure .sqlx directory is available
+              ls -la .sqlx/ || echo "No .sqlx directory found"
             '';
           };
         in
