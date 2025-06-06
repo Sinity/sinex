@@ -37,11 +37,65 @@
             ];
           };
 
+          # Build cargo-pgrx separately
+          cargo-pgrx = pkgs.rustPlatform.buildRustPackage rec {
+            pname = "cargo-pgrx";
+            version = "0.12.6";
+            
+            src = pkgs.fetchCrate {
+              inherit pname version;
+              hash = "sha256-7aQkrApALZe6EoQGVShGBj0UIATnfOy2DytFj9IWdEA=";
+            };
+            
+            cargoHash = "sha256-pnMxWWfvr1/AEp8DvG4awig8zjdHizJHoZ5RJA8CL08=";
+            
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.openssl ];
+            
+            doCheck = false; # Tests fail in nix build environment
+          };
+
+          # Use pre-built pg_jsonschema deb package
+          pg_jsonschema = pkgs.stdenv.mkDerivation rec {
+            pname = "pg_jsonschema";
+            version = "0.3.3";
+            
+            src = pkgs.fetchurl {
+              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
+              hash = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+            };
+            
+            nativeBuildInputs = [ pkgs.dpkg ];
+            
+            dontBuild = true;
+            dontStrip = true;
+            dontFixup = true;
+            
+            unpackPhase = ''
+              dpkg-deb -x $src .
+            '';
+            
+            installPhase = ''
+              mkdir -p $out/lib $out/share/postgresql/extension
+              
+              # Find and copy the actual files (not symlinks)
+              find . -name "*.so" -type f -exec cp {} $out/lib/ \;
+              find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
+              find . -name "*.control" -type f -exec cp {} $out/share/postgresql/extension/ \;
+              
+              # List what we installed
+              echo "Installed files:"
+              ls -la $out/lib/
+              ls -la $out/share/postgresql/extension/
+            '';
+          };
+
           # PostgreSQL with all required extensions
           postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
             p.timescaledb
             p.pgvector
             p.pgx_ulid
+            pg_jsonschema
           ]);
 
           # Build individual ingestors
@@ -224,6 +278,8 @@
               filesystemIngestor
               kittyIngestor
               sinexPromoWorker
+              cargo-pgrx
+              pg_jsonschema
               ;
             default = sinexPromoWorker;
           };
@@ -283,6 +339,9 @@
                     ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || {
                       warning "Could not create timescaledb extension. May need superuser privileges."
                     }
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || {
+                      warning "Could not create pg_jsonschema extension. May need superuser privileges."
+                    }
                     
                     log "Running migrations"
                     DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
@@ -311,6 +370,7 @@
                     ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
                     ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
                     ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
+                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
                     
                     # Migrations
                     DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
@@ -928,6 +988,7 @@
                   ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
                   ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
                   ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
+                  ${postgresqlWithExtensions}/bin/psql -p $DB_PORT -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
                   
                   # Run migrations
                   log "Running migrations on ephemeral database"
@@ -1081,7 +1142,17 @@
           filesystemIngestor = systemOutputs.packages.${final.system}.filesystemIngestor;
           kittyIngestor = systemOutputs.packages.${final.system}.kittyIngestor;
           promoWorker = systemOutputs.packages.${final.system}.sinexPromoWorker;
+          pg_jsonschema = systemOutputs.packages.${final.system}.pg_jsonschema;
         };
+        # Add pg_jsonschema to PostgreSQL extension packages
+        postgresqlPackages = prev.postgresqlPackages // {
+          pg_jsonschema = systemOutputs.packages.${final.system}.pg_jsonschema;
+        };
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = systemOutputs.packages.${final.system}.pg_jsonschema;
+        };
+        # Also make pg_jsonschema available at top level
+        pg_jsonschema = systemOutputs.packages.${final.system}.pg_jsonschema;
       };
     };
 }

@@ -713,6 +713,7 @@ dependencies = [
  "serde_yaml",
  "shellexpand",
  "sinex-shared",
+ "sinex-ulid",
  "sqlx",
  "tempfile",
  "thiserror 1.0.69",

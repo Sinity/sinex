@@ -31,6 +31,7 @@ let
     ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
     ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
     ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;"
     
     # Run migrations using sqlx
     export DATABASE_URL="postgresql://${cfg.systemUser}@localhost/${cfg.database.name}"
@@ -59,6 +60,7 @@ in {
         - Configure kitty terminal for remote control
         - Set up shell integration for command tracking
         - Increase inotify limits for filesystem monitoring
+        - Configure system-level settings for optimal performance
       '';
     };
     
@@ -155,11 +157,14 @@ in {
     # Ensure PostgreSQL is enabled with required extensions
     services.postgresql = {
       enable = mkDefault true;
-      package = mkForce pkgs.postgresql_16;
-      extensions = ps: with ps; [
+      package = mkDefault pkgs.postgresql_16;
+      extraPlugins = with pkgs.postgresql16Packages; [
         timescaledb
         pgvector  
         pgx_ulid
+      ] ++ [ 
+        # pg_jsonschema from our flake's overlay
+        pkgs.pg_jsonschema
       ];
       
       # Ensure basic authentication and database setup

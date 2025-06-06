@@ -46,7 +46,7 @@ sqlx migrate add new_feature        # Create new migration
 # SQLX offline cache management
 ./scripts/update-sqlx-cache.sh     # Update SQLX cache manually
 cargo sqlx prepare --workspace     # Regenerate entire cache
-nix run .#sqlx-prepare             # Update cache via nix
+nix run .#sqlx-prepare              # Update cache via nix
 
 # Building and testing
 cargo build --release              # Build all workspace members
@@ -218,3 +218,10 @@ Comprehensive domain deep-dives:
 3. **Read ADRs** to understand why certain technical choices were made
 4. **All new documentation** should go under `spec/docs/claude/` if needed
 5. **TIMs include actual code** - SQL DDL, configuration examples, implementation details
+
+## Important Memories and Notes
+
+- THERE IS NO pg_jsonschema IN THE NIXPKGS
+- Always check authentication methods (local socket vs network) before attempting database connections
+- When working with Nix packages, check the package structure and available outputs first
+- For local PostgreSQL on NixOS, use postgresql:///dbname?host=/run/postgresql
