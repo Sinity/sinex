@@ -66,10 +66,15 @@
               "hyprland-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation  
+            # Ensure SQLX offline mode
+            SQLX_OFFLINE = "true";
+            
             preBuild = ''
-              export DATABASE_URL="postgresql:///sinex_dev"
-              export SQLX_OFFLINE=true
+              # Verify .sqlx directory exists
+              if [ ! -d ".sqlx" ]; then
+                echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
+                exit 1
+              fi
             '';
           };
 
@@ -95,10 +100,15 @@
               "filesystem-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation  
+            # Ensure SQLX offline mode
+            SQLX_OFFLINE = "true";
+            
             preBuild = ''
-              export DATABASE_URL="postgresql:///sinex_dev"
-              export SQLX_OFFLINE=true
+              # Verify .sqlx directory exists
+              if [ ! -d ".sqlx" ]; then
+                echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
+                exit 1
+              fi
             '';
           };
 
@@ -124,10 +134,15 @@
               "kitty-ingestor"
             ];
 
-            # Set DATABASE_URL for sqlx compilation  
+            # Ensure SQLX offline mode
+            SQLX_OFFLINE = "true";
+            
             preBuild = ''
-              export DATABASE_URL="postgresql:///sinex_dev"
-              export SQLX_OFFLINE=true
+              # Verify .sqlx directory exists
+              if [ ! -d ".sqlx" ]; then
+                echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
+                exit 1
+              fi
             '';
           };
 
@@ -154,10 +169,15 @@
               "sinex-promo-worker"
             ];
 
-            # Set DATABASE_URL for sqlx compilation  
+            # Ensure SQLX offline mode
+            SQLX_OFFLINE = "true";
+            
             preBuild = ''
-              export DATABASE_URL="postgresql:///sinex_dev"
-              export SQLX_OFFLINE=true
+              # Verify .sqlx directory exists
+              if [ ! -d ".sqlx" ]; then
+                echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
+                exit 1
+              fi
             '';
           };
         in
@@ -903,6 +923,7 @@
               # Use system PostgreSQL on standard port
               export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
               export TEST_DATABASE_URL="postgresql://localhost:5432/sinex_test"
+              export SQLX_OFFLINE=true
               
               cat <<'EOF'
               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
