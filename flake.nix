@@ -122,9 +122,8 @@
               "hyprland-ingestor"
             ];
 
-            # Ensure SQLX offline mode
+            # Ensure SQLX offline mode for build
             SQLX_OFFLINE = "true";
-            SQLX_OFFLINE_DIR = "./.sqlx";
             
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -165,9 +164,8 @@
               "filesystem-ingestor"
             ];
 
-            # Ensure SQLX offline mode
+            # Ensure SQLX offline mode for build
             SQLX_OFFLINE = "true";
-            SQLX_OFFLINE_DIR = "./.sqlx";
             
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -208,9 +206,8 @@
               "kitty-ingestor"
             ];
 
-            # Ensure SQLX offline mode
+            # Ensure SQLX offline mode for build
             SQLX_OFFLINE = "true";
-            SQLX_OFFLINE_DIR = "./.sqlx";
             
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -252,9 +249,8 @@
               "sinex-promo-worker"
             ];
 
-            # Ensure SQLX offline mode
+            # Ensure SQLX offline mode for build
             SQLX_OFFLINE = "true";
-            SQLX_OFFLINE_DIR = "./.sqlx";
             
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -307,20 +303,20 @@
                 case "$MODE" in
                   dev)
                     log "Setting up development database"
-                    export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
+                    export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
                     
                     # Check if PostgreSQL is running
-                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
-                      error "PostgreSQL is not running on localhost:5432"
+                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                      error "PostgreSQL is not running on /run/postgresql"
                       error "Please ensure PostgreSQL is installed and running"
                       error "On NixOS: services.postgresql.enable = true;"
                       exit 1
                     fi
                     
                     # Create database if it doesn't exist
-                    if ! ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+                    if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
                       log "Creating database sinex_dev"
-                      ${postgresqlWithExtensions}/bin/createdb -h localhost -p 5432 sinex_dev || {
+                      ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev || {
                         error "Failed to create database. You may need to run:"
                         error "  sudo -u postgres createdb sinex_dev"
                         error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
@@ -349,18 +345,18 @@
                     ;;
                   test)
                     log "Setting up test database"
-                    export DATABASE_URL="postgresql://localhost:5432/sinex_test"
+                    export DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
                     
                     # Check PostgreSQL
-                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
-                      error "PostgreSQL is not running on localhost:5432"
+                    if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                      error "PostgreSQL is not running on /run/postgresql"
                       exit 1
                     fi
                     
                     # Create test database
-                    if ! ${postgresqlWithExtensions}/bin/psql -h localhost -p 5432 -lqt | cut -d \| -f 1 | grep -qw sinex_test; then
+                    if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_test; then
                       log "Creating database sinex_test"
-                      ${postgresqlWithExtensions}/bin/createdb -h localhost -p 5432 sinex_test || {
+                      ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_test || {
                         error "Failed to create test database"
                         exit 1
                       }
@@ -1087,9 +1083,9 @@
             ];
 
             shellHook = ''
-              # Use system PostgreSQL on standard port
-              export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
-              export TEST_DATABASE_URL="postgresql://localhost:5432/sinex_test"
+              # Use local peer authentication via Unix socket
+              export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
+              export TEST_DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
               export SQLX_OFFLINE=true
               
               cat <<'EOF'

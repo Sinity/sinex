@@ -18,23 +18,23 @@ let
     set -e
     
     # Wait for PostgreSQL to be available
-    until ${pkgs.postgresql}/bin/pg_isready -h localhost -U postgres; do
+    until ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql; do
       echo "Waiting for PostgreSQL to be ready..."
       sleep 2
     done
     
     # Create database if it doesn't exist (should be handled by ensureDatabases)
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | grep -q 1 || \
-      ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '${cfg.database.name}'" | ${pkgs.gnugrep}/bin/grep -q 1 || \
+      ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -c "CREATE DATABASE \"${cfg.database.name}\""
     
     # Create required extensions
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
-    ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS ulid;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+    ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;"
     
     # Run migrations using sqlx
-    export DATABASE_URL="postgresql://${cfg.systemUser}@localhost/${cfg.database.name}"
+    export DATABASE_URL="${cfg.database.url}"
     cd ${../.}
     ${pkgs.sqlx-cli}/bin/sqlx migrate run
   '';
@@ -67,8 +67,8 @@ in {
     database = {
       url = mkOption {
         type = types.str;
-        default = "postgresql://${cfg.systemUser}@localhost/${cfg.database.name}";
-        description = "PostgreSQL database URL";
+        default = "postgresql:///${cfg.database.name}?host=/run/postgresql";
+        description = "PostgreSQL database URL using local peer authentication";
       };
       
       name = mkOption {
@@ -389,11 +389,11 @@ EOF
         ExecStart = pkgs.writeShellScript "grant-sinex-permissions" ''
           set -e
           # Create role if it doesn't exist
-          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '${cfg.systemUser}'" | grep -q 1 || \
-            ${pkgs.postgresql}/bin/psql -h localhost -U postgres -c "CREATE ROLE \"${cfg.systemUser}\" WITH LOGIN"
+          ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '${cfg.systemUser}'" | ${pkgs.gnugrep}/bin/grep -q 1 || \
+            ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -c "CREATE ROLE \"${cfg.systemUser}\" WITH LOGIN"
           
           # Grant permissions
-          ${pkgs.postgresql}/bin/psql -h localhost -U postgres -d "${cfg.database.name}" -c "
+          ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "
             GRANT CONNECT ON DATABASE \"${cfg.database.name}\" TO \"${cfg.systemUser}\";
             GRANT USAGE ON SCHEMA public TO \"${cfg.systemUser}\";
             GRANT CREATE ON SCHEMA public TO \"${cfg.systemUser}\";
