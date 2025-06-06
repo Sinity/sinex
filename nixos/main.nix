@@ -33,8 +33,8 @@ let
     ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
     ${pkgs.postgresql}/bin/psql -h /run/postgresql -U postgres -d "${cfg.database.name}" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;"
     
-    # Run migrations using sqlx
-    export DATABASE_URL="${cfg.database.url}"
+    # Run migrations using sqlx as postgres user
+    export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
     cd ${../.}
     ${pkgs.sqlx-cli}/bin/sqlx migrate run
   '';
