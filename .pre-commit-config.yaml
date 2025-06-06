@@ -1,0 +1,25 @@
+# Pre-commit hooks for Sinex
+repos:
+  - repo: local
+    hooks:
+      - id: sqlx-prepare
+        name: Update SQLX offline cache
+        entry: scripts/update-sqlx-cache.sh
+        language: script
+        files: '\.(rs|sql)$'
+        pass_filenames: false
+        description: Updates SQLX offline cache when Rust or SQL files change
+      
+      - id: fmt
+        name: Rust format
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+      
+      - id: clippy
+        name: Rust lint
+        entry: cargo clippy --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

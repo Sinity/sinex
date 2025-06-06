@@ -427,6 +427,76 @@
               '');
             };
             
+            # SQLX cache management
+            sqlx-prepare = {
+              type = "app";
+              program = toString (pkgs.writeShellScript "sqlx-prepare" ''
+                set -euo pipefail
+                
+                BLUE='\033[0;34m'
+                GREEN='\033[0;32m'
+                YELLOW='\033[1;33m'
+                RED='\033[0;31m'
+                NC='\033[0m'
+                
+                log() { echo -e "''${BLUE}🗄️''${NC}  $*"; }
+                success() { echo -e "''${GREEN}✅''${NC} $*"; }
+                warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
+                error() { echo -e "''${RED}❌''${NC} $*" >&2; }
+                
+                log "Updating SQLX offline cache..."
+                
+                # Check if DATABASE_URL is set
+                if [ -z "''${DATABASE_URL:-}" ]; then
+                  warning "DATABASE_URL not set, using default"
+                  export DATABASE_URL="postgresql://localhost:5432/sinex_dev"
+                fi
+                
+                # Check database connectivity
+                if ! ${postgresqlWithExtensions}/bin/pg_isready -h localhost -p 5432 >/dev/null 2>&1; then
+                  error "PostgreSQL is not running on localhost:5432"
+                  error "Please start PostgreSQL or run: nix run .#db-setup dev"
+                  exit 1
+                fi
+                
+                # Check if database exists
+                if ! ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+                  warning "Database not accessible, trying to set it up"
+                  
+                  # Run db setup
+                  log "Setting up database..."
+                  nix run .#db-setup dev || {
+                    error "Failed to setup database"
+                    exit 1
+                  }
+                fi
+                
+                # Ensure migrations are up to date
+                log "Running migrations..."
+                DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run || {
+                  error "Failed to run migrations"
+                  exit 1
+                }
+                
+                # Update the cache
+                log "Preparing SQLX offline cache..."
+                DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx prepare --workspace -- --all-targets --all-features || {
+                  error "Failed to prepare SQLX cache"
+                  exit 1
+                }
+                
+                success "SQLX cache updated successfully"
+                warning "Don't forget to commit the changes in .sqlx/"
+                
+                # Show what changed
+                if command -v git >/dev/null 2>&1; then
+                  echo ""
+                  log "Changes to commit:"
+                  git status --porcelain .sqlx/ | sed 's/^/  /'
+                fi
+              '');
+            };
+            
             # Real-time monitoring TUI
             monitor = {
               type = "app";
@@ -972,6 +1042,7 @@
               ┃ 🗄️  DATABASE                                               ┃
               ┃   setup    : nix run .#db-setup [dev|test|reset|check]     ┃
               ┃   connect  : psql $DATABASE_URL                            ┃
+              ┃   sqlx     : nix run .#sqlx-prepare                        ┃
               ┃                                                            ┃
               ┃ 🧪 TESTING                                                  ┃
               ┃   run      : nix run .#test [unit|integration|all]         ┃

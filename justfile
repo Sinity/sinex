@@ -94,6 +94,18 @@ migrate:
 migrate-create NAME:
     sqlx migrate add {{NAME}}
 
+# Update SQLX offline cache
+sqlx-prepare:
+    nix run .#sqlx-prepare
+
+# Update SQLX cache (alternative)
+sqlx-update:
+    ./scripts/update-sqlx-cache.sh
+
+# Check if SQLX cache is up to date
+sqlx-check:
+    cargo sqlx prepare --workspace --check -- --all-targets --all-features
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 Monitoring & Queries
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
