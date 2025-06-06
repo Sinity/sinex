@@ -12,7 +12,6 @@ mod integration_tests {
     use super::*;
     use crate::config::{Config, WindowAugmentation};
     use serde_json::json;
-    use std::sync::Arc;
 
     // These tests require a running PostgreSQL instance
     // They should be run with: cargo test --features integration-tests

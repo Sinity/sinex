@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use sinex_shared::{
     ingestor_framework::{Ingestor, IngestorConfig},
-    DatabaseService, sources, event_type_constants,
+    DatabaseService, sources,
 };
 use crate::cli::ConfigFormat;
 use crate::error::IngestorError;
