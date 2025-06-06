@@ -50,7 +50,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
+            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -65,6 +65,12 @@
               "-p"
               "hyprland-ingestor"
             ];
+
+            # Set DATABASE_URL for sqlx compilation
+            preBuild = ''
+              export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
+              export SQLX_OFFLINE=true
+            '';
           };
 
           # Build filesystem ingestor
@@ -73,7 +79,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
+            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -88,6 +94,12 @@
               "-p"
               "filesystem-ingestor"
             ];
+
+            # Set DATABASE_URL for sqlx compilation
+            preBuild = ''
+              export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
+              export SQLX_OFFLINE=true
+            '';
           };
 
           # Build kitty ingestor
@@ -96,7 +108,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
+            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -111,6 +123,12 @@
               "-p"
               "kitty-ingestor"
             ];
+
+            # Set DATABASE_URL for sqlx compilation
+            preBuild = ''
+              export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
+              export SQLX_OFFLINE=true
+            '';
           };
 
           # Build promotion worker
@@ -119,7 +137,7 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-LNoiD/cIqe4HgJ9obTSNsZnLii9ixz4DoZgnoWRbIr0=";
+            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
 
             buildInputs = with pkgs; [
               openssl
@@ -135,6 +153,12 @@
               "-p"
               "sinex-promo-worker"
             ];
+
+            # Set DATABASE_URL for sqlx compilation
+            preBuild = ''
+              export DATABASE_URL="''${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
+              export SQLX_OFFLINE=true
+            '';
           };
         in
         {
