@@ -1,22 +1,20 @@
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer};
+use anyhow::Result;
+use chrono::Utc;
+use notify::{EventKind, RecursiveMode, Watcher};
+use notify_debouncer_full::new_debouncer;
 use serde::{Deserialize, Serialize};
 use sinex_shared::{
-    agent_events::*, create_error_event, create_heartbeat_event, event_types, sources,
-    AgentMetrics, AgentStatus, DatabaseService, DlqManager, ErrorSeverity, RawEvent,
-    RetryConfig, Ulid, retry_db_operation,
+    create_heartbeat_event, event_type_constants, sources,
+    AgentMetrics, AgentStatus, DatabaseService, DlqManager, RawEvent, RawEventBuilder,
+    RetryConfig, retry_db_operation,
 };
-use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
-use walkdir::WalkDir;
 
 use crate::config::FilesystemConfig;
 
@@ -228,7 +226,7 @@ impl FilesystemWatcher {
                 };
 
                 (
-                    event_types::filesystem::FILE_CREATED,
+                    event_type_constants::filesystem::FILE_CREATED,
                     serde_json::to_value(FileCreatedPayload {
                         path: path_str,
                         object_type,
@@ -244,7 +242,7 @@ impl FilesystemWatcher {
                 };
 
                 (
-                    event_types::filesystem::FILE_MODIFIED,
+                    event_type_constants::filesystem::FILE_MODIFIED,
                     serde_json::to_value(FileModifiedPayload {
                         path: path_str,
                         object_type,
@@ -254,7 +252,7 @@ impl FilesystemWatcher {
             }
             EventKind::Remove(_) => {
                 (
-                    event_types::filesystem::FILE_DELETED,
+                    event_type_constants::filesystem::FILE_DELETED,
                     serde_json::to_value(FileDeletedPayload {
                         path: path_str,
                         object_type,
@@ -265,8 +263,9 @@ impl FilesystemWatcher {
         };
 
         Some(
-            RawEvent::new(sources::FILESYSTEM, event_type, payload)
+            RawEventBuilder::new(sources::FILESYSTEM, event_type, payload)
                 .with_orig_timestamp(Utc::now())
+                .build()
         )
     }
 

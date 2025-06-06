@@ -43,7 +43,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Tests don't currently use anything from super
 
     #[tokio::test]
     async fn test_pool_creation() {

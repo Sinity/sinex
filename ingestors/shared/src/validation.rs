@@ -307,7 +307,7 @@ impl EventValidator {
             sources::SINEX,
             event_type_constants::sinex::AGENT_HEARTBEAT,
             |payload| {
-                // Required: agent_name, timestamp_iso
+                // Required: agent_name
                 payload.get("agent_name")
                     .ok_or_else(|| ValidationError::MissingField { field: "agent_name".to_string() })?
                     .as_str()
@@ -317,21 +317,53 @@ impl EventValidator {
                         actual: format!("{:?}", payload.get("agent_name")),
                     })?;
                 
-                let timestamp = payload.get("timestamp_iso")
-                    .ok_or_else(|| ValidationError::MissingField { field: "timestamp_iso".to_string() })?
+                // Required: status
+                payload.get("status")
+                    .ok_or_else(|| ValidationError::MissingField { field: "status".to_string() })?
                     .as_str()
                     .ok_or_else(|| ValidationError::InvalidType {
-                        field: "timestamp_iso".to_string(),
-                        expected: "ISO8601 string".to_string(),
-                        actual: format!("{:?}", payload.get("timestamp_iso")),
+                        field: "status".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("status")),
                     })?;
                 
-                // Validate ISO8601 format
-                chrono::DateTime::parse_from_rfc3339(timestamp)
-                    .map_err(|_| ValidationError::InvalidValue {
-                        field: "timestamp_iso".to_string(),
-                        reason: "must be valid ISO8601/RFC3339 timestamp".to_string(),
+                // Required: version
+                payload.get("version")
+                    .ok_or_else(|| ValidationError::MissingField { field: "version".to_string() })?
+                    .as_str()
+                    .ok_or_else(|| ValidationError::InvalidType {
+                        field: "version".to_string(),
+                        expected: "string".to_string(),
+                        actual: format!("{:?}", payload.get("version")),
                     })?;
+                
+                // Optional numeric fields
+                if let Some(uptime) = payload.get("uptime_seconds") {
+                    uptime.as_u64()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "uptime_seconds".to_string(),
+                            expected: "non-negative integer".to_string(),
+                            actual: format!("{:?}", uptime),
+                        })?;
+                }
+                
+                if let Some(events) = payload.get("events_processed_session") {
+                    events.as_u64()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "events_processed_session".to_string(),
+                            expected: "non-negative integer".to_string(),
+                            actual: format!("{:?}", events),
+                        })?;
+                }
+                
+                if let Some(dlq_size) = payload.get("dlq_size") {
+                    dlq_size.as_u64()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "dlq_size".to_string(),
+                            expected: "non-negative integer".to_string(),
+                            actual: format!("{:?}", dlq_size),
+                        })?;
+                }
                 
                 Ok(())
             },

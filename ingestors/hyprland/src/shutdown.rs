@@ -287,6 +287,9 @@ mod tests {
     async fn test_shutdown_coordinator() {
         let coordinator = ShutdownCoordinator::new(10);
         
+        // Need to have a receiver to prevent channel closed error
+        let _receiver = coordinator.subscribe();
+        
         assert!(!coordinator.is_shutting_down().await);
         
         coordinator.shutdown("test").await.unwrap();

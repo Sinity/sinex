@@ -267,6 +267,7 @@ impl Config {
     }
 
     /// Get the database URL with connection parameters
+    #[allow(dead_code)]
     pub fn database_url_with_params(&self) -> String {
         format!(
             "{}?connect_timeout={}",

@@ -1,8 +1,5 @@
 use sinex_shared::{RawEventBuilder, sources, event_type_constants};
 use serde_json::json;
-use tempfile::TempDir;
-use std::fs::{File, create_dir_all};
-use std::io::Write;
 
 #[test]
 fn test_filesystem_event_creation() {

@@ -2,8 +2,16 @@
 set -euo pipefail
 
 # Script to diagnose assumption mismatches in the event data
+# Updated to work with flake apps
 
-DB_URL="${DATABASE_URL:-postgresql://sinex:sinex@localhost:5432/sinex}"
+# Ensure database is available
+echo "🗄️ Checking database..."
+if ! nix run .#db-setup check >/dev/null 2>&1; then
+    echo "❌ Database not available. Run: nix run .#db-setup dev"
+    exit 1
+fi
+
+DB_URL="${DATABASE_URL:-postgresql://localhost:5432/sinex_dev}"
 
 echo "=== Sinex Event Assumption Diagnostics ==="
 echo
