@@ -50,7 +50,9 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
             buildInputs = with pkgs; [
               openssl
@@ -68,6 +70,13 @@
 
             # Ensure SQLX offline mode
             SQLX_OFFLINE = "true";
+            SQLX_OFFLINE_DIR = "./.sqlx";
+            
+            # Disable cargo-auditable to avoid version conflicts
+            auditable = false;
+            
+            # Don't run tests during build
+            doCheck = false;
             
             preBuild = ''
               # Verify .sqlx directory exists
@@ -84,7 +93,9 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
             buildInputs = with pkgs; [
               openssl
@@ -102,6 +113,13 @@
 
             # Ensure SQLX offline mode
             SQLX_OFFLINE = "true";
+            SQLX_OFFLINE_DIR = "./.sqlx";
+            
+            # Disable cargo-auditable to avoid version conflicts
+            auditable = false;
+            
+            # Don't run tests during build
+            doCheck = false;
             
             preBuild = ''
               # Verify .sqlx directory exists
@@ -118,7 +136,9 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
             buildInputs = with pkgs; [
               openssl
@@ -136,6 +156,13 @@
 
             # Ensure SQLX offline mode
             SQLX_OFFLINE = "true";
+            SQLX_OFFLINE_DIR = "./.sqlx";
+            
+            # Disable cargo-auditable to avoid version conflicts
+            auditable = false;
+            
+            # Don't run tests during build
+            doCheck = false;
             
             preBuild = ''
               # Verify .sqlx directory exists
@@ -152,7 +179,9 @@
             version = "0.1.0";
             src = ./.;
 
-            cargoHash = "sha256-1b3lbpzYK9/8qV19mxCj2m4raU2sIEQR4i0KSkKDth0=";
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
             buildInputs = with pkgs; [
               openssl
@@ -171,6 +200,13 @@
 
             # Ensure SQLX offline mode
             SQLX_OFFLINE = "true";
+            SQLX_OFFLINE_DIR = "./.sqlx";
+            
+            # Disable cargo-auditable to avoid version conflicts
+            auditable = false;
+            
+            # Don't run tests during build
+            doCheck = false;
             
             preBuild = ''
               # Verify .sqlx directory exists
