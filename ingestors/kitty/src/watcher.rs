@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_shared::{event_types::{self, RawEventBuilder}, sources};
+use sinex_shared::{event_type_constants, RawEventBuilder, sources};
 use sinex_db::models::RawEvent;
 use std::collections::HashMap;
 use std::os::unix::fs::FileTypeExt;
@@ -35,13 +35,13 @@ struct KittyWindow {
     title: String,
 }
 
-/// Simplified Kitty terminal watcher
-pub struct SimpleKittyWatcher {
+/// Kitty terminal ingestor that watches for terminal events
+pub struct KittyIngestor {
     config: KittyConfig,
     last_command_times: Arc<Mutex<HashMap<u32, DateTime<Utc>>>>,
 }
 
-impl SimpleKittyWatcher {
+impl KittyIngestor {
     pub fn new(config: KittyConfig) -> Self {
         Self {
             config,
@@ -121,7 +121,7 @@ impl SimpleKittyWatcher {
 
                             let event = RawEventBuilder::new(
                                 sources::TERMINAL_KITTY,
-                                event_types::event_types::terminal::COMMAND_EXECUTED,
+                                event_type_constants::terminal::COMMAND_EXECUTED,
                                 serde_json::to_value(payload)?,
                             )
                             .with_orig_timestamp(cmd.ts_end_orig)
@@ -256,5 +256,24 @@ impl SimpleKittyWatcher {
         warn!("Command history extraction from Kitty is limited - consider shell integration");
         
         Ok(Vec::new())
+    }
+}
+
+// SimpleIngestor implementation for use with IngestorRuntime
+use async_trait::async_trait;
+use sinex_shared::SimpleIngestor;
+
+#[async_trait]
+impl SimpleIngestor for KittyIngestor {
+    fn name() -> &'static str {
+        "kitty-ingestor"
+    }
+    
+    fn version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+    
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        self.watch(event_tx).await
     }
 }

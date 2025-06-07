@@ -1,13 +1,12 @@
 use anyhow::Result;
-use sinex_shared::{IngestorRuntime, RuntimeConfig, MemorySink, sources, event_types};
+use sinex_shared::{IngestorRuntime, RuntimeConfig, MemorySink, sources, event_type_constants};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
-use filesystem_ingestor::config::FilesystemConfig;
-use filesystem_ingestor::simple_ingestor::FilesystemSimpleIngestor;
+use filesystem_ingestor::{FilesystemConfig, FilesystemIngestor};
 
 #[tokio::test]
 async fn test_filesystem_ingestor_captures_file_events() -> Result<()> {
@@ -30,7 +29,7 @@ async fn test_filesystem_ingestor_captures_file_events() -> Result<()> {
         retry_delay_secs: 5,
     };
     
-    let ingestor = FilesystemSimpleIngestor::new(config);
+    let ingestor = FilesystemIngestor::new(config);
     let event_sink = Arc::new(MemorySink::new());
     
     let runtime_config = RuntimeConfig {
@@ -85,13 +84,13 @@ async fn test_filesystem_ingestor_captures_file_events() -> Result<()> {
     
     // Check event types
     let has_create = fs_events.iter().any(|e| 
-        e.event_type == event_types::event_types::filesystem::FILE_CREATED
+        e.event_type == event_type_constants::filesystem::FILE_CREATED
     );
     let has_modify = fs_events.iter().any(|e| 
-        e.event_type == event_types::event_types::filesystem::FILE_MODIFIED
+        e.event_type == event_type_constants::filesystem::FILE_MODIFIED
     );
     let has_delete = fs_events.iter().any(|e| 
-        e.event_type == event_types::event_types::filesystem::FILE_DELETED
+        e.event_type == event_type_constants::filesystem::FILE_DELETED
     );
     
     assert!(has_create, "Should have file created event");
@@ -122,7 +121,7 @@ async fn test_filesystem_ingestor_exclude_patterns() -> Result<()> {
         retry_delay_secs: 5,
     };
     
-    let ingestor = FilesystemSimpleIngestor::new(config);
+    let ingestor = FilesystemIngestor::new(config);
     let event_sink = Arc::new(MemorySink::new());
     
     let runtime_config = RuntimeConfig::default();
@@ -197,7 +196,7 @@ async fn test_filesystem_ingestor_heartbeats() -> Result<()> {
         retry_delay_secs: 5,
     };
     
-    let ingestor = FilesystemSimpleIngestor::new(config);
+    let ingestor = FilesystemIngestor::new(config);
     let event_sink = Arc::new(MemorySink::new());
     
     let runtime_config = RuntimeConfig {

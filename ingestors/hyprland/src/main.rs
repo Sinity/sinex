@@ -1,8 +1,7 @@
 mod cli;
 mod config;
 mod error;
-mod simple_watcher;
-mod simple_ingestor;
+mod watcher;
 
 use anyhow::Result;
 use clap::Parser;
@@ -15,9 +14,9 @@ use sinex_shared::{
     DatabaseConfig, DatabaseService, ManifestManager, create_agent_manifest,
     sources, RetryConfig,
 };
-use simple_ingestor::HyprlandSimpleIngestor;
-use config::Config;
-use cli::{Cli, Commands, ConfigFormat};
+use crate::watcher::HyprlandIngestor;
+use crate::config::Config;
+use crate::cli::{Cli, Commands, ConfigFormat};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -105,7 +104,7 @@ async fn run_ingestor(config: Config, dry_run: bool, output_file: Option<PathBuf
     };
     
     // Create the simple ingestor
-    let ingestor = HyprlandSimpleIngestor::new(config.hyprland.clone());
+    let ingestor = HyprlandIngestor::new(config.hyprland.clone())?;
     
     // Create runtime config
     let runtime_config = RuntimeConfig {

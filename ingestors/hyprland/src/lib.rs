@@ -1,10 +1,11 @@
 pub mod cli;
 pub mod config;
 pub mod error;
-pub mod simple_watcher;
-pub mod simple_ingestor;
+pub mod watcher;
 
 pub use error::{IngestorError, Result};
+pub use config::HyprlandConfig;
+pub use watcher::HyprlandIngestor;
 
 #[cfg(test)]
 mod integration_tests {

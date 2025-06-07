@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_shared::{event_types::RawEventBuilder, sources};
+use sinex_shared::{RawEventBuilder, sources};
 use sinex_db::models::RawEvent;
 use std::collections::{HashMap, VecDeque};
 use std::env;
@@ -41,8 +41,8 @@ struct FocusHistoryEntry {
     window_data: Option<Value>,
 }
 
-/// Simplified Hyprland event watcher
-pub struct SimpleHyprlandWatcher {
+/// Hyprland ingestor that watches for window manager events
+pub struct HyprlandIngestor {
     config: HyprlandConfig,
     socket_path: PathBuf,
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
@@ -51,7 +51,7 @@ pub struct SimpleHyprlandWatcher {
     last_config_reload: Arc<Mutex<DateTime<Utc>>>,
 }
 
-impl SimpleHyprlandWatcher {
+impl HyprlandIngestor {
     pub fn new(config: HyprlandConfig) -> Result<Self> {
         // Get Hyprland instance signature
         let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE")
@@ -452,4 +452,38 @@ pub fn create_shutdown_event(agent_name: &str, reason: &str) -> RawEvent {
         }),
     )
     .build()
+}
+
+// SimpleIngestor implementation for use with IngestorRuntime
+use async_trait::async_trait;
+use sinex_shared::SimpleIngestor;
+
+#[async_trait]
+impl SimpleIngestor for HyprlandIngestor {
+    fn name() -> &'static str {
+        "hyprland-ingestor"
+    }
+    
+    fn version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+    
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        // Send startup event
+        let startup_event = create_startup_event(Self::name(), Self::version());
+        event_tx.send(startup_event).await?;
+        
+        // Run the watcher
+        let result = self.watch(event_tx.clone()).await;
+        
+        // Send shutdown event
+        let shutdown_reason = match &result {
+            Ok(_) => "normal".to_string(),
+            Err(e) => format!("error: {}", e),
+        };
+        let shutdown_event = create_shutdown_event(Self::name(), &shutdown_reason);
+        let _ = event_tx.send(shutdown_event).await;
+        
+        result
+    }
 }

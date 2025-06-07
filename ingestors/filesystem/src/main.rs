@@ -1,7 +1,6 @@
 mod cli;
 mod config;
-mod simple_watcher;
-mod simple_ingestor;
+mod watcher;
 
 use anyhow::Result;
 use clap::Parser;
@@ -12,11 +11,11 @@ use tracing::{error, info};
 use sinex_shared::{
     IngestorRuntime, RuntimeConfig, EventSink, DatabaseSink, LogSink, FileSink,
     DatabaseConfig, DatabaseService, ManifestManager, create_agent_manifest,
-    sources, event_types,
+    sources, event_type_constants,
 };
-use simple_ingestor::FilesystemSimpleIngestor;
-use config::Config;
-use cli::Cli;
+use crate::watcher::FilesystemIngestor;
+use crate::config::Config;
+use crate::cli::Cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -100,7 +99,7 @@ async fn run_ingestor(config: Config, dry_run: bool, output_file: Option<PathBuf
     };
     
     // Create the simple ingestor
-    let ingestor = FilesystemSimpleIngestor::new(config.filesystem.clone());
+    let ingestor = FilesystemIngestor::new(config.filesystem.clone());
     
     // Create runtime config
     let runtime_config = RuntimeConfig {
@@ -127,10 +126,10 @@ async fn register_manifest(db: &DatabaseService) -> Result<()> {
     produces.insert(
         sources::FILESYSTEM.to_string(),
         vec![
-            event_types::event_types::filesystem::FILE_CREATED.to_string(),
-            event_types::event_types::filesystem::FILE_MODIFIED.to_string(),
-            event_types::event_types::filesystem::FILE_DELETED.to_string(),
-            event_types::event_types::filesystem::FILE_RENAMED.to_string(),
+            event_type_constants::filesystem::FILE_CREATED.to_string(),
+            event_type_constants::filesystem::FILE_MODIFIED.to_string(),
+            event_type_constants::filesystem::FILE_DELETED.to_string(),
+            event_type_constants::filesystem::FILE_RENAMED.to_string(),
         ],
     );
     
@@ -138,9 +137,9 @@ async fn register_manifest(db: &DatabaseService) -> Result<()> {
     produces.insert(
         sources::SINEX.to_string(),
         vec![
-            event_types::event_types::sinex::AGENT_HEARTBEAT.to_string(),
-            event_types::event_types::sinex::AGENT_ERROR.to_string(),
-            event_types::event_types::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
+            event_type_constants::sinex::AGENT_HEARTBEAT.to_string(),
+            event_type_constants::sinex::AGENT_ERROR.to_string(),
+            event_type_constants::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
         ],
     );
 

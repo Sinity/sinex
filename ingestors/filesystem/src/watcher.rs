@@ -1,9 +1,11 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::Utc;
 use notify::{EventKind, RecursiveMode, Watcher};
 use notify_debouncer_full::new_debouncer;
 use serde::{Deserialize, Serialize};
-use sinex_shared::{event_type_constants, sources, RawEventBuilder};
+use sinex_shared::{event_type_constants, sources, RawEventBuilder, SimpleIngestor};
+use sinex_db::models::RawEvent;
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc as std_mpsc;
@@ -52,18 +54,18 @@ pub enum ObjectType {
     Directory,
 }
 
-/// Simplified filesystem watcher that only captures events
-pub struct SimpleFilesystemWatcher {
+/// Filesystem ingestor that watches for file system events
+pub struct FilesystemIngestor {
     config: FilesystemConfig,
 }
 
-impl SimpleFilesystemWatcher {
+impl FilesystemIngestor {
     pub fn new(config: FilesystemConfig) -> Self {
         Self { config }
     }
 
     /// Start watching and send events through the provided channel
-    pub async fn watch(&mut self, event_tx: mpsc::Sender<sinex_db::models::RawEvent>) -> Result<()> {
+    async fn watch(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
         info!(
             watch_dirs = ?self.config.watch_directories,
             exclude_patterns = ?self.config.exclude_patterns,
@@ -144,7 +146,7 @@ impl SimpleFilesystemWatcher {
     fn process_notify_event(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
-    ) -> Option<sinex_db::models::RawEvent> {
+    ) -> Option<RawEvent> {
         let path = event.paths.first()?;
         let path_str = path.to_string_lossy().to_string();
 
@@ -250,5 +252,21 @@ impl SimpleFilesystemWatcher {
             }
             _ => None,
         }
+    }
+}
+
+// SimpleIngestor implementation for use with IngestorRuntime
+#[async_trait]
+impl SimpleIngestor for FilesystemIngestor {
+    fn name() -> &'static str {
+        "filesystem-ingestor"
+    }
+    
+    fn version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+    
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        self.watch(event_tx).await
     }
 }
