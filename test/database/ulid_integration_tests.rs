@@ -1,10 +1,10 @@
 use sinex_ulid::Ulid;
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
+use std::collections::HashSet;
 
 #[sqlx::test]
 async fn test_ulid_roundtrip_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
     // Generate ULID in Rust
     let ulid = Ulid::new();
     let ulid_string = ulid.to_string();
@@ -16,21 +16,20 @@ async fn test_ulid_roundtrip_database(pool: sqlx::PgPool) -> Result<(), Box<dyn 
          RETURNING id::text"
     )
     .bind(&ulid_string)
-    .bind("test_source")
-    .bind("test_type")
+    .bind("roundtrip_test_v2")
+    .bind("test_type_v2")
     .bind("test_host")
     .bind(serde_json::json!({"test": "data"}))
     .fetch_one(&pool)
-    .await
-    .unwrap();
+    .await?;
     
     assert_eq!(ulid_string, inserted_id, "ULID should roundtrip correctly");
+    Ok(())
 }
 
 #[sqlx::test]
 async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Insert multiple events with slight delays
+    // Insert multiple events with delays to ensure proper ordering
     let mut ulids = Vec::new();
     
     for i in 0..5 {
@@ -49,8 +48,8 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
         .execute(&pool)
         .await?;
         
-        // Small delay to ensure different timestamps
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        // Ensure different timestamps by sleeping
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     
     // Query events ordered by ID
@@ -64,6 +63,16 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
     
     // Verify they're in the same order as inserted
     assert_eq!(ulids, ordered_ids, "ULIDs should maintain insertion order when sorted");
+    
+    // Also verify strict ordering by comparing ULIDs directly
+    for i in 1..ulids.len() {
+        let prev_ulid = Ulid::from_str(&ulids[i-1])?;
+        let curr_ulid = Ulid::from_str(&ulids[i])?;
+        assert!(curr_ulid > prev_ulid, 
+            "Each ULID should be greater than the previous: {} > {}", 
+            curr_ulid, prev_ulid);
+    }
+    
     Ok(())
 }
 
@@ -127,13 +136,31 @@ async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dy
         .map_err(|e| format!("Failed to parse stored ULID: {}", e))?;
     let extracted_timestamp = stored_ulid.timestamp();
     
-    // Compare timestamps (allow 1ms difference due to precision)
-    let diff = expected_timestamp.signed_duration_since(extracted_timestamp);
-    assert!(
-        diff.num_milliseconds().abs() <= 1,
-        "Extracted timestamp should match ULID timestamp: expected {:?}, got {:?}",
+    // Compare timestamps (should be identical since it's the same ULID)
+    assert_eq!(expected_timestamp, extracted_timestamp,
+        "Extracted timestamp should exactly match ULID timestamp: expected {:?}, got {:?}",
         expected_timestamp, extracted_timestamp
     );
+    
+    // Also verify that the extracted timestamp is reasonable (within last few seconds)
+    let now = chrono::Utc::now();
+    let age = now.signed_duration_since(extracted_timestamp);
+    assert!(age.num_seconds() < 10, 
+        "ULID timestamp should be recent (within 10 seconds): age = {} seconds", 
+        age.num_seconds());
+    
+    // Test the generated ts_ingest column matches our ULID timestamp
+    let ts_ingest: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT ts_ingest FROM raw.events WHERE source = 'timestamp_test_v2'"
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    // ts_ingest is generated from id::timestamp, should match our extraction
+    let ts_ingest_diff = extracted_timestamp.signed_duration_since(ts_ingest);
+    assert!(ts_ingest_diff.num_milliseconds().abs() <= 1,
+        "ts_ingest column should match extracted timestamp: ULID={:?}, ts_ingest={:?}, diff={}ms",
+        extracted_timestamp, ts_ingest, ts_ingest_diff.num_milliseconds());
     
     Ok(())
 }
@@ -143,17 +170,24 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
     // Generate multiple ULIDs rapidly to test monotonic behavior
     let mut prev_ulid = None;
     let mut ulids = Vec::new();
+    let mut unique_check = HashSet::new();
     
     for i in 0..10 {
         let ulid = Ulid::new_monotonic(prev_ulid.as_ref());
-        ulids.push(ulid.to_string());
+        let ulid_str = ulid.to_string();
+        
+        // Verify uniqueness immediately
+        assert!(unique_check.insert(ulid_str.clone()), 
+            "Generated non-unique ULID: {}", ulid_str);
+        
+        ulids.push(ulid_str.clone());
         prev_ulid = Some(ulid);
         
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
         )
-        .bind(&ulid.to_string())
+        .bind(&ulid_str)
         .bind("monotonic_test_v2")
         .bind("test_type_v2")
         .bind("test_host")
@@ -162,29 +196,31 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
         .await?;
     }
     
-    // Verify all ULIDs are unique
+    // Verify all ULIDs are unique in database
     let unique_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(DISTINCT id) FROM raw.events WHERE source = 'monotonic_test_v2'"
     )
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique");
+    assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
     
-    // Verify they're in order
+    // Verify they're in order in database
     let ordered: Vec<String> = sqlx::query_scalar(
         "SELECT id::text FROM raw.events WHERE source = 'monotonic_test_v2' ORDER BY id"
     )
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order");
+    assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order in database");
     
-    // Also verify that each ULID is actually greater than the previous
+    // Verify strict monotonic ordering
     for i in 1..ulids.len() {
         let prev = Ulid::from_str(&ulids[i-1])?;
         let curr = Ulid::from_str(&ulids[i])?;
-        assert!(curr > prev, "Each monotonic ULID should be greater than the previous: {} > {}", curr, prev);
+        assert!(curr > prev, 
+            "Each monotonic ULID should be greater than the previous: {} > {}", 
+            curr, prev);
     }
     
     Ok(())
@@ -192,10 +228,10 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
 
 #[sqlx::test]
 async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Insert events across time range
-    let start_time = chrono::Utc::now();
+    // Insert events with significant time separation to ensure reliable range queries
     let mut first_batch_ulids = Vec::new();
     
+    // First batch - insert with delays
     for i in 0..5 {
         let ulid = Ulid::new();
         first_batch_ulids.push(ulid);
@@ -206,18 +242,21 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         )
         .bind(&ulid.to_string())
         .bind("range_test_v2")
-        .bind("test_type_v2")
+        .bind("first_batch")
         .bind("test_host")
-        .bind(serde_json::json!({"seq": i}))
+        .bind(serde_json::json!({"seq": i, "batch": "first"}))
         .execute(&pool)
         .await?;
         
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     
+    // Significant gap between batches
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     let mid_time = chrono::Utc::now();
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;  // Ensure gap
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     
+    // Second batch - insert with delays
     let mut second_batch_ulids = Vec::new();
     for i in 5..10 {
         let ulid = Ulid::new();
@@ -229,13 +268,13 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         )
         .bind(&ulid.to_string())
         .bind("range_test_v2")
-        .bind("test_type_v2")
+        .bind("second_batch")
         .bind("test_host")
-        .bind(serde_json::json!({"seq": i}))
+        .bind(serde_json::json!({"seq": i, "batch": "second"}))
         .execute(&pool)
         .await?;
         
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     
     // Create a ULID from the mid_time for comparison
@@ -260,10 +299,30 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     .fetch_one(&pool)
     .await?;
     
-    // The exact counts may vary due to timing, but we should have events in both ranges
-    assert!(count_before_mid >= 3, "Should have at least 3 events before mid time, got {}", count_before_mid);
-    assert!(count_after_mid >= 3, "Should have at least 3 events after mid time, got {}", count_after_mid);
-    assert_eq!(count_before_mid + count_after_mid, 10, "Total should be 10 events");
+    // Verify range query behavior with better timing separation
+    assert!(count_before_mid >= 4, 
+        "Should have at least 4 events before mid time (first batch), got {}", 
+        count_before_mid);
+    assert!(count_after_mid >= 4, 
+        "Should have at least 4 events after mid time (second batch), got {}", 
+        count_after_mid);
+    assert_eq!(count_before_mid + count_after_mid, 10, 
+        "Total should be 10 events: {} before + {} after = 10", 
+        count_before_mid, count_after_mid);
+    
+    // Additional verification: check that all first batch ULIDs are before mid_ulid
+    for ulid in &first_batch_ulids {
+        assert!(ulid < &mid_ulid, 
+            "First batch ULID {} should be before mid_ulid {}", 
+            ulid, mid_ulid);
+    }
+    
+    // And all second batch ULIDs are after mid_ulid
+    for ulid in &second_batch_ulids {
+        assert!(ulid >= &mid_ulid, 
+            "Second batch ULID {} should be after or equal to mid_ulid {}", 
+            ulid, mid_ulid);
+    }
     
     Ok(())
 }
@@ -323,10 +382,12 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
 
 #[sqlx::test]
 async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Insert events to test indexing and lookup performance
+    let mut test_ulids = Vec::new();
     
-    // Insert many events
-    for i in 0..100 {
+    for i in 0..50 {
         let ulid = Ulid::new();
+        test_ulids.push(ulid.to_string());
         
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
@@ -341,43 +402,82 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
         .await?;
     }
     
-    // Analyze table to update statistics
-    sqlx::query("ANALYZE raw.events")
-        .execute(&pool)
-        .await?;
-    
-    // Test that we can efficiently query by ULID primary key
-    let test_ulid = Ulid::new();
+    // Insert a specific test ULID for lookup verification
+    let lookup_ulid = Ulid::new();
     sqlx::query(
         "INSERT INTO raw.events (id, source, event_type, host, payload) 
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
     )
-    .bind(&test_ulid.to_string())
+    .bind(&lookup_ulid.to_string())
     .bind("perf_test_v2")
     .bind("lookup_test")
     .bind("test_host")
-    .bind(serde_json::json!({"lookup": true}))
+    .bind(serde_json::json!({"lookup": true, "special": "target"}))
     .execute(&pool)
     .await?;
     
-    // Query by primary key should be efficient
-    let found: Option<String> = sqlx::query_scalar(
+    // Update table statistics for accurate query planning
+    sqlx::query("ANALYZE raw.events")
+        .execute(&pool)
+        .await?;
+    
+    // Test primary key lookup efficiency
+    let found_event_type: Option<String> = sqlx::query_scalar(
         "SELECT event_type FROM raw.events WHERE id = $1::ulid"
     )
-    .bind(&test_ulid.to_string())
+    .bind(&lookup_ulid.to_string())
     .fetch_optional(&pool)
     .await?;
     
-    assert_eq!(found, Some("lookup_test".to_string()), "Should efficiently find event by ULID primary key");
+    assert_eq!(found_event_type, Some("lookup_test".to_string()), 
+        "Should efficiently find event by ULID primary key");
     
-    // Test range query performance 
-    let count: i64 = sqlx::query_scalar(
+    // Test that we can lookup the specific payload  
+    let found_payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM raw.events WHERE id = $1::ulid"
+    )
+    .bind(&lookup_ulid.to_string())
+    .fetch_one(&pool)
+    .await?;
+    
+    assert_eq!(found_payload["special"], "target", 
+        "Should retrieve correct payload for ULID lookup");
+    
+    // Test range query performance with ULID ordering
+    let mid_index = test_ulids.len() / 2;
+    let mid_ulid = &test_ulids[mid_index];
+    
+    let count_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM raw.events 
+         WHERE source = 'perf_test_v2' AND id < $1::ulid"
+    )
+    .bind(mid_ulid)
+    .fetch_one(&pool)
+    .await?;
+    
+    let count_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM raw.events 
+         WHERE source = 'perf_test_v2' AND id >= $1::ulid"
+    )
+    .bind(mid_ulid)
+    .fetch_one(&pool)
+    .await?;
+    
+    // Verify range queries work correctly
+    assert!(count_before > 0, "Should find events before mid ULID");
+    assert!(count_after > 0, "Should find events after mid ULID");
+    
+    // Total count should be our inserted events
+    let total_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE source = 'perf_test_v2'"
     )
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(count, 101, "Should have inserted 101 events total (100 + 1 lookup test)");
+    assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
+    assert_eq!(count_before + count_after, total_count, 
+        "Range query counts should sum to total: {} + {} = {}", 
+        count_before, count_after, total_count);
     
     Ok(())
 }
