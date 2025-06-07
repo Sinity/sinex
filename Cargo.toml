@@ -9,7 +9,7 @@ members = [
     "ingestors/hyprland",
     "ingestors/kitty",
     "ingestors/filesystem",
-    "ingestors/unified", "crates/sinex-runtime",
+    "ingestors/unified",
 ]
 resolver = "2"
 

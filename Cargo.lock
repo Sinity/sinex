@@ -2788,26 +2788,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-runtime"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "directories",
- "once_cell",
- "serde",
- "serde_json",
- "sinex-core",
- "sinex-db",
- "sinex-ulid",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "sinex-shared"
 version = "0.3.0"
 dependencies = [
