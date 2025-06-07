@@ -4,31 +4,29 @@ This directory contains the main integration and system tests for the Sinex proj
 
 ## Test Categories
 
-### Core Infrastructure Tests
+### Database Tests (`database/`)
 - `database_integration_tests.rs` - Database connection and basic operations
 - `migration_tests.rs` - Database migration verification
 - `timescaledb_tests.rs` - TimescaleDB-specific functionality
 - `ulid_integration_tests.rs` - ULID primary key implementation
-
-### Event Processing Tests  
-- `event_pipeline_integration_tests.rs` - Event ingestion and routing
 - `jsonschema_validation_tests.rs` - Event payload validation
 - `schema_validation_tests.rs` - Schema registry and validation
+
+### Pipeline Tests (`pipeline/`)
+- `event_pipeline_integration_tests.rs` - Event ingestion and routing
 - `promotion_worker_integration.rs` - Event promotion queue processing
 - `worker_concurrency_tests.rs` - Concurrent worker behavior
+- `end_to_end_pipeline_test.rs` - Full pipeline integration test
+- `real_pipeline_test.rs` - Realistic pipeline scenarios
 
-### Agent/Ingestor Tests
+### Agent Tests (`agents/`)
 - `agent_manifest_tests.rs` - Agent registration and manifest management
 - `heartbeat_tests.rs` - Agent heartbeat mechanism
 
-### Error Handling & Reliability Tests
+### Reliability Tests (`reliability/`)
 - `error_handling_tests.rs` - Error recovery and DLQ functionality
 - `realistic_failure_tests.rs` - Failure scenario simulation
 - `assumption_mismatch_tests.rs` - Handling invalid assumptions
-
-### End-to-End Tests
-- `end_to_end_pipeline_test.rs` - Full pipeline integration test
-- `real_pipeline_test.rs` - Realistic pipeline scenarios
 
 ### Property-Based Tests
 - `property_tests.rs` - Property-based testing for edge cases
