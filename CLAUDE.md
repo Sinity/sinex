@@ -36,7 +36,7 @@ impl SimpleIngestor for MyIngestor {
 
 ### Code Organization
 - Consolidate related code - avoid excessive file atomization
-- Tests go in categorized subdirectories under `tests/`
+- Tests go in categorized subdirectories under `test/`
 - Put my working docs in `spec/docs/claude/`
 - Clean up obsolete code/files proactively
 
@@ -54,19 +54,19 @@ sinex/
 │   ├── sinex-ulid/           # ULID ↔ UUID conversion
 │   ├── sinex-worker/         # Worker implementations
 │   └── sinex-promo-worker/   # Promotion queue worker
-├── ingestors/
+├── ingestor/
 │   ├── shared/               # Shared utilities (gradually migrating to crates)
 │   ├── filesystem/           # Watch file system changes
 │   ├── kitty/               # Capture terminal commands
 │   ├── hyprland/            # Window manager events
 │   └── unified/             # Example multi-source collector
 ├── config/                   # Example configurations for each ingestor
-├── tests/                    # Categorized test suites
+├── test/                    # Categorized test suites
 │   ├── database/            # Schema, migrations, ULID
 │   ├── pipeline/            # Event processing, workers
 │   ├── agents/              # Manifests, heartbeats
 │   └── reliability/         # Error handling, failures
-├── migrations/              # SQL schema migrations (sqlx)
+├── migration/              # SQL schema migrations (sqlx)
 ├── spec/                    # Documentation
 │   ├── SADI.md             # Start here - doc index
 │   ├── docs/tims/          # Implementation specs
@@ -79,7 +79,7 @@ sinex/
 ### Development Setup
 ```bash
 nix develop                      # Always run first - enters dev shell
-./scripts/db_reset.sh           # Initialize database
+./script/db_reset.sh           # Initialize database
 cargo check --workspace         # Verify build
 ```
 
@@ -97,7 +97,7 @@ sqlx migrate add feature_name   # New migration
 psql $DATABASE_URL             # Direct connection
 
 # Fix SQLX cache after query changes
-./scripts/update-sqlx-cache.sh
+./script/update-sqlx-cache.sh
 ```
 
 ### Testing
@@ -162,7 +162,7 @@ postgresql:///sinex?host=/run/postgresql
 - Always in nix shell? (`nix develop`)
 - Database running? (`psql $DATABASE_URL`)
 - Migrations applied? (`sqlx migrate run`)
-- SQLX cache current? (`./scripts/update-sqlx-cache.sh`)
+- SQLX cache current? (`./script/update-sqlx-cache.sh`)
 
 ## 💡 Principles
 

@@ -28,7 +28,7 @@ This directory contains the main integration and system tests for the Sinex proj
 - `realistic_failure_tests.rs` - Failure scenario simulation
 - `assumption_mismatch_tests.rs` - Handling invalid assumptions
 
-### Ingestor Tests (`ingestors/`)
+### Ingestor Tests (`ingestor/`)
 - `filesystem_tests.rs` - Filesystem ingestor tests
 - `integration_tests.rs` - Ingestor integration tests
 

@@ -5,7 +5,7 @@ This directory contains the event ingestors for the Sinex system.
 ## Structure
 
 ```
-ingestors/
+ingestor/
 ├── shared/           # Shared libraries and utilities for all ingestors
 │   ├── src/         # Source code
 │   └── tests/       # Unit tests for shared components

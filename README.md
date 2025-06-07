@@ -9,7 +9,7 @@ A personal data substrate that captures digital events across devices and modali
 nix develop
 
 # Initialize database
-./scripts/db_reset.sh
+./script/db_reset.sh
 
 # Run a simple test
 cargo run --bin filesystem-ingestor -- --dry-run
@@ -35,12 +35,12 @@ sinex/
 │   ├── sinex-db/           # Database models and pooling
 │   ├── sinex-ulid/         # ULID implementation
 │   └── sinex-worker/       # Event processing workers
-├── ingestors/              # Event capture implementations
+├── ingestor/              # Event capture implementations
 │   ├── filesystem/         # File system monitoring
 │   ├── kitty/             # Terminal command capture
 │   └── hyprland/          # Window manager events
 ├── config/                 # Example configurations
-├── tests/                  # Organized test suites
+├── test/                  # Organized test suites
 └── cli/                    # Python query tools
 ```
 
@@ -110,7 +110,7 @@ sqlx migrate add feature_name
 psql $DATABASE_URL
 
 # Update SQLX cache after query changes
-./scripts/update-sqlx-cache.sh
+./script/update-sqlx-cache.sh
 ```
 
 ## 🔧 Configuration
@@ -127,9 +127,9 @@ cargo run --bin hyprland-ingestor -- config
 
 ## 🧪 Testing Strategy
 
-Tests are organized by category in `tests/`:
+Tests are organized by category in `test/`:
 
-- `database/` - Schema, migrations, ULID tests
+- `database/` - Schema, migration, ULID tests
 - `pipeline/` - Event processing and worker tests
 - `agents/` - Agent manifest and heartbeat tests
 - `reliability/` - Error handling and failure scenarios

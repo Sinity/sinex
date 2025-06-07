@@ -33,7 +33,7 @@ async fn test_all_migrations_run_successfully() {
         .expect("Failed to connect to test database");
     
     // Run migrations
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("./migration")
         .run(&pool)
         .await
         .expect("Failed to run migrations");
@@ -256,7 +256,7 @@ async fn test_migration_rollback() {
         .expect("Failed to connect to test database");
     
     // Run migrations
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("./migration")
         .run(&pool)
         .await
         .expect("Failed to run migrations");
