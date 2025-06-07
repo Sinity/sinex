@@ -268,13 +268,13 @@ in {
         ExecStart = "${pkgs.writeShellScript "hyprland-ingestor-wrapper" ''
           #!/usr/bin/env bash
           # Wait for Hyprland to be available
-          while ! pgrep -x Hyprland > /dev/null; do
+          while ! pgrep -f "Hyprland" > /dev/null; do
             echo "Waiting for Hyprland to start..."
             sleep 5
           done
           
           # Find the actual user running Hyprland
-          HYPRLAND_USER=$(pgrep -x Hyprland -o | xargs ps -o user= -p | tr -d ' ')
+          HYPRLAND_USER=$(pgrep -f "Hyprland" -o | xargs ps -o user= -p | tr -d ' ')
           HYPRLAND_UID=$(id -u "$HYPRLAND_USER" 2>/dev/null || echo "1000")
           
           # Get the user's runtime directory  

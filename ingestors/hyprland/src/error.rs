@@ -68,6 +68,7 @@ impl IngestorError {
     }
 
     /// Create a new application error
+    #[allow(dead_code)]
     pub fn application(msg: impl Into<String>) -> Self {
         Self::Application(msg.into())
     }
