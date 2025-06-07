@@ -40,6 +40,10 @@ impl SimpleIngestor for MyIngestor {
 - Put my working docs in `spec/docs/claude/`
 - Clean up obsolete code/files proactively
 
+## 🌟 Memory Bank
+
+- After you finish with your task which involved modifying source code, ensure there is no mess left behind, git commit your changes and only then your job is considered done.
+
 ## 📁 Project Map
 
 ```
