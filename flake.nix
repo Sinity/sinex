@@ -1107,6 +1107,20 @@
               export TEST_DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
               export SQLX_OFFLINE=true
 
+              # Auto-setup development database if PostgreSQL is running
+              if ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+                  echo "🗄️ Setting up development database..."
+                  ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev >/dev/null 2>&1 || true
+                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null 2>&1 || true
+                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1 || true
+                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null 2>&1 || true
+                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null 2>&1 || true
+                  sqlx migrate run >/dev/null 2>&1 || true
+                  echo "✅ Database ready"
+                fi
+              fi
+
               cat <<'EOF'
               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
               ┃  Sinex Exocortex devShell                                  ┃

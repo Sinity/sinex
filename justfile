@@ -98,10 +98,6 @@ migrate-create NAME:
 sqlx-prepare:
     nix run .#sqlx-prepare
 
-# Update SQLX cache (alternative)
-sqlx-update:
-    ./script/update-sqlx-cache.sh
-
 # Check if SQLX cache is up to date
 sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
