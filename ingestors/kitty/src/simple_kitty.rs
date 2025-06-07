@@ -1,22 +1,19 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_shared::{
-    agent_events::*, create_error_event, create_heartbeat_event, event_types::{self, RawEventBuilder}, sources,
-    AgentMetrics, AgentStatus, EventSink, DlqManager, ErrorSeverity,
-    RetryConfig, retry_db_operation,
-};
-use sinex_db::models::RawEvent;
 use std::collections::HashMap;
 use std::os::unix::fs::FileTypeExt;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time;
+use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::config::KittyConfig;
+use sinex_shared::{
+    SimpleIngestor, event_types::{self, RawEventBuilder}, sources,
+    agent_events::{AgentError, ErrorSeverity}, create_error_event,
+};
+use sinex_db::models::RawEvent;
 
 /// Command execution event payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,133 +36,24 @@ struct KittyWindow {
     title: String,
 }
 
-/// Kitty terminal listener
-pub struct KittyListener {
+/// Simplified Kitty ingestor that only handles event capture
+pub struct SimpleKittyIngestor {
     config: KittyConfig,
-    event_sink: Arc<dyn EventSink>,
-    dlq: Arc<DlqManager>,
-    metrics: Arc<Mutex<AgentMetrics>>,
-    retry_config: RetryConfig,
-    last_command_times: Arc<Mutex<HashMap<u32, DateTime<Utc>>>>,
+    last_command_times: HashMap<u32, DateTime<Utc>>,
 }
 
-impl KittyListener {
-    pub fn new(config: KittyConfig, event_sink: Arc<dyn EventSink>) -> Result<Self> {
-        let dlq = Arc::new(DlqManager::new("kitty-ingestor")?);
-        let metrics = Arc::new(Mutex::new(AgentMetrics::new(
-            "kitty-ingestor",
-            env!("CARGO_PKG_VERSION"),
-        )));
-        
-        let retry_config = RetryConfig {
-            max_retries: config.max_retries,
-            initial_delay: Duration::from_secs(1),
-            max_delay: Duration::from_secs(config.retry_delay_secs),
-            exponential_base: 2,
-        };
-
-        Ok(Self {
+impl SimpleKittyIngestor {
+    pub fn new(config: KittyConfig) -> Self {
+        Self {
             config,
-            event_sink,
-            dlq,
-            metrics,
-            retry_config,
-            last_command_times: Arc::new(Mutex::new(HashMap::new())),
-        })
+            last_command_times: HashMap::new(),
+        }
     }
-
-    /// Start the Kitty listener
-    pub async fn start(self) -> Result<()> {
-        info!(
-            agent_name = "kitty-ingestor",
-            version = env!("CARGO_PKG_VERSION"),
-            config.polling_interval = %self.config.polling_interval_secs,
-            config.heartbeat_interval = %self.config.heartbeat_interval_secs,
-            "Starting Kitty terminal listener"
-        );
-
-        let (event_tx, mut event_rx) = mpsc::channel(1000);
-        
-        // Spawn event sink writer task
-        let event_sink = Arc::clone(&self.event_sink);
-        let dlq = Arc::clone(&self.dlq);
-        let retry_config = self.retry_config.clone();
-        let metrics = Arc::clone(&self.metrics);
-        
-        let sink_writer = tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                Self::process_event_with_retry(
-                    &event_sink,
-                    &dlq,
-                    &retry_config,
-                    &metrics,
-                    event,
-                )
-                .await;
-            }
-        });
-
-        // Spawn heartbeat task
-        let heartbeat_tx = event_tx.clone();
-        let metrics_clone = Arc::clone(&self.metrics);
-        let heartbeat_interval = self.config.heartbeat_interval_secs;
-        
-        let heartbeat_task = tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(heartbeat_interval));
-            loop {
-                interval.tick().await;
-                let heartbeat = {
-                    let metrics = metrics_clone.lock().unwrap();
-                    metrics.create_heartbeat(AgentStatus::Running)
-                };
-                let event = create_heartbeat_event(heartbeat);
-                if heartbeat_tx.send(event).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Spawn command polling task
-        let command_tx = event_tx.clone();
-        let socket_path = self.config.socket_path.clone();
-        let polling_interval = self.config.polling_interval_secs;
-        let last_command_times = Arc::clone(&self.last_command_times);
-        
-        let polling_task = tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(polling_interval));
-            loop {
-                interval.tick().await;
-                
-                if let Err(e) = Self::poll_kitty_commands(&command_tx, &socket_path, &last_command_times).await {
-                    error!("Error polling Kitty commands: {}", e);
-                    
-                    // Send error event
-                    let error = AgentError {
-                        agent_name: "kitty-ingestor".to_string(),
-                        error_message: format!("Failed to poll Kitty commands: {}", e),
-                        error_context: "command_polling".to_string(),
-                        severity: ErrorSeverity::Warning,
-                        original_event_id_if_related: None,
-                    };
-                    let _ = command_tx.send(create_error_event(error)).await;
-                }
-            }
-        });
-
-        // Wait for tasks
-        tokio::try_join!(sink_writer, heartbeat_task, polling_task)?;
-
-        Ok(())
-    }
-
+    
     /// Poll Kitty for new commands
-    async fn poll_kitty_commands(
-        tx: &mpsc::Sender<RawEvent>,
-        socket_pattern: &str,
-        last_command_times: &Arc<Mutex<HashMap<u32, DateTime<Utc>>>>,
-    ) -> Result<()> {
+    async fn poll_kitty_commands(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
         // Find Kitty sockets
-        let sockets = Self::find_kitty_sockets(socket_pattern)?;
+        let sockets = Self::find_kitty_sockets(&self.config.socket_path)?;
         
         if sockets.is_empty() {
             debug!("No Kitty sockets found");
@@ -178,7 +66,7 @@ impl KittyListener {
                 Ok(windows) => windows,
                 Err(e) => {
                     error!("Failed to get windows from socket {}: {}", socket, e);
-                    continue; // Skip this socket but try others
+                    continue;
                 }
             };
             
@@ -189,10 +77,10 @@ impl KittyListener {
                 // Get command history for this window
                 if let Ok(commands) = Self::get_window_commands(&socket, window.id) {
                     let now = Utc::now();
-                    let last_time = {
-                        let times = last_command_times.lock().unwrap();
-                        times.get(&window.id).cloned().unwrap_or(now - chrono::Duration::hours(1))
-                    };
+                    let last_time = self.last_command_times
+                        .get(&window.id)
+                        .cloned()
+                        .unwrap_or(now - chrono::Duration::hours(1));
 
                     for cmd in &commands {
                         if cmd.ts_end_orig > last_time {
@@ -232,28 +120,24 @@ impl KittyListener {
 
                     // Update last command time
                     if let Some(last_cmd) = commands.last() {
-                        let mut times = last_command_times.lock().unwrap();
-                        times.insert(window.id, last_cmd.ts_end_orig);
+                        self.last_command_times.insert(window.id, last_cmd.ts_end_orig);
                     }
                 }
             }
             
             // Clean up entries for closed windows
-            {
-                let mut times = last_command_times.lock().unwrap();
-                let closed_windows: Vec<u32> = times.keys()
-                    .filter(|id| !active_window_ids.contains(id))
-                    .cloned()
-                    .collect();
-                
-                for closed_id in closed_windows {
-                    debug!("Removing tracking for closed window: {}", closed_id);
-                    times.remove(&closed_id);
-                }
-                
-                if times.len() > 100 {
-                    warn!("Tracking {} windows - possible memory leak?", times.len());
-                }
+            let closed_windows: Vec<u32> = self.last_command_times.keys()
+                .filter(|id| !active_window_ids.contains(id))
+                .cloned()
+                .collect();
+            
+            for closed_id in closed_windows {
+                debug!("Removing tracking for closed window: {}", closed_id);
+                self.last_command_times.remove(&closed_id);
+            }
+            
+            if self.last_command_times.len() > 100 {
+                warn!("Tracking {} windows - possible memory leak?", self.last_command_times.len());
             }
         }
 
@@ -375,52 +259,43 @@ impl KittyListener {
         
         Ok(Vec::new())
     }
+}
 
-    /// Process event with retry logic
-    async fn process_event_with_retry(
-        event_sink: &Arc<dyn EventSink>,
-        dlq: &Arc<DlqManager>,
-        retry_config: &RetryConfig,
-        metrics: &Arc<Mutex<AgentMetrics>>,
-        event: RawEvent,
-    ) {
-        let result = retry_db_operation(retry_config, || async {
-            event_sink.send_event(&event).await.map_err(|e| e.into())
-        })
-        .await;
-
-        match result {
-            Ok(_) => {
-                metrics.lock().unwrap().increment_processed();
-                debug!("Successfully sent event: {} {}", event.source, event.event_type);
-            }
-            Err(e) => {
-                error!("Failed to send event after retries: {}", e);
+#[async_trait::async_trait]
+impl SimpleIngestor for SimpleKittyIngestor {
+    fn name() -> &'static str {
+        "kitty-ingestor"
+    }
+    
+    fn version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+    
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        info!(
+            agent_name = Self::name(),
+            version = Self::version(),
+            config.polling_interval = %self.config.polling_interval_secs,
+            "Starting Kitty terminal capture"
+        );
+        
+        let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
+        
+        loop {
+            interval.tick().await;
+            
+            if let Err(e) = self.poll_kitty_commands(&event_tx).await {
+                error!("Error polling Kitty commands: {}", e);
                 
-                // Write to DLQ
-                match dlq.write_event(event.clone(), e.to_string(), retry_config.max_retries).await {
-                    Ok(dlq_path) => {
-                        metrics.lock().unwrap().increment_dlq();
-                        
-                        // Try to emit DLQ notification
-                        let dlq_event = dlq.create_dlq_notification(&event, dlq_path, e.to_string());
-                        
-                        if let Err(e2) = event_sink.send_event(&dlq_event).await {
-                            // Critical failure - can't even write DLQ notifications
-                            let _ = dlq.log_critical_failure(&format!(
-                                "Failed to emit DLQ notification: {} (original error: {})",
-                                e2, e
-                            ));
-                        }
-                    }
-                    Err(dlq_err) => {
-                        // Can't even write to DLQ
-                        let _ = dlq.log_critical_failure(&format!(
-                            "Failed to write to DLQ: {} (original error: {})",
-                            dlq_err, e
-                        ));
-                    }
-                }
+                // Send error event
+                let error = AgentError {
+                    agent_name: Self::name().to_string(),
+                    error_message: format!("Failed to poll Kitty commands: {}", e),
+                    error_context: "command_polling".to_string(),
+                    severity: ErrorSeverity::Warning,
+                    original_event_id_if_related: None,
+                };
+                let _ = event_tx.send(create_error_event(error)).await;
             }
         }
     }
