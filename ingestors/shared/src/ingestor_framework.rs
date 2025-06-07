@@ -10,6 +10,7 @@ use tracing::{error, info};
 
 use crate::{
     create_agent_manifest, event_types, sources, DatabaseConfig, DatabaseService, ManifestManager,
+    EventSink, DatabaseSink, LogSink, FileSink,
 };
 
 /// Common CLI arguments for all ingestors
@@ -27,6 +28,14 @@ pub struct CommonCli<T: Subcommand> {
     /// Override log level from config
     #[arg(long, env = "RUST_LOG")]
     pub log_level: Option<String>,
+    
+    /// Run in dry-run mode (log events instead of inserting to database)
+    #[arg(long)]
+    pub dry_run: bool,
+    
+    /// Write events to file (implies dry-run)
+    #[arg(long)]
+    pub output_file: Option<PathBuf>,
 
     /// Command to run
     #[command(subcommand)]
@@ -95,8 +104,8 @@ pub trait Ingestor: Sized {
     /// Get the event types this ingestor produces
     fn produces_events() -> HashMap<String, Vec<String>>;
     
-    /// Initialize the ingestor with config and database
-    async fn new(config: Self::Config, db: Arc<DatabaseService>) -> Result<Self>;
+    /// Initialize the ingestor with config and event sink
+    async fn new(config: Self::Config, event_sink: Arc<dyn EventSink>) -> Result<Self>;
     
     /// Run the main ingestor logic
     async fn run(&mut self) -> Result<()>;
@@ -111,6 +120,8 @@ pub trait Ingestor: Sized {
 pub struct IngestorApp<I: Ingestor> {
     config: I::Config,
     db: Option<Arc<DatabaseService>>,
+    event_sink: Option<Arc<dyn EventSink>>,
+    dry_run: bool,
     _phantom: std::marker::PhantomData<I>,
 }
 
@@ -138,24 +149,21 @@ impl<I: Ingestor> IngestorApp<I> {
         // Initialize logging
         init_logging(config.log_level());
 
-        // Get command
-        let command = cli.command.unwrap_or_else(|| {
-            // Create default Run command
-            let common = CommonCommands::Run;
-            // This is a bit hacky but works for the common case
-            unsafe { std::mem::transmute_copy(&common) }
-        });
-
-        // Create app instance
-        let app = Self::new(config, command.clone()).await?;
+        // Create app instance  
+        let app = Self::new(config, cli.dry_run, cli.output_file).await?;
         
-        // Handle command
-        app.handle_command(command).await
+        // Handle command - default to Run if not specified
+        if let Some(command) = cli.command {
+            app.handle_command(command).await
+        } else {
+            // Default to run command
+            app.run_ingestor().await
+        }
     }
 
-    async fn new(config: I::Config, command: I::Commands) -> Result<Self> {
-        // Only initialize database for commands that need it
-        let needs_db = matches!(command.clone().into(), CommonCommands::Run | CommonCommands::Check);
+    async fn new(config: I::Config, dry_run: bool, output_file: Option<PathBuf>) -> Result<Self> {
+        // Only initialize database for non-dry-run mode
+        let needs_db = !dry_run && output_file.is_none();
         
         let db = if needs_db {
             let db_config = DatabaseConfig {
@@ -172,10 +180,25 @@ impl<I: Ingestor> IngestorApp<I> {
         } else {
             None
         };
+        
+        // Create event sink based on CLI options
+        let event_sink = if let Some(ref file_path) = output_file {
+            info!("Writing events to file: {}", file_path.display());
+            Some(Arc::new(FileSink::new(file_path.clone()).await?) as Arc<dyn EventSink>)
+        } else if dry_run {
+            info!("Running in dry-run mode - events will be logged");
+            Some(Arc::new(LogSink::new(I::name())) as Arc<dyn EventSink>)
+        } else if let Some(db) = &db {
+            Some(Arc::new(DatabaseSink::new(Arc::clone(db))) as Arc<dyn EventSink>)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
             db,
+            event_sink,
+            dry_run: dry_run || output_file.is_some(),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -193,13 +216,20 @@ impl<I: Ingestor> IngestorApp<I> {
 
     async fn run_ingestor(&self) -> Result<()> {
         info!("Starting {} ingestor", I::name());
+        
+        if self.dry_run {
+            info!("Running in DRY-RUN mode - no database operations will be performed");
+        }
 
-        // Register agent manifest
-        self.register_manifest().await?;
+        // Register agent manifest (skip in dry-run mode)
+        if !self.dry_run {
+            self.register_manifest().await?;
+        }
 
         // Create and run the ingestor
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("Database not initialized"))?;
-        let mut ingestor = I::new(self.config.clone(), Arc::clone(db)).await?;
+        let event_sink = self.event_sink.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Event sink not initialized"))?;
+        let mut ingestor = I::new(self.config.clone(), Arc::clone(event_sink)).await?;
         ingestor.run().await
     }
 
