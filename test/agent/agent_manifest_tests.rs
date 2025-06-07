@@ -1,7 +1,6 @@
 use serde_json::json;
 
-#[path = "../common/mod.rs"]
-mod common;
+use crate::common;
 use common::*;
 
 #[sqlx::test]
