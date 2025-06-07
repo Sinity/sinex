@@ -1,14 +1,15 @@
 [workspace]
 members = [
-    "src/sinex-ulid",
-    "src/sinex-db", 
-    "src/sinex-worker",
-    "src/sinex-promo-worker",
+    "crates/sinex-core",
+    "crates/sinex-ulid",
+    "crates/sinex-db", 
+    "crates/sinex-worker",
+    "crates/sinex-promo-worker",
     "ingestors/shared",
     "ingestors/hyprland",
     "ingestors/kitty",
     "ingestors/filesystem",
-    "ingestors/unified",
+    "ingestors/unified", "crates/sinex-runtime",
 ]
 resolver = "2"
 

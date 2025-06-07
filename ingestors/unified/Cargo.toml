@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 sinex-shared = { path = "../shared" }
-sinex-db = { path = "../../src/sinex-db" }
-sinex-ulid = { path = "../../src/sinex-ulid" }
+sinex-db = { path = "../../crates/sinex-db" }
+sinex-ulid = { path = "../../crates/sinex-ulid" }
 
 anyhow = "1.0"
 async-trait = "0.1"

@@ -2732,6 +2732,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-core"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gethostname",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "thiserror 1.0.69",
+ "ulid",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-db"
 version = "0.3.0"
 dependencies = [
@@ -2770,6 +2785,26 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "sinex-runtime"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "directories",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

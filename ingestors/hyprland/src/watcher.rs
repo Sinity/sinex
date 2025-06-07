@@ -36,8 +36,11 @@ struct CacheEntry {
 /// Focus history entry
 #[derive(Debug, Clone)]
 struct FocusHistoryEntry {
+    #[allow(dead_code)]
     timestamp: DateTime<Utc>,
+    #[allow(dead_code)]
     window_address: String,
+    #[allow(dead_code)]
     window_data: Option<Value>,
 }
 
@@ -47,7 +50,9 @@ pub struct HyprlandIngestor {
     socket_path: PathBuf,
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
     focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
+    #[allow(dead_code)]
     last_descriptions_emit: Arc<Mutex<DateTime<Utc>>>,
+    #[allow(dead_code)]
     last_config_reload: Arc<Mutex<DateTime<Utc>>>,
 }
 

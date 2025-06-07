@@ -1,0 +1,25 @@
+[package]
+name = "sinex-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# For RawEvent and builders
+sinex-ulid = { path = "../sinex-ulid" }
+
+# For hostname in RawEventBuilder
+gethostname = { workspace = true }
+
+# For UUID
+uuid = { workspace = true }
