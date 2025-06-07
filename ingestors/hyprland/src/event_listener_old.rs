@@ -18,7 +18,7 @@ use crate::error::{IngestorError, Result as IngestorResult};
 
 use sinex_shared::{
     create_heartbeat_event, event_types::RawEventBuilder, sources,
-    AgentMetrics, AgentStatus, EventSink, DlqManager,
+    AgentMetrics, AgentStatus, DatabaseService, DlqManager,
     RetryConfig, retry_db_operation,
 };
 use sinex_db::models::RawEvent;
@@ -49,7 +49,7 @@ struct FocusHistoryEntry {
 /// Hyprland event listener using socket2
 pub struct HyprlandEventListener {
     config: HyprlandConfig,
-    event_sink: Arc<dyn EventSink>,
+    db: Arc<DatabaseService>,
     dlq: Arc<DlqManager>,
     metrics: Arc<Mutex<AgentMetrics>>,
     retry_config: RetryConfig,
@@ -62,7 +62,7 @@ pub struct HyprlandEventListener {
 }
 
 impl HyprlandEventListener {
-    pub fn new(config: HyprlandConfig, event_sink: Arc<dyn EventSink>) -> IngestorResult<Self> {
+    pub fn new(config: HyprlandConfig, db: Arc<DatabaseService>) -> IngestorResult<Self> {
         let dlq = Arc::new(DlqManager::new("hyprland-ingestor")?);
         let metrics = Arc::new(Mutex::new(AgentMetrics::new(
             "hyprland-ingestor",
@@ -90,7 +90,7 @@ impl HyprlandEventListener {
 
         Ok(Self {
             config,
-            event_sink,
+            db,
             dlq,
             metrics,
             retry_config,
@@ -153,7 +153,7 @@ impl HyprlandEventListener {
 
     /// Spawn heartbeat task
     fn spawn_heartbeat_task(&self) -> tokio::task::JoinHandle<()> {
-        let event_sink = Arc::clone(&self.event_sink);
+        let db = Arc::clone(&self.db);
         let metrics = Arc::clone(&self.metrics);
         let heartbeat_interval = self.config.heartbeat_interval_secs;
         
@@ -166,21 +166,21 @@ impl HyprlandEventListener {
                     metrics.create_heartbeat(AgentStatus::Running)
                 };
                 let event = create_heartbeat_event(heartbeat);
-                let _ = event_sink.send_event(&event).await;
+                let _ = db.insert_event(&event).await;
             }
         })
     }
 
     /// Spawn state snapshot task
     fn spawn_snapshot_task(&self) -> tokio::task::JoinHandle<()> {
-        let event_sink = Arc::clone(&self.event_sink);
+        let db = Arc::clone(&self.db);
         let snapshot_interval = self.config.state_snapshot_interval_secs;
         let descriptions_interval_hours = self.config.descriptions_interval_hours;
         let last_descriptions = Arc::clone(&self.last_descriptions_emit);
         
         tokio::spawn(async move {
             // Take initial snapshot with descriptions
-            if let Err(e) = Self::capture_and_insert_snapshot(&event_sink, &last_descriptions, true).await {
+            if let Err(e) = Self::capture_and_insert_snapshot(&db, &last_descriptions, true).await {
                 error!("Failed to capture initial state snapshot: {}", e);
             }
 
@@ -194,7 +194,7 @@ impl HyprlandEventListener {
                     Utc::now() - *last > chrono::Duration::hours(descriptions_interval_hours as i64)
                 };
                 
-                if let Err(e) = Self::capture_and_insert_snapshot(&event_sink, &last_descriptions, should_include_descriptions).await {
+                if let Err(e) = Self::capture_and_insert_snapshot(&db, &last_descriptions, should_include_descriptions).await {
                     error!("Failed to capture state snapshot: {}", e);
                 }
             }
@@ -748,7 +748,7 @@ impl HyprlandEventListener {
     /// Insert event into database with retry logic
     async fn insert_event(&self, event: RawEvent) {
         let result = retry_db_operation(&self.retry_config, || async {
-            self.event_sink.send_event(&event).await.map_err(|e| e.into())
+            self.db.insert_event(&event).await.map(|_| ())
         })
         .await;
 
@@ -768,7 +768,7 @@ impl HyprlandEventListener {
                         // Try to emit DLQ notification
                         let dlq_event = self.dlq.create_dlq_notification(&event, dlq_path, e.to_string());
                         
-                        if let Err(e2) = self.event_sink.send_event(&dlq_event).await {
+                        if let Err(e2) = self.db.insert_event(&dlq_event).await {
                             let _ = self.dlq.log_critical_failure(&format!(
                                 "Failed to emit DLQ notification: {} (original error: {})",
                                 e2, e
@@ -788,7 +788,7 @@ impl HyprlandEventListener {
 
     /// Capture and insert a state snapshot
     async fn capture_and_insert_snapshot(
-        event_sink: &Arc<dyn EventSink>,
+        db: &Arc<DatabaseService>,
         last_descriptions: &Arc<Mutex<DateTime<Utc>>>,
         include_descriptions: bool,
     ) -> Result<()> {
@@ -825,7 +825,7 @@ impl HyprlandEventListener {
         .with_orig_timestamp(snapshot_timestamp)
         .build();
 
-        event_sink.send_event(&event).await?;
+        db.insert_event(&event).await?;
         Ok(())
     }
 
