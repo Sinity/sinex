@@ -9,11 +9,13 @@ pub mod assumption_detector;
 pub mod ingestor_framework;
 pub mod event_sink;
 pub mod ingestor_runtime;
+// These modules are kept for backward compatibility with unified ingestor
 pub mod event_models;
 pub mod error_handling;
 pub mod observability;
-pub mod config_management;
-pub mod testing_framework;
+// These modules are currently unused but may be needed in future
+// pub mod config_management;
+// pub mod testing_framework;
 
 pub use sinex_ulid::Ulid;
 pub use sinex_db::models::RawEvent;
@@ -27,7 +29,8 @@ pub use validation::{EventValidator, ValidationError};
 pub use assumption_detector::{AssumptionDetector, AssumptionError};
 pub use event_sink::{EventSink, DatabaseSink, LogSink, FileSink, MemorySink, MultiSink};
 pub use ingestor_runtime::{SimpleIngestor, IngestorRuntime, RuntimeConfig};
+// These are kept for backward compatibility
 pub use event_models::{TerminalEvent, FilesystemEvent, HyprlandEvent, EventPayload, ValidationError as EventValidationError};
 pub use error_handling::{IngestorError, IngestorResult, ErrorExt, ErrorCategory, RetryPolicy, CircuitBreaker};
 pub use observability::{IngestorMetrics, TraceContext, EventInstrumentation, HealthStatus, init_observability};
-pub use config_management::{ValidatedConfig, ConfigManager, ConfigSource, FileConfigSource, EnvConfigSource};
+// pub use config_management::{ValidatedConfig, ConfigManager, ConfigSource, FileConfigSource, EnvConfigSource};

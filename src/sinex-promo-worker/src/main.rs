@@ -8,6 +8,7 @@ use sinex_db::{
 use sinex_worker::{metrics::start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{signal, task};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -49,6 +50,7 @@ struct ExampleProcessor {
     agent_name: String,
     batch_size: i32,
     poll_interval: u64,
+    events_processed: Arc<AtomicU64>,
 }
 
 #[async_trait]
@@ -96,6 +98,9 @@ impl EventProcessor for ExampleProcessor {
         // 2. Transform/enrich the data
         // 3. Insert into domain-specific tables
         // 4. Generate derived events if needed
+        
+        // Track processed events
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
@@ -137,18 +142,25 @@ async fn register_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn emit_heartbeat(pool: PgPool, agent_name: String) -> Result<()> {
+async fn emit_heartbeat(
+    pool: PgPool, 
+    agent_name: String,
+    events_processed: Arc<AtomicU64>,
+) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     
     loop {
         interval.tick().await;
         
+        let uptime = 0u64; // TODO: Track uptime properly
+        let events_count = events_processed.load(Ordering::Relaxed);
+        
         let heartbeat = AgentHeartbeat {
             agent_name: agent_name.clone(),
             status: "running".to_string(),
-            uptime_seconds: 0, // TODO: track actual uptime
-            events_processed_session: 0, // TODO: track actual events
-            dlq_size: 0, // TODO: track DLQ size
+            uptime_seconds: uptime,
+            events_processed_session: events_count,
+            dlq_size: 0, // Still TODO: Would need DLQ manager integration
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
 
@@ -195,11 +207,19 @@ async fn main() -> Result<()> {
     // Register the agent
     register_agent(&pool, &args.agent_name).await?;
 
+    // Create shared state for tracking
+    let events_processed = Arc::new(AtomicU64::new(0));
+
     // Start heartbeat task
     let heartbeat_pool = pool.clone();
     let heartbeat_agent_name = args.agent_name.clone();
+    let heartbeat_events = events_processed.clone();
     task::spawn(async move {
-        if let Err(e) = emit_heartbeat(heartbeat_pool, heartbeat_agent_name).await {
+        if let Err(e) = emit_heartbeat(
+            heartbeat_pool, 
+            heartbeat_agent_name,
+            heartbeat_events,
+        ).await {
             error!(error = %e, "Heartbeat task failed");
         }
     });
@@ -216,6 +236,7 @@ async fn main() -> Result<()> {
         agent_name: args.agent_name.clone(),
         batch_size: args.batch_size,
         poll_interval: args.poll_interval,
+        events_processed: events_processed.clone(),
     });
 
     // Create worker
