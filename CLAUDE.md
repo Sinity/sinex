@@ -48,14 +48,14 @@ impl SimpleIngestor for MyIngestor {
 
 ```
 sinex/
-├── crates/                    # Core Rust libraries
+├── crate/                    # Core Rust libraries
 │   ├── sinex-core/           # RawEvent, errors, constants
 │   ├── sinex-db/             # Database models and pooling
 │   ├── sinex-ulid/           # ULID ↔ UUID conversion
 │   ├── sinex-worker/         # Worker implementations
 │   └── sinex-promo-worker/   # Promotion queue worker
 ├── ingestor/
-│   ├── shared/               # Shared utilities (gradually migrating to crates)
+│   ├── shared/               # Shared utilities (gradually migrating to crate)
 │   ├── filesystem/           # Watch file system changes
 │   ├── kitty/               # Capture terminal commands
 │   ├── hyprland/            # Window manager events
@@ -64,7 +64,7 @@ sinex/
 ├── test/                    # Categorized test suites
 │   ├── database/            # Schema, migrations, ULID
 │   ├── pipeline/            # Event processing, workers
-│   ├── agents/              # Manifests, heartbeats
+│   ├── agent/              # Manifests, heartbeats
 │   └── reliability/         # Error handling, failures
 ├── migration/              # SQL schema migrations (sqlx)
 ├── spec/                    # Documentation
@@ -132,7 +132,7 @@ cargo test -- --nocapture      # See test output
 
 ### Path Dependencies
 ```toml
-sinex-db = { path = "../../crates/sinex-db" }    # Not src/!
+sinex-db = { path = "../../crate/sinex-db" }    # Not src/!
 ```
 
 ### Local PostgreSQL

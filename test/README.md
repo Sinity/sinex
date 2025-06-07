@@ -19,7 +19,7 @@ This directory contains the main integration and system tests for the Sinex proj
 - `end_to_end_pipeline_test.rs` - Full pipeline integration test
 - `real_pipeline_test.rs` - Realistic pipeline scenarios
 
-### Agent Tests (`agents/`)
+### Agent Tests (`agent/`)
 - `agent_manifest_tests.rs` - Agent registration and manifest management
 - `heartbeat_tests.rs` - Agent heartbeat mechanism
 

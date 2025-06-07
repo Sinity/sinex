@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/sinex-core",
-    "crates/sinex-ulid",
-    "crates/sinex-db", 
-    "crates/sinex-worker",
-    "crates/sinex-promo-worker",
+    "crate/sinex-core",
+    "crate/sinex-ulid",
+    "crate/sinex-db", 
+    "crate/sinex-worker",
+    "crate/sinex-promo-worker",
     "ingestor/shared",
     "ingestor/hyprland",
     "ingestor/kitty",

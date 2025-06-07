@@ -30,7 +30,7 @@ Sinex follows an event-driven architecture with three layers:
 
 ```
 sinex/
-├── crates/                  # Core Rust libraries
+├── crate/                  # Core Rust libraries
 │   ├── sinex-core/         # Common types (RawEvent, errors)
 │   ├── sinex-db/           # Database models and pooling
 │   ├── sinex-ulid/         # ULID implementation
@@ -131,7 +131,7 @@ Tests are organized by category in `test/`:
 
 - `database/` - Schema, migration, ULID tests
 - `pipeline/` - Event processing and worker tests
-- `agents/` - Agent manifest and heartbeat tests
+- `agent/` - Agent manifest and heartbeat tests
 - `reliability/` - Error handling and failure scenarios
 
 ```bash

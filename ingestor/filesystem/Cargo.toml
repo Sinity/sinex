@@ -6,7 +6,7 @@ authors = ["Sinity"]
 
 [dependencies]
 sinex-shared = { path = "../shared" }
-sinex-db = { path = "../../crates/sinex-db" }
+sinex-db = { path = "../../crate/sinex-db" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,4 +33,4 @@ shellexpand = "3.1"
 [dev-dependencies]
 pretty_assertions = "1"
 tempfile = "3.8"
-sinex-ulid = { path = "../../crates/sinex-ulid" }
+sinex-ulid = { path = "../../crate/sinex-ulid" }
