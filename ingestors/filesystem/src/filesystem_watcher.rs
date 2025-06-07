@@ -5,7 +5,7 @@ use notify_debouncer_full::new_debouncer;
 use serde::{Deserialize, Serialize};
 use sinex_shared::{
     create_heartbeat_event, event_type_constants, sources,
-    AgentMetrics, AgentStatus, DatabaseService, DlqManager, RawEvent, RawEventBuilder,
+    AgentMetrics, AgentStatus, EventSink, DlqManager, RawEvent, RawEventBuilder,
     RetryConfig, retry_db_operation,
 };
 use std::fs;
@@ -60,7 +60,7 @@ pub enum ObjectType {
 /// Filesystem watcher
 pub struct FilesystemWatcher {
     config: FilesystemConfig,
-    db: Arc<DatabaseService>,
+    event_sink: Arc<dyn EventSink>,
     dlq: Arc<DlqManager>,
     metrics: Arc<Mutex<AgentMetrics>>,
     retry_config: RetryConfig,
@@ -68,7 +68,7 @@ pub struct FilesystemWatcher {
 }
 
 impl FilesystemWatcher {
-    pub fn new(config: FilesystemConfig, db: Arc<DatabaseService>) -> Result<Self> {
+    pub fn new(config: FilesystemConfig, event_sink: Arc<dyn EventSink>) -> Result<Self> {
         let dlq = Arc::new(DlqManager::new("filesystem-ingestor")?);
         let metrics = Arc::new(Mutex::new(AgentMetrics::new(
             "filesystem-ingestor",
@@ -84,7 +84,7 @@ impl FilesystemWatcher {
 
         Ok(Self {
             config,
-            db,
+            event_sink,
             dlq,
             metrics,
             retry_config,
@@ -94,12 +94,21 @@ impl FilesystemWatcher {
 
     /// Start the filesystem watcher
     pub async fn start(self) -> Result<()> {
-        info!("Starting filesystem watcher");
+        info!(
+            agent_name = "filesystem-ingestor",
+            version = env!("CARGO_PKG_VERSION"),
+            watch_dirs = ?self.config.watch_directories,
+            exclude_patterns = ?self.config.exclude_patterns,
+            debounce_ms = self.config.debounce_ms,
+            batch_size = self.config.batch_size_events,
+            hash_files = self.config.hash_files,
+            "Starting filesystem watcher"
+        );
 
         let (event_tx, mut event_rx) = mpsc::channel(1000);
         
         // Spawn batch processor task
-        let db = Arc::clone(&self.db);
+        let event_sink = Arc::clone(&self.event_sink);
         let dlq = Arc::clone(&self.dlq);
         let retry_config = self.retry_config.clone();
         let metrics = Arc::clone(&self.metrics);
@@ -113,7 +122,7 @@ impl FilesystemWatcher {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        Self::flush_batch(&db, &dlq, &retry_config, &metrics, &event_batch).await;
+                        Self::flush_batch(&event_sink, &dlq, &retry_config, &metrics, &event_batch).await;
                     }
                     Some(event) = event_rx.recv() => {
                         let should_flush = {
@@ -123,7 +132,7 @@ impl FilesystemWatcher {
                         };
                         
                         if should_flush {
-                            Self::flush_batch(&db, &dlq, &retry_config, &metrics, &event_batch).await;
+                            Self::flush_batch(&event_sink, &dlq, &retry_config, &metrics, &event_batch).await;
                         }
                     }
                 }
@@ -179,8 +188,17 @@ impl FilesystemWatcher {
             for result in notify_rx {
                 match result {
                     Ok(events) => {
+                        debug!(
+                            event_count = events.len(),
+                            "Received filesystem events batch"
+                        );
                         for event in events {
                             if let Some(raw_event) = Self::process_notify_event(&event, &config) {
+                                debug!(
+                                    event_type = %raw_event.event_type,
+                                    path = ?event.paths.first(),
+                                    "Processed filesystem event"
+                                );
                                 let _ = event_tx_clone.blocking_send(raw_event);
                             }
                         }
@@ -208,6 +226,10 @@ impl FilesystemWatcher {
 
         // Check exclude/include patterns
         if !Self::should_process_path(&path_str, &config.exclude_patterns, &config.include_patterns) {
+            debug!(
+                path = %path_str,
+                "Path filtered out by exclude/include patterns"
+            );
             return None;
         }
 
@@ -306,9 +328,9 @@ impl FilesystemWatcher {
         }
     }
 
-    /// Flush the event batch to the database
+    /// Flush the event batch to the event sink
     async fn flush_batch(
-        db: &Arc<DatabaseService>,
+        event_sink: &Arc<dyn EventSink>,
         dlq: &Arc<DlqManager>,
         retry_config: &RetryConfig,
         metrics: &Arc<Mutex<AgentMetrics>>,
@@ -326,7 +348,7 @@ impl FilesystemWatcher {
         debug!("Flushing batch of {} events", event_count);
 
         let result = retry_db_operation(retry_config, || async {
-            db.insert_events_batch(&events).await.map_err(|e| e.into())
+            event_sink.send_batch(&events).await.map_err(|e| e.into())
         })
         .await;
 
@@ -350,7 +372,7 @@ impl FilesystemWatcher {
                             // Try to emit DLQ notification
                             let dlq_event = dlq.create_dlq_notification(&event, dlq_path, e.to_string());
                             
-                            if let Err(e2) = db.insert_event(&dlq_event).await {
+                            if let Err(e2) = event_sink.send_event(&dlq_event).await {
                                 let _ = dlq.log_critical_failure(&format!(
                                     "Failed to emit DLQ notification: {} (original error: {})",
                                     e2, e

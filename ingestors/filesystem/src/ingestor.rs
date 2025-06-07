@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use sinex_shared::{
     ingestor_framework::{Ingestor, IngestorConfig, CommonCommands},
-    DatabaseService, sources, event_types,
+    EventSink, sources, event_types,
 };
 
 use crate::config::Config;
@@ -14,7 +14,7 @@ use crate::filesystem_watcher::FilesystemWatcher;
 /// The filesystem ingestor implementation
 pub struct FilesystemIngestor {
     config: Config,
-    db: Arc<DatabaseService>,
+    event_sink: Arc<dyn EventSink>,
 }
 
 impl IngestorConfig for Config {
@@ -78,14 +78,14 @@ impl Ingestor for FilesystemIngestor {
         produces
     }
     
-    async fn new(config: Self::Config, db: Arc<DatabaseService>) -> Result<Self> {
-        Ok(Self { config, db })
+    async fn new(config: Self::Config, event_sink: Arc<dyn EventSink>) -> Result<Self> {
+        Ok(Self { config, event_sink })
     }
     
     async fn run(&mut self) -> Result<()> {
         let watcher = FilesystemWatcher::new(
             self.config.filesystem.clone(),
-            Arc::clone(&self.db),
+            Arc::clone(&self.event_sink),
         )?;
         
         watcher.start().await
