@@ -179,9 +179,11 @@ impl From<&str> for AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHeartbeat {
     pub agent_name: String,
-    pub timestamp_iso: String,
-    pub status_reported: String,
-    pub metrics_snapshot: Option<serde_json::Value>,
+    pub status: String,  // "running", "degraded", "erroring"
+    pub uptime_seconds: u64,
+    pub events_processed_session: u64,
+    pub dlq_size: u64,
+    pub version: String,
 }
 
 #[cfg(test)]
@@ -239,20 +241,21 @@ mod tests {
     fn test_agent_heartbeat_serialization() {
         let heartbeat = AgentHeartbeat {
             agent_name: "TestAgent".to_string(),
-            timestamp_iso: "2024-01-01T00:00:00Z".to_string(),
-            status_reported: "healthy".to_string(),
-            metrics_snapshot: Some(serde_json::json!({
-                "processed": 100,
-                "errors": 0
-            })),
+            status: "running".to_string(),
+            uptime_seconds: 3600,
+            events_processed_session: 100,
+            dlq_size: 0,
+            version: "0.1.0".to_string(),
         };
         
         let json = serde_json::to_string(&heartbeat).unwrap();
         let deserialized: AgentHeartbeat = serde_json::from_str(&json).unwrap();
         
         assert_eq!(deserialized.agent_name, heartbeat.agent_name);
-        assert_eq!(deserialized.timestamp_iso, heartbeat.timestamp_iso);
-        assert_eq!(deserialized.status_reported, heartbeat.status_reported);
-        assert_eq!(deserialized.metrics_snapshot, heartbeat.metrics_snapshot);
+        assert_eq!(deserialized.status, heartbeat.status);
+        assert_eq!(deserialized.uptime_seconds, heartbeat.uptime_seconds);
+        assert_eq!(deserialized.events_processed_session, heartbeat.events_processed_session);
+        assert_eq!(deserialized.dlq_size, heartbeat.dlq_size);
+        assert_eq!(deserialized.version, heartbeat.version);
     }
 }

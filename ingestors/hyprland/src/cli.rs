@@ -1,33 +1,38 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use sinex_shared::ingestor_framework::CommonCommands;
 
-/// Hyprland Event Ingestor for Sinex
-#[derive(Parser)]
-#[command(
-    name = "hyprland-ingestor",
-    about = "Captures Hyprland window manager events via IPC socket2 and stores them in the Sinex database",
-    version = env!("CARGO_PKG_VERSION"),
-    author = "Sinity"
-)]
+/// Hyprland ingestor CLI
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// Configuration file path
-    #[arg(short, long, value_name = "FILE")]
+    #[command(flatten)]
+    pub common: CommonArgs,
+}
+
+/// Common arguments for all ingestors
+#[derive(Parser, Debug)]
+pub struct CommonArgs {
+    /// Path to configuration file
+    #[arg(short, long, env = "SINEX_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// Database URL (overrides config file)
-    #[arg(long, value_name = "URL")]
+    /// Override database URL from config
+    #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
 
-    /// Log level (overrides config file)
-    #[arg(long, value_name = "LEVEL")]
+    /// Override log level from config
+    #[arg(long, env = "RUST_LOG")]
     pub log_level: Option<String>,
+    
+    /// Run in dry-run mode (log events instead of inserting to database)
+    #[arg(long)]
+    pub dry_run: bool,
+    
+    /// Write events to file (implies dry-run)
+    #[arg(long)]
+    pub output_file: Option<PathBuf>,
 
-    /// Log format: pretty or json
-    #[arg(long, value_name = "FORMAT")]
-    pub log_format: Option<String>,
-
-    /// Subcommand
+    /// Command to run
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -72,16 +77,4 @@ pub enum ConfigFormat {
     Json,
     Toml,
     Yaml,
-}
-
-impl From<Commands> for CommonCommands {
-    fn from(cmd: Commands) -> Self {
-        match cmd {
-            Commands::Run => CommonCommands::Run,
-            Commands::Check => CommonCommands::Check,
-            Commands::Config { .. } => CommonCommands::Config,
-            Commands::GenerateConfig { output, .. } => CommonCommands::GenerateConfig { output },
-            Commands::Validate { .. } => CommonCommands::Config, // Map to Config for now
-        }
-    }
 }

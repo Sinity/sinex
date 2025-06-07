@@ -4,8 +4,8 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-sinex-ulid = { path = "../../src/sinex-ulid" }
-sinex-db = { path = "../../src/sinex-db" }
+sinex-ulid = { path = "../../crates/sinex-ulid" }
+sinex-db = { path = "../../crates/sinex-db" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,5 +25,16 @@ toml = "0.8"
 regex = "1"
 jsonschema = "0.16"
 
+# Observability dependencies
+prometheus = "0.13"
+memory-stats = "1"
+
+# Config management dependencies  
+notify = "6"
+validator = { version = "0.16", features = ["derive"] }
+
+
 [dev-dependencies]
 pretty_assertions = "1"
+tempfile = "3"
+proptest = "1"

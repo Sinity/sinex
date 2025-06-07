@@ -1,0 +1,20 @@
+[package]
+name = "sinex-unified-collector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sinex-shared = { path = "../shared" }
+sinex-db = { path = "../../crates/sinex-db" }
+sinex-ulid = { path = "../../crates/sinex-ulid" }
+
+anyhow = "1.0"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
