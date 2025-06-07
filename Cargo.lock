@@ -1558,6 +1558,7 @@ dependencies = [
  "clap",
  "config",
  "gethostname",
+ "glob",
  "pretty_assertions",
  "regex",
  "serde",
@@ -2739,6 +2740,7 @@ dependencies = [
  "sinex-db",
  "sinex-ulid",
  "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "toml",
@@ -2758,6 +2760,25 @@ dependencies = [
  "thiserror 1.0.69",
  "ulid",
  "uuid",
+]
+
+[[package]]
+name = "sinex-unified-collector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sinex-db",
+ "sinex-shared",
+ "sinex-ulid",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

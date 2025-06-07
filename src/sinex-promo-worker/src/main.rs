@@ -145,11 +145,11 @@ async fn emit_heartbeat(pool: PgPool, agent_name: String) -> Result<()> {
         
         let heartbeat = AgentHeartbeat {
             agent_name: agent_name.clone(),
-            timestamp_iso: chrono::Utc::now().to_rfc3339(),
-            status_reported: "healthy".to_string(),
-            metrics_snapshot: Some(serde_json::json!({
-                "uptime_seconds": interval.period().as_secs() * interval.period().as_secs()
-            })),
+            status: "running".to_string(),
+            uptime_seconds: 0, // TODO: track actual uptime
+            events_processed_session: 0, // TODO: track actual events
+            dlq_size: 0, // TODO: track DLQ size
+            version: env!("CARGO_PKG_VERSION").to_string(),
         };
 
         match insert_raw_event(

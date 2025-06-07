@@ -25,6 +25,7 @@ toml = "0.8"
 serde_yaml = "0.9"
 regex = "1.10"
 tempfile = "3.8"
+glob = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
