@@ -109,7 +109,7 @@ pub mod assertions {
     ) -> Result<Ulid> {
         let inserted_id = db.insert_event(event).await?;
         assert!(!inserted_id.to_string().is_empty());
-        Ok(inserted_id)
+        Ok(inserted_id.into())
     }
 
     /// Assert that an event insertion fails with validation error
@@ -130,7 +130,7 @@ pub mod assertions {
         // This would need the actual manifest insertion method
         // For now, just verify the structure is valid
         assert!(!manifest.agent_name.is_empty());
-        assert!(!manifest.agent_version.is_empty());
+        assert!(!manifest.version.is_empty());
         Ok(())
     }
 }

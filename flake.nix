@@ -930,7 +930,7 @@
 
                   TEST_ID="sinex_ephemeral_$(date +%s)"
                   TEST_DIR="/tmp/$TEST_ID"
-                  TEST_DB_URL="postgresql:///sinex_test?host=$TEST_DIR"
+                  TEST_DB_URL="postgresql:///sinex_test?host=$TEST_DIR&port=54321"
 
                   log() { echo -e "''${BLUE}🧪''${NC} $*"; }
                   success() { echo -e "''${GREEN}✅''${NC} $*"; }
@@ -974,31 +974,35 @@
                     ${postgresqlWithExtensions}/bin/initdb -D "$TEST_DIR/data" --no-locale --encoding=UTF8 >/dev/null
 
                     # Configure PostgreSQL
-                    cat >> "$TEST_DIR/data/postgresql.conf" << EOL
-                  unix_socket_directories = '$TEST_DIR'
-                  shared_preload_libraries = 'timescaledb'
-                  max_connections = 50
-                  shared_buffers = 128MB
-                  EOL
+                    echo "unix_socket_directories = '$TEST_DIR'" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "shared_preload_libraries = 'timescaledb'" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "max_connections = 50" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "shared_buffers = 128MB" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "port = 54321" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "listen_addresses = " >> "$TEST_DIR/data/postgresql.conf"
 
                     # Start PostgreSQL
-                    ${postgresqlWithExtensions}/bin/pg_ctl -D "$TEST_DIR/data" -l "$TEST_DIR/logs/postgres.log" start >/dev/null
+                    if ! ${postgresqlWithExtensions}/bin/pg_ctl -D "$TEST_DIR/data" -l "$TEST_DIR/logs/postgres.log" start >/dev/null; then
+                      error "Failed to start PostgreSQL. Log output:"
+                      cat "$TEST_DIR/logs/postgres.log" >&2
+                      return 1
+                    fi
                     POSTGRES_PID=$(cat "$TEST_DIR/data/postmaster.pid" | head -n 1)
 
                     # Wait for startup
                     for i in {1..10}; do
-                      if ${postgresqlWithExtensions}/bin/pg_isready -h "$TEST_DIR" >/dev/null 2>&1; then
+                      if ${postgresqlWithExtensions}/bin/pg_isready -h "$TEST_DIR" -p 54321 >/dev/null 2>&1; then
                         break
                       fi
                       sleep 0.5
                     done
 
                     # Create database and extensions
-                    ${postgresqlWithExtensions}/bin/createdb -h "$TEST_DIR" sinex_test
-                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
-                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
-                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
-                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
+                    ${postgresqlWithExtensions}/bin/createdb -h "$TEST_DIR" -p 54321 sinex_test
+                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
+                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
+                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
+                    ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
 
                     # Run migrations
                     log "Running migrations on ephemeral database"
