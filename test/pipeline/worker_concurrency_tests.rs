@@ -1,13 +1,14 @@
-use sinex_worker::{Worker, WorkerConfig, EventProcessor, ProcessResult};
-use sinex_db::Database;
+use sinex_worker::{worker::Worker, EventProcessor};
+use sinex_db::models::PromotionQueueItem;
 use sinex_ulid::Ulid;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use std::collections::HashSet;
 use async_trait::async_trait;
+use anyhow;
 
 struct ConcurrencyTestProcessor {
     processed_items: Arc<Mutex<HashSet<String>>>,
@@ -17,19 +18,20 @@ struct ConcurrencyTestProcessor {
 
 #[async_trait]
 impl EventProcessor for ConcurrencyTestProcessor {
-    async fn process_event(&self, event_id: &str, _payload: &serde_json::Value) -> ProcessResult {
+    async fn process_event(&self, _pool: &PgPool, item: &PromotionQueueItem) -> anyhow::Result<()> {
         // Simulate processing time
         tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
         
         // Track processed items
+        let event_id = item.raw_event_id.to_string();
         let mut processed = self.processed_items.lock().await;
-        if processed.contains(event_id) {
-            return ProcessResult::Error("Duplicate processing detected".to_string());
+        if processed.contains(&event_id) {
+            return Err(anyhow::anyhow!("Duplicate processing detected"));
         }
-        processed.insert(event_id.to_string());
+        processed.insert(event_id);
         
         self.process_count.fetch_add(1, Ordering::SeqCst);
-        ProcessResult::Success
+        Ok(())
     }
     
     fn agent_name(&self) -> &str {

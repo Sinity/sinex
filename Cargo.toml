@@ -13,6 +13,111 @@ members = [
 ]
 resolver = "2"
 
+[package]
+name = "sinex"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[test]]
+name = "database_integration_tests"
+path = "test/database/database_integration_tests.rs"
+
+[[test]]
+name = "migration_tests"
+path = "test/database/migration_tests.rs"
+
+[[test]]
+name = "timescaledb_tests"
+path = "test/database/timescaledb_tests.rs"
+
+[[test]]
+name = "ulid_integration_tests"
+path = "test/database/ulid_integration_tests.rs"
+
+[[test]]
+name = "jsonschema_validation_tests"
+path = "test/database/jsonschema_validation_tests.rs"
+
+[[test]]
+name = "schema_validation_tests"
+path = "test/database/schema_validation_tests.rs"
+
+[[test]]
+name = "agent_manifest_tests"
+path = "test/agent/agent_manifest_tests.rs"
+
+[[test]]
+name = "heartbeat_tests"
+path = "test/agent/heartbeat_tests.rs"
+
+[[test]]
+name = "end_to_end_pipeline_test"
+path = "test/pipeline/end_to_end_pipeline_test.rs"
+
+[[test]]
+name = "event_pipeline_integration_tests"
+path = "test/pipeline/event_pipeline_integration_tests.rs"
+
+[[test]]
+name = "real_pipeline_test"
+path = "test/pipeline/real_pipeline_test.rs"
+
+[[test]]
+name = "worker_concurrency_tests"
+path = "test/pipeline/worker_concurrency_tests.rs"
+
+[[test]]
+name = "assumption_mismatch_tests"
+path = "test/reliability/assumption_mismatch_tests.rs"
+
+[[test]]
+name = "error_handling_tests"
+path = "test/reliability/error_handling_tests.rs"
+
+[[test]]
+name = "realistic_failure_tests"
+path = "test/reliability/realistic_failure_tests.rs"
+
+[[test]]
+name = "event_sink_test"
+path = "test/runtime/event_sink_test.rs"
+
+[[test]]
+name = "runtime_test"
+path = "test/runtime/runtime_test.rs"
+
+[[test]]
+name = "validation_unit_tests"
+path = "test/runtime/validation_unit_tests.rs"
+
+[[test]]
+name = "property_tests"
+path = "test/property_tests.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+sqlx.workspace = true
+async-trait.workspace = true
+
+# Testing dependencies needed for integration tests
+futures = "0.3"
+
+# Local dependencies  
+sinex-core = { path = "crate/sinex-core" }
+sinex-db = { path = "crate/sinex-db" }
+sinex-ulid = { path = "crate/sinex-ulid" }
+sinex-worker = { path = "crate/sinex-worker" }
+sinex-shared = { path = "ingestor/shared" }
+
+[dev-dependencies]
+proptest.workspace = true
+
 [workspace.package]
 version = "0.3.0"
 edition = "2021"

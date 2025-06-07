@@ -78,15 +78,14 @@ async fn test_timescale_chunk_creation() {
     for (i, ts) in time_periods.iter().enumerate() {
         let event_id = Ulid::new();
         sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload, ts_ingest) 
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb, $6)"
+            "INSERT INTO raw.events (id, source, event_type, host, payload) 
+             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
         )
         .bind(&event_id.to_string())
         .bind("chunk_test")
         .bind(format!("event_type_{}", i))
         .bind("test_host")
         .bind(json!({"chunk_test": i}))
-        .bind(ts)
         .execute(&pool)
         .await
         .unwrap();
@@ -171,15 +170,14 @@ async fn test_timescale_compression_policy() {
     for i in 0..10 {
         let event_id = Ulid::new();
         sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload, ts_ingest) 
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb, $6)"
+            "INSERT INTO raw.events (id, source, event_type, host, payload) 
+             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
         )
         .bind(&event_id.to_string())
         .bind("compression_test")
         .bind("old_event")
         .bind("test_host")
         .bind(json!({"seq": i}))
-        .bind(old_timestamp + Duration::minutes(i))
         .execute(&pool)
         .await
         .unwrap();
@@ -252,15 +250,14 @@ async fn test_timescale_continuous_aggregates() {
                 let ts = Utc::now() - Duration::hours(hour);
                 
                 sqlx::query(
-                    "INSERT INTO raw.events (id, source, event_type, host, payload, ts_ingest) 
-                     VALUES ($1::ulid, $2, $3, $4, $5::jsonb, $6)"
+                    "INSERT INTO raw.events (id, source, event_type, host, payload) 
+                     VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
                 )
                 .bind(&event_id.to_string())
                 .bind(source)
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
                 .bind(json!({"hour": hour}))
-                .bind(ts)
                 .execute(&pool)
                 .await
                 .unwrap();

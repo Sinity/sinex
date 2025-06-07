@@ -1,5 +1,6 @@
 use serde_json::json;
 
+#[path = "../common/mod.rs"]
 mod common;
 use common::*;
 

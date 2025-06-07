@@ -2732,6 +2732,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "proptest",
+ "serde_json",
+ "sinex-core",
+ "sinex-db",
+ "sinex-shared",
+ "sinex-ulid",
+ "sinex-worker",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-core"
 version = "0.3.0"
 dependencies = [

@@ -1,3 +1,4 @@
+#[path = "../common/mod.rs"]
 mod common;
 
 use chrono::Utc;
@@ -200,6 +201,7 @@ async fn test_event_schema_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn 
         id: uuid::Uuid::new_v4(),
         source: "test".to_string(),
         event_type: "structured_event".to_string(),
+        ts_ingest: Utc::now(), // This will be ignored by DB due to generated column
         ts_orig: None,
         host: "test-host".to_string(),
         ingestor_version: Some("1.0.0".to_string()),

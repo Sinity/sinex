@@ -1,8 +1,8 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_db::models::{RawEvent, PromotionQueueItem, QueueStatus};
-use sinex_shared::{DatabaseConfig, DatabaseService, RawEventBuilder, sources, event_type_constants};
-use sinex_worker::{Worker, WorkerConfig};
+use sinex_db::models::RawEvent;
+use sinex_shared::{DatabaseService, RawEventBuilder, sources, event_type_constants};
+use sinex_worker::{worker::Worker, EventProcessor};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;

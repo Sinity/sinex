@@ -1,11 +1,12 @@
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use sinex_ulid::Ulid;
-use sinex_worker::{Worker, WorkerConfig, EventProcessor, ProcessResult};
-use sinex_db::Database;
+use sinex_worker::{worker::Worker, EventProcessor};
+use sinex_db::models::PromotionQueueItem;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use async_trait::async_trait;
+use anyhow::Result;
 
 struct PipelineTestProcessor {
     agent_name: String,
@@ -15,17 +16,17 @@ struct PipelineTestProcessor {
 
 #[async_trait]
 impl EventProcessor for PipelineTestProcessor {
-    async fn process_event(&self, event_id: &str, payload: &serde_json::Value) -> ProcessResult {
+    async fn process_event(&self, pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
         // Simulate processing time
         tokio::time::sleep(Duration::from_millis(self.process_delay_ms)).await;
         
         // Create derived events if configured
         if self.create_derived_events {
             // In real implementation, would insert derived events to raw.events
-            println!("Would create derived event from {}", event_id);
+            println!("Would create derived event from {}", item.raw_event_id);
         }
         
-        ProcessResult::Success
+        Ok(())
     }
     
     fn agent_name(&self) -> &str {
