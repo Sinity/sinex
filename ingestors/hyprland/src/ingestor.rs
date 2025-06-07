@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use sinex_shared::{
     ingestor_framework::{Ingestor, IngestorConfig},
-    DatabaseService, sources,
+    EventSink, sources,
 };
 use crate::cli::ConfigFormat;
 use crate::error::IngestorError;
@@ -19,7 +19,7 @@ type HyprResult<T> = Result<T, IngestorError>;
 /// The hyprland ingestor implementation
 pub struct HyprlandIngestor {
     config: Config,
-    db: Arc<DatabaseService>,
+    event_sink: Arc<dyn EventSink>,
 }
 
 impl IngestorConfig for Config {
@@ -89,14 +89,14 @@ impl Ingestor for HyprlandIngestor {
         produces
     }
     
-    async fn new(config: Self::Config, db: Arc<DatabaseService>) -> Result<Self> {
-        Ok(Self { config, db })
+    async fn new(config: Self::Config, event_sink: Arc<dyn EventSink>) -> Result<Self> {
+        Ok(Self { config, event_sink })
     }
     
     async fn run(&mut self) -> Result<()> {
         let event_listener = HyprlandEventListener::new(
             self.config.hyprland.clone(),
-            Arc::clone(&self.db),
+            Arc::clone(&self.event_sink),
         )?;
         
         event_listener.start().await.map_err(Into::into)
