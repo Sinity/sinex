@@ -1,9 +1,8 @@
 pub mod cli;
 pub mod config;
 pub mod error;
-pub mod event_listener;
-pub mod logging;
-pub mod shutdown;
+pub mod simple_watcher;
+pub mod simple_ingestor;
 
 pub use error::{IngestorError, Result};
 
