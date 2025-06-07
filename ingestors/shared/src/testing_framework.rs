@@ -3,10 +3,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sinex_db::models::RawEvent;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
 /// Test fixture for ingestor testing

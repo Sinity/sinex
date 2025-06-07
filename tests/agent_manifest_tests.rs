@@ -1,16 +1,10 @@
-use sqlx::postgres::PgPoolOptions;
 use serde_json::json;
 
-#[tokio::test]
-async fn test_agent_manifest_create() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+mod common;
+use common::*;
+
+#[sqlx::test]
+async fn test_agent_manifest_create(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create a complete agent manifest
     let result = sqlx::query(
@@ -84,18 +78,12 @@ async fn test_agent_manifest_create() {
     assert!(manifest.8.is_some());
     assert!(manifest.9.is_some());
     assert_eq!(manifest.10.unwrap(), "https://github.com/example/test-agent");
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_manifest_update() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+#[sqlx::test]
+async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent
     sqlx::query(
@@ -153,18 +141,12 @@ async fn test_agent_manifest_update() {
     assert_eq!(status, "stopped");
     assert!(updated_new > updated, "updated_at should be updated by trigger");
     assert_eq!(registered, registered, "registered_at should not change");
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_manifest_delete() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+#[sqlx::test]
+async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent
     sqlx::query(
@@ -229,18 +211,12 @@ async fn test_agent_manifest_delete() {
     .unwrap();
     
     assert_eq!(queue_count, 0, "Promotion queue items should be cascade deleted");
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_status_transitions() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+#[sqlx::test]
+async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent in pending state
     sqlx::query(
@@ -304,18 +280,12 @@ async fn test_agent_status_transitions() {
     assert_eq!(status, "error_state");
     assert!(error_ts.is_some());
     assert_eq!(error_msg.unwrap(), "Connection timeout to data source");
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_capabilities_and_dependencies() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+#[sqlx::test]
+async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent with complex capabilities
     let capabilities = json!({
@@ -376,18 +346,12 @@ async fn test_agent_capabilities_and_dependencies() {
     .unwrap();
     
     assert!(agents_using_gpt4.contains(&"capability_test_agent".to_string()));
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_event_subscription_queries() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+#[sqlx::test]
+async fn test_agent_event_subscription_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create multiple agents with different subscriptions
     let agents = vec![
@@ -447,4 +411,6 @@ async fn test_agent_event_subscription_queries() {
     assert_eq!(raw_feed_subscribers.len(), 2);
     assert!(raw_feed_subscribers.contains(&"subscriber_1".to_string()));
     assert!(raw_feed_subscribers.contains(&"subscriber_2".to_string()));
+    
+    Ok(())
 }

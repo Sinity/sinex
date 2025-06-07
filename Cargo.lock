@@ -804,6 +804,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "shellexpand",
+ "sinex-db",
  "sinex-shared",
  "sinex-ulid",
  "sqlx",
