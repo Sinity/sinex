@@ -1,86 +1,58 @@
 # Kitty Terminal Ingestor
 
-The Kitty terminal ingestor captures command execution events from the Kitty terminal emulator.
+Captures terminal activity from Kitty terminal emulator sessions.
 
-## Current Implementation
+## Features
 
-The current implementation uses Kitty's remote control protocol to:
-1. List active Kitty sessions and windows
-2. Get window metadata (PID, CWD, title)
-3. Poll for changes at regular intervals
+- Monitors all Kitty terminal instances
+- Tracks window metadata (CWD, PID)
+- Polls for terminal state changes
+- Foundation for command tracking
 
-## Limitations
-
-Kitty's remote control protocol doesn't directly expose command history or execution events. The current implementation is a foundation that needs enhancement through one of these approaches:
-
-### Option 1: Shell Integration (Recommended)
-
-Configure your shell to emit special markers that Kitty recognizes:
+## Usage
 
 ```bash
-# Add to .bashrc or .zshrc
-if [[ "$TERM" == "xterm-kitty" ]]; then
-    # Shell integration for command tracking
-    precmd() {
-        echo -ne "\033]133;A\007"
-    }
-    preexec() {
-        echo -ne "\033]133;C\007"
-    }
-fi
+# Run with default config
+cargo run --bin kitty-ingestor
+
+# Dry run (logs events to console)
+cargo run --bin kitty-ingestor -- --dry-run
+
+# Output to file instead of database
+cargo run --bin kitty-ingestor -- --output-file events.json
+
+# Use custom config
+cargo run --bin kitty-ingestor -- --config config/kitty/production.toml
+
+# Show current configuration
+cargo run --bin kitty-ingestor -- config
+
+# Check database connection
+cargo run --bin kitty-ingestor -- check
 ```
-
-### Option 2: Terminal Scrollback Parsing
-
-Use `kitty @ get-text` to retrieve terminal scrollback and parse for command patterns:
-- Detect shell prompts
-- Extract commands between prompts
-- Track execution times based on prompt timestamps
-
-### Option 3: Shell History Integration
-
-Monitor shell history files:
-- `~/.bash_history`
-- `~/.zsh_history`
-- Correlate with Kitty window PIDs
 
 ## Configuration
 
-Create a configuration file at `~/.config/sinex/kitty-ingestor.toml`:
+Configuration uses TOML format. See `config/kitty/` for examples.
 
-```toml
-[database]
-url = "postgresql://localhost/sinex"
-max_connections = 5
+Key settings:
+- `socket_path` - Pattern for finding Kitty sockets
+- `polling_interval_secs` - How often to check for changes
+- `max_tracked_windows` - Limit on tracked windows
 
-[logging]
-level = "info"
-format = "pretty"
+## Current Limitations
 
-[kitty]
-socket_path = "/tmp/kitty-*"
-polling_interval_secs = 5
-command_timeout_secs = 30
-heartbeat_interval_secs = 60
-```
+Kitty's remote control API doesn't directly expose command execution events. The current implementation provides infrastructure for future enhancements:
 
-## Running
+1. **Shell Integration** - Configure shells to emit markers
+2. **Scrollback Parsing** - Extract commands from terminal output
+3. **History File Monitoring** - Watch shell history files
 
-```bash
-# Check database connection
-kitty-ingestor check
+## Events Captured
 
-# Run the ingestor
-kitty-ingestor run
+Currently limited - the infrastructure is ready but needs shell integration for meaningful command capture:
 
-# Generate example config
-kitty-ingestor generate-config
-```
-
-## Events Produced
-
-### `terminal.kitty.command_executed`
-
+### terminal.command_executed (future)
 ```json
 {
   "command_string": "ls -la",
@@ -91,10 +63,10 @@ kitty-ingestor generate-config
 }
 ```
 
-## Future Enhancements
+## Architecture
 
-1. **Real-time Command Detection**: Implement shell integration markers
-2. **Command Output Capture**: Optionally capture command output
-3. **Session Tracking**: Track terminal session lifecycle
-4. **Multi-Shell Support**: Handle different shell configurations
-5. **Performance Metrics**: Track command execution time and resource usage
+Uses the SimpleIngestor pattern - the ingestor polls Kitty state while IngestorRuntime handles:
+- Heartbeats
+- Error recovery and retries
+- Dead letter queue
+- Graceful shutdown

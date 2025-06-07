@@ -28,6 +28,16 @@ This directory contains the main integration and system tests for the Sinex proj
 - `realistic_failure_tests.rs` - Failure scenario simulation
 - `assumption_mismatch_tests.rs` - Handling invalid assumptions
 
+### Ingestor Tests (`ingestors/`)
+- `filesystem_tests.rs` - Filesystem ingestor tests
+- `integration_tests.rs` - Ingestor integration tests
+
+### Runtime Tests (`runtime/`)
+- `runtime_test.rs` - IngestorRuntime tests
+- `runtime_tests.rs` - Additional runtime tests
+- `event_sink_test.rs` - EventSink implementation tests
+- `validation_unit_tests.rs` - Event validation tests
+
 ### Property-Based Tests
 - `property_tests.rs` - Property-based testing for edge cases
 
