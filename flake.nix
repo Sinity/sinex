@@ -1129,6 +1129,13 @@
               ┃   dev env  : nix run .#dev                                 ┃
               ┃   monitor  : nix run .#monitor                             ┃
               ┃                                                            ┃
+              ┃ 📡 INGESTORS                                                ┃
+              ┃   filesystem: cargo run --bin filesystem-ingestor          ┃
+              ┃   hyprland  : cargo run --bin hyprland-ingestor            ┃
+              ┃   kitty     : cargo run --bin kitty-ingestor               ┃
+              ┃   unified   : cargo run --bin unified-ingestor             ┃
+              ┃   dry run   : cargo run --bin <ingestor> -- --dry-run      ┃
+              ┃                                                            ┃
               ┃ 🗄️  DATABASE                                               ┃
               ┃   setup    : nix run .#db-setup [dev|test|reset|check]     ┃
               ┃   connect  : psql $DATABASE_URL                            ┃
@@ -1142,11 +1149,13 @@
               ┃ 🔧 BUILD & CHECK                                            ┃
               ┃   build    : nix run .#build                               ┃
               ┃   check    : nix run .#check                               ┃
+              ┃   watch    : cargo watch -x check                          ┃
               ┃                                                            ┃
               ┃ 📊 MONITORING                                               ┃
               ┃   dashboard: nix run .#monitor                             ┃
               ┃   live tail: nix run .#monitor live                        ┃
               ┃   events   : nix run .#monitor events                      ┃
+              ┃   query cli: ./cli/exo.py query --limit 10                 ┃
               ┃                                                            ┃
               ┃ 📦 ALL APPS: nix flake show                                ┃
               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
