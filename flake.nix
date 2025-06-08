@@ -350,14 +350,10 @@
                         sleep 0.5
                       done
                       
-                      # Create database and extensions
+                      # Create database
                       ${postgresqlWithExtensions}/bin/createdb -h "$EPHEMERAL_DIR" -p "5432$NUM" "sinex_ephemeral_$NUM"
-                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
-                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
-                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
-                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
                       
-                      # Run migrations
+                      # Run migrations (which create extensions)
                       log "Running migrations on ephemeral database $NUM"
                       DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration >/dev/null 2>&1 || {
                         error "Failed to run migrations on ephemeral database"
@@ -509,22 +505,7 @@
                             }
                           fi
                           
-                          # Create extensions
-                          log "Ensuring extensions are available"
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || {
-                            warning "Could not create ulid extension. May need superuser privileges."
-                          }
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
-                            warning "Could not create vector extension. May need superuser privileges."
-                          }
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || {
-                            warning "Could not create timescaledb extension. May need superuser privileges."
-                          }
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || {
-                            warning "Could not create pg_jsonschema extension. May need superuser privileges."
-                          }
-                          
-                          log "Running migrations"
+                          log "Running migrations (includes extensions)"
                           DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
                           
                           # Save state and switch to this database
@@ -552,13 +533,7 @@
                             }
                           fi
                           
-                          # Extensions
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
-                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
-                          
-                          # Migrations
+                          log "Running migrations (includes extensions)"
                           DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
                           
                           # Save state and switch to this database
@@ -1157,10 +1132,6 @@
                 if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
                   echo "🗄️ Setting up development database..."
                   ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev >/dev/null 2>&1 || true
-                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null 2>&1 || true
-                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1 || true
-                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null 2>&1 || true
-                  ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null 2>&1 || true
                   sqlx migrate run --source migration >/dev/null 2>&1 || true
                   echo "✅ Database ready"
                 fi
