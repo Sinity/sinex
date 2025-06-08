@@ -96,6 +96,28 @@ db destroy                     # Destroy ephemeral database
 db shell                       # Connect with psql to current database
 ```
 
+### PostgreSQL Extension Setup
+The project requires `pg_jsonschema` extension for JSON Schema validation. Since we use the global PostgreSQL system, install it via:
+
+**Option 1: NixOS System Configuration**
+```nix
+services.postgresql = {
+  enable = true;
+  package = pkgs.postgresql_16;
+  extraPlugins = with pkgs.postgresql16Packages; [
+    # ... other extensions
+    # Add pg_jsonschema when available in nixpkgs
+  ];
+};
+```
+
+**Option 2: Manual Installation**
+```bash
+# Download and install from releases
+# https://github.com/supabase/pg_jsonschema/releases
+# Follow installation instructions for your PostgreSQL version
+```
+
 ### Running Ingestors
 ```bash
 cargo run --bin filesystem-ingestor -- --dry-run

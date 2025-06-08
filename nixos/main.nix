@@ -5,12 +5,12 @@ with lib;
 let
   cfg = config.services.sinex;
   
-  # Get packages from the flake's overlay
-  # The overlay is applied by the flake, so these packages should be available
-  hyprlandIngestor = pkgs.sinex.hyprlandIngestor;
-  filesystemIngestor = pkgs.sinex.filesystemIngestor;
-  kittyIngestor = pkgs.sinex.kittyIngestor;
-  promoWorker = pkgs.sinex.promoWorker;
+  # Import the flake packages for this module
+  # These should be provided by the system that imports this module
+  hyprlandIngestor = pkgs.sinex-hyprland-ingestor or (throw "sinex-hyprland-ingestor package not found");
+  filesystemIngestor = pkgs.sinex-filesystem-ingestor or (throw "sinex-filesystem-ingestor package not found"); 
+  kittyIngestor = pkgs.sinex-kitty-ingestor or (throw "sinex-kitty-ingestor package not found");
+  promoWorker = pkgs.sinex-promo-worker or (throw "sinex-promo-worker package not found");
   
   
   # Database initialization script using sqlx migrations
@@ -188,9 +188,9 @@ in {
         timescaledb
         pgvector  
         pgx_ulid
-      ] ++ [ 
-        # pg_jsonschema from our flake's overlay
-        pkgs.pg_jsonschema
+        # Note: pg_jsonschema needs to be installed separately:
+        # https://github.com/supabase/pg_jsonschema#installation
+        # Or add to postgresql16Packages in your system configuration
       ];
       
       # Ensure basic authentication and database setup
