@@ -52,13 +52,13 @@ worker *ARGS:
     nix run .#sinexPromoWorker -- {{ARGS}}
 
 # Run all ingestors in background
-ingestors-start:
+ingestors-start *ARGS:
     #!/usr/bin/env bash
     echo "Starting all ingestors in background..."
-    nix run .#filesystemIngestor &
-    nix run .#kittyIngestor &
-    nix run .#hyprlandIngestor &
-    nix run .#sinexPromoWorker &
+    nix run .#filesystemIngestor -- {{ARGS}} &
+    nix run .#kittyIngestor -- {{ARGS}} &
+    nix run .#hyprlandIngestor -- {{ARGS}} &
+    nix run .#sinexPromoWorker -- {{ARGS}} &
     echo "All ingestors started. Use 'just ingestors-stop' to stop them."
 
 # Stop all running ingestors

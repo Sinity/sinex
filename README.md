@@ -84,6 +84,7 @@ just filesystem --config config/filesystem/production.toml
 
 # Manage all ingestors
 just ingestors-start        # Start all in background
+just ingestors-start --dry-run  # Start all in dry-run mode
 just ingestors-stop         # Stop all running ingestors
 ```
 
@@ -112,9 +113,6 @@ Each ingestor can be configured via TOML files. Example configurations are in `c
 ```bash
 # Use custom config
 just filesystem --config config/filesystem/development.toml
-
-# View current config
-just hyprland config
 ```
 
 ## 🧪 Testing Strategy
