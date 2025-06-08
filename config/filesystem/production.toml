@@ -1,0 +1,55 @@
+# Filesystem Ingestor Configuration - Production
+
+[database]
+# Use environment variable: DATABASE_URL
+url = "${DATABASE_URL}"
+max_connections = 50
+connection_timeout_secs = 10
+
+[logging]
+level = "info"
+format = "json"
+include_location = false
+
+[filesystem]
+# Production directories to monitor
+watch_directories = [
+    "/data/documents",
+    "/data/projects",
+    "/data/shared"
+]
+
+# Patterns to exclude from monitoring
+exclude_patterns = [
+    "*.tmp",
+    "*.log",
+    "*.cache",
+    ".git/**",
+    "node_modules/**",
+    "__pycache__/**",
+    "target/**",
+    "*.swp",
+    "*.swo",
+    "*~",
+    "*.backup",
+    "*.bak"
+]
+
+# Patterns to explicitly include (overrides excludes)
+include_patterns = []
+
+# Debounce time for filesystem events (milliseconds)
+debounce_ms = 1000
+
+# Batching configuration - larger batches in production
+batch_size_events = 100
+batch_timeout_ms = 10000
+
+# File hashing - consider disabling for performance
+hash_files = false
+max_hash_size_bytes = 5242880  # 5MB
+
+# Agent settings
+heartbeat_interval_secs = 300  # 5 minutes
+max_retries = 5
+retry_delay_secs = 10

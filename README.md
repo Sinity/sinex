@@ -9,47 +9,50 @@ A personal data substrate that captures digital events across devices and modali
 nix develop
 
 # Initialize database
-./scripts/db_reset.sh
+./script/db_reset.sh
 
-# Run tests
-./scripts/test_pipeline.sh
+# Run a simple test
+cargo run --bin filesystem-ingestor -- --dry-run
 
-# Test with real data (ephemeral setup)
-./scripts/full_system_test.sh auto
-
-# Interactive testing with live monitoring
-./scripts/full_system_test.sh interactive
-
-# Check system status
-./cli/exo.py query --limit 1
+# Query captured events
+./cli/exo.py query --limit 10
 ```
-
-See the devShell banner for available commands.
 
 ## 🏗️ Architecture
 
-Sinex follows a simple event-driven architecture:
+Sinex follows an event-driven architecture with three layers:
 
-1. **Ingestors** capture events from various sources
-2. **Event substrate** stores all events in a universal schema
-3. **CLI** provides querying and introspection capabilities
+1. **Ingestors** - Capture events from various sources (filesystem, terminals, window managers)
+2. **Event Substrate** - PostgreSQL + TimescaleDB stores immutable events with ULID keys
+3. **Query Interface** - Python CLI for exploring and analyzing captured data
 
-### Core Components
+### Project Structure
 
-- **Database**: PostgreSQL with TimescaleDB for time-series data
-- **Event Schema**: Universal `raw.events` table with JSONB payloads
-- **Worker System**: Concurrent event processing with SKIP LOCKED
-- **ULID Support**: Distributed-safe unique identifiers
+```
+sinex/
+├── crate/                  # Core Rust libraries
+│   ├── sinex-core/         # Common types (RawEvent, errors)
+│   ├── sinex-db/           # Database models and pooling
+│   ├── sinex-ulid/         # ULID implementation
+│   └── sinex-worker/       # Event processing workers
+├── ingestor/              # Event capture implementations
+│   ├── filesystem/         # File system monitoring
+│   ├── kitty/             # Terminal command capture
+│   └── hyprland/          # Window manager events
+├── config/                 # Example configurations
+├── test/                  # Organized test suites
+└── cli/                    # Python query tools
+```
 
 ## 📊 Event Format
 
-All events follow a consistent structure:
+All events follow a universal structure:
 
 ```json
 {
   "id": "01HKJM2Q3R4S5T6U7V8W9X0Y1Z",
-  "source": "app.browser",
-  "event_type": "page_loaded",
+  "source": "filesystem",
+  "event_type": "file.created",
   "ts_ingest": "2024-01-15T10:30:00Z",
   "ts_orig": "2024-01-15T10:29:59Z",
   "host": "workstation-01",
@@ -59,111 +62,129 @@ All events follow a consistent structure:
 
 ## 🛠️ Development
 
-### Building
+### Building & Testing
 
 ```bash
-# Build all components
-cargo build --all-features
+# Build everything
+cargo build --workspace
 
-# Run specific tests
-cargo test --test migration_tests
-cargo test --test ulid_integration_tests
+# Run all tests
+cargo test
+
+# Test specific component
+cargo test --package filesystem-ingestor
+
+# Continuous testing
+bacon
 ```
 
-### Database Migrations
+### Running Ingestors
 
 ```bash
-# Run migrations
+# Filesystem monitoring
+cargo run --bin filesystem-ingestor
+
+# Terminal capture (Kitty)
+cargo run --bin kitty-ingestor
+
+# Window manager events (Hyprland)
+cargo run --bin hyprland-ingestor
+
+# Dry run mode (no database)
+cargo run --bin filesystem-ingestor -- --dry-run
+
+# Output to file
+cargo run --bin kitty-ingestor -- --output-file events.json
+```
+
+### Database Operations
+
+```bash
+# Apply migrations
 sqlx migrate run
 
 # Create new migration
-sqlx migrate add create_new_feature
+sqlx migrate add feature_name
+
+# Direct connection
+psql $DATABASE_URL
+
+# Update SQLX cache after query changes
+./script/update-sqlx-cache.sh
 ```
-
-### Testing
-
-The project includes comprehensive testing at multiple levels:
-
-#### Quick Testing
-```bash
-# Run all tests
-./scripts/test_pipeline.sh
-
-# Test specific components
-cargo test --package sinex-shared
-cargo test --test schema_validation_tests
-```
-
-#### Real-World Testing
-```bash
-# Ephemeral full system test (recommended)
-./scripts/full_system_test.sh auto
-
-# Interactive testing with live monitoring
-./scripts/full_system_test.sh interactive
-
-# Monitor production system
-DATABASE_URL=... ./scripts/live_monitor.sh
-```
-
-#### Assumption Validation
-```bash
-# Detect configuration issues in production data
-./scripts/diagnose_assumptions.sh
-
-# Test resilience against common bugs
-./scripts/chaos_test.sh
-
-# Test with real system data sources
-./scripts/real_world_test.sh
-```
-
-**Test Types:**
-- Unit tests for validation logic
-- Integration tests with real database operations  
-- Assumption mismatch detection tests
-- Real-time monitoring and validation
-- Chaos testing for failure scenarios
-- Performance and concurrency testing
 
 ## 🔧 Configuration
 
-Configuration varies by component. Check component-specific README files for details:
+Each ingestor can be configured via TOML files. Example configurations are in `config/`:
 
-- `ingestors/hyprland/README.md` - Window manager integration
-- `ingestors/kitty/README.md` - Terminal integration
-- `ingestors/filesystem/README.md` - File system monitoring
+```bash
+# Use custom config
+cargo run --bin filesystem-ingestor -- --config config/filesystem/development.toml
+
+# View current config
+cargo run --bin hyprland-ingestor -- config
+```
+
+## 🧪 Testing Strategy
+
+Tests are organized by category in `test/`:
+
+- `database/` - Schema, migration, ULID tests
+- `pipeline/` - Event processing and worker tests
+- `agent/` - Agent manifest and heartbeat tests
+- `reliability/` - Error handling and failure scenarios
+
+```bash
+# Run specific test category
+cargo test --test database/
+
+# Run with test database
+TEST_DATABASE_URL=postgresql://... cargo test
+
+# See test output
+cargo test -- --nocapture
+```
+
+## 🏗️ Key Patterns
+
+### SimpleIngestor Pattern
+All ingestors implement a simple trait that focuses only on event capture:
+
+```rust
+impl SimpleIngestor for MyIngestor {
+    fn name() -> &'static str { "my-ingestor" }
+    fn version() -> &'static str { env!("CARGO_PKG_VERSION") }
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        // Capture logic only - runtime handles lifecycle
+    }
+}
+```
+
+### Database Patterns
+- ULID primary keys for time-ordered, distributed-safe IDs
+- Immutable events in `raw.events` hypertable
+- Concurrent processing with `SELECT FOR UPDATE SKIP LOCKED`
+- JSON Schema validation for event payloads
+
+## 📚 Documentation
+
+- `CLAUDE.md` - Development practices and project memory
+- `spec/SADI.md` - Documentation index
+- `spec/STAD.md` - System architecture
+- `spec/docs/tims/` - Implementation details
 
 ## 🏗️ NixOS Integration
 
 ```nix
 {
-  inputs.sinex.url = "github:sinity/sinex";
-  imports = [ sinex.nixosModules.default ];
-  
-  services.sinex.enable = true;
+  services.sinex = {
+    enable = true;
+    systemUser = "username";
+    database = { name = "sinex"; user = "sinex"; };
+    ingestors.hyprland.enable = true;
+  };
 }
 ```
-
-## 📋 Project Status
-
-See `CHANGELOG.md` for recent changes and `spec/` directory for detailed specifications.
-
-### Key Features Implemented
-
-- ✅ Universal event schema with ULID support
-- ✅ TimescaleDB integration for time-series data
-- ✅ JSON Schema validation for event payloads
-- ✅ Concurrent worker processing
-- ✅ Agent manifest system
-- ✅ Comprehensive test suite
-- ✅ CI/CD pipeline
-
-## 📚 Documentation
-
-- `spec/VISION.md` - High-level vision and goals
-- `spec/docs/` - Technical implementation details
-- `CLAUDE.md` - Development practices and invariants
 
 ## 📄 License
 
