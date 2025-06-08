@@ -52,7 +52,7 @@ impl RawEventBuilder {
 
     /// Build the event (ID and ts_ingest will be set by database)
     pub fn build(self) -> RawEvent {
-        let id = uuid::Uuid::new_v4(); // Will be replaced by database gen_ulid()
+        let id = crate::Ulid::new(); // Will be replaced by database gen_ulid()
         RawEvent {
             id,
             source: self.source,
@@ -61,7 +61,7 @@ impl RawEventBuilder {
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: Some(self.ingestor_version),
-            payload_schema_id: self.payload_schema_id.map(|ulid| uuid::Uuid::from_bytes(ulid.to_bytes())),
+            payload_schema_id: self.payload_schema_id,
             payload: self.payload,
         }
     }

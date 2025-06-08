@@ -146,12 +146,24 @@ impl From<Uuid> for Ulid {
 #[cfg(feature = "sqlx")]
 mod sqlx_impl {
     use super::*;
-    use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef};
-    use sqlx::{Postgres, Type};
+    use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef, PgHasArrayType};
+    use sqlx::{Postgres, Type, TypeInfo};
 
     impl Type<Postgres> for Ulid {
         fn type_info() -> PgTypeInfo {
-            <Uuid as Type<Postgres>>::type_info()
+            // Register as the ULID type from PostgreSQL
+            PgTypeInfo::with_name("ulid")
+        }
+        
+        fn compatible(ty: &PgTypeInfo) -> bool {
+            // ULID is compatible with both ulid and uuid types
+            ty.name() == "ulid" || ty.name() == "uuid"
+        }
+    }
+
+    impl PgHasArrayType for Ulid {
+        fn array_type_info() -> PgTypeInfo {
+            PgTypeInfo::with_name("_ulid")
         }
     }
 

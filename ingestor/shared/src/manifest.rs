@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -50,7 +50,7 @@ impl ManifestManager {
     pub async fn register_agent(&self, manifest: &AgentManifest) -> Result<()> {
         let produces_json = serde_json::to_value(&manifest.produces_event_types)?;
         
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.agent_manifests 
                 (agent_name, description, version, status, config_schema_id, 
@@ -64,16 +64,16 @@ impl ManifestManager {
                 produces_event_types = EXCLUDED.produces_event_types,
                 repo_url = EXCLUDED.repo_url,
                 last_heartbeat_ts = COALESCE(EXCLUDED.last_heartbeat_ts, agent_manifests.last_heartbeat_ts)
-            "#
+            "#,
+            &manifest.agent_name,
+            &manifest.description,
+            &manifest.version,
+            format!("{:?}", manifest.status).to_lowercase(),
+            manifest.config_schema_id.map(|id| uuid::Uuid::from(id)),
+            produces_json,
+            manifest.repo_url.as_deref(),
+            manifest.last_heartbeat_ts
         )
-        .bind(&manifest.agent_name)
-        .bind(&manifest.description)
-        .bind(&manifest.version)
-        .bind(format!("{:?}", manifest.status).to_lowercase())
-        .bind(manifest.config_schema_id.map(|id| uuid::Uuid::from_bytes(id.to_bytes())))
-        .bind(&produces_json)
-        .bind(&manifest.repo_url)
-        .bind(manifest.last_heartbeat_ts)
         .execute(&self.pool)
         .await
         .context("Failed to register agent manifest")?;
@@ -84,14 +84,14 @@ impl ManifestManager {
 
     /// Update agent heartbeat timestamp
     pub async fn update_heartbeat(&self, agent_name: &str) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE sinex_schemas.agent_manifests 
             SET last_heartbeat_ts = NOW()
             WHERE agent_name = $1
-            "#
+            "#,
+            agent_name
         )
-        .bind(agent_name)
         .execute(&self.pool)
         .await
         .context("Failed to update agent heartbeat")?;
@@ -101,37 +101,43 @@ impl ManifestManager {
 
     /// Get agent manifest by name
     pub async fn get_agent(&self, agent_name: &str) -> Result<Option<AgentManifest>> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
-            SELECT agent_name, description, version, status, 
+            SELECT agent_name as "agent_name!", 
+                   description, 
+                   version as "version!", 
+                   status as "status!", 
                    config_schema_id::uuid,
-                   produces_event_types, repo_url, last_heartbeat_ts, registered_at
+                   produces_event_types, 
+                   repo_url, 
+                   last_heartbeat_ts, 
+                   registered_at as "registered_at!"
             FROM sinex_schemas.agent_manifests
             WHERE agent_name = $1
-            "#
+            "#,
+            agent_name
         )
-        .bind(agent_name)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(row) = row {
-            let config_schema_id: Option<Ulid> = row.try_get::<Option<uuid::Uuid>, _>("config_schema_id")?
-                .map(|uuid| Ulid::from_uuid(uuid));
+            let config_schema_id: Option<Ulid> = row.config_schema_id
+                .map(|uuid| uuid.into());
             let manifest = AgentManifest {
-                agent_name: row.try_get("agent_name")?,
-                description: row.try_get::<Option<String>, _>("description")?.unwrap_or_default(),
-                version: row.try_get("version")?,
-                status: match row.try_get::<String, _>("status")?.as_str() {
+                agent_name: row.agent_name,
+                description: row.description.unwrap_or_default(),
+                version: row.version,
+                status: match row.status.as_str() {
                     "stable" => AgentManifestStatus::Stable,
                     "deprecated" => AgentManifestStatus::Deprecated,
                     _ => AgentManifestStatus::Development,
                 },
                 config_schema_id,
-                produces_event_types: serde_json::from_value(row.try_get::<Option<JsonValue>, _>("produces_event_types")?.unwrap_or(JsonValue::Object(Default::default())))
+                produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
                     .unwrap_or_default(),
-                repo_url: row.try_get("repo_url")?,
-                last_heartbeat_ts: row.try_get("last_heartbeat_ts")?,
-                registered_at: Some(row.try_get("registered_at")?),
+                repo_url: row.repo_url,
+                last_heartbeat_ts: row.last_heartbeat_ts,
+                registered_at: Some(row.registered_at),
             };
             Ok(Some(manifest))
         } else {
@@ -141,11 +147,17 @@ impl ManifestManager {
 
     /// List all registered agents
     pub async fn list_agents(&self) -> Result<Vec<AgentManifest>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
-            SELECT agent_name, description, version, status, 
+            SELECT agent_name as "agent_name!", 
+                   description, 
+                   version as "version!", 
+                   status as "status!", 
                    config_schema_id::uuid,
-                   produces_event_types, repo_url, last_heartbeat_ts, registered_at
+                   produces_event_types, 
+                   repo_url, 
+                   last_heartbeat_ts, 
+                   registered_at as "registered_at!"
             FROM sinex_schemas.agent_manifests
             ORDER BY agent_name
             "#
@@ -155,23 +167,23 @@ impl ManifestManager {
 
         let mut manifests = Vec::new();
         for row in rows {
-            let config_schema_id: Option<Ulid> = row.try_get::<Option<uuid::Uuid>, _>("config_schema_id")?
-                .map(|uuid| Ulid::from_uuid(uuid));
+            let config_schema_id: Option<Ulid> = row.config_schema_id
+                .map(|uuid| uuid.into());
             manifests.push(AgentManifest {
-                agent_name: row.try_get("agent_name")?,
-                description: row.try_get::<Option<String>, _>("description")?.unwrap_or_default(),
-                version: row.try_get("version")?,
-                status: match row.try_get::<String, _>("status")?.as_str() {
+                agent_name: row.agent_name,
+                description: row.description.unwrap_or_default(),
+                version: row.version,
+                status: match row.status.as_str() {
                     "stable" => AgentManifestStatus::Stable,
                     "deprecated" => AgentManifestStatus::Deprecated,
                     _ => AgentManifestStatus::Development,
                 },
                 config_schema_id,
-                produces_event_types: serde_json::from_value(row.try_get::<Option<JsonValue>, _>("produces_event_types")?.unwrap_or(JsonValue::Object(Default::default())))
+                produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
                     .unwrap_or_default(),
-                repo_url: row.try_get("repo_url")?,
-                last_heartbeat_ts: row.try_get("last_heartbeat_ts")?,
-                registered_at: Some(row.try_get("registered_at")?),
+                repo_url: row.repo_url,
+                last_heartbeat_ts: row.last_heartbeat_ts,
+                registered_at: Some(row.registered_at),
             });
         }
 

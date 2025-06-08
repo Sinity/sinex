@@ -20,6 +20,9 @@ use crate::config::FilesystemConfig;
 pub struct FileCreatedPayload {
     pub path: String,
     pub object_type: ObjectType,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
 }
@@ -28,6 +31,12 @@ pub struct FileCreatedPayload {
 pub struct FileModifiedPayload {
     pub path: String,
     pub object_type: ObjectType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modification_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
 }
@@ -167,7 +176,28 @@ impl FilesystemIngestor {
 
         let (event_type, payload) = match &event.kind {
             EventKind::Create(_) => {
-                let hash = if config.hash_files && object_type == ObjectType::File {
+                let (size, permissions) = if path.exists() {
+                    match fs::metadata(path) {
+                        Ok(metadata) => {
+                            let size = metadata.len();
+                            let permissions = if cfg!(unix) {
+                                use std::os::unix::fs::PermissionsExt;
+                                Some(format!("{:o}", metadata.permissions().mode() & 0o777))
+                            } else {
+                                None
+                            };
+                            (size, permissions)
+                        }
+                        Err(e) => {
+                            debug!("Failed to get metadata for {}: {}", path.display(), e);
+                            (0, None)
+                        }
+                    }
+                } else {
+                    (0, None)
+                };
+
+                let hash = if config.hash_files && object_type == ObjectType::File && size > 0 {
                     Self::hash_file(path, config.max_hash_size_bytes)
                 } else {
                     None
@@ -178,11 +208,25 @@ impl FilesystemIngestor {
                     serde_json::to_value(FileCreatedPayload {
                         path: path_str,
                         object_type,
+                        size,
+                        permissions,
                         blake3_hash: hash,
                     }).ok()?,
                 )
             }
             EventKind::Modify(_) => {
+                let new_size = if path.exists() {
+                    match fs::metadata(path) {
+                        Ok(metadata) => Some(metadata.len()),
+                        Err(e) => {
+                            debug!("Failed to get metadata for {}: {}", path.display(), e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 let hash = if config.hash_files && object_type == ObjectType::File {
                     Self::hash_file(path, config.max_hash_size_bytes)
                 } else {
@@ -194,6 +238,9 @@ impl FilesystemIngestor {
                     serde_json::to_value(FileModifiedPayload {
                         path: path_str,
                         object_type,
+                        old_size: None, // We don't track the old size currently
+                        new_size,
+                        modification_type: Some("content".to_string()),
                         blake3_hash: hash,
                     }).ok()?,
                 )

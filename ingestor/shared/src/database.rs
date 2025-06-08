@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::Row;
 use std::time::Duration;
 use tracing::{debug, info};
 use sinex_db::models::RawEvent;
@@ -92,35 +91,32 @@ impl DatabaseService {
         }
         
         // Let database generate the ULID
-        let row = sqlx::query(
+        let record = sqlx::query!(
             r#"
             INSERT INTO raw.events 
                 (source, event_type, ts_orig, host, ingestor_version, 
                  payload_schema_id, payload)
             VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
-            RETURNING id::uuid
-            "#
+            RETURNING id::uuid as "id!"
+            "#,
+            &event.source,
+            &event.event_type,
+            event.ts_orig,
+            &event.host,
+            event.ingestor_version.as_deref(),
+            event.payload_schema_id.map(|ulid| uuid::Uuid::from(ulid)),
+            &event.payload
         )
-        .bind(&event.source)
-        .bind(&event.event_type)
-        .bind(&event.ts_orig)
-        .bind(&event.host)
-        .bind(&event.ingestor_version)
-        .bind(&event.payload_schema_id)
-        .bind(&event.payload)
         .fetch_one(&self.pool)
         .await
         .context("Failed to insert event")?;
 
-        let id: Uuid = row.try_get("id")
-            .context("Failed to get inserted event ID")?;
-
         debug!(
             "Inserted event: {} {} (id: {})",
-            event.source, event.event_type, id
+            event.source, event.event_type, record.id
         );
 
-        Ok(id)
+        Ok(record.id)
     }
 
     /// Insert multiple events in a batch
@@ -137,29 +133,27 @@ impl DatabaseService {
         let mut ids = Vec::new();
 
         for event in events {
-            let row = sqlx::query(
+            let record = sqlx::query!(
                 r#"
                 INSERT INTO raw.events 
                     (source, event_type, ts_orig, host, ingestor_version, 
                      payload_schema_id, payload)
                 VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
-                RETURNING id::uuid
-                "#
+                RETURNING id::uuid as "id!"
+                "#,
+                &event.source,
+                &event.event_type,
+                event.ts_orig,
+                &event.host,
+                event.ingestor_version.as_deref(),
+                event.payload_schema_id.map(|ulid| uuid::Uuid::from(ulid)),
+                &event.payload
             )
-            .bind(&event.source)
-            .bind(&event.event_type)
-            .bind(&event.ts_orig)
-            .bind(&event.host)
-            .bind(&event.ingestor_version)
-            .bind(&event.payload_schema_id)
-            .bind(&event.payload)
             .fetch_one(&mut *tx)
             .await
             .context("Failed to insert event in batch")?;
 
-            let id: Uuid = row.try_get("id")
-                .context("Failed to get inserted event ID")?;
-            ids.push(id);
+            ids.push(record.id);
         }
 
         tx.commit().await?;

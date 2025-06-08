@@ -82,7 +82,7 @@ impl EventValidator {
             sources::FILESYSTEM,
             event_type_constants::filesystem::FILE_CREATED,
             |payload| {
-                // Required: path (string), object_type (string)
+                // Required: path (string), size (number >= 0)
                 let path = payload.get("path")
                     .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
                     .as_str()
@@ -99,23 +99,31 @@ impl EventValidator {
                     });
                 }
                 
-                let _object_type = payload.get("object_type")
-                    .ok_or_else(|| ValidationError::MissingField { field: "object_type".to_string() })?
-                    .as_str()
+                let _size = payload.get("size")
+                    .ok_or_else(|| ValidationError::MissingField { field: "size".to_string() })?
+                    .as_u64()
                     .ok_or_else(|| ValidationError::InvalidType {
-                        field: "object_type".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("object_type")),
+                        field: "size".to_string(),
+                        expected: "positive integer".to_string(),
+                        actual: format!("{:?}", payload.get("size")),
                     })?;
                 
-                // Optional: blake3_hash (string)
-                if let Some(hash) = payload.get("blake3_hash") {
-                    hash.as_str()
+                // Optional: permissions (string matching pattern)
+                if let Some(perms) = payload.get("permissions") {
+                    let perms_str = perms.as_str()
                         .ok_or_else(|| ValidationError::InvalidType {
-                            field: "blake3_hash".to_string(),
+                            field: "permissions".to_string(),
                             expected: "string".to_string(),
-                            actual: format!("{:?}", hash),
+                            actual: format!("{:?}", perms),
                         })?;
+                    
+                    if !perms_str.chars().all(|c| c >= '0' && c <= '7') || 
+                       (perms_str.len() != 3 && perms_str.len() != 4) {
+                        return Err(ValidationError::InvalidValue {
+                            field: "permissions".to_string(),
+                            reason: "must be 3 or 4 octal digits".to_string(),
+                        });
+                    }
                 }
                 
                 Ok(())
@@ -127,7 +135,7 @@ impl EventValidator {
             sources::FILESYSTEM,
             event_type_constants::filesystem::FILE_MODIFIED,
             |payload| {
-                // Required: path, object_type
+                // Required: path
                 payload.get("path")
                     .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
                     .as_str()
@@ -137,23 +145,14 @@ impl EventValidator {
                         actual: format!("{:?}", payload.get("path")),
                     })?;
                 
-                payload.get("object_type")
-                    .ok_or_else(|| ValidationError::MissingField { field: "object_type".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "object_type".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("object_type")),
-                    })?;
+                // At least one of: old_size/new_size, modification_type
+                let has_size_info = payload.get("old_size").is_some() || payload.get("new_size").is_some();
+                let has_mod_type = payload.get("modification_type").is_some();
                 
-                // Optional: blake3_hash
-                if let Some(hash) = payload.get("blake3_hash") {
-                    hash.as_str()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "blake3_hash".to_string(),
-                            expected: "string".to_string(),
-                            actual: format!("{:?}", hash),
-                        })?;
+                if !has_size_info && !has_mod_type {
+                    return Err(ValidationError::MissingField {
+                        field: "modification info (old_size/new_size or modification_type)".to_string(),
+                    });
                 }
                 
                 Ok(())
@@ -165,7 +164,7 @@ impl EventValidator {
             sources::FILESYSTEM,
             event_type_constants::filesystem::FILE_DELETED,
             |payload| {
-                // Required: path, object_type
+                // Required: path
                 payload.get("path")
                     .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
                     .as_str()
@@ -175,14 +174,15 @@ impl EventValidator {
                         actual: format!("{:?}", payload.get("path")),
                     })?;
                 
-                payload.get("object_type")
-                    .ok_or_else(|| ValidationError::MissingField { field: "object_type".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "object_type".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("object_type")),
-                    })?;
+                // Optional: was_directory (boolean)
+                if let Some(was_dir) = payload.get("was_directory") {
+                    was_dir.as_bool()
+                        .ok_or_else(|| ValidationError::InvalidType {
+                            field: "was_directory".to_string(),
+                            expected: "boolean".to_string(),
+                            actual: format!("{:?}", was_dir),
+                        })?;
+                }
                 
                 Ok(())
             },

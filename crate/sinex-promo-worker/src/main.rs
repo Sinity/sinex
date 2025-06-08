@@ -6,7 +6,7 @@ use sinex_db::{
     queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
 };
 use sinex_worker::{metrics::start_metrics_server, worker::Worker, EventProcessor};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{signal, task};
@@ -56,37 +56,37 @@ struct ExampleProcessor {
 #[async_trait]
 impl EventProcessor for ExampleProcessor {
     async fn process_event(&self, pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
-        // Fetch the raw event
-        let row = sqlx::query(
+        // Fetch the raw event - need to handle ULID conversion manually
+        let record = sqlx::query!(
             r#"
             SELECT 
-                id::uuid, 
-                source, 
-                event_type, 
-                ts_ingest,
+                id::uuid as "id!", 
+                source as "source!", 
+                event_type as "event_type!", 
+                ts_ingest as "ts_ingest!",
                 ts_orig,
-                host, 
+                host as "host!", 
                 ingestor_version, 
-                payload_schema_id::uuid, 
-                payload
+                payload_schema_id::uuid as "payload_schema_id", 
+                payload as "payload!"
             FROM raw.events 
             WHERE id = $1::uuid::ulid
-            "#
+            "#,
+            uuid::Uuid::from(item.raw_event_id)
         )
-        .bind(item.raw_event_id)
         .fetch_one(pool)
         .await?;
-
+        
         let event = RawEvent {
-            id: row.try_get("id")?,
-            source: row.try_get("source")?,
-            event_type: row.try_get("event_type")?,
-            ts_ingest: row.try_get("ts_ingest")?,
-            ts_orig: row.try_get("ts_orig")?,
-            host: row.try_get("host")?,
-            ingestor_version: row.try_get("ingestor_version")?,
-            payload_schema_id: row.try_get("payload_schema_id")?,
-            payload: row.try_get("payload")?,
+            id: record.id.into(),
+            source: record.source,
+            event_type: record.event_type,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            host: record.host,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(Into::into),
+            payload: record.payload,
         };
 
         info!(

@@ -87,7 +87,7 @@ impl Worker {
             match self.processor.process_event(&self.pool, &item).await {
                 Ok(()) => {
                     // Successfully processed
-                    if let Err(e) = complete_promotion_queue_item(&self.pool, item.queue_id).await {
+                    if let Err(e) = complete_promotion_queue_item(&self.pool, item.queue_id.into()).await {
                         error!(
                             worker_id = %self.worker_id,
                             queue_id = %item.queue_id,
@@ -124,7 +124,7 @@ impl Worker {
                         );
                         
                         // For now, just delete it
-                        let _ = complete_promotion_queue_item(&self.pool, item.queue_id).await;
+                        let _ = complete_promotion_queue_item(&self.pool, item.queue_id.into()).await;
                         self.metrics.items_dlq.inc();
                     } else {
                         // Schedule retry
@@ -133,7 +133,7 @@ impl Worker {
                         
                         if let Err(e) = fail_promotion_queue_item(
                             &self.pool,
-                            item.queue_id,
+                            item.queue_id.into(),
                             &format!("{:?}", e),
                             next_retry,
                         )

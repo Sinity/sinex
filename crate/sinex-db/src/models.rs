@@ -2,37 +2,29 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
 use sqlx::FromRow;
-use uuid::Uuid;
 
 /// Raw event from the events table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RawEvent {
-    pub id: Uuid,
+    pub id: Ulid,
     pub source: String,
     pub event_type: String,
     pub ts_ingest: DateTime<Utc>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub host: String,
     pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<Uuid>,
+    pub payload_schema_id: Option<Ulid>,
     pub payload: serde_json::Value,
 }
 
 impl RawEvent {
-    /// Convert database UUID to ULID for application layer
-    pub fn id_as_ulid(&self) -> Result<Ulid, sinex_ulid::Error> {
-        Ulid::from_bytes(*self.id.as_bytes())
-    }
-    
-    pub fn payload_schema_id_as_ulid(&self) -> Option<Result<Ulid, sinex_ulid::Error>> {
-        self.payload_schema_id.map(|uuid| Ulid::from_bytes(*uuid.as_bytes()))
-    }
+    // These conversion methods are no longer needed since we're using Ulid directly
 }
 
 /// Event payload schema
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EventPayloadSchema {
-    pub id: Uuid,
+    pub id: Ulid,
     pub event_source: String,
     pub event_type: String,
     pub schema_version: String,
@@ -66,8 +58,8 @@ pub struct AgentManifest {
 /// Promotion queue item
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PromotionQueueItem {
-    pub queue_id: Uuid,
-    pub raw_event_id: Uuid,
+    pub queue_id: Ulid,
+    pub raw_event_id: Ulid,
     pub target_agent_name: String,
     pub status: String,
     pub attempts: i32,
