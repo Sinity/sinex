@@ -220,10 +220,8 @@ where
         match operation().await {
             Ok(result) => return Ok(result),
             Err(e) => {
-                last_error = Some(e);
-                
                 if attempt < config.max_retries {
-                    info!("Database operation failed (attempt {}), retrying...", attempt + 1);
+                    info!("Database operation failed (attempt {}), retrying... Error: {}", attempt + 1, e);
                     tokio::time::sleep(delay).await;
                     
                     // Exponential backoff
@@ -232,6 +230,7 @@ where
                         config.max_delay
                     );
                 }
+                last_error = Some(e);
             }
         }
     }
