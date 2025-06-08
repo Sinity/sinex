@@ -119,16 +119,20 @@ services.postgresql = {
 
 ### Running Ingestors
 ```bash
-# Using just commands (recommended)
+# Individual ingestors
 just filesystem                 # Run filesystem ingestor
 just kitty                     # Run kitty ingestor  
 just hyprland                  # Run hyprland ingestor
 just worker                    # Run promotion worker
 
-# Or run with cargo directly
-cargo run --bin filesystem-ingestor -- --dry-run
-cargo run --bin kitty-ingestor -- --output-file events.json
-cargo run --bin hyprland-ingestor
+# With options
+just filesystem --dry-run       # Test mode without database
+just kitty --output-file events.json
+just filesystem --config config/filesystem/production.toml
+
+# All at once
+just ingestors-start           # Start all in background
+just ingestors-stop            # Stop all
 ```
 
 ### Database Work
@@ -144,15 +148,10 @@ just sqlx-check               # Check if cache is up to date
 
 ### Testing
 ```bash
-# Regular testing
 just test                       # All tests
-cargo test --package sinex-db   # Specific crate
-cargo test --test database/     # Test category
-
-# Continuous testing
-just watch                      # Watch mode with cargo-watch
-
-# All tests run against the same sinex_dev database
+just test -- --package sinex-db # Specific crate
+just test -- --test database/   # Test category
+just watch                      # Continuous testing
 ```
 
 

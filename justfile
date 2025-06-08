@@ -39,25 +39,40 @@ sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
 # Ingestors
-filesystem:
-    nix run .#filesystemIngestor
+filesystem *ARGS:
+    nix run .#filesystemIngestor -- {{ARGS}}
 
-kitty:
-    nix run .#kittyIngestor
+kitty *ARGS:
+    nix run .#kittyIngestor -- {{ARGS}}
 
-hyprland:
-    nix run .#hyprlandIngestor
+hyprland *ARGS:
+    nix run .#hyprlandIngestor -- {{ARGS}}
 
-worker:
-    nix run .#sinexPromoWorker
+worker *ARGS:
+    nix run .#sinexPromoWorker -- {{ARGS}}
+
+# Run all ingestors in background
+ingestors-start:
+    #!/usr/bin/env bash
+    echo "Starting all ingestors in background..."
+    nix run .#filesystemIngestor &
+    nix run .#kittyIngestor &
+    nix run .#hyprlandIngestor &
+    nix run .#sinexPromoWorker &
+    echo "All ingestors started. Use 'just ingestors-stop' to stop them."
+
+# Stop all running ingestors
+ingestors-stop:
+    pkill -f "filesystem-ingestor" || true
+    pkill -f "kitty-ingestor" || true
+    pkill -f "hyprland-ingestor" || true
+    pkill -f "sinex-promo-worker" || true
+    @echo "All ingestors stopped."
 
 # Query
 query LIMIT="10":
     @python3 ./cli/exo.py query --limit {{LIMIT}}
 
-# Utilities
-kill-ingestors:
-    pkill -f "ingestor" || true
 
 clean:
     cargo clean

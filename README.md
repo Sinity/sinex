@@ -62,37 +62,29 @@ All events follow a universal structure:
 ### Building & Testing
 
 ```bash
-# Build everything
-cargo build --workspace
-
-# Run all tests
-cargo test
-
-# Test specific component
-cargo test --package filesystem-ingestor
-
-# Continuous testing
-cargo watch -x test
-
-# Use just commands
 just check    # Fast compile check
-just test     # Run tests
-just build    # Build all
+just test     # Run all tests
+just build    # Build everything
+just watch    # Continuous testing
 ```
 
 ### Running Ingestors
 
 ```bash
-# Using just commands (recommended)
-just filesystem    # Filesystem monitoring
-just kitty        # Terminal capture (Kitty)
-just hyprland     # Window manager events (Hyprland)
-just worker       # Promotion worker
+# Run individual ingestors
+just filesystem              # Filesystem monitoring
+just kitty                  # Terminal capture (Kitty)
+just hyprland               # Window manager events (Hyprland)
+just worker                 # Promotion worker
 
-# Or run directly with cargo
-cargo run --bin filesystem-ingestor
-cargo run --bin kitty-ingestor -- --dry-run
-cargo run --bin hyprland-ingestor -- --output-file events.json
+# Run with options
+just filesystem --dry-run    # Test without database writes
+just kitty --output-file events.json  # Output to file
+just filesystem --config config/filesystem/production.toml
+
+# Manage all ingestors
+just ingestors-start        # Start all in background
+just ingestors-stop         # Stop all running ingestors
 ```
 
 ### Database Operations
@@ -119,10 +111,10 @@ Each ingestor can be configured via TOML files. Example configurations are in `c
 
 ```bash
 # Use custom config
-cargo run --bin filesystem-ingestor -- --config config/filesystem/development.toml
+just filesystem --config config/filesystem/development.toml
 
 # View current config
-cargo run --bin hyprland-ingestor -- config
+just hyprland config
 ```
 
 ## 🧪 Testing Strategy
@@ -135,13 +127,9 @@ Tests are organized by category in `test/`:
 - `reliability/` - Error handling and failure scenarios
 
 ```bash
-# Run specific test category
-cargo test --test database/
-
-# See test output
-cargo test -- --nocapture
-
-# The test database is the same as dev database (sinex_dev)
+just test                    # Run all tests
+just test -- --test database/  # Run specific test category  
+just test -- --nocapture     # See test output
 ```
 
 ## 🏗️ Key Patterns
