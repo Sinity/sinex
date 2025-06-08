@@ -246,7 +246,8 @@ async fn test_max_retry_exhaustion() {
     .await;
     
     assert!(result.is_ok());
-    let (status,): (String,) = result.unwrap();
+    let row = result.unwrap();
+    let status: String = row.get("status");
     assert_eq!(status, "failed_permanent", "Should be permanently failed after max attempts");
 }
 
