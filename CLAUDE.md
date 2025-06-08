@@ -119,7 +119,7 @@ services.postgresql = {
 
 ### Running Ingestors
 ```bash
-# Individual ingestors
+# Individual ingestors (config logged at startup)
 just filesystem                 # Run filesystem ingestor
 just kitty                     # Run kitty ingestor  
 just hyprland                  # Run hyprland ingestor
@@ -128,12 +128,18 @@ just worker                    # Run promotion worker
 # With options
 just filesystem --dry-run       # Test mode without database
 just kitty --output-file events.json
-just filesystem --config config/filesystem/production.toml
+just filesystem --config my-config.toml
 
 # All at once
 just ingestors-start           # Start all in background
+just ingestors-start --dry-run # All in dry-run mode
 just ingestors-stop            # Stop all
 ```
+
+Config loading priority:
+1. `INGESTOR-NAME.toml` in current directory
+2. `~/.config/INGESTOR-NAME.toml`
+3. Built-in defaults (uses DATABASE_URL automatically)
 
 ### Database Work
 ```bash

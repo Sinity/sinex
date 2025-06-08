@@ -108,11 +108,21 @@ just sqlx-prepare
 
 ## 🔧 Configuration
 
-Each ingestor can be configured via TOML files. Example configurations are in `config/`:
+Each ingestor automatically loads configuration from (in priority order):
+1. `INGESTOR-NAME.toml` in current directory
+2. `~/.config/INGESTOR-NAME.toml`
+3. Built-in defaults (uses DATABASE_URL from environment)
 
 ```bash
-# Use custom config
-just filesystem --config config/filesystem/development.toml
+# Use custom config file
+just filesystem --config my-config.toml
+
+# Configuration is logged at startup
+just filesystem
+# [INFO] Configuration loaded:
+# [INFO]   Database URL: postgresql:///sinex_dev?host=/run/postgresql
+# [INFO]   Watch directories: ["~/Documents", "~/Projects"]
+# ...
 ```
 
 ## 🧪 Testing Strategy
