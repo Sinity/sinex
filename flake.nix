@@ -442,7 +442,6 @@
                   warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
                   error() { echo -e "''${RED}❌''${NC} $*" >&2; }
 
-                  STATE_FILE=".sinex_current_db"
                   EPHEMERAL_BASE="/tmp/sinex_ephemeral"
 
                   # Function to create ephemeral database
@@ -493,11 +492,15 @@
 
                   # Function to show current database
                   show_current() {
-                    if [ -f "$STATE_FILE" ]; then
-                      local CURRENT=$(cat "$STATE_FILE")
-                      echo "$CURRENT"
-                    else
+                    local URL="''${DATABASE_URL:-}"
+                    if [[ "$URL" =~ sinex_dev ]]; then
                       echo "sinex_dev"
+                    elif [[ "$URL" =~ /sinex\? ]]; then
+                      echo "sinex"
+                    elif [[ "$URL" =~ sinex_ephemeral_([0-9]) ]]; then
+                      echo "tmp_''${BASH_REMATCH[1]}"
+                    else
+                      echo "sinex_dev"  # Default
                     fi
                   }
 
@@ -524,7 +527,6 @@
                     dev)
                       log "Switching to development database"
                       export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-                      echo "sinex_dev" > "$STATE_FILE"
                       echo "export DATABASE_URL=\"$DATABASE_URL\""
                       success "Switched to sinex_dev"
                       ;;
@@ -532,7 +534,6 @@
                     prod)
                       log "Switching to production database"
                       export DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
-                      echo "sinex" > "$STATE_FILE"
                       echo "export DATABASE_URL=\"$DATABASE_URL\""
                       success "Switched to sinex (production)"
                       ;;
@@ -551,7 +552,6 @@
                       
                       log "Switching to ephemeral database $NUM"
                       URL=$(create_ephemeral "$NUM")
-                      echo "tmp_$NUM" > "$STATE_FILE"
                       echo "export DATABASE_URL=\"$URL\""
                       success "Switched to ephemeral database $NUM"
                       ;;
@@ -598,7 +598,6 @@
                         rm -rf "$EPHEMERAL_DIR"
                         success "Destroyed ephemeral database $NUM"
                         # Switch to dev
-                        echo "sinex_dev" > "$STATE_FILE"
                         echo "export DATABASE_URL=\"postgresql:///sinex_dev?host=/run/postgresql\""
                         success "Switched to sinex_dev"
                       else
