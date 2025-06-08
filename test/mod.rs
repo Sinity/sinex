@@ -43,3 +43,6 @@ mod runtime {
 
 #[cfg(test)]
 mod property_tests;
+
+#[cfg(test)]
+mod e2e;
