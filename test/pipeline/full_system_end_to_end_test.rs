@@ -14,6 +14,7 @@ use tracing::{debug, error, info, warn};
 struct IngestorProcess {
     name: &'static str,
     child: Child,
+    #[allow(dead_code)]
     started: Instant,
 }
 

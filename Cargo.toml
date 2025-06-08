@@ -23,9 +23,6 @@ authors.workspace = true
 name = "integration"
 path = "test/mod.rs"
 
-[[example]]
-name = "ulid_compile_time_safe"
-path = "examples/ulid_compile_time_safe.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -52,6 +49,7 @@ sinex-shared = { path = "ingestor/shared" }
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile = "3"
 
 [workspace.package]
 version = "0.3.0"

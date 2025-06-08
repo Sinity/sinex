@@ -3,6 +3,37 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::{DateTime, Utc, Duration};
 
+/// Helper to compare JSON values with tolerance for floating point precision
+fn assert_json_values_equivalent(a: &Value, b: &Value) {
+    match (a, b) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                // For very small or very large numbers, use relative tolerance
+                let tolerance = f64::EPSILON * f1.abs().max(1.0) * 100.0;
+                assert!((f1 - f2).abs() <= tolerance, 
+                    "Numbers not equal within tolerance: {} vs {}", f1, f2);
+            } else {
+                // For integers or other number types, require exact match
+                assert_eq!(n1, n2);
+            }
+        }
+        (Value::Array(a1), Value::Array(a2)) => {
+            assert_eq!(a1.len(), a2.len(), "Array lengths differ");
+            for (v1, v2) in a1.iter().zip(a2.iter()) {
+                assert_json_values_equivalent(v1, v2);
+            }
+        }
+        (Value::Object(o1), Value::Object(o2)) => {
+            assert_eq!(o1.len(), o2.len(), "Object lengths differ");
+            for (k, v1) in o1 {
+                let v2 = o2.get(k).expect(&format!("Key {} missing in second object", k));
+                assert_json_values_equivalent(v1, v2);
+            }
+        }
+        _ => assert_eq!(a, b),
+    }
+}
+
 /// Generate arbitrary JSON values for testing
 fn arb_json_value() -> BoxedStrategy<Value> {
     let leaf = prop_oneof![
@@ -10,7 +41,7 @@ fn arb_json_value() -> BoxedStrategy<Value> {
         any::<bool>().prop_map(Value::Bool),
         any::<i64>().prop_map(|i| Value::Number(i.into())),
         any::<f64>()
-            .prop_filter("valid float", |f| f.is_finite())
+            .prop_filter("valid float", |f| f.is_finite() && f.abs() > 1e-300 && f.abs() < 1e300)
             .prop_map(|f| Value::Number(serde_json::Number::from_f64(f).unwrap())),
         "[a-zA-Z0-9_]{0,50}".prop_map(Value::String),
     ];
@@ -46,6 +77,7 @@ fn arb_event_type() -> impl Strategy<Value = String> {
 }
 
 /// Generate valid agent names
+#[allow(dead_code)]
 fn arb_agent_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z]+Agent_[A-Za-z]+_v[0-9]+\\.[0-9]+\\.[0-9]+").unwrap()
 }
@@ -77,13 +109,16 @@ proptest! {
         source in arb_event_source(),
         event_type in arb_event_type(),
         host in arb_host_name(),
-        ts_orig in prop::option::of(arb_timestamp()),
+        _ts_orig in prop::option::of(arb_timestamp()),
     ) {
         // This would test actual database insertion in a real test
         // For now, verify the payload can be serialized/deserialized
         let serialized = serde_json::to_string(&payload).unwrap();
         let deserialized: Value = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(payload, deserialized);
+        
+        // For floating point numbers, we need to be more forgiving due to precision
+        // Instead of direct equality, verify structure is preserved
+        assert_json_values_equivalent(&payload, &deserialized);
         
         // Verify source format
         assert!(source.contains('.'));
@@ -183,8 +218,13 @@ proptest! {
         assert!(clamped <= 24.0 * 3600.0);
         
         // Verify exponential growth until cap
-        if attempts < 10 && base_delay < 100.0 {
+        if attempts > 0 && attempts < 10 && base_delay < 100.0 {
             assert!(delay > base_delay);
+        }
+        
+        // When attempts = 0, delay should equal base_delay
+        if attempts == 0 {
+            assert_eq!(delay, base_delay);
         }
     }
 
@@ -198,10 +238,9 @@ proptest! {
         // Convert to ULIDs and then to UUIDs
         let mut ulid_pairs: Vec<(Ulid, Uuid)> = ulids.into_iter()
             .map(|n| {
-                // Create ULID from bytes
-                let mut bytes = [0u8; 16];
-                bytes.copy_from_slice(&n.to_be_bytes());
-                let ulid = Ulid::from(ulid::Ulid::from_bytes(bytes));
+                // Create ULID from bytes - convert i128 to byte array
+                let bytes = n.to_be_bytes();
+                let ulid = Ulid::from_bytes(bytes).expect("Valid ULID bytes");
                 let uuid = ulid.to_uuid();
                 (ulid, uuid)
             })

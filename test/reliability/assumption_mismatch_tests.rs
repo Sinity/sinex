@@ -1,7 +1,6 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_shared::{DatabaseService, RawEventBuilder, sources, event_type_constants, EventValidator};
-use std::collections::HashMap;
 
 /// Test that detects when event payloads don't match their declared source/type
 #[sqlx::test]
@@ -283,9 +282,9 @@ async fn test_field_usage_pattern_analysis(pool: sqlx::PgPool) -> Result<(), Box
         println!("{} {} - field '{}': {}/{} ({:.1}%) - {}",
             analysis.source,
             analysis.event_type,
-            analysis.field_name,
-            analysis.usage_count,
-            analysis.total_count,
+            analysis.field_name.unwrap_or_else(|| "unknown".to_string()),
+            analysis.usage_count.unwrap_or(0),
+            analysis.total_count.unwrap_or(0),
             analysis.usage_percentage.unwrap_or(0.0),
             analysis.field_status.unwrap_or_default()
         );
@@ -352,8 +351,8 @@ async fn test_field_usage_pattern_analysis(pool: sqlx::PgPool) -> Result<(), Box
     
     println!("\nDetected outliers:");
     for outlier in outliers {
-        println!("Event {} ({} {}) is missing {} common fields",
-            outlier.id,
+        println!("Event {} ({:?} {:?}) is missing {} common fields",
+            outlier.id.map(|u| u.to_string()).unwrap_or_else(|| "unknown".to_string()),
             outlier.source,
             outlier.event_type,
             outlier.missing_common_fields_count.unwrap_or(0)
@@ -411,13 +410,13 @@ async fn test_cross_source_field_confusion(pool: sqlx::PgPool) -> Result<(), Box
     // Check if any fields appear in multiple sources (indicating potential confusion)
     for field in cross_source_fields {
         println!("Field '{}' appears in {} sources: {:?}",
-            field.field_name,
-            field.source_count,
+            field.field_name.unwrap_or_else(|| "unknown".to_string()),
+            field.source_count.unwrap_or(0),
             field.sources
         );
         
         // This indicates potential confusion between sources
-        if field.source_count > 1 {
+        if field.source_count.unwrap_or(0) > 1 {
             println!("  WARNING: This field appears in multiple sources - possible confusion!");
         }
     }

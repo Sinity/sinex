@@ -1,7 +1,5 @@
-use chrono::Utc;
 use serde_json::json;
 use sinex_shared::{DatabaseService, RawEventBuilder, sources, event_type_constants};
-use std::collections::HashMap;
 
 /// Test that validation prevents malformed events from being inserted
 #[sqlx::test]
@@ -67,7 +65,8 @@ async fn test_validation_prevents_malformed_events(pool: sqlx::PgPool) -> Result
         "#
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
     
     assert_eq!(count, 1, "Only the valid event should have been inserted");
 
@@ -149,7 +148,8 @@ async fn test_batch_validation_atomic(pool: sqlx::PgPool) -> Result<(), Box<dyn 
         "#
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
     
     assert_eq!(count, 0, "No events should be inserted when batch validation fails");
 
@@ -162,7 +162,7 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
     let db_service = DatabaseService::from_pool(pool.clone());
 
     // Register v1.0.0 schema
-    let schema_v1: uuid::Uuid = sqlx::query_scalar!(
+    let _schema_v1: uuid::Uuid = sqlx::query_scalar!(
         r#"
         INSERT INTO sinex_schemas.event_payload_schemas 
             (event_source, event_type, schema_version, json_schema_definition)
@@ -180,7 +180,8 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
         "#
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .expect("Schema ID should be returned");
 
     // Insert event with v1 schema
     let v1_event = RawEventBuilder::new(
@@ -195,7 +196,7 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
     db_service.insert_event(&v1_event).await?;
 
     // Register v2.0.0 schema (adds optional field)
-    let schema_v2: uuid::Uuid = sqlx::query_scalar!(
+    let _schema_v2: uuid::Uuid = sqlx::query_scalar!(
         r#"
         INSERT INTO sinex_schemas.event_payload_schemas 
             (event_source, event_type, schema_version, json_schema_definition)
@@ -214,7 +215,8 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
         "#
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .expect("Schema ID should be returned");
 
     // Insert event with v2 schema (includes new field)
     let v2_event = RawEventBuilder::new(
@@ -238,7 +240,8 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
         "#
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     assert_eq!(schema_count, 2);
 
@@ -389,7 +392,9 @@ async fn test_source_mismatch_detection(pool: sqlx::PgPool) -> Result<(), Box<dy
     // Report any semantic mismatches
     for mismatch in mismatched_events {
         println!("Detected source/event_type mismatch: {} {} {}", 
-                 mismatch.id, mismatch.source, mismatch.event_type);
+                 mismatch.id.map(|u| u.to_string()).unwrap_or_else(|| "unknown".to_string()), 
+                 mismatch.source, 
+                 mismatch.event_type);
     }
 
     Ok(())
@@ -403,6 +408,7 @@ fn test_validation_framework_design() {
     use serde_json::Value;
     
     // Define validation rules
+    #[allow(dead_code)]
     struct ValidationRule {
         source: &'static str,
         event_type: &'static str,

@@ -5,6 +5,7 @@ use sinex_ulid::Ulid;
 use std::sync::Arc;
 
 /// Test database configuration helper
+#[allow(dead_code)]
 pub fn test_database_config() -> DatabaseConfig {
     DatabaseConfig {
         url: std::env::var("TEST_DATABASE_URL")
@@ -17,6 +18,7 @@ pub fn test_database_config() -> DatabaseConfig {
 }
 
 /// Create a test database service with appropriate configuration
+#[allow(dead_code)]
 pub async fn test_database_service() -> Result<Arc<DatabaseService>> {
     let config = test_database_config();
     Ok(Arc::new(DatabaseService::new(config).await?))
@@ -124,7 +126,7 @@ pub mod assertions {
 
     /// Assert that manifest was registered successfully
     pub async fn assert_manifest_registered(
-        db: &DatabaseService,
+        _db: &DatabaseService,
         manifest: &AgentManifest
     ) -> Result<()> {
         // This would need the actual manifest insertion method
@@ -194,7 +196,7 @@ pub async fn get_event_by_id(pool: &sqlx::PgPool, event_id: Ulid) -> Result<sine
         id: record.id.into(),
         source: record.source,
         event_type: record.event_type,
-        ts_ingest: record.ts_ingest,
+        ts_ingest: record.ts_ingest.unwrap_or_else(|| chrono::Utc::now()),
         ts_orig: record.ts_orig,
         host: record.host,
         ingestor_version: record.ingestor_version,
@@ -204,6 +206,7 @@ pub async fn get_event_by_id(pool: &sqlx::PgPool, event_id: Ulid) -> Result<sine
 }
 
 /// Helper for checking if an event exists by ULID
+#[allow(dead_code)]
 pub async fn event_exists(pool: &sqlx::PgPool, event_id: uuid::Uuid) -> Result<bool> {
     let exists = sqlx::query!(
         r#"
@@ -223,12 +226,13 @@ pub async fn event_exists(pool: &sqlx::PgPool, event_id: uuid::Uuid) -> Result<b
 #[macro_export]
 macro_rules! test_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
-        #[sqlx::test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-            let db = crate::common::database_service_from_pool(pool);
-            let event = $event_builder;
-            crate::common::assertions::assert_event_inserted(&db, &event).await?;
-            Ok(())
+        crate::db_test! {
+            async fn $test_name(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+                let db = crate::common::database_service_from_pool(pool);
+                let event = $event_builder;
+                crate::common::assertions::assert_event_inserted(&db, &event).await?;
+                Ok(())
+            }
         }
     };
 }
@@ -236,12 +240,13 @@ macro_rules! test_event_insertion {
 #[macro_export]
 macro_rules! test_invalid_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
-        #[sqlx::test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-            let db = crate::common::database_service_from_pool(pool);
-            let event = $event_builder;
-            crate::common::assertions::assert_event_insertion_fails(&db, &event).await?;
-            Ok(())
+        crate::db_test! {
+            async fn $test_name(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+                let db = crate::common::database_service_from_pool(pool);
+                let event = $event_builder;
+                crate::common::assertions::assert_event_insertion_fails(&db, &event).await?;
+                Ok(())
+            }
         }
     };
 }
@@ -249,18 +254,21 @@ macro_rules! test_invalid_event_insertion {
 /// Test environment utilities
 pub mod env {
     /// Check if we're running in a test environment
+    #[allow(dead_code)]
     pub fn is_test_env() -> bool {
         std::env::var("TEST_DATABASE_URL").is_ok() || 
         std::env::var("CARGO_TEST").is_ok()
     }
 
     /// Get test database URL with fallback
+    #[allow(dead_code)]
     pub fn test_database_url() -> String {
         std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
     }
 
     /// Setup test environment variables
+    #[allow(dead_code)]
     pub fn setup_test_env() {
         if std::env::var("RUST_LOG").is_err() {
             std::env::set_var("RUST_LOG", "debug");

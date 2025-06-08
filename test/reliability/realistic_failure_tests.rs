@@ -1,4 +1,3 @@
-use chrono::Utc;
 use serde_json::json;
 use sinex_shared::{DatabaseService, RawEventBuilder, AssumptionDetector, sources, event_type_constants};
 
@@ -377,11 +376,11 @@ async fn test_environment_data_corruption(pool: sqlx::PgPool) -> Result<(), Box<
         let has_container_fields = fields.iter().any(|f| ["container_id", "image", "pod_name"].contains(&f.as_str()));
         
         println!("Host '{}': {} events with fields: {:?}", 
-                 analysis.host, analysis.event_count, fields);
+                 analysis.host, analysis.event_count.unwrap_or(0), fields);
         
         if !has_filesystem_fields && has_container_fields {
             println!("  🚨 Environment corruption detected: {} events with container fields instead of filesystem", 
-                     analysis.event_count);
+                     analysis.event_count.unwrap_or(0));
             corrupted_environments += 1;
         }
     }

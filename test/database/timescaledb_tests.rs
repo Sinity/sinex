@@ -75,7 +75,7 @@ async fn test_timescale_chunk_creation() {
         Utc::now() + Duration::days(5),
     ];
     
-    for (i, ts) in time_periods.iter().enumerate() {
+    for (i, _ts) in time_periods.iter().enumerate() {
         let event_id = Ulid::new();
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
@@ -166,7 +166,7 @@ async fn test_timescale_compression_policy() {
     }
     
     // Insert old data to test compression
-    let old_timestamp = Utc::now() - Duration::days(30);
+    let _old_timestamp = Utc::now() - Duration::days(30);
     for i in 0..10 {
         let event_id = Ulid::new();
         sqlx::query(
@@ -247,7 +247,7 @@ async fn test_timescale_continuous_aggregates() {
         for source in &sources {
             for event_type in &event_types {
                 let event_id = Ulid::new();
-                let ts = Utc::now() - Duration::hours(hour);
+                let _ts = Utc::now() - Duration::hours(hour);
                 
                 sqlx::query(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 
