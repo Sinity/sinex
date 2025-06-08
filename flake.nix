@@ -123,7 +123,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
+            # SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -165,7 +165,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
+            # SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -207,7 +207,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
+            # SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -250,7 +250,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
+            # SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -302,6 +302,21 @@
                   error() { echo -e "''${RED}❌''${NC} $*" >&2; }
 
                   EPHEMERAL_BASE="/tmp/sinex_ephemeral"
+                  STATE_FILE="$HOME/.sinex_db_state"
+
+                  # Function to save database state
+                  save_state() {
+                    echo "$1" > "$STATE_FILE"
+                  }
+
+                  # Function to load database state
+                  load_state() {
+                    if [ -f "$STATE_FILE" ]; then
+                      cat "$STATE_FILE"
+                    else
+                      echo "postgresql:///sinex_dev?host=/run/postgresql"
+                    fi
+                  }
 
                   # Function to create ephemeral database
                   create_ephemeral() {
@@ -343,7 +358,7 @@
                       ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
                       
                       # Run migrations
-                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run >/dev/null
+                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration >/dev/null
                     fi
                     
                     echo "$EPHEMERAL_URL"
@@ -351,12 +366,12 @@
 
                   # Function to show current database
                   show_current() {
-                    local URL="''${DATABASE_URL:-}"
+                    local URL=$(load_state)
                     if [[ "$URL" =~ sinex_dev ]]; then
                       echo "sinex_dev"
                     elif [[ "$URL" =~ /sinex\? ]]; then
                       echo "sinex"
-                    elif [[ "$URL" =~ sinex_ephemeral_([0-9]) ]]; then
+                    elif [[ "$URL" =~ sinex_ephemeral_([0-9]+) ]]; then
                       echo "tmp_''${BASH_REMATCH[1]}"
                     else
                       echo "sinex_dev"  # Default
@@ -365,35 +380,30 @@
 
                   # Main command handling
                   TARGET="''${1:-}"
-                  
+
                   if [ -z "$TARGET" ]; then
                     # Show current database
                     CURRENT=$(show_current)
+                    URL=$(load_state)
                     log "Current database: $CURRENT"
-                    case "$CURRENT" in
-                      sinex_dev) echo "  URL: postgresql:///sinex_dev?host=/run/postgresql" ;;
-                      sinex) echo "  URL: postgresql:///sinex?host=/run/postgresql" ;;
-                      tmp*) 
-                        NUM="''${CURRENT#tmp}"
-                        NUM="''${NUM:-0}"
-                        echo "  URL: postgresql:///sinex_ephemeral_$NUM?host=/tmp/sinex_ephemeral_$NUM&port=5432$NUM" 
-                        ;;
-                    esac
+                    echo "  URL: $URL"
                     exit 0
                   fi
 
                   case "$TARGET" in
                     dev)
                       log "Switching to development database"
-                      export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-                      echo "export DATABASE_URL=\"$DATABASE_URL\""
+                      URL="postgresql:///sinex_dev?host=/run/postgresql"
+                      save_state "$URL"
+                      export DATABASE_URL="$URL"
                       success "Switched to sinex_dev"
                       ;;
                     
                     prod)
                       log "Switching to production database"
-                      export DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
-                      echo "export DATABASE_URL=\"$DATABASE_URL\""
+                      URL="postgresql:///sinex?host=/run/postgresql"
+                      save_state "$URL"
+                      export DATABASE_URL="$URL"
                       success "Switched to sinex (production)"
                       ;;
                     
@@ -411,7 +421,8 @@
                       
                       log "Switching to ephemeral database $NUM"
                       URL=$(create_ephemeral "$NUM")
-                      echo "export DATABASE_URL=\"$URL\""
+                      save_state "$URL"
+                      export DATABASE_URL="$URL"
                       success "Switched to ephemeral database $NUM"
                       ;;
                     
@@ -457,7 +468,9 @@
                         rm -rf "$EPHEMERAL_DIR"
                         success "Destroyed ephemeral database $NUM"
                         # Switch to dev
-                        echo "export DATABASE_URL=\"postgresql:///sinex_dev?host=/run/postgresql\""
+                        URL="postgresql:///sinex_dev?host=/run/postgresql"
+                        save_state "$URL"
+                        export DATABASE_URL="$URL"
                         success "Switched to sinex_dev"
                       else
                         error "Can only destroy ephemeral databases"
@@ -632,7 +645,7 @@
 
                   # Ensure migrations are up to date
                   log "Running migrations..."
-                  DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run || {
+                  DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration || {
                     error "Failed to run migrations"
                     exit 1
                   }
@@ -1041,17 +1054,19 @@
             ];
 
             shellHook = ''
-              # Use local peer authentication via Unix socket
-              export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-              export SQLX_OFFLINE=true
-              
+              # Load saved database state or use default
+              if [ -f "$HOME/.sinex_db_state" ]; then
+                export DATABASE_URL=$(cat "$HOME/.sinex_db_state")
+              else
+                export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
+              fi
+
               # Database switching function
               db() {
-                local output=$(nix run .#db -- "$@")
-                if [[ "$output" =~ ^export ]]; then
-                  eval "$output"
-                else
-                  echo "$output"
+                nix run .#db -- "$@"
+                # Load the current state after any db operation
+                if [ -f "$HOME/.sinex_db_state" ]; then
+                  export DATABASE_URL=$(cat "$HOME/.sinex_db_state")
                 fi
               }
 
@@ -1064,7 +1079,7 @@
                   ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1 || true
                   ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null 2>&1 || true
                   ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null 2>&1 || true
-                  sqlx migrate run >/dev/null 2>&1 || true
+                  sqlx migrate run --source migration >/dev/null 2>&1 || true
                   echo "✅ Database ready"
                 fi
               fi
@@ -1095,7 +1110,7 @@
               ┃                                                            ┃
               ┃ 🧪 TESTING                                                  ┃
               ┃   run      : nix run .#test [unit|integration|all]         ┃
-              ┃   isolated : nix run .#ephemeral [test|interactive]        ┃
+              ┃   isolated : db tmp && cargo test [test-name] -- [flags]   ┃
               ┃   watch    : cargo watch -x test                           ┃
               ┃                                                            ┃
               ┃ 🔧 BUILD & CHECK                                            ┃

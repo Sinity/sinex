@@ -1,19 +1,14 @@
 use anyhow::Result;
-use serde_json::json;
-use sinex_core::{event_type_constants, sources, RawEvent};
-use sinex_db::{models_no_ts_ingest::*, pool::create_pool};
+use sinex_core::{event_type_constants, sources};
+use sinex_db::create_pool;
 use sqlx::PgPool;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tempfile::TempDir;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio::process::Command as TokioCommand;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 struct IngestorProcess {
@@ -34,14 +29,18 @@ impl Drop for IngestorProcess {
 struct TestHarness {
     pool: PgPool,
     ingestors: Vec<IngestorProcess>,
-    test_dir: TempDir,
+    test_dir: std::path::PathBuf,
     shutdown: Arc<AtomicBool>,
 }
 
 impl TestHarness {
     async fn new() -> Result<Self> {
-        let pool = create_pool(None).await?;
-        let test_dir = TempDir::new()?;
+        let database_url = std::env::var("DATABASE_URL")?;
+        let pool = create_pool(&database_url).await?;
+        
+        // Create a temporary directory
+        let test_dir = std::env::temp_dir().join(format!("sinex_test_{}", std::process::id()));
+        std::fs::create_dir_all(&test_dir)?;
         
         Ok(Self {
             pool,
@@ -52,24 +51,41 @@ impl TestHarness {
     }
 
     async fn start_filesystem_ingestor(&mut self) -> Result<()> {
-        info!("Starting filesystem ingestor monitoring: {}", self.test_dir.path().display());
+        info!("Starting filesystem ingestor monitoring: {}", self.test_dir.display());
+        
+        // Check if the binary exists first
+        let check = std::process::Command::new("cargo")
+            .args(&["build", "--bin", "filesystem-ingestor"])
+            .output()?;
+        
+        if !check.status.success() {
+            error!("Failed to build filesystem-ingestor: {:?}", String::from_utf8_lossy(&check.stderr));
+            return Err(anyhow::anyhow!("Could not build filesystem-ingestor"));
+        }
         
         let mut cmd = Command::new("cargo");
         cmd.args(&["run", "--bin", "filesystem-ingestor", "--"])
             .arg("--watch-dir")
-            .arg(self.test_dir.path())
+            .arg(&self.test_dir)
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let child = cmd.spawn()?;
-        
-        self.ingestors.push(IngestorProcess {
-            name: "filesystem",
-            child,
-            started: Instant::now(),
-        });
+        match cmd.spawn() {
+            Ok(child) => {
+                info!("Filesystem ingestor process started with PID: {:?}", child.id());
+                self.ingestors.push(IngestorProcess {
+                    name: "filesystem",
+                    child,
+                    started: Instant::now(),
+                });
+            }
+            Err(e) => {
+                error!("Failed to start filesystem ingestor: {}", e);
+                return Err(e.into());
+            }
+        }
 
         // Give it time to start and register
         sleep(Duration::from_secs(3)).await;
@@ -143,8 +159,8 @@ impl TestHarness {
     async fn trigger_filesystem_events(&self) -> Result<()> {
         info!("Triggering filesystem events");
         
-        let test_file = self.test_dir.path().join("test_file.txt");
-        let test_dir = self.test_dir.path().join("test_subdir");
+        let test_file = self.test_dir.join("test_file.txt");
+        let test_dir = self.test_dir.join("test_subdir");
         
         // Create file
         fs::write(&test_file, "initial content").await?;
@@ -247,27 +263,20 @@ impl TestHarness {
     async fn verify_events(&self, source: &str, min_events: usize) -> Result<()> {
         info!("Verifying {} events (expecting at least {})", source, min_events);
         
-        let events = sqlx::query_as!(
-            RawEventDto,
+        let events = sqlx::query!(
             r#"
             SELECT 
-                id,
-                event_time,
+                id::TEXT as id,
                 source,
                 event_type,
-                event_payload,
-                correlation_id,
-                causation_id,
-                agent_id,
-                version,
-                created_at,
-                processing_status as "processing_status: ProcessingStatus",
-                processing_error,
-                promotion_status as "promotion_status: PromotionStatus"
+                ts_orig,
+                host,
+                payload,
+                ts_ingest
             FROM raw.events
             WHERE source = $1
-              AND created_at >= NOW() - INTERVAL '5 minutes'
-            ORDER BY event_time DESC
+              AND ts_ingest >= NOW() - INTERVAL '5 minutes'
+            ORDER BY ts_ingest DESC
             "#,
             source
         )
@@ -277,19 +286,34 @@ impl TestHarness {
         info!("Found {} {} events", events.len(), source);
         
         for event in &events {
-            debug!("{} event: type={}, payload={}", 
+            debug!("{} event: type={}, payload={:?}", 
                 source, 
                 event.event_type, 
-                serde_json::to_string(&event.event_payload)?
+                event.payload
             );
         }
         
+        // Also check total events from this source
+        let total_events = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM raw.events
+            WHERE source = $1
+            "#,
+            source
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        
+        info!("Total {} events in database: {}", source, total_events.count.unwrap_or(0));
+        
         assert!(
             events.len() >= min_events,
-            "Expected at least {} {} events, but found {}",
+            "Expected at least {} {} events, but found {} (total in DB: {})",
             min_events,
             source,
-            events.len()
+            events.len(),
+            total_events.count.unwrap_or(0)
         );
         
         Ok(())
@@ -301,12 +325,11 @@ impl TestHarness {
         let heartbeats = sqlx::query!(
             r#"
             SELECT 
-                agent_id,
                 agent_name,
-                last_seen,
-                is_active
+                last_heartbeat_ts,
+                status
             FROM sinex_schemas.agent_manifests
-            WHERE last_seen >= NOW() - INTERVAL '5 minutes'
+            WHERE last_heartbeat_ts >= NOW() - INTERVAL '5 minutes'
             "#
         )
         .fetch_all(&self.pool)
@@ -317,13 +340,26 @@ impl TestHarness {
         for heartbeat in &heartbeats {
             info!("Agent {} last seen: {:?}", 
                 heartbeat.agent_name, 
-                heartbeat.last_seen
+                heartbeat.last_heartbeat_ts
             );
         }
         
+        // Also check if any agents are registered at all
+        let all_agents = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM sinex_schemas.agent_manifests
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        
+        info!("Total agents registered: {}", all_agents.count.unwrap_or(0));
+        
         assert!(
             !heartbeats.is_empty(),
-            "No recent heartbeats found"
+            "No recent heartbeats found. Total agents: {}",
+            all_agents.count.unwrap_or(0)
         );
         
         Ok(())
@@ -339,6 +375,11 @@ impl TestHarness {
             ingestor.child.kill()?;
         }
         
+        // Clean up test directory
+        if self.test_dir.exists() {
+            std::fs::remove_dir_all(&self.test_dir)?;
+        }
+        
         Ok(())
     }
 }
@@ -346,19 +387,25 @@ impl TestHarness {
 #[tokio::test]
 #[ignore = "Requires running services and may affect system state"]
 async fn test_full_system_end_to_end() -> Result<()> {
-    // Initialize logging
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("info,sinex=debug")
-        .try_init();
+    // Logging is already initialized by the test framework
 
     info!("Starting full system end-to-end test");
     
     let mut harness = TestHarness::new().await?;
     
     // Start all ingestors
+    info!("Starting ingestors...");
     harness.start_filesystem_ingestor().await?;
     harness.start_hyprland_ingestor().await?;
     harness.start_kitty_ingestor().await?;
+    
+    // Check initial event count
+    let initial_count = sqlx::query!(
+        r#"SELECT COUNT(*) as count FROM raw.events"#
+    )
+    .fetch_one(&harness.pool)
+    .await?;
+    info!("Initial event count: {}", initial_count.count.unwrap_or(0));
     
     // Wait for ingestors to fully initialize and send initial heartbeats
     info!("Waiting for ingestors to initialize...");
@@ -400,10 +447,10 @@ async fn test_full_system_end_to_end() -> Result<()> {
         SELECT COUNT(*) as count
         FROM raw.events
         WHERE event_type IN ($1, $2)
-          AND created_at >= NOW() - INTERVAL '5 minutes'
+          AND ts_ingest >= NOW() - INTERVAL '5 minutes'
         "#,
-        event_type_constants::heartbeat::AGENT_HEARTBEAT,
-        event_type_constants::hyprland::WORKSPACE_SNAPSHOT
+        event_type_constants::sinex::AGENT_HEARTBEAT,
+        "workspace_snapshot" // No constant defined for this yet
     )
     .fetch_one(&harness.pool)
     .await?;

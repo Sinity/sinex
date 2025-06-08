@@ -20,6 +20,7 @@ mod agent {
 mod pipeline {
     mod end_to_end_pipeline_test;
     mod event_pipeline_integration_tests;
+    mod full_system_end_to_end_test;
     mod real_pipeline_test;
     mod worker_concurrency_tests;
 }
