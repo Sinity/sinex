@@ -322,7 +322,7 @@
                       echo "unix_socket_directories = '$EPHEMERAL_DIR'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       echo "shared_preload_libraries = 'timescaledb'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       echo "port = 5432$NUM" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      echo "listen_addresses = ''''" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      echo "# listen_addresses disabled for unix sockets only" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       
                       # Start PostgreSQL
                       ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
@@ -1014,6 +1014,9 @@
                 pkgs.writeShellScript "ephemeral-test" ''
                   set -euo pipefail
 
+                  # Save original working directory
+                  ORIGINAL_PWD="$(pwd)"
+
                   # Colors
                   GREEN='\033[0;32m'
                   RED='\033[0;31m'
@@ -1073,7 +1076,7 @@
                     echo "max_connections = 50" >> "$TEST_DIR/data/postgresql.conf"
                     echo "shared_buffers = 128MB" >> "$TEST_DIR/data/postgresql.conf"
                     echo "port = 54321" >> "$TEST_DIR/data/postgresql.conf"
-                    echo "listen_addresses = ''''" >> "$TEST_DIR/data/postgresql.conf"
+                    echo "# listen_addresses disabled for unix sockets only" >> "$TEST_DIR/data/postgresql.conf"
 
                     # Start PostgreSQL
                     if ! ${postgresqlWithExtensions}/bin/pg_ctl -D "$TEST_DIR/data" -l "$TEST_DIR/logs/postgres.log" start >/dev/null; then
@@ -1098,9 +1101,11 @@
                     ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
                     ${postgresqlWithExtensions}/bin/psql -h "$TEST_DIR" -p 54321 -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
 
-                    # Run migrations
+                    # Run migrations (from original project directory)
                     log "Running migrations on ephemeral database"
-                    DATABASE_URL="$TEST_DB_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
+                    log "Original PWD: $ORIGINAL_PWD"
+                    log "Migration files in: $(ls -la "$ORIGINAL_PWD"/migration/ 2>/dev/null | head -3 || echo 'Not found')"
+                    cd "$ORIGINAL_PWD" && DATABASE_URL="$TEST_DB_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
 
                     success "Ephemeral environment ready"
                     echo ""
@@ -1116,10 +1121,28 @@
 
                     # Set environment for tests
                     export TEST_DATABASE_URL="$TEST_DB_URL"
+                    export DATABASE_URL="$TEST_DB_URL"  # Also set main DATABASE_URL
                     export RUST_LOG="''${RUST_LOG:-info}"
+                    unset SQLX_OFFLINE  # Use real database, not offline mode
 
-                    # Run tests
-                    ${rustToolchain}/bin/cargo test --all-features "''${@}"
+                    # Run tests - handle test name and flags properly
+                    local test_name=""
+                    local test_flags=()
+                    
+                    # First arg is test name, rest are flags
+                    if [[ $# -gt 0 ]]; then
+                      test_name="$1"
+                      shift
+                      test_flags=("$@")
+                    fi
+                    
+                    log "Running test: $test_name with flags: ''${test_flags[*]}"
+                    
+                    if [[ -n "$test_name" ]]; then
+                      cd "$ORIGINAL_PWD" && ${rustToolchain}/bin/cargo test --all-features "$test_name" -- "''${test_flags[@]}"
+                    else
+                      cd "$ORIGINAL_PWD" && ${rustToolchain}/bin/cargo test --all-features
+                    fi
 
                     success "Tests completed"
                   }
