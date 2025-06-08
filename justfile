@@ -76,9 +76,6 @@ fmt:
 # 🗄️  Database Operations
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Setup development database
-db-setup:
-    ./script/db.sh dev
 
 # Switch to development database
 db-dev:
