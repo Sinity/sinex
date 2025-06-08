@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::Row;
 use std::time::Duration;
 use tracing::{debug, info};
 use sinex_db::models::RawEvent;
@@ -91,32 +92,35 @@ impl DatabaseService {
         }
         
         // Let database generate the ULID
-        let result = sqlx::query!(
+        let row = sqlx::query(
             r#"
             INSERT INTO raw.events 
                 (source, event_type, ts_orig, host, ingestor_version, 
                  payload_schema_id, payload)
             VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
-            RETURNING id::uuid as "id!"
-            "#,
-            event.source,
-            event.event_type,
-            event.ts_orig,
-            event.host,
-            event.ingestor_version,
-            event.payload_schema_id,
-            event.payload
+            RETURNING id::uuid
+            "#
         )
+        .bind(&event.source)
+        .bind(&event.event_type)
+        .bind(&event.ts_orig)
+        .bind(&event.host)
+        .bind(&event.ingestor_version)
+        .bind(&event.payload_schema_id)
+        .bind(&event.payload)
         .fetch_one(&self.pool)
         .await
         .context("Failed to insert event")?;
 
+        let id: Uuid = row.try_get("id")
+            .context("Failed to get inserted event ID")?;
+
         debug!(
             "Inserted event: {} {} (id: {})",
-            event.source, event.event_type, result.id
+            event.source, event.event_type, id
         );
 
-        Ok(result.id)
+        Ok(id)
     }
 
     /// Insert multiple events in a batch
@@ -133,27 +137,29 @@ impl DatabaseService {
         let mut ids = Vec::new();
 
         for event in events {
-            let result = sqlx::query!(
+            let row = sqlx::query(
                 r#"
                 INSERT INTO raw.events 
                     (source, event_type, ts_orig, host, ingestor_version, 
                      payload_schema_id, payload)
                 VALUES ($1, $2, $3, $4, $5, $6::uuid::ulid, $7)
-                RETURNING id::uuid as "id!"
-                "#,
-                event.source,
-                event.event_type,
-                event.ts_orig,
-                event.host,
-                event.ingestor_version,
-                event.payload_schema_id,
-                event.payload
+                RETURNING id::uuid
+                "#
             )
+            .bind(&event.source)
+            .bind(&event.event_type)
+            .bind(&event.ts_orig)
+            .bind(&event.host)
+            .bind(&event.ingestor_version)
+            .bind(&event.payload_schema_id)
+            .bind(&event.payload)
             .fetch_one(&mut *tx)
             .await
             .context("Failed to insert event in batch")?;
 
-            ids.push(result.id);
+            let id: Uuid = row.try_get("id")
+                .context("Failed to get inserted event ID")?;
+            ids.push(id);
         }
 
         tx.commit().await?;
@@ -164,7 +170,7 @@ impl DatabaseService {
 
     /// Health check
     pub async fn health_check(&self) -> Result<()> {
-        sqlx::query!("SELECT 1 as check")
+        sqlx::query("SELECT 1 as check")
             .fetch_one(&self.pool)
             .await
             .context("Database health check failed")?;

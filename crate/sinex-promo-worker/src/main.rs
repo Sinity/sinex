@@ -6,7 +6,7 @@ use sinex_db::{
     queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
 };
 use sinex_worker::{metrics::start_metrics_server, worker::Worker, EventProcessor};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::{signal, task};
@@ -57,26 +57,37 @@ struct ExampleProcessor {
 impl EventProcessor for ExampleProcessor {
     async fn process_event(&self, pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
         // Fetch the raw event
-        let event: RawEvent = sqlx::query_as!(
-            RawEvent,
+        let row = sqlx::query(
             r#"
             SELECT 
-                id::uuid as "id!", 
-                source as "source!", 
-                event_type as "event_type!", 
-                ts_ingest as "ts_ingest!",
-                ts_orig as "ts_orig?",
-                host as "host!", 
-                ingestor_version as "ingestor_version?", 
-                payload_schema_id::uuid as "payload_schema_id?", 
-                payload as "payload!"
+                id::uuid, 
+                source, 
+                event_type, 
+                ts_ingest,
+                ts_orig,
+                host, 
+                ingestor_version, 
+                payload_schema_id::uuid, 
+                payload
             FROM raw.events 
             WHERE id = $1::uuid::ulid
-            "#,
-            item.raw_event_id
+            "#
         )
+        .bind(item.raw_event_id)
         .fetch_one(pool)
         .await?;
+
+        let event = RawEvent {
+            id: row.try_get("id")?,
+            source: row.try_get("source")?,
+            event_type: row.try_get("event_type")?,
+            ts_ingest: row.try_get("ts_ingest")?,
+            ts_orig: row.try_get("ts_orig")?,
+            host: row.try_get("host")?,
+            ingestor_version: row.try_get("ingestor_version")?,
+            payload_schema_id: row.try_get("payload_schema_id")?,
+            payload: row.try_get("payload")?,
+        };
 
         info!(
             agent = %self.agent_name,

@@ -689,7 +689,7 @@
 
                     # Run db setup
                     log "Setting up database..."
-                    nix run .#db-setup dev || {
+                    nix run .#db -- setup dev || {
                       error "Failed to setup database"
                       exit 1
                     }

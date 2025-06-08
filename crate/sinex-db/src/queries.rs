@@ -1,7 +1,7 @@
 use crate::models::{AgentManifest, PromotionQueueItem, RawEvent};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 /// Insert a raw event
@@ -15,32 +15,43 @@ pub async fn insert_raw_event(
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Uuid>,
 ) -> Result<RawEvent> {
-    let event = sqlx::query_as!(
-        RawEvent,
+    let row = sqlx::query(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7::uuid::ulid)
         RETURNING 
-            id::uuid as "id!", 
-            source as "source!", 
-            event_type as "event_type!", 
-            ts_ingest as "ts_ingest!",
-            ts_orig as "ts_orig?",
-            host as "host!", 
-            ingestor_version as "ingestor_version?", 
-            payload_schema_id::uuid as "payload_schema_id?", 
-            payload as "payload!"
-        "#,
-        source,
-        event_type,
-        host,
-        payload,
-        ts_orig,
-        ingestor_version,
-        payload_schema_id
+            id::uuid, 
+            source, 
+            event_type, 
+            ts_ingest,
+            ts_orig,
+            host, 
+            ingestor_version, 
+            payload_schema_id::uuid, 
+            payload
+        "#
     )
+    .bind(source)
+    .bind(event_type)
+    .bind(host)
+    .bind(&payload)
+    .bind(ts_orig)
+    .bind(ingestor_version)
+    .bind(payload_schema_id)
     .fetch_one(pool)
     .await?;
+
+    let event = RawEvent {
+        id: row.try_get("id")?,
+        source: row.try_get("source")?,
+        event_type: row.try_get("event_type")?,
+        ts_ingest: row.try_get("ts_ingest")?,
+        ts_orig: row.try_get("ts_orig")?,
+        host: row.try_get("host")?,
+        ingestor_version: row.try_get("ingestor_version")?,
+        payload_schema_id: row.try_get("payload_schema_id")?,
+        payload: row.try_get("payload")?,
+    };
 
     Ok(event)
 }
@@ -56,8 +67,7 @@ pub async fn upsert_agent_manifest(
     produces_event_types: Option<serde_json::Value>,
     subscribes_to_event_types: Option<serde_json::Value>,
 ) -> Result<AgentManifest> {
-    let manifest = sqlx::query_as!(
-        AgentManifest,
+    let row = sqlx::query(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
             (agent_name, version, status, agent_type, description, produces_event_types, subscribes_to_event_types)
@@ -71,33 +81,52 @@ pub async fn upsert_agent_manifest(
             subscribes_to_event_types = EXCLUDED.subscribes_to_event_types,
             updated_at = NOW()
         RETURNING 
-            agent_name as "agent_name!", 
-            description as "description?", 
-            version as "version!", 
-            status as "status!", 
-            agent_type as "agent_type!",
-            config_template_json as "config_template_json?", 
-            produces_event_types as "produces_event_types?", 
-            subscribes_to_event_types as "subscribes_to_event_types?",
-            required_capabilities as "required_capabilities?", 
-            llm_dependencies as "llm_dependencies?", 
-            repo_url as "repo_url?",
-            last_heartbeat_ts as "last_heartbeat_ts?", 
-            last_error_ts as "last_error_ts?", 
-            last_error_summary as "last_error_summary?",
-            registered_at as "registered_at!", 
-            updated_at as "updated_at!"
-        "#,
-        agent_name,
-        version,
-        status,
-        agent_type,
-        description,
-        produces_event_types,
-        subscribes_to_event_types
+            agent_name, 
+            description, 
+            version, 
+            status, 
+            agent_type,
+            config_template_json, 
+            produces_event_types, 
+            subscribes_to_event_types,
+            required_capabilities, 
+            llm_dependencies, 
+            repo_url,
+            last_heartbeat_ts, 
+            last_error_ts, 
+            last_error_summary,
+            registered_at, 
+            updated_at
+        "#
     )
+    .bind(agent_name)
+    .bind(version)
+    .bind(status)
+    .bind(agent_type)
+    .bind(description)
+    .bind(produces_event_types)
+    .bind(subscribes_to_event_types)
     .fetch_one(pool)
     .await?;
+
+    let manifest = AgentManifest {
+        agent_name: row.try_get("agent_name")?,
+        description: row.try_get("description")?,
+        version: row.try_get("version")?,
+        status: row.try_get("status")?,
+        agent_type: row.try_get("agent_type")?,
+        config_template_json: row.try_get("config_template_json")?,
+        produces_event_types: row.try_get("produces_event_types")?,
+        subscribes_to_event_types: row.try_get("subscribes_to_event_types")?,
+        required_capabilities: row.try_get("required_capabilities")?,
+        llm_dependencies: row.try_get("llm_dependencies")?,
+        repo_url: row.try_get("repo_url")?,
+        last_heartbeat_ts: row.try_get("last_heartbeat_ts")?,
+        last_error_ts: row.try_get("last_error_ts")?,
+        last_error_summary: row.try_get("last_error_summary")?,
+        registered_at: row.try_get("registered_at")?,
+        updated_at: row.try_get("updated_at")?,
+    };
 
     Ok(manifest)
 }
@@ -109,8 +138,7 @@ pub async fn claim_promotion_queue_items(
     worker_id: &str,
     batch_size: i64,
 ) -> Result<Vec<PromotionQueueItem>> {
-    let items = sqlx::query_as!(
-        PromotionQueueItem,
+    let rows = sqlx::query(
         r#"
         UPDATE sinex_schemas.promotion_queue
         SET status = 'processing', last_attempt_ts = now(), processing_worker_id = $3
@@ -129,34 +157,51 @@ pub async fn claim_promotion_queue_items(
             FOR UPDATE SKIP LOCKED
         )
         RETURNING 
-            queue_id::uuid as "queue_id!",
-            raw_event_id::uuid as "raw_event_id!",
-            target_agent_name as "target_agent_name!", 
-            status as "status!", 
-            attempts as "attempts!", 
-            max_attempts as "max_attempts!",
-            last_attempt_ts as "last_attempt_ts?", 
-            next_retry_ts as "next_retry_ts?", 
-            error_message_last as "error_message_last?",
-            created_at as "created_at!", 
-            processing_worker_id as "processing_worker_id?"
-        "#,
-        target_agent_name,
-        batch_size,
-        worker_id
+            queue_id::uuid,
+            raw_event_id::uuid,
+            target_agent_name, 
+            status, 
+            attempts, 
+            max_attempts,
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at, 
+            processing_worker_id
+        "#
     )
+    .bind(target_agent_name)
+    .bind(batch_size)
+    .bind(worker_id)
     .fetch_all(pool)
     .await?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(PromotionQueueItem {
+            queue_id: row.try_get("queue_id")?,
+            raw_event_id: row.try_get("raw_event_id")?,
+            target_agent_name: row.try_get("target_agent_name")?,
+            status: row.try_get("status")?,
+            attempts: row.try_get("attempts")?,
+            max_attempts: row.try_get("max_attempts")?,
+            last_attempt_ts: row.try_get("last_attempt_ts")?,
+            next_retry_ts: row.try_get("next_retry_ts")?,
+            error_message_last: row.try_get("error_message_last")?,
+            created_at: row.try_get("created_at")?,
+            processing_worker_id: row.try_get("processing_worker_id")?,
+        });
+    }
 
     Ok(items)
 }
 
 /// Mark a promotion queue item as successfully processed
 pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Uuid) -> Result<()> {
-    sqlx::query!(
-        "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
-        queue_id
+    sqlx::query(
+        "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid"
     )
+    .bind(queue_id)
     .execute(pool)
     .await?;
 
@@ -170,7 +215,7 @@ pub async fn fail_promotion_queue_item(
     error_message: &str,
     next_retry_ts: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE sinex_schemas.promotion_queue
         SET 
@@ -180,11 +225,11 @@ pub async fn fail_promotion_queue_item(
             next_retry_ts = $3,
             processing_worker_id = NULL
         WHERE queue_id = $1::uuid::ulid
-        "#,
-        queue_id,
-        error_message,
-        next_retry_ts
+        "#
     )
+    .bind(queue_id)
+    .bind(error_message)
+    .bind(next_retry_ts)
     .execute(pool)
     .await?;
 
@@ -193,14 +238,14 @@ pub async fn fail_promotion_queue_item(
 
 /// Update agent heartbeat timestamp
 pub async fn update_agent_heartbeat(pool: &PgPool, agent_name: &str) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE sinex_schemas.agent_manifests
         SET last_heartbeat_ts = NOW()
         WHERE agent_name = $1
-        "#,
-        agent_name
+        "#
     )
+    .bind(agent_name)
     .execute(pool)
     .await?;
 
