@@ -79,6 +79,13 @@ setup)
 
 reset)
   db_name=$(current_db)
+  if [[ "$db_name" == "sinex" ]]; then
+    error "Cannot reset production database. To reset manually:"
+    echo "  dropdb -h /run/postgresql sinex"
+    echo "  db prod"
+    exit 1
+  fi
+
   warning "Reset database $db_name? [y/N]"
   read -n 1 -r
   echo
@@ -88,11 +95,7 @@ reset)
   fi
 
   dropdb -h /run/postgresql "$db_name" 2>/dev/null || true
-  if [[ "$db_name" == "sinex" ]]; then
-    setup_db "sinex"
-  else
-    setup_db "sinex_dev"
-  fi
+  setup_db "sinex_dev"
   ;;
 
 shell | psql)
