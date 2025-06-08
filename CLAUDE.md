@@ -1,227 +1,208 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file is my persistent memory for working with the Sinex project.
 
-## Quick Start
+## 🎯 Project Purpose & Architecture
 
+Sinex is an event-driven data capture system that records everything happening on a computer for later analysis.
+
+**Core Flow**: Ingestors → Event Substrate → Workers → Query Interface
+
+- **Ingestors**: Capture events from sources (filesystem, terminals, window managers)
+- **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
+- **Workers**: Process events concurrently using `SELECT FOR UPDATE SKIP LOCKED`
+- **Query Interface**: Python CLI for exploring captured events
+
+## 🏗️ Key Patterns & Conventions
+
+### SimpleIngestor Pattern
+All ingestors implement this trait and let IngestorRuntime handle lifecycle:
+```rust
+#[async_trait]
+impl SimpleIngestor for MyIngestor {
+    fn name() -> &'static str { "my-ingestor" }
+    fn version() -> &'static str { env!("CARGO_PKG_VERSION") }
+    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        // Just capture events - runtime handles heartbeats, retries, DLQ, shutdown
+    }
+}
+```
+
+### Database Patterns
+- All primary keys use ULID (time-ordered, distributed-safe)
+- Events are immutable once written to `raw.events`
+- Schema validation via pg_jsonschema
+- Concurrent work distribution via `FOR UPDATE SKIP LOCKED`
+
+### Code Organization
+- Consolidate related code - avoid excessive file atomization
+- Tests go in categorized subdirectories under `test/`
+- Put my working docs in `spec/docs/claude/`
+- Clean up obsolete code/files proactively
+
+## 🌟 Memory Bank
+
+- After you finish with your task which involved modifying source code, ensure there is no mess left behind, git commit your changes and only then your job is considered done.
+
+## 📁 Project Map
+
+```
+sinex/
+├── crate/                    # Core Rust libraries
+│   ├── sinex-core/           # RawEvent, errors, constants
+│   ├── sinex-db/             # Database models and pooling
+│   ├── sinex-ulid/           # ULID ↔ UUID conversion
+│   ├── sinex-worker/         # Worker implementations
+│   └── sinex-promo-worker/   # Promotion queue worker
+├── ingestor/
+│   ├── shared/               # Shared utilities (gradually migrating to crate)
+│   ├── filesystem/           # Watch file system changes
+│   ├── kitty/               # Capture terminal commands
+│   ├── hyprland/            # Window manager events
+│   └── unified/             # Example multi-source collector
+├── config/                   # Example configurations for each ingestor
+├── test/                    # Categorized test suites
+│   ├── database/            # Schema, migrations, ULID
+│   ├── pipeline/            # Event processing, workers
+│   ├── agent/              # Manifests, heartbeats
+│   └── reliability/         # Error handling, failures
+├── migration/              # SQL schema migrations (sqlx)
+├── spec/                    # Documentation
+│   ├── SADI.md             # Start here - doc index
+│   ├── docs/tims/          # Implementation specs
+│   └── docs/claude/        # My working area
+└── cli/                     # Python query tools
+```
+
+## 🛠️ Common Tasks
+
+### Development Setup
 ```bash
-# Enter development environment (required first step)
-nix develop
-
-# Initialize database with migrations
-./scripts/db_reset.sh
-
-# Run all tests
-cargo test --all-features
-
-# Check system status
-./cli/exo.py query --limit 1
+nix develop                      # Always run first - enters dev shell
+db setup dev                    # Initialize database
+cargo check --workspace         # Verify build
 ```
 
-See the devShell banner for additional commands.
-
-## Architecture Overview
-
-Sinex is an event-driven data capture system with three main layers:
-
-1. **Ingestors** (Rust workspace members): Capture events from various sources
-2. **Event Substrate** (PostgreSQL + TimescaleDB): Universal event storage with ULID keys
-3. **Query Interface** (Python CLI): Event querying and system introspection
-
-### Key Components
-
-- **Migrations**: sqlx-managed database schema in `/migrations/`
-- **Shared Crates**: `sinex-ulid`, `sinex-db`, `sinex-worker` for common functionality  
-- **Worker System**: Concurrent event processing with `SELECT FOR UPDATE SKIP LOCKED`
-- **Event Schema**: Universal `raw.events` table with JSONB payloads and schema validation
-
-## Core Development Commands
-
+### Database Management
 ```bash
-# Database operations
-sqlx migrate run                    # Apply migrations
-sqlx migrate add new_feature        # Create new migration
-./scripts/setup_test_db.sh         # Test database setup
-
-# SQLX offline cache management
-./scripts/update-sqlx-cache.sh     # Update SQLX cache manually
-cargo sqlx prepare --workspace     # Regenerate entire cache
-nix run .#sqlx-prepare              # Update cache via nix
-
-# Building and testing
-cargo build --release              # Build all workspace members
-cargo test --test migration_tests  # Run specific test file
-cargo test --package sinex-ulid    # Test specific crate
-
-# Development workflow  
-cargo watch -x check               # Watch for changes
-bacon                              # Continuous testing
+db                              # Show current database
+db dev                         # Switch to development database  
+db prod                        # Switch to production database
+db tmp                         # Switch to ephemeral database (tmp_0)
+db tmp_3                       # Switch to ephemeral database 3 (0-9)
+db setup [dev|prod]            # Setup/initialize database
+db reset                       # Reset current database
+db destroy                     # Destroy ephemeral database
+db shell                       # Connect with psql to current database
 ```
 
-## SQLX Offline Mode
-
-The project uses SQLX's offline mode for reproducible builds. This means:
-
-1. **Query Cache**: All SQL queries are cached in `.sqlx/` directory
-2. **Automatic Updates**: Pre-commit hooks update cache when queries change
-3. **CI Verification**: GitHub Actions verify cache is up-to-date
-4. **Nix Builds**: Work offline using `SQLX_OFFLINE=true`
-
-### When to Update SQLX Cache
-
-The cache needs updating when:
-- You modify any `sqlx::query!()` macros
-- You change database schema (migrations)
-- You add new SQL queries
-
-### How to Update SQLX Cache
-
+### Running Ingestors
 ```bash
-# Automatic (recommended)
-git add .                           # Stage your changes
-git commit                          # Pre-commit hook runs automatically
-
-# Manual update
-./scripts/update-sqlx-cache.sh      # Updates and stages cache
-
-# Force regeneration
-rm -rf .sqlx/                       # Remove existing cache
-cargo sqlx prepare --workspace      # Regenerate from scratch
+cargo run --bin filesystem-ingestor -- --dry-run
+cargo run --bin kitty-ingestor -- --output-file events.json
+cargo run --bin hyprland-ingestor
 ```
 
-### Troubleshooting SQLX
-
-If you see "no cached data for this query":
-1. Ensure database is running: `psql $DATABASE_URL`
-2. Run migrations: `sqlx migrate run`
-3. Update cache: `./scripts/update-sqlx-cache.sh`
-4. Commit the `.sqlx/` changes
-
-## Database Schema Architecture
-
-### Core Schemas
-- **`raw`**: Immutable event storage (`raw.events` hypertable)
-- **`sinex_schemas`**: Schema registry, agent manifests, promotion queue
-- **`core`**: Structured data (future: artifacts, entities, relations)
-
-### ULID System
-- All primary keys use ULID via `pgx_ulid` PostgreSQL extension
-- Provides time-ordered, distributed-safe unique identifiers
-- ULID ↔ UUID compatibility for existing tools
-
-### Event Processing Pipeline
-1. Ingestors → `raw.events` (immutable storage)
-2. Event router → `promotion_queue` (work distribution)  
-3. Workers → concurrent processing with retry logic
-4. Structured data → `core` schemas (promoted/enriched events)
-
-## Testing Strategy
-
-- **Unit tests**: Standard Rust `#[cfg(test)]` modules
-- **Integration tests**: `/tests/*.rs` files using `#[sqlx::test]`
-- **Database tests**: Require `TEST_DATABASE_URL` environment variable
-- **Property tests**: Use `proptest` crate for schema boundary testing
-
-### Test Database Management
-Tests use an ephemeral test database. Set `TEST_DATABASE_URL` or let tests use default:
+### Database Work
 ```bash
-export TEST_DATABASE_URL="postgres://sinex_test:testpass@localhost:5433/sinex_test"
+sqlx migrate run                # Apply migrations
+sqlx migrate add feature_name   # New migration
+psql $DATABASE_URL             # Direct connection
+
+# SQLX cache management (NEW)
+nix run .#sqlx-prepare          # Update SQLX cache (replaces old script)
 ```
 
-## Worker System Architecture
+### Testing
+```bash
+# Regular testing
+cargo test                      # All tests
+cargo test --package sinex-db   # Specific crate
+cargo test --test database/     # Test category
 
-### Concurrent Processing Pattern
-Workers use PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent task claiming:
+# Isolated testing with ephemeral database
+db tmp                          # Switch to ephemeral database
+cargo test test_full_system_end_to_end -- --ignored  # Run specific test
 
-```sql
-UPDATE promotion_queue 
-SET status = 'processing', processing_worker_id = $worker_id
-WHERE queue_id IN (
-    SELECT queue_id FROM promotion_queue 
-    WHERE status = 'pending' 
-    ORDER BY created_at 
-    LIMIT $batch_size
-    FOR UPDATE SKIP LOCKED
-)
+# Continuous testing
+bacon                           # Continuous testing
+cargo watch -x test           # Watch mode
 ```
 
-### Retry Logic
-- Exponential backoff with jitter
-- Configurable max attempts per event type
-- Dead letter queue for permanent failures
-
-## NixOS Integration
-
-The project includes a NixOS module for system deployment:
-
-```nix
-services.sinex = {
-  enable = true;
-  systemUser = "username";
-  database = { name = "sinex"; user = "sinex"; };
-  ingestors.hyprland.enable = true;
-};
+### Development Environment (NEW)
+```bash
+nix run .#dev                  # Full interactive development environment (mprocs)
+nix run .#dev db-only         # Just setup database
+nix run .#dev background      # Start services in background
 ```
 
-Database initialization uses sqlx migrations automatically.
+### Monitoring (NEW)
+```bash
+nix run .#monitor             # Interactive dashboard
+nix run .#monitor live        # Live event tail
+nix run .#monitor events      # Recent events
+```
 
-## Extension Dependencies
+### Debugging
+```bash
+./cli/exo.py query --limit 10  # View recent events
+./cli/exo.py query --source filesystem --after "1 hour ago"
+cargo test -- --nocapture      # See test output
+```
 
-The system requires specific PostgreSQL extensions built into the Nix environment:
-- **pgx_ulid**: ULID support (built from source)
-- **TimescaleDB**: Time-series optimization  
-- **pgvector**: Vector similarity search
-- **pg_jsonschema**: JSON Schema validation
+## 🗄️ Database Schema
 
-## Event Types and Schema Validation
+**Core Tables**:
+- `raw.events` - Immutable event storage (hypertable)
+- `sinex_schemas.event_payload_schemas` - JSON schemas
+- `sinex_schemas.agent_manifests` - Registered ingestors
+- `sinex_schemas.promotion_queue` - Event processing queue
 
-All events follow a universal structure stored in `raw.events`:
-- Events have optional schema validation via `payload_schema_id` 
-- Schema definitions stored in `sinex_schemas.event_payload_schemas`
-- Validation enforced by pg_jsonschema CHECK constraints
-- Schema versioning supports event evolution over time
+**Key Types**:
+- `RawEvent` - Universal event structure
+- `EventSink` - Output abstraction (Database/Log/File/Memory)
+- `IngestorRuntime` - Manages ingestor lifecycle
 
-## Specification System (`spec/` directory)
+## ⚡ Quick References
 
-The project includes comprehensive specifications that guide development:
+### Path Dependencies
+```toml
+sinex-db = { path = "../../crate/sinex-db" }    # Not src/!
+```
 
-### Key Documents
-- **`VISION.md`**: Foundational philosophy and conceptual vision
-- **`STAD.md`**: System Technical Architecture Document (high-level architectural map)
-- **`SADI.md`**: Master index/map of all documentation - **start here**
-- **`CDDG.md`**: Claude-Driven Development Guide (AI-assisted TDD methodology)
-- **`GLOSSARY.md`**: Definitions of key terms
+### Local PostgreSQL
+```
+postgresql:///sinex?host=/run/postgresql
+```
 
-### Documentation Categories
+### Event Types
+- `sources::FILESYSTEM`, `sources::TERMINAL_KITTY`, `sources::HYPRLAND`
+- `event_type_constants::filesystem::FILE_CREATED`
+- `event_type_constants::terminal::COMMAND_EXECUTED`
 
-#### ADRs (Architectural Decision Records) - `spec/docs/adr/`
-Record significant architectural choices with rationale:
-- **ADR-001**: Primary key strategy (chose pgx_ulid over UUID)
-- **ADR-005**: Vector index type (chose pgvector)
-- Format: Problem → Options → Decision → Rationale
+### Key Crates
+- `sinex-core` - Common types all crates use
+- `sinex-db` - Database layer
+- `sinex-shared` - Ingestor utilities (being split up)
 
-#### TIMs (Technical Implementation Modules) - `spec/docs/tims/`
-Granular implementation specifications organized by domain:
-- **`data_substrate/`**: Database schemas, event processing, ULID implementation
-- **`ingestors/`**: Desktop, filesystem, application capture strategies  
-- **`operations/`**: DevOps, backups, observability setup
-- **`cli/`**: Command-line interface design
+## 📚 Where to Look
 
-#### Architectural Modules - `spec/docs/arch_modules/`
-Comprehensive domain deep-dives:
-- **DataSubstrate_Architecture.md**: Core event storage and processing
-- **IngestionArchitecture_And_TelemetrySources.md**: Data capture strategies
+- **Architecture Overview**: `spec/STAD.md`
+- **Implementation Details**: `spec/docs/tims/`
+- **Design Decisions**: `spec/docs/adr/`
+- **My Working Notes**: `spec/docs/claude/`
 
-### Navigation Tips
-1. **Start with `SADI.md`** - master map of all documentation
-2. **Check relevant TIMs** before implementing new features
-3. **Read ADRs** to understand why certain technical choices were made
-4. **All new documentation** should go under `spec/docs/claude/` if needed
-5. **TIMs include actual code** - SQL DDL, configuration examples, implementation details
+## 🚦 Environment Checks
 
-## Important Memories and Notes
+- Always in nix shell? (`nix develop`)
+- Database running? (`psql $DATABASE_URL`)
+- Migrations applied? (`sqlx migrate run`)
+- SQLX cache current? (`./script/update-sqlx-cache.sh`)
 
-- THERE IS NO pg_jsonschema IN THE NIXPKGS
-- Always check authentication methods (local socket vs network) before attempting database connections
-- When working with Nix packages, check the package structure and available outputs first
-- For local PostgreSQL on NixOS, use postgresql:///dbname?host=/run/postgresql
+## 💡 Principles
+
+- Events are immutable facts
+- Ingestors just capture, workers process
+- Use existing patterns before creating new ones
+- Clean up as you go - don't let cruft accumulate
+- Check the TIMs before implementing features

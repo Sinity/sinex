@@ -98,10 +98,6 @@ migrate-create NAME:
 sqlx-prepare:
     nix run .#sqlx-prepare
 
-# Update SQLX cache (alternative)
-sqlx-update:
-    ./scripts/update-sqlx-cache.sh
-
 # Check if SQLX cache is up to date
 sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
@@ -120,11 +116,11 @@ query LIMIT="10":
 
 # Show event flow demo
 demo:
-    ./scripts/demo_event_flow.sh
+    ./script/demo_event_flow.sh
 
 # Diagnose event assumptions
 diagnose:
-    ./scripts/diagnose_assumptions.sh
+    ./script/diagnose_assumptions.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🎛️  Complex Orchestration
