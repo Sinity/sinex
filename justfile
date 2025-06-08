@@ -9,37 +9,39 @@ default:
 # 🚀 Quick Start
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Start full development environment with process management
+# Switch to dev database (idempotent setup)
 dev:
-    nix run .#dev
+    ./script/db.sh dev
 
-# Start database only
-db:
-    nix run .#db-setup dev
-
-# Quick status check
+# Show current database status
 status:
-    @echo "🗄️  Database Status:"
-    @nix run .#db-setup check 2>/dev/null && echo "✅ Connected" || echo "❌ Not running"
-    @echo ""
-    @echo "📊 Event Count:"
-    @psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM raw.events" 2>/dev/null || echo "N/A"
+    ./script/db.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🧪 Testing
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Run tests (unit, integration, or all)
-test TYPE="unit":
-    nix run .#test {{TYPE}}
+# Run all tests
+test:
+    cargo test
 
 # Run tests in isolated ephemeral environment
 test-isolated:
-    nix run .#ephemeral test
+    #!/usr/bin/env bash
+    ./script/db.sh tmp_0
+    cargo test
 
-# Interactive ephemeral environment
-ephemeral:
-    nix run .#ephemeral interactive
+# Create ephemeral database for testing  
+ephemeral NUMBER="0":
+    ./script/db.sh tmp_{{NUMBER}}
+
+# Switch to ephemeral database
+tmp NUMBER="0":
+    ./script/db.sh tmp_{{NUMBER}}
+
+# Destroy ephemeral database
+destroy:
+    ./script/db.sh destroy
 
 # Watch tests
 watch:
@@ -76,15 +78,23 @@ fmt:
 
 # Setup development database
 db-setup:
-    nix run .#db-setup dev
+    ./script/db.sh dev
+
+# Switch to development database
+db-dev:
+    ./script/db.sh dev
+
+# Switch to production database
+db-prod:
+    ./script/db.sh prod
 
 # Reset database (WARNING: destructive)
 db-reset:
-    nix run .#db-setup reset
+    ./script/db.sh reset
 
 # Connect to database
 psql:
-    psql $DATABASE_URL
+    ./script/db.sh shell
 
 # Run migrations
 migrate:
@@ -96,11 +106,31 @@ migrate-create NAME:
 
 # Update SQLX offline cache
 sqlx-prepare:
-    nix run .#sqlx-prepare
+    ./script/sqlx-prepare.sh
 
 # Check if SQLX cache is up to date
 sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🏃 Running Ingestors (using nix packages)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Run filesystem ingestor (nix package)
+filesystem:
+    nix run .#filesystemIngestor
+
+# Run kitty ingestor (nix package)
+kitty:
+    nix run .#kittyIngestor
+
+# Run hyprland ingestor (nix package)
+hyprland:
+    nix run .#hyprlandIngestor
+
+# Run promo worker (nix package)
+worker:
+    nix run .#sinexPromoWorker
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📊 Monitoring & Queries
@@ -108,7 +138,7 @@ sqlx-check:
 
 # Live monitoring dashboard
 monitor:
-    nix run .#monitor
+    ./script/monitor.sh
 
 # Query recent events
 query LIMIT="10":
@@ -126,26 +156,6 @@ diagnose:
 # 🎛️  Complex Orchestration
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Start ingestors individually
-ingestor NAME:
-    #!/usr/bin/env bash
-    case {{NAME}} in
-        filesystem)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL filesystem-ingestor run
-            ;;
-        kitty)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL kitty-ingestor run
-            ;;
-        hyprland)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL hyprland-ingestor run
-            ;;
-        *)
-            echo "Unknown ingestor: {{NAME}}"
-            echo "Available: filesystem, kitty, hyprland"
-            exit 1
-            ;;
-    esac
-
 # Kill all ingestors
 kill-ingestors:
     pkill -f "ingestor" || true
@@ -159,12 +169,9 @@ system-test:
     # Ensure clean state
     just db-reset
     
-    # Start database
-    just db-setup
-    
     # Run ingestors in background for 10 seconds
     echo "📡 Starting ingestors..."
-    just ingestor filesystem &
+    just filesystem &
     FILESYSTEM_PID=$!
     
     sleep 10
@@ -207,3 +214,6 @@ alias b := build
 alias t := test
 alias m := monitor
 alias d := dev
+alias fs := filesystem
+alias kt := kitty
+alias hy := hyprland
