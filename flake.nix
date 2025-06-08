@@ -283,147 +283,6 @@
           # Flake apps for development workflows
           apps = {
             # Database management
-            db-setup = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "db-setup" ''
-                  set -euo pipefail
-
-                  # Colors
-                  RED='\033[0;31m'
-                  GREEN='\033[0;32m'
-                  BLUE='\033[0;34m'
-                  NC='\033[0m'
-
-                  log() { echo -e "''${BLUE}🗄️''${NC}  $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-                  error() { echo -e "''${RED}❌''${NC} $*" >&2; }
-
-                  MODE="''${1:-dev}"
-
-                  case "$MODE" in
-                    dev)
-                      log "Setting up development database"
-                      export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-
-                      # Check if PostgreSQL is running
-                      if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                        error "PostgreSQL is not running on /run/postgresql"
-                        error "Please ensure PostgreSQL is installed and running"
-                        error "On NixOS: services.postgresql.enable = true;"
-                        exit 1
-                      fi
-
-                      # Create database if it doesn't exist
-                      if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
-                        log "Creating database sinex_dev"
-                        ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev || {
-                          error "Failed to create database. You may need to run:"
-                          error "  sudo -u postgres createdb sinex_dev"
-                          error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
-                          exit 1
-                        }
-                      fi
-
-                      # Create extensions
-                      log "Ensuring extensions are available"
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || {
-                        warning "Could not create ulid extension. May need superuser privileges."
-                      }
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
-                        warning "Could not create vector extension. May need superuser privileges."
-                      }
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || {
-                        warning "Could not create timescaledb extension. May need superuser privileges."
-                      }
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || {
-                        warning "Could not create pg_jsonschema extension. May need superuser privileges."
-                      }
-
-                      log "Running migrations"
-                      DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
-                      success "Development database ready at $DATABASE_URL"
-                      ;;
-                    prod)
-                      log "Setting up production database"
-                      export DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
-
-                      # Check PostgreSQL
-                      if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                        error "PostgreSQL is not running on /run/postgresql"
-                        exit 1
-                      fi
-
-                      # Create production database
-                      if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
-                        log "Creating database sinex"
-                        ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex || {
-                          error "Failed to create production database"
-                          exit 1
-                        }
-                      fi
-
-                      # Extensions
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
-
-                      # Migrations
-                      DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
-                      success "Production database ready at $DATABASE_URL"
-                      ;;
-                  reset)
-                    log "Resetting development database"
-                      export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-
-                      warning "This will DROP and recreate the sinex_dev database"
-                      read -p "Continue? [y/N] " -n 1 -r
-                      echo
-                      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                        log "Reset cancelled"
-                        exit 0
-                      fi
-
-                      # Drop and recreate
-                      ${postgresqlWithExtensions}/bin/dropdb -h /run/postgresql sinex_dev 2>/dev/null || true
-                      exec "$0" dev
-                      ;;
-                    check)
-                      log "Checking database connectivity"
-
-                      # Check PostgreSQL server
-                      if ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                        success "PostgreSQL server: Running on /run/postgresql"
-                      else
-                        error "PostgreSQL server: Not available on /run/postgresql"
-                        exit 1
-                      fi
-
-                      # Check dev database
-                      if ${postgresqlWithExtensions}/bin/psql -h /run/postgresql sinex_dev -c "SELECT 1;" >/dev/null 2>&1; then
-                        success "Development database: sinex_dev accessible"
-                      else
-                        warning "Development database: sinex_dev not found (run 'nix run .#db-setup dev')"
-                      fi
-
-                      # Check production database
-                      if ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
-                        success "Production database: sinex accessible"
-                      else
-                        warning "Production database: sinex not found (run 'nix run .#db-setup prod')"
-                      fi
-                      ;;
-                    *)
-                      error "Usage: nix run .#db-setup [dev|prod|reset|check]"
-                      exit 1
-                      ;;
-                  esac
-                ''
-              );
-            };
-
-            # Database switching
             db = {
               type = "app";
               program = toString (
@@ -463,7 +322,7 @@
                       echo "unix_socket_directories = '$EPHEMERAL_DIR'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       echo "shared_preload_libraries = 'timescaledb'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       echo "port = 5432$NUM" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      echo "listen_addresses = ''" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      echo "listen_addresses = ''''" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       
                       # Start PostgreSQL
                       ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
@@ -569,7 +428,7 @@
                       case "$CURRENT" in
                         sinex_dev|sinex)
                           ${postgresqlWithExtensions}/bin/dropdb -h /run/postgresql "$CURRENT" 2>/dev/null || true
-                          nix run .#db-setup "''${CURRENT#sinex_}"
+                          "$0" setup "''${CURRENT#sinex_}"
                           ;;
                         tmp*)
                           NUM="''${CURRENT#tmp_}"
@@ -1214,7 +1073,7 @@
                     echo "max_connections = 50" >> "$TEST_DIR/data/postgresql.conf"
                     echo "shared_buffers = 128MB" >> "$TEST_DIR/data/postgresql.conf"
                     echo "port = 54321" >> "$TEST_DIR/data/postgresql.conf"
-                    echo "listen_addresses = " >> "$TEST_DIR/data/postgresql.conf"
+                    echo "listen_addresses = ''''" >> "$TEST_DIR/data/postgresql.conf"
 
                     # Start PostgreSQL
                     if ! ${postgresqlWithExtensions}/bin/pg_ctl -D "$TEST_DIR/data" -l "$TEST_DIR/logs/postgres.log" start >/dev/null; then
@@ -1292,11 +1151,8 @@
                     test)
                       run_tests "''${@}"
                       ;;
-                    interactive|shell)
-                      interactive_mode
-                      ;;
                     *)
-                      error "Usage: nix run .#ephemeral [test|interactive] [test-args...]"
+                      error "Usage: nix run .#ephemeral test [test-args...]"
                       exit 1
                       ;;
                   esac

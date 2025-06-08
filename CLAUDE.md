@@ -79,8 +79,21 @@ sinex/
 ### Development Setup
 ```bash
 nix develop                      # Always run first - enters dev shell
-./script/db_reset.sh           # Initialize database
+db setup dev                    # Initialize database
 cargo check --workspace         # Verify build
+```
+
+### Database Management
+```bash
+db                              # Show current database
+db dev                         # Switch to development database  
+db prod                        # Switch to production database
+db tmp                         # Switch to ephemeral database (tmp_0)
+db tmp_3                       # Switch to ephemeral database 3 (0-9)
+db setup [dev|prod]            # Setup/initialize database
+db reset                       # Reset current database
+db destroy                     # Destroy ephemeral database
+db shell                       # Connect with psql to current database
 ```
 
 ### Running Ingestors
@@ -96,16 +109,37 @@ sqlx migrate run                # Apply migrations
 sqlx migrate add feature_name   # New migration
 psql $DATABASE_URL             # Direct connection
 
-# Fix SQLX cache after query changes
-./script/update-sqlx-cache.sh
+# SQLX cache management (NEW)
+nix run .#sqlx-prepare          # Update SQLX cache (replaces old script)
 ```
 
 ### Testing
 ```bash
+# Regular testing
 cargo test                      # All tests
 cargo test --package sinex-db   # Specific crate
 cargo test --test database/     # Test category
-bacon                          # Continuous testing
+
+# Isolated testing (creates isolated postgres + runs cargo test with remaining args)
+nix run .#ephemeral test [cargo-test-args]  # e.g. test_full_system_end_to_end -- --ignored
+
+# Continuous testing
+bacon                           # Continuous testing
+cargo watch -x test           # Watch mode
+```
+
+### Development Environment (NEW)
+```bash
+nix run .#dev                  # Full interactive development environment (mprocs)
+nix run .#dev db-only         # Just setup database
+nix run .#dev background      # Start services in background
+```
+
+### Monitoring (NEW)
+```bash
+nix run .#monitor             # Interactive dashboard
+nix run .#monitor live        # Live event tail
+nix run .#monitor events      # Recent events
 ```
 
 ### Debugging
