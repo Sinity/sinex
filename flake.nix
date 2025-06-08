@@ -442,7 +442,7 @@
                   warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
                   error() { echo -e "''${RED}❌''${NC} $*" >&2; }
 
-                  STATE_FILE="$HOME/.sinex_current_db"
+                  STATE_FILE=".sinex_current_db"
                   EPHEMERAL_BASE="/tmp/sinex_ephemeral"
 
                   # Function to create ephemeral database

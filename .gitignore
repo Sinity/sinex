@@ -51,3 +51,4 @@ result-*
 /logs/
 /spec/combo/
 .direnv/
+.sinex_current_db
