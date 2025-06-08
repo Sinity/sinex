@@ -125,10 +125,10 @@ impl Config {
             .add_source(config::Config::try_from(&Config::default())?)
             // Add config file if it exists
             .add_source(
-                config::File::with_name("/etc/sinex/kitty-ingestor.toml").required(false)
+                config::File::with_name("kitty-ingestor.toml").required(false)
             )
             .add_source(
-                config::File::with_name("~/.config/sinex/kitty-ingestor.toml").required(false)
+                config::File::with_name("~/.config/kitty-ingestor.toml").required(false)
             )
             // Override with environment variables (SINEX_DATABASE_URL, etc.)
             .add_source(
