@@ -23,6 +23,10 @@ authors.workspace = true
 name = "integration"
 path = "test/mod.rs"
 
+[[example]]
+name = "ulid_compile_time_safe"
+path = "examples/ulid_compile_time_safe.rs"
+
 [dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
@@ -35,6 +39,9 @@ async-trait.workspace = true
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
+
+# Example dependencies
+tracing-subscriber = { workspace = true }
 
 # Local dependencies  
 sinex-core = { path = "crate/sinex-core" }

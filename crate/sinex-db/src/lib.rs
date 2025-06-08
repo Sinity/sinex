@@ -1,6 +1,7 @@
 pub mod models;
 pub mod pool;
 pub mod queries;
+pub mod queries_macro_safe;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;

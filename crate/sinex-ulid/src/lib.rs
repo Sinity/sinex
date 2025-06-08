@@ -94,6 +94,12 @@ impl Ulid {
     pub fn is_nil(&self) -> bool {
         self.0.to_bytes().iter().all(|&b| b == 0)
     }
+
+    /// Helper for SQLX queries - returns UUID for parameter binding
+    /// Use this when passing ULID as a parameter to SQLX macros
+    pub fn as_uuid(&self) -> Uuid {
+        self.to_uuid()
+    }
 }
 
 impl Default for Ulid {

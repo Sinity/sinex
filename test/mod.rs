@@ -6,6 +6,7 @@ mod database {
     mod migration_tests;
     mod timescaledb_tests;
     mod ulid_integration_tests;
+    mod ulid_compile_time_macro_tests;
     mod jsonschema_validation_tests;
     mod schema_validation_tests;
 }
