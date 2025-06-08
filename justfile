@@ -1,25 +1,9 @@
 default:
     @just --list --unsorted
 
-# Database
-dev:
-    ./script/db.sh dev
-
-status:
-    ./script/db.sh
-
-prod:
-    ./script/db.sh prod
-
-reset:
-    ./script/db.sh reset
-
-psql:
-    ./script/db.sh shell
-
 # Testing  
 test:
-    DATABASE_URL="$(./script/db.sh get-url)" cargo test
+    cargo test
 
 watch:
     cargo watch -x test
@@ -43,16 +27,16 @@ fmt:
 
 # Migrations
 migrate:
-    DATABASE_URL="$(./script/db.sh get-url)" sqlx migrate run
+    sqlx migrate run
 
 migrate-create NAME:
-    DATABASE_URL="$(./script/db.sh get-url)" sqlx migrate add {{NAME}}
+    sqlx migrate add {{NAME}}
 
 sqlx-prepare:
-    DATABASE_URL="$(./script/db.sh get-url)" ./script/sqlx-prepare.sh
+    ./script/sqlx-prepare.sh
 
 sqlx-check:
-    DATABASE_URL="$(./script/db.sh get-url)" cargo sqlx prepare --workspace --check -- --all-targets --all-features
+    cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
 # Ingestors
 filesystem:
@@ -81,7 +65,10 @@ clean:
 update:
     cargo update
 
+# Database utilities
+psql:
+    psql "$DATABASE_URL"
+
 # Aliases
 alias c := check
 alias t := test
-alias d := dev

@@ -86,8 +86,28 @@
             ];
 
             shellHook = ''
-              # Ensure default database is set up
-              ./script/db.sh dev >/dev/null 2>&1 || true
+              # Database configuration
+              export DATABASE_NAME="sinex_dev"
+              export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
+              
+              # Setup database if needed
+              if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw "$DATABASE_NAME"; then
+                  echo "🗄️  Creating database $DATABASE_NAME..."
+                  createdb -h /run/postgresql "$DATABASE_NAME" || echo "❌ Failed to create database"
+                fi
+                
+                # Run migrations
+                if [ -d "migration" ]; then
+                  echo "🗄️  Running migrations..."
+                  sqlx migrate run --source migration >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
+                fi
+                
+                echo "✅ Database $DATABASE_NAME ready at $DATABASE_URL"
+              else
+                echo "⚠️  PostgreSQL not available - database setup skipped"
+              fi
+              
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."
             '';
           };
