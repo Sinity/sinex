@@ -120,8 +120,9 @@ cargo test                      # All tests
 cargo test --package sinex-db   # Specific crate
 cargo test --test database/     # Test category
 
-# Isolated testing (creates isolated postgres + runs cargo test with remaining args)
-nix run .#ephemeral test [cargo-test-args]  # e.g. test_full_system_end_to_end -- --ignored
+# Isolated testing with ephemeral database
+db tmp                          # Switch to ephemeral database
+cargo test test_full_system_end_to_end -- --ignored  # Run specific test
 
 # Continuous testing
 bacon                           # Continuous testing
