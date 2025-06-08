@@ -358,7 +358,11 @@
                       ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
                       
                       # Run migrations
-                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration >/dev/null
+                      log "Running migrations on ephemeral database $NUM"
+                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration >/dev/null 2>&1 || {
+                        error "Failed to run migrations on ephemeral database"
+                        exit 1
+                      }
                     fi
                     
                     echo "$EPHEMERAL_URL"
@@ -482,9 +486,87 @@
                       # Setup dev or prod database
                       DB_TYPE="''${2:-dev}"
                       case "$DB_TYPE" in
-                        dev|prod)
-                          nix run .#db-setup "$DB_TYPE"
+                        dev)
+                          log "Setting up development database"
+                          URL="postgresql:///sinex_dev?host=/run/postgresql"
+                          
+                          # Check if PostgreSQL is running
+                          if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                            error "PostgreSQL is not running on /run/postgresql"
+                            error "Please ensure PostgreSQL is installed and running"
+                            error "On NixOS: services.postgresql.enable = true;"
+                            exit 1
+                          fi
+                          
+                          # Create database if it doesn't exist
+                          if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+                            log "Creating database sinex_dev"
+                            ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev || {
+                              error "Failed to create database. You may need to run:"
+                              error "  sudo -u postgres createdb sinex_dev"
+                              error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
+                              exit 1
+                            }
+                          fi
+                          
+                          # Create extensions
+                          log "Ensuring extensions are available"
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || {
+                            warning "Could not create ulid extension. May need superuser privileges."
+                          }
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
+                            warning "Could not create vector extension. May need superuser privileges."
+                          }
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || {
+                            warning "Could not create timescaledb extension. May need superuser privileges."
+                          }
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || {
+                            warning "Could not create pg_jsonschema extension. May need superuser privileges."
+                          }
+                          
+                          log "Running migrations"
+                          DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
+                          
+                          # Save state and switch to this database
+                          save_state "$URL"
+                          export DATABASE_URL="$URL"
+                          success "Development database ready"
                           ;;
+                        
+                        prod)
+                          log "Setting up production database"
+                          URL="postgresql:///sinex?host=/run/postgresql"
+                          
+                          # Check PostgreSQL
+                          if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                            error "PostgreSQL is not running on /run/postgresql"
+                            exit 1
+                          fi
+                          
+                          # Create production database
+                          if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
+                            log "Creating database sinex"
+                            ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex || {
+                              error "Failed to create production database"
+                              exit 1
+                            }
+                          fi
+                          
+                          # Extensions
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
+                          ${postgresqlWithExtensions}/bin/psql "$URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
+                          
+                          # Migrations
+                          DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
+                          
+                          # Save state and switch to this database
+                          save_state "$URL"
+                          export DATABASE_URL="$URL"
+                          success "Production database ready"
+                          ;;
+                        
                         *)
                           error "Usage: db setup [dev|prod]"
                           exit 1
