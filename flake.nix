@@ -118,7 +118,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            # SQLX_OFFLINE = "true";
+            SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -160,7 +160,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            # SQLX_OFFLINE = "true";
+            SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -202,7 +202,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            # SQLX_OFFLINE = "true";
+            SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -232,7 +232,6 @@
             buildInputs = with pkgs; [
               openssl
               pkg-config
-              postgresql_16
             ];
 
             nativeBuildInputs = with pkgs; [
@@ -245,7 +244,7 @@
             ];
 
             # Ensure SQLX offline mode for build
-            # SQLX_OFFLINE = "true";
+            SQLX_OFFLINE = "true";
 
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
@@ -275,804 +274,6 @@
             default = sinexPromoWorker;
           };
 
-          # Flake apps for development workflows
-          apps = {
-            # Database management
-            db = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "db-switcher" ''
-                  set -euo pipefail
-
-                  # Colors
-                  RED='\033[0;31m'
-                  GREEN='\033[0;32m'
-                  BLUE='\033[0;34m'
-                  YELLOW='\033[1;33m'
-                  NC='\033[0m'
-
-                  log() { echo -e "''${BLUE}🗄️''${NC}  $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-                  warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
-                  error() { echo -e "''${RED}❌''${NC} $*" >&2; }
-
-                  EPHEMERAL_BASE="/tmp/sinex_ephemeral"
-                  STATE_FILE="$HOME/.sinex_db_state"
-
-                  # Function to save database state
-                  save_state() {
-                    echo "$1" > "$STATE_FILE"
-                  }
-
-                  # Function to load database state
-                  load_state() {
-                    if [ -f "$STATE_FILE" ]; then
-                      cat "$STATE_FILE"
-                    else
-                      echo "postgresql:///sinex_dev?host=/run/postgresql"
-                    fi
-                  }
-
-                  # Function to create ephemeral database
-                  create_ephemeral() {
-                    local NUM="$1"
-                    local EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
-                    local EPHEMERAL_URL="postgresql:///sinex_ephemeral_$NUM?host=$EPHEMERAL_DIR&port=5432$NUM"
-                    
-                    if [ -d "$EPHEMERAL_DIR" ] && pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
-                      log "Reusing existing ephemeral database $NUM"
-                    else
-                      log "Creating ephemeral database $NUM"
-                      mkdir -p "$EPHEMERAL_DIR"/{data,logs}
-                      
-                      # Initialize database
-                      initdb -D "$EPHEMERAL_DIR/data" --no-locale --encoding=UTF8 >/dev/null
-                      
-                      # Configure
-                      echo "unix_socket_directories = '$EPHEMERAL_DIR'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      echo "shared_preload_libraries = 'timescaledb'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      echo "port = 5432$NUM" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      echo "# listen_addresses disabled for unix sockets only" >> "$EPHEMERAL_DIR/data/postgresql.conf"
-                      
-                      # Start PostgreSQL
-                      pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
-                      
-                      # Wait for startup
-                      for i in {1..10}; do
-                        if pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
-                          break
-                        fi
-                        sleep 0.5
-                      done
-                      
-                      # Create database
-                      createdb -h "$EPHEMERAL_DIR" -p "5432$NUM" "sinex_ephemeral_$NUM"
-                      
-                      # Run migrations (which create extensions)
-                      log "Running migrations on ephemeral database $NUM"
-                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration >/dev/null 2>&1 || {
-                        error "Failed to run migrations on ephemeral database"
-                        exit 1
-                      }
-                    fi
-                    
-                    echo "$EPHEMERAL_URL"
-                  }
-
-                  # Function to show current database
-                  show_current() {
-                    local URL=$(load_state)
-                    if [[ "$URL" =~ sinex_dev ]]; then
-                      echo "sinex_dev"
-                    elif [[ "$URL" =~ /sinex\? ]]; then
-                      echo "sinex"
-                    elif [[ "$URL" =~ sinex_ephemeral_([0-9]+) ]]; then
-                      echo "tmp_''${BASH_REMATCH[1]}"
-                    else
-                      echo "sinex_dev"  # Default
-                    fi
-                  }
-
-                  # Main command handling
-                  TARGET="''${1:-}"
-
-                  if [ -z "$TARGET" ]; then
-                    # Show current database
-                    CURRENT=$(show_current)
-                    URL=$(load_state)
-                    log "Current database: $CURRENT"
-                    echo "  URL: $URL"
-                    exit 0
-                  fi
-
-                  case "$TARGET" in
-                    dev)
-                      log "Switching to development database"
-                      URL="postgresql:///sinex_dev?host=/run/postgresql"
-                      save_state "$URL"
-                      export DATABASE_URL="$URL"
-                      success "Switched to sinex_dev"
-                      ;;
-                    
-                    prod)
-                      log "Switching to production database"
-                      URL="postgresql:///sinex?host=/run/postgresql"
-                      save_state "$URL"
-                      export DATABASE_URL="$URL"
-                      success "Switched to sinex (production)"
-                      ;;
-                    
-                    tmp|tmp_*)
-                      # Handle tmp (alias for tmp_0) and tmp_N
-                      if [ "$TARGET" = "tmp" ]; then
-                        NUM=0
-                      else
-                        NUM="''${TARGET#tmp_}"
-                        if ! [[ "$NUM" =~ ^[0-9]$ ]]; then
-                          error "Invalid ephemeral database number. Use tmp or tmp_0 through tmp_9"
-                          exit 1
-                        fi
-                      fi
-                      
-                      log "Switching to ephemeral database $NUM"
-                      URL=$(create_ephemeral "$NUM")
-                      save_state "$URL"
-                      export DATABASE_URL="$URL"
-                      success "Switched to ephemeral database $NUM"
-                      ;;
-                    
-                    reset)
-                      CURRENT=$(show_current)
-                      warning "This will reset the current database ($CURRENT)"
-                      read -p "Continue? [y/N] " -n 1 -r
-                      echo
-                      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                        log "Reset cancelled"
-                        exit 0
-                      fi
-                      
-                      case "$CURRENT" in
-                        sinex_dev|sinex)
-                          dropdb -h /run/postgresql "$CURRENT" 2>/dev/null || true
-                          "$0" setup "''${CURRENT#sinex_}"
-                          ;;
-                        tmp*)
-                          NUM="''${CURRENT#tmp_}"
-                          EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
-                          pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
-                          rm -rf "$EPHEMERAL_DIR"
-                          create_ephemeral "$NUM" >/dev/null
-                          success "Reset ephemeral database $NUM"
-                          ;;
-                      esac
-                      ;;
-                    
-                    destroy)
-                      CURRENT=$(show_current)
-                      if [[ "$CURRENT" =~ ^tmp ]]; then
-                        NUM="''${CURRENT#tmp_}"
-                        EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
-                        warning "This will destroy ephemeral database $NUM"
-                        read -p "Continue? [y/N] " -n 1 -r
-                        echo
-                        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                          log "Destroy cancelled"
-                          exit 0
-                        fi
-                        pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
-                        rm -rf "$EPHEMERAL_DIR"
-                        success "Destroyed ephemeral database $NUM"
-                        # Switch to dev
-                        URL="postgresql:///sinex_dev?host=/run/postgresql"
-                        save_state "$URL"
-                        export DATABASE_URL="$URL"
-                        success "Switched to sinex_dev"
-                      else
-                        error "Can only destroy ephemeral databases"
-                        exit 1
-                      fi
-                      ;;
-                    
-                    setup)
-                      # Setup dev or prod database
-                      DB_TYPE="''${2:-dev}"
-                      case "$DB_TYPE" in
-                        dev)
-                          log "Setting up development database"
-                          URL="postgresql:///sinex_dev?host=/run/postgresql"
-                          
-                          # Check if PostgreSQL is running
-                          if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                            error "PostgreSQL is not running on /run/postgresql"
-                            error "Please ensure PostgreSQL is installed and running"
-                            error "On NixOS: services.postgresql.enable = true;"
-                            exit 1
-                          fi
-                          
-                          # Create database if it doesn't exist
-                          if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
-                            log "Creating database sinex_dev"
-                            createdb -h /run/postgresql sinex_dev || {
-                              error "Failed to create database. You may need to run:"
-                              error "  sudo -u postgres createdb sinex_dev"
-                              error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
-                              exit 1
-                            }
-                          fi
-                          
-                          log "Running migrations (includes extensions)"
-                          DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
-                          
-                          # Save state and switch to this database
-                          save_state "$URL"
-                          export DATABASE_URL="$URL"
-                          success "Development database ready"
-                          ;;
-                        
-                        prod)
-                          log "Setting up production database"
-                          URL="postgresql:///sinex?host=/run/postgresql"
-                          
-                          # Check PostgreSQL
-                          if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                            error "PostgreSQL is not running on /run/postgresql"
-                            exit 1
-                          fi
-                          
-                          # Create production database
-                          if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
-                            log "Creating database sinex"
-                            createdb -h /run/postgresql sinex || {
-                              error "Failed to create production database"
-                              exit 1
-                            }
-                          fi
-                          
-                          log "Running migrations (includes extensions)"
-                          DATABASE_URL="$URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration
-                          
-                          # Save state and switch to this database
-                          save_state "$URL"
-                          export DATABASE_URL="$URL"
-                          success "Production database ready"
-                          ;;
-                        
-                        *)
-                          error "Usage: db setup [dev|prod]"
-                          exit 1
-                          ;;
-                      esac
-                      ;;
-                    
-                    shell|psql)
-                      # Connect to current database
-                      CURRENT=$(show_current)
-                      case "$CURRENT" in
-                        sinex_dev) 
-                          DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-                          ;;
-                        sinex) 
-                          DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
-                          ;;
-                        tmp*) 
-                          NUM="''${CURRENT#tmp_}"
-                          DATABASE_URL="postgresql:///sinex_ephemeral_$NUM?host=/tmp/sinex_ephemeral_$NUM&port=5432$NUM"
-                          ;;
-                      esac
-                      log "Connecting to $CURRENT database"
-                      psql "$DATABASE_URL"
-                      ;;
-                    
-                    *)
-                      error "Usage: db [command] [args]"
-                      echo "Commands:"
-                      echo "  db              - Show current database"
-                      echo "  db dev          - Switch to development database"
-                      echo "  db prod         - Switch to production database"
-                      echo "  db tmp          - Switch to ephemeral database 0"
-                      echo "  db tmp_N        - Switch to ephemeral database N (0-9)"
-                      echo "  db reset        - Reset current database"
-                      echo "  db destroy      - Destroy current ephemeral database"
-                      echo "  db setup [dev|prod] - Initialize dev or prod database"
-                      echo "  db shell        - Connect to current database with psql"
-                      exit 1
-                      ;;
-                  esac
-                ''
-              );
-            };
-
-            # Testing
-            test = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "test-runner" ''
-                  set -euo pipefail
-
-                  BLUE='\033[0;34m'
-                  GREEN='\033[0;32m'
-                  NC='\033[0m'
-
-                  log() { echo -e "''${BLUE}🧪''${NC}  $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-
-                  TEST_TYPE="''${1:-unit}"
-
-                  case "$TEST_TYPE" in
-                    unit)
-                      log "Running unit tests"
-                      ${rustToolchain}/bin/cargo test --all-features
-                      ;;
-                    integration)
-                      log "Running integration tests"
-                      ${rustToolchain}/bin/cargo test --all-features database_integration_tests
-                      ${rustToolchain}/bin/cargo test --all-features event_pipeline_integration_tests
-                      ${rustToolchain}/bin/cargo test --all-features promotion_worker_integration
-                      ;;
-                    all)
-                      log "Running all tests"
-                      ${rustToolchain}/bin/cargo test --all-features
-                      ;;
-                    *)
-                      echo "Usage: nix run .#test [unit|integration|all]"
-                      exit 1
-                      ;;
-                  esac
-                  success "Tests completed"
-                ''
-              );
-            };
-
-            # Development build
-            build = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "build" ''
-                  set -euo pipefail
-                  echo "🔧 Building all workspace members..."
-                  ${rustToolchain}/bin/cargo build --all-features
-                  echo "✅ Build completed"
-                ''
-              );
-            };
-
-            # Check/lint
-            check = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "check" ''
-                  set -euo pipefail
-                  echo "🔍 Checking code..."
-                  ${rustToolchain}/bin/cargo check --all-features
-                  ${rustToolchain}/bin/cargo clippy --all-features -- -D warnings
-                  echo "✅ Check completed"
-                ''
-              );
-            };
-
-            # SQLX cache management
-            sqlx-prepare = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "sqlx-prepare" ''
-                  set -euo pipefail
-
-                  BLUE='\033[0;34m'
-                  GREEN='\033[0;32m'
-                  YELLOW='\033[1;33m'
-                  RED='\033[0;31m'
-                  NC='\033[0m'
-
-                  log() { echo -e "''${BLUE}🗄️''${NC}  $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-                  warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
-                  error() { echo -e "''${RED}❌''${NC} $*" >&2; }
-
-                  log "Updating SQLX offline cache..."
-
-                  # Check if DATABASE_URL is set
-                  if [ -z "''${DATABASE_URL:-}" ]; then
-                    warning "DATABASE_URL not set, using default"
-                    export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-                  fi
-
-                  # Check database connectivity
-                  if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                    error "PostgreSQL is not running on /run/postgresql"
-                    error "Please start PostgreSQL or run: nix run .#db-setup dev"
-                    exit 1
-                  fi
-
-                  # Check if database exists
-                  if ! psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
-                    warning "Database not accessible, trying to set it up"
-
-                    # Run db setup
-                    log "Setting up database..."
-                    nix run .#db -- setup dev || {
-                      error "Failed to setup database"
-                      exit 1
-                    }
-                  fi
-
-                  # Ensure migrations are up to date
-                  log "Running migrations..."
-                  DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migration || {
-                    error "Failed to run migrations"
-                    exit 1
-                  }
-
-                  # Update the cache
-                  log "Preparing SQLX offline cache..."
-                  DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx prepare --workspace -- --all-targets --all-features || {
-                    error "Failed to prepare SQLX cache"
-                    exit 1
-                  }
-
-                  success "SQLX cache updated successfully"
-                  warning "Don't forget to commit the changes in .sqlx/"
-
-                  # Show what changed
-                  if command -v git >/dev/null 2>&1; then
-                    echo ""
-                    log "Changes to commit:"
-                    git status --porcelain .sqlx/ | sed 's/^/  /'
-                  fi
-                ''
-              );
-            };
-
-            # Real-time monitoring TUI
-            monitor = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "monitor" ''
-                  set -euo pipefail
-
-                  # Colors and formatting
-                  BLUE='\033[0;34m'
-                  GREEN='\033[0;32m'
-                  YELLOW='\033[1;33m'
-                  RED='\033[0;31m'
-                  NC='\033[0m'
-                  BOLD='\033[1m'
-
-                  log() { echo -e "''${BLUE}📊''${NC} $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-                  warning() { echo -e "''${YELLOW}⚠️''${NC} $*"; }
-                  error() { echo -e "''${RED}❌''${NC} $*" >&2; }
-
-                  MODE="''${1:-dashboard}"
-
-                  check_database() {
-                    if psql -h /run/postgresql -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
-                      return 0
-                    else
-                      return 1
-                    fi
-                  }
-
-                  show_dashboard() {
-                    clear
-                    echo -e "''${BOLD}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓''${NC}"
-                    echo -e "''${BOLD}┃  Sinex Live Dashboard                                      ┃''${NC}"
-                    echo -e "''${BOLD}┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫''${NC}"
-
-                    # Database status
-                    if check_database; then
-                      echo -e "┃ 🗄️  Database: ''${GREEN}●''${NC} CONNECTED                              ┃"
-
-                      # Event counts
-                      local total_events=$(psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events;" 2>/dev/null | xargs)
-                      local recent_events=$(psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour';" 2>/dev/null | xargs)
-
-                      echo "┃ 📈 Total Events: $total_events                                  ┃"
-                      echo "┃ 🕐 Last Hour: $recent_events                                     ┃"
-
-                      # Event sources breakdown
-                      echo "┃                                                            ┃"
-                      echo "┃ 📁 Recent Events by Source:                               ┃"
-                      psql -h /run/postgresql -d sinex -t -c "
-                        SELECT '┃   ' || RPAD(source, 15) || ': ' || LPAD(count::text, 8) || '                         ┃'
-                        FROM (
-                          SELECT source, COUNT(*) as count
-                          FROM raw.events
-                          WHERE ts_ingest > NOW() - INTERVAL '1 hour'
-                          GROUP BY source
-                          ORDER BY count DESC
-                          LIMIT 5
-                        ) t
-                      " 2>/dev/null || echo "┃   No recent events                                         ┃"
-                    else
-                      echo -e "┃ 🗄️  Database: ''${RED}●''${NC} DISCONNECTED                           ┃"
-                      echo "┃                                                            ┃"
-                      echo -e "┃ ''${YELLOW}💡 Run: nix run .#db-setup dev''${NC}                            ┃"
-                    fi
-
-                    echo "┃                                                            ┃"
-                    echo "┃ ⌨️  Commands:                                              ┃"
-                    echo "┃   [r] Refresh   [e] Recent Events   [l] Live Tail         ┃"
-                    echo "┃   [p] Processes [s] System Stats    [q] Quit               ┃"
-                    echo -e "''${BOLD}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛''${NC}"
-                  }
-
-                  show_recent_events() {
-                    clear
-                    echo -e "''${BOLD}Recent Events (Last 10):''${NC}"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-                    if check_database; then
-                      psql -h /run/postgresql -d sinex -c "
-                        SELECT
-                          LEFT(id::text, 8) as id,
-                          source,
-                          event_type,
-                          ts_ingest::timestamp(0)
-                        FROM raw.events
-                        ORDER BY ts_ingest DESC
-                        LIMIT 10
-                      " 2>/dev/null || echo "No events found"
-                    else
-                      error "Database not connected"
-                    fi
-
-                    echo ""
-                    echo "Press any key to return to dashboard..."
-                    read -n 1
-                  }
-
-                  live_tail() {
-                    clear
-                    echo -e "''${BOLD}Live Event Stream (Ctrl+C to exit):''${NC}"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-                    if check_database; then
-                      # Simple polling implementation
-                      local last_id=""
-                      while true; do
-                        local new_events=$(psql -h /run/postgresql -d sinex -t -c "
-                          SELECT COUNT(*) FROM raw.events WHERE id > '''$last_id'''
-                        " 2>/dev/null | xargs)
-
-                        if [[ "$new_events" -gt 0 ]]; then
-                          psql -h /run/postgresql -d sinex -c "
-                            SELECT
-                              '[' || ts_ingest::timestamp(0) || '] ' ||
-                              source || ':' || event_type ||
-                              ' | ' || LEFT(payload::text, 50) || '...'
-                            FROM raw.events
-                            WHERE id > '''$last_id'''
-                            ORDER BY ts_ingest DESC
-                          " 2>/dev/null
-
-                          last_id=$(psql -h /run/postgresql -d sinex -t -c "
-                            SELECT id FROM raw.events ORDER BY ts_ingest DESC LIMIT 1
-                          " 2>/dev/null | xargs)
-                        fi
-
-                        sleep 2
-                      done
-                    else
-                      error "Database not connected"
-                      exit 1
-                    fi
-                  }
-
-                  show_processes() {
-                    clear
-                    echo -e "''${BOLD}System Processes:''${NC}"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-                    # Show postgres status
-                    if pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                      success "PostgreSQL: Running"
-                    else
-                      warning "PostgreSQL: Not running"
-                    fi
-
-                    # Show any running ingestors
-                    echo ""
-                    echo -e "''${BOLD}Running Ingestors:''${NC}"
-                    ps aux | grep -E "(filesystem|kitty|hyprland)-ingestor" | grep -v grep || echo "No ingestors running"
-
-                    echo ""
-                    echo "Press any key to return to dashboard..."
-                    read -n 1
-                  }
-
-                  show_system_stats() {
-                    clear
-                    echo -e "''${BOLD}System Statistics:''${NC}"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-                    # Basic system info
-                    echo "💾 Disk Usage:"
-                    df -h . | tail -n +2
-
-                    echo ""
-                    echo "🧠 Memory Usage:"
-                    free -h | head -n 2
-
-                    if check_database; then
-                      echo ""
-                      echo "🗄️  Database Size:"
-                      psql -h /run/postgresql -d sinex -c "
-                        SELECT
-                          schemaname,
-                          tablename,
-                          pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-                        FROM pg_tables
-                        WHERE schemaname IN ('raw', 'sinex_schemas')
-                        ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
-                      " 2>/dev/null
-                    fi
-
-                    echo ""
-                    echo "Press any key to return to dashboard..."
-                    read -n 1
-                  }
-
-                  case "$MODE" in
-                    dashboard|"")
-                      # Interactive dashboard
-                      trap 'echo "Exiting..."; exit 0' INT
-                      while true; do
-                        show_dashboard
-                        read -n 1 -t 5 key || key=""
-                        case "$key" in
-                          r|R) continue ;;
-                          e|E) show_recent_events ;;
-                          l|L) live_tail ;;
-                          p|P) show_processes ;;
-                          s|S) show_system_stats ;;
-                          q|Q) exit 0 ;;
-                        esac
-                      done
-                      ;;
-                    events)
-                      show_recent_events
-                      ;;
-                    live)
-                      live_tail
-                      ;;
-                    *)
-                      error "Usage: nix run .#monitor [dashboard|events|live]"
-                      exit 1
-                      ;;
-                  esac
-                ''
-              );
-            };
-
-            # Development server with process management
-            dev = {
-              type = "app";
-              program = toString (
-                pkgs.writeShellScript "dev-server" ''
-                  set -euo pipefail
-
-                  BLUE='\033[0;34m'
-                  GREEN='\033[0;32m'
-                  YELLOW='\033[1;33m'
-                  NC='\033[0m'
-
-                  log() { echo -e "''${BLUE}🚀''${NC} $*"; }
-                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
-                  warning() { echo -e "''${YELLOW}⚠️''${NC} $*"; }
-
-                  MODE="''${1:-full}"
-
-                  # Create mprocs configuration
-                  create_mprocs_config() {
-                    cat > .mprocs.yaml << EOF
-                  procs:
-                    database:
-                      cmd: ["nix", "run", ".#db-setup", "dev"]
-                      cwd: "$PWD"
-                      env:
-                        RUST_LOG: info
-
-                    filesystem:
-                      cmd: ["${filesystemIngestor}/bin/filesystem-ingestor", "run"]
-                      cwd: "$PWD"
-                      env:
-                        RUST_LOG: info
-                        DATABASE_URL: "postgresql:///sinex_dev?host=/run/postgresql"
-                      autostart: false
-
-                    kitty:
-                      cmd: ["${kittyIngestor}/bin/kitty-ingestor", "run"]
-                      cwd: "$PWD"
-                      env:
-                        RUST_LOG: info
-                        DATABASE_URL: "postgresql:///sinex_dev?host=/run/postgresql"
-                      autostart: false
-
-                    hyprland:
-                      cmd: ["${hyprlandIngestor}/bin/hyprland-ingestor", "run"]
-                      cwd: "$PWD"
-                      env:
-                        RUST_LOG: info
-                        DATABASE_URL: "postgresql:///sinex_dev?host=/run/postgresql"
-                      autostart: false
-
-                    monitor:
-                      cmd: ["nix", "run", ".#monitor", "dashboard"]
-                      cwd: "$PWD"
-                      autostart: false
-
-                  display:
-                    app: "Sinex Development Environment"
-                    begin_show: 4
-
-                  keymap_procs:
-                    # Database management
-                    'd': database
-                    # Individual ingestors
-                    'f': filesystem
-                    'k': kitty
-                    'h': hyprland
-                    # Monitoring
-                    'm': monitor
-                  EOF
-                  }
-
-                  case "$MODE" in
-                    full)
-                      log "Starting full development environment with mprocs"
-                      create_mprocs_config
-                      warning "Database will start automatically. Start other services manually with keys:"
-                      warning "  [d] Database   [f] Filesystem   [k] Kitty   [h] Hyprland   [m] Monitor"
-                      warning "  [Ctrl+A] then [q] to quit"
-                      echo ""
-                      ${pkgs.mprocs}/bin/mprocs --config .mprocs.yaml
-                      ;;
-                    db-only)
-                      log "Setting up database only"
-                      exec nix run .#db-setup dev
-                      ;;
-                    background)
-                      log "Starting services in background"
-
-                      # Setup database first
-                      nix run .#db-setup dev
-
-                      # Start ingestors in background
-                      log "Starting filesystem ingestor..."
-                      RUST_LOG=info DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" \
-                        ${filesystemIngestor}/bin/filesystem-ingestor run &
-
-                      if command -v kitty >/dev/null 2>&1; then
-                        log "Starting kitty ingestor..."
-                        RUST_LOG=info DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" \
-                          ${kittyIngestor}/bin/kitty-ingestor run &
-                      fi
-
-                      if [[ -n "''${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-                        log "Starting hyprland ingestor..."
-                        RUST_LOG=info DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" \
-                          ${hyprlandIngestor}/bin/hyprland-ingestor run &
-                      fi
-
-                      success "Services started in background"
-                      warning "Monitor with: nix run .#monitor"
-                      warning "Stop with: pkill -f ingestor"
-                      ;;
-                    *)
-                      echo "Usage: nix run .#dev [full|db-only|background]"
-                      echo ""
-                      echo "Modes:"
-                      echo "  full       - Interactive mprocs session (default)"
-                      echo "  db-only    - Just setup database"
-                      echo "  background - Start all services in background"
-                      exit 1
-                      ;;
-                  esac
-                ''
-              );
-            };
-
-          };
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
@@ -1082,7 +283,7 @@
               cargo-nextest
 
               # Database tools
-              postgresqlWithExtensions
+              postgresql_16
 
               # Python for CLI
               python311
@@ -1113,13 +314,24 @@
                 export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
               fi
 
-              # Database switching function
-              db() {
-                nix run .#db -- "$@"
-                # Load the current state after any db operation
+              # Shell aliases for common commands
+              alias db='./script/db.sh'
+              alias dev='./script/dev.sh'  
+              alias monitor='./script/monitor.sh'
+              alias test='./script/test.sh'
+              alias sqlx-prepare='./script/sqlx-prepare.sh'
+              
+              # Update DATABASE_URL after db operations
+              update_db_env() {
                 if [ -f "$HOME/.sinex_db_state" ]; then
                   export DATABASE_URL=$(cat "$HOME/.sinex_db_state")
                 fi
+              }
+              
+              # Enhanced db function that updates environment
+              db() {
+                ./script/db.sh "$@"
+                update_db_env
               }
 
               # Auto-setup development database if PostgreSQL is running
@@ -1137,8 +349,9 @@
               ┃  Sinex Exocortex devShell                                  ┃
               ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
               ┃ 🚀 QUICK START                                             ┃
-              ┃   dev env  : nix run .#dev                                 ┃
-              ┃   monitor  : nix run .#monitor                             ┃
+              ┃   dev        : Start full development environment          ┃
+              ┃   monitor    : Open monitoring dashboard                   ┃
+              ┃   test       : Run test suite                              ┃
               ┃                                                            ┃
               ┃ 📡 INGESTORS (uses current database)                        ┃
               ┃   filesystem: cargo run --bin filesystem-ingestor          ┃
@@ -1147,14 +360,13 @@
               ┃   unified   : cargo run --bin unified-ingestor             ┃
               ┃   dry run   : cargo run --bin <ingestor> -- --dry-run      ┃
               ┃                                                            ┃
-              ┃ 🗄️  DATABASE SWITCHING                                     ┃
-              ┃   setup    : db setup [dev|prod]                           ┃
-              ┃   shell    : db shell (connect to current database)        ┃
-              ┃   sqlx     : nix run .#sqlx-prepare                        ┃
-              ┃   current  : db                                            ┃
-              ┃   switch   : db [dev|prod|tmp|tmp_0-9]                     ┃
-              ┃   reset    : db reset (reset current database)             ┃
-              ┃   destroy  : db destroy (remove ephemeral database)        ┃
+              ┃ 🗄️  DATABASE MANAGEMENT                                     ┃
+              ┃   db         : Show current database                       ┃
+              ┃   db setup   : db setup [dev|prod]                         ┃
+              ┃   db shell   : Connect to current database                 ┃
+              ┃   db switch  : db [dev|prod|tmp|tmp_0-9]                   ┃
+              ┃   db reset   : Reset current database                      ┃
+              ┃   sqlx-prepare: Update SQLX offline cache                  ┃
               ┃                                                            ┃
               ┃ 🧪 TESTING                                                  ┃
               ┃   run      : nix run .#test [unit|integration|all]         ┃

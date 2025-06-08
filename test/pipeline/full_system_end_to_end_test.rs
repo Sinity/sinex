@@ -53,9 +53,9 @@ impl TestHarness {
     async fn start_filesystem_ingestor(&mut self) -> Result<()> {
         info!("Starting filesystem ingestor monitoring: {}", self.test_dir.display());
         
-        // Check if the binary exists first
+        // Build the binary first
         let check = std::process::Command::new("cargo")
-            .args(&["build", "--bin", "filesystem-ingestor"])
+            .args(&["build", "-p", "filesystem-ingestor"])
             .output()?;
         
         if !check.status.success() {
@@ -63,10 +63,29 @@ impl TestHarness {
             return Err(anyhow::anyhow!("Could not build filesystem-ingestor"));
         }
         
+        // Create a temporary config file
+        let config_content = format!(r#"
+[database]
+url = "{}"
+
+[logging]
+level = "info"
+
+[filesystem]
+watch_directories = ["{}"]
+exclude_patterns = []
+debounce_ms = 100
+batch_size_events = 5
+batch_timeout_ms = 1000
+hash_files = false
+heartbeat_interval_secs = 60
+"#, std::env::var("DATABASE_URL")?, self.test_dir.display());
+
+        let config_path = self.test_dir.join("filesystem-config.toml");
+        std::fs::write(&config_path, config_content)?;
+
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "--bin", "filesystem-ingestor", "--"])
-            .arg("--watch-dir")
-            .arg(&self.test_dir)
+        cmd.args(&["run", "-p", "filesystem-ingestor", "--", "--config", &config_path.to_string_lossy()])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
@@ -106,7 +125,7 @@ impl TestHarness {
         info!("Starting hyprland ingestor");
         
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "--bin", "hyprland-ingestor"])
+        cmd.args(&["run", "-p", "hyprland-ingestor"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
@@ -138,7 +157,7 @@ impl TestHarness {
         info!("Starting kitty ingestor");
         
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "--bin", "kitty-ingestor"])
+        cmd.args(&["run", "-p", "kitty-ingestor"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
