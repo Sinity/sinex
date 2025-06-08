@@ -86,7 +86,8 @@ impl Default for Config {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            url: "postgresql://localhost/sinex".to_string(),
+            url: std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string()),
             max_connections: default_max_connections(),
             connection_timeout_secs: default_connection_timeout(),
         }
@@ -124,13 +125,10 @@ impl Config {
             .add_source(config::Config::try_from(&Config::default())?)
             // Add config file if it exists
             .add_source(
-                config::File::with_name("/etc/sinex/kitty-ingestor").required(false)
+                config::File::with_name("/etc/sinex/kitty-ingestor.toml").required(false)
             )
             .add_source(
-                config::File::with_name("~/.config/sinex/kitty-ingestor").required(false)
-            )
-            .add_source(
-                config::File::with_name("./config/kitty-ingestor").required(false)
+                config::File::with_name("~/.config/sinex/kitty-ingestor.toml").required(false)
             )
             // Override with environment variables (SINEX_DATABASE_URL, etc.)
             .add_source(

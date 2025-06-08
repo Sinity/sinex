@@ -73,6 +73,15 @@ async fn run() -> Result<()> {
 async fn run_ingestor(config: Config, dry_run: bool, output_file: Option<PathBuf>) -> Result<()> {
     info!("Starting filesystem ingestor");
     
+    // Log configuration
+    info!("Configuration loaded:");
+    info!("  Database URL: {}", config.database.url);
+    info!("  Log level: {}", config.logging.level);
+    info!("  Watch directories: {:?}", config.filesystem.watch_directories);
+    info!("  Exclude patterns: {:?}", config.filesystem.exclude_patterns);
+    info!("  Batch size: {}", config.filesystem.batch_size_events);
+    info!("  Heartbeat interval: {}s", config.filesystem.heartbeat_interval_secs);
+    
     // Create event sink based on CLI options
     let event_sink: Arc<dyn EventSink> = if let Some(ref file_path) = output_file {
         info!("Writing events to file: {}", file_path.display());
