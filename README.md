@@ -5,11 +5,8 @@ A personal data substrate that captures digital events across devices and modali
 ## 🚀 Quick Start
 
 ```bash
-# Enter development environment
+# Enter development environment (database setup is automatic)
 nix develop
-
-# Initialize database
-./script/db_reset.sh
 
 # Run a simple test
 cargo run --bin filesystem-ingestor -- --dry-run
@@ -75,42 +72,45 @@ cargo test
 cargo test --package filesystem-ingestor
 
 # Continuous testing
-bacon
+cargo watch -x test
+
+# Use just commands
+just check    # Fast compile check
+just test     # Run tests
+just build    # Build all
 ```
 
 ### Running Ingestors
 
 ```bash
-# Filesystem monitoring
+# Using just commands (recommended)
+just filesystem    # Filesystem monitoring
+just kitty        # Terminal capture (Kitty)
+just hyprland     # Window manager events (Hyprland)
+just worker       # Promotion worker
+
+# Or run directly with cargo
 cargo run --bin filesystem-ingestor
-
-# Terminal capture (Kitty)
-cargo run --bin kitty-ingestor
-
-# Window manager events (Hyprland)
-cargo run --bin hyprland-ingestor
-
-# Dry run mode (no database)
-cargo run --bin filesystem-ingestor -- --dry-run
-
-# Output to file
-cargo run --bin kitty-ingestor -- --output-file events.json
+cargo run --bin kitty-ingestor -- --dry-run
+cargo run --bin hyprland-ingestor -- --output-file events.json
 ```
 
 ### Database Operations
 
+The database (`sinex_dev`) is automatically created and migrations applied when entering the nix shell.
+
 ```bash
-# Apply migrations
-sqlx migrate run
+# Apply migrations manually if needed
+just migrate
 
 # Create new migration
-sqlx migrate add feature_name
+just migrate-create feature_name
 
-# Direct connection
-psql $DATABASE_URL
+# Direct database connection
+just psql
 
 # Update SQLX cache after query changes
-./script/update-sqlx-cache.sh
+just sqlx-prepare
 ```
 
 ## 🔧 Configuration
@@ -138,11 +138,10 @@ Tests are organized by category in `test/`:
 # Run specific test category
 cargo test --test database/
 
-# Run with test database
-TEST_DATABASE_URL=postgresql://... cargo test
-
 # See test output
 cargo test -- --nocapture
+
+# The test database is the same as dev database (sinex_dev)
 ```
 
 ## 🏗️ Key Patterns
