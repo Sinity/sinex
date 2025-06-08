@@ -36,7 +36,7 @@ sqlx migrate run --source migration || {
 
 # Update the cache
 log "Preparing SQLX offline cache..."
-sqlx prepare --workspace -- --all-targets --all-features || {
+cargo sqlx prepare --workspace -- --all-targets --all-features || {
   error "Failed to prepare SQLX cache"
   exit 1
 }
