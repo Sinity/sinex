@@ -15,7 +15,7 @@ use common::{
 /// Test that we can actually connect to the database and perform basic operations
 #[sqlx::test]
 async fn test_database_connection_and_health_check(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let db_service = test_database_service().await?;
+    let db_service = database_service_from_pool(pool);
     db_service.health_check().await?;
     Ok(())
 }
@@ -34,26 +34,14 @@ async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dy
     // Insert and verify using shared assertion helpers
     let event_id = assertions::assert_event_inserted(&db_service, &event).await?;
 
-    // Query it back
-    let retrieved = sqlx::query_as!(
-        RawEvent,
-        r#"
-        SELECT id, source, event_type, ts_orig, host, 
-               ingestor_version, payload_schema_id, payload
-        FROM raw.events
-        WHERE id = $1
-        "#,
-        event_id
-    )
-    .fetch_one(&pool)
-    .await?;
+    // Query it back using our helper that encapsulates the UUID conversion
+    let retrieved = common::get_event_by_id(&pool, event_id).await?;
 
     // Verify using shared assertion helper
     assertions::assert_events_equivalent(&retrieved, &event);
     
     // Verify ingestion timestamp from ULID
-    let ts_ingest = retrieved.ts_ingest().expect("extract timestamp from ULID");
-    assert!(ts_ingest > Utc::now() - chrono::Duration::seconds(5));
+    assert!(retrieved.ts_ingest > Utc::now() - chrono::Duration::seconds(5));
 
     Ok(())
 }
@@ -187,7 +175,7 @@ async fn test_event_schema_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn 
                 },
                 "required": ["name", "value"]
              }'::jsonb)
-        RETURNING id
+        RETURNING id::uuid
         "#
     )
     .fetch_one(&pool)

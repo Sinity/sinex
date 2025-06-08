@@ -167,6 +167,58 @@ pub mod generators {
     }
 }
 
+/// Helper for querying events by ULID
+/// This encapsulates the UUID conversion needed for SQLX compile-time macros
+pub async fn get_event_by_id(pool: &sqlx::PgPool, event_id: Ulid) -> Result<sinex_db::models::RawEvent> {
+    let record = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source, 
+            event_type, 
+            ts_ingest,
+            ts_orig, 
+            host, 
+            ingestor_version, 
+            payload_schema_id::uuid as payload_schema_id, 
+            payload
+        FROM raw.events
+        WHERE id = $1::uuid::ulid
+        "#,
+        event_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(sinex_db::models::RawEvent {
+        id: record.id.into(),
+        source: record.source,
+        event_type: record.event_type,
+        ts_ingest: record.ts_ingest,
+        ts_orig: record.ts_orig,
+        host: record.host,
+        ingestor_version: record.ingestor_version,
+        payload_schema_id: record.payload_schema_id.map(Into::into),
+        payload: record.payload,
+    })
+}
+
+/// Helper for checking if an event exists by ULID
+pub async fn event_exists(pool: &sqlx::PgPool, event_id: uuid::Uuid) -> Result<bool> {
+    let exists = sqlx::query!(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM raw.events WHERE id = $1::uuid::ulid
+        ) as "exists!"
+        "#,
+        event_id
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(exists.exists)
+}
+
 /// Macros for common test patterns
 #[macro_export]
 macro_rules! test_event_insertion {

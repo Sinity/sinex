@@ -30,7 +30,7 @@ async fn test_basic_event_insertion(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         r#"
         SELECT source, event_type, host, payload
         FROM raw.events
-        WHERE id = $1
+        WHERE id = $1::uuid::ulid
         "#,
         event_id
     )
@@ -117,7 +117,7 @@ async fn test_error_event_creation(pool: sqlx::PgPool) -> Result<(), Box<dyn std
         r#"
         SELECT source, event_type, payload
         FROM raw.events
-        WHERE id = $1
+        WHERE id = $1::uuid::ulid
         "#,
         error_id
     )

@@ -176,7 +176,7 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
                 },
                 "required": ["name", "value"]
              }'::jsonb)
-        RETURNING id
+        RETURNING id::uuid
         "#
     )
     .fetch_one(&pool)
@@ -210,7 +210,7 @@ async fn test_schema_evolution(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
                 },
                 "required": ["name", "value"]
              }'::jsonb)
-        RETURNING id
+        RETURNING id::uuid
         "#
     )
     .fetch_one(&pool)

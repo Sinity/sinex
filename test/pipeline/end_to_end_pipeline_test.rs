@@ -303,7 +303,7 @@ async fn test_error_handling_and_retry(pool: sqlx::PgPool) -> Result<(), Box<dyn
         r#"
         SELECT status 
         FROM sinex_schemas.promotion_queue 
-        WHERE raw_event_id = $1
+        WHERE raw_event_id = $1::uuid::ulid
         "#,
         event_id
     )
