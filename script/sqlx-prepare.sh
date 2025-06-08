@@ -15,26 +15,16 @@ error() { echo -e "${RED}❌${NC} $*" >&2; }
 
 log "Updating SQLX offline cache..."
 
-# Ensure database exists
-if [ -z "${DATABASE_URL:-}" ]; then
-  export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-fi
-
 # Check database connectivity
 if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
-  error "PostgreSQL is not running on /run/postgresql"
-  error "Please start PostgreSQL or run: ./script/db.sh setup dev"
+  error "PostgreSQL is not running on /run/postgresql. Please start PostgreSQL"
   exit 1
 fi
 
 # Check if database exists
 if ! psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
-  warning "Database not accessible, trying to set it up"
-  log "Setting up database..."
-  ./script/db.sh setup dev || {
-    error "Failed to setup database"
-    exit 1
-  }
+  error "Database $DATABASE_URL not accessible"
+  exit 1
 fi
 
 # Ensure migrations are up to date

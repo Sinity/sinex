@@ -25,9 +25,6 @@
           overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs {
             inherit system overlays;
-            config = {
-              allowUnfree = true; # Required for TimescaleDB
-            };
           };
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -36,7 +33,6 @@
               "rust-analyzer"
             ];
           };
-
 
           # Build individual ingestors
           hyprlandIngestor = pkgs.rustPlatform.buildRustPackage {
@@ -62,15 +58,14 @@
               "hyprland-ingestor"
             ];
 
-            # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
-
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
 
             # Don't run tests during build
             doCheck = false;
 
+            # Ensure SQLX offline mode for build
+            SQLX_OFFLINE = "true";
             preBuild = ''
               # Verify .sqlx directory exists
               if [ ! -d ".sqlx" ]; then
@@ -104,17 +99,15 @@
               "filesystem-ingestor"
             ];
 
-            # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
-
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
 
             # Don't run tests during build
             doCheck = false;
 
+            # Ensure SQLX offline mode for build
+            SQLX_OFFLINE = "true";
             preBuild = ''
-              # Verify .sqlx directory exists
               if [ ! -d ".sqlx" ]; then
                 echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
                 exit 1
@@ -146,15 +139,14 @@
               "kitty-ingestor"
             ];
 
-            # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
-
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
 
             # Don't run tests during build
             doCheck = false;
 
+            # Ensure SQLX offline mode for build
+            SQLX_OFFLINE = "true";
             preBuild = ''
               # Verify .sqlx directory exists
               if [ ! -d ".sqlx" ]; then
@@ -188,15 +180,14 @@
               "sinex-promo-worker"
             ];
 
-            # Ensure SQLX offline mode for build
-            SQLX_OFFLINE = "true";
-
             # Disable cargo-auditable to avoid version conflicts
             auditable = false;
 
             # Don't run tests during build
             doCheck = false;
 
+            # Ensure SQLX offline mode for build
+            SQLX_OFFLINE = "true";
             preBuild = ''
               # Verify .sqlx directory exists
               if [ ! -d ".sqlx" ]; then
@@ -214,7 +205,7 @@
               kittyIngestor
               sinexPromoWorker
               ;
-            default = sinexPromoWorker;
+            # default = sinexPromoWorker;
           };
 
           devShells.default = pkgs.mkShell {
@@ -240,16 +231,8 @@
             ];
 
             shellHook = ''
+              # setup DB
               export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-
-              # Shell aliases for common commands
-              alias db='./script/db.sh'
-              alias dev='./script/dev.sh'  
-              alias monitor='./script/monitor.sh'
-              alias test='./script/test.sh'
-              alias sqlx-prepare='./script/sqlx-prepare.sh'
-
-              # Auto-setup development database if PostgreSQL is running
               if pg_isready -h /run/postgresql >/dev/null 2>&1; then
                 if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
                   echo "🗄️ Setting up development database..."
@@ -258,6 +241,13 @@
                   echo "✅ Database ready"
                 fi
               fi
+
+              # Shell aliases for common commands
+              alias db='./script/db.sh'
+              alias dev='./script/dev.sh'  
+              alias monitor='./script/monitor.sh'
+              alias test='./script/test.sh'
+              alias sqlx-prepare='./script/sqlx-prepare.sh'
 
               cat <<'EOF'
               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
