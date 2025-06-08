@@ -90,13 +90,8 @@
             '';
           };
 
-          # PostgreSQL with all required extensions
-          postgresqlWithExtensions = pkgs.postgresql_16.withPackages (p: [
-            p.timescaledb
-            p.pgvector
-            p.pgx_ulid
-            pg_jsonschema
-          ]);
+          # Note: We expect PostgreSQL with required extensions to be installed at the system level
+          # On NixOS, this means configuring services.postgresql with extraPlugins
 
           # Build individual ingestors
           hyprlandIngestor = pkgs.rustPlatform.buildRustPackage {
@@ -324,14 +319,14 @@
                     local EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
                     local EPHEMERAL_URL="postgresql:///sinex_ephemeral_$NUM?host=$EPHEMERAL_DIR&port=5432$NUM"
                     
-                    if [ -d "$EPHEMERAL_DIR" ] && ${postgresqlWithExtensions}/bin/pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
+                    if [ -d "$EPHEMERAL_DIR" ] && pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
                       log "Reusing existing ephemeral database $NUM"
                     else
                       log "Creating ephemeral database $NUM"
                       mkdir -p "$EPHEMERAL_DIR"/{data,logs}
                       
                       # Initialize database
-                      ${postgresqlWithExtensions}/bin/initdb -D "$EPHEMERAL_DIR/data" --no-locale --encoding=UTF8 >/dev/null
+                      initdb -D "$EPHEMERAL_DIR/data" --no-locale --encoding=UTF8 >/dev/null
                       
                       # Configure
                       echo "unix_socket_directories = '$EPHEMERAL_DIR'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
@@ -340,18 +335,18 @@
                       echo "# listen_addresses disabled for unix sockets only" >> "$EPHEMERAL_DIR/data/postgresql.conf"
                       
                       # Start PostgreSQL
-                      ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
+                      pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
                       
                       # Wait for startup
                       for i in {1..10}; do
-                        if ${postgresqlWithExtensions}/bin/pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
+                        if pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
                           break
                         fi
                         sleep 0.5
                       done
                       
                       # Create database
-                      ${postgresqlWithExtensions}/bin/createdb -h "$EPHEMERAL_DIR" -p "5432$NUM" "sinex_ephemeral_$NUM"
+                      createdb -h "$EPHEMERAL_DIR" -p "5432$NUM" "sinex_ephemeral_$NUM"
                       
                       # Run migrations (which create extensions)
                       log "Running migrations on ephemeral database $NUM"
@@ -438,13 +433,13 @@
                       
                       case "$CURRENT" in
                         sinex_dev|sinex)
-                          ${postgresqlWithExtensions}/bin/dropdb -h /run/postgresql "$CURRENT" 2>/dev/null || true
+                          dropdb -h /run/postgresql "$CURRENT" 2>/dev/null || true
                           "$0" setup "''${CURRENT#sinex_}"
                           ;;
                         tmp*)
                           NUM="''${CURRENT#tmp_}"
                           EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
-                          ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
+                          pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
                           rm -rf "$EPHEMERAL_DIR"
                           create_ephemeral "$NUM" >/dev/null
                           success "Reset ephemeral database $NUM"
@@ -464,7 +459,7 @@
                           log "Destroy cancelled"
                           exit 0
                         fi
-                        ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
+                        pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
                         rm -rf "$EPHEMERAL_DIR"
                         success "Destroyed ephemeral database $NUM"
                         # Switch to dev
@@ -487,7 +482,7 @@
                           URL="postgresql:///sinex_dev?host=/run/postgresql"
                           
                           # Check if PostgreSQL is running
-                          if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                          if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
                             error "PostgreSQL is not running on /run/postgresql"
                             error "Please ensure PostgreSQL is installed and running"
                             error "On NixOS: services.postgresql.enable = true;"
@@ -495,9 +490,9 @@
                           fi
                           
                           # Create database if it doesn't exist
-                          if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+                          if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
                             log "Creating database sinex_dev"
-                            ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev || {
+                            createdb -h /run/postgresql sinex_dev || {
                               error "Failed to create database. You may need to run:"
                               error "  sudo -u postgres createdb sinex_dev"
                               error "  sudo -u postgres psql -c \"GRANT ALL ON DATABASE sinex_dev TO $USER;\""
@@ -519,15 +514,15 @@
                           URL="postgresql:///sinex?host=/run/postgresql"
                           
                           # Check PostgreSQL
-                          if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                          if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
                             error "PostgreSQL is not running on /run/postgresql"
                             exit 1
                           fi
                           
                           # Create production database
-                          if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
+                          if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
                             log "Creating database sinex"
-                            ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex || {
+                            createdb -h /run/postgresql sinex || {
                               error "Failed to create production database"
                               exit 1
                             }
@@ -565,7 +560,7 @@
                           ;;
                       esac
                       log "Connecting to $CURRENT database"
-                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL"
+                      psql "$DATABASE_URL"
                       ;;
                     
                     *)
@@ -682,14 +677,14 @@
                   fi
 
                   # Check database connectivity
-                  if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                  if ! pg_isready -h /run/postgresql >/dev/null 2>&1; then
                     error "PostgreSQL is not running on /run/postgresql"
                     error "Please start PostgreSQL or run: nix run .#db-setup dev"
                     exit 1
                   fi
 
                   # Check if database exists
-                  if ! ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+                  if ! psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
                     warning "Database not accessible, trying to set it up"
 
                     # Run db setup
@@ -750,7 +745,7 @@
                   MODE="''${1:-dashboard}"
 
                   check_database() {
-                    if ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
+                    if psql -h /run/postgresql -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
                       return 0
                     else
                       return 1
@@ -768,8 +763,8 @@
                       echo -e "┃ 🗄️  Database: ''${GREEN}●''${NC} CONNECTED                              ┃"
 
                       # Event counts
-                      local total_events=$(${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events;" 2>/dev/null | xargs)
-                      local recent_events=$(${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour';" 2>/dev/null | xargs)
+                      local total_events=$(psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events;" 2>/dev/null | xargs)
+                      local recent_events=$(psql -h /run/postgresql -d sinex -t -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour';" 2>/dev/null | xargs)
 
                       echo "┃ 📈 Total Events: $total_events                                  ┃"
                       echo "┃ 🕐 Last Hour: $recent_events                                     ┃"
@@ -777,7 +772,7 @@
                       # Event sources breakdown
                       echo "┃                                                            ┃"
                       echo "┃ 📁 Recent Events by Source:                               ┃"
-                      ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -t -c "
+                      psql -h /run/postgresql -d sinex -t -c "
                         SELECT '┃   ' || RPAD(source, 15) || ': ' || LPAD(count::text, 8) || '                         ┃'
                         FROM (
                           SELECT source, COUNT(*) as count
@@ -807,7 +802,7 @@
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
                     if check_database; then
-                      ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "
+                      psql -h /run/postgresql -d sinex -c "
                         SELECT
                           LEFT(id::text, 8) as id,
                           source,
@@ -835,12 +830,12 @@
                       # Simple polling implementation
                       local last_id=""
                       while true; do
-                        local new_events=$(${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -t -c "
+                        local new_events=$(psql -h /run/postgresql -d sinex -t -c "
                           SELECT COUNT(*) FROM raw.events WHERE id > '''$last_id'''
                         " 2>/dev/null | xargs)
 
                         if [[ "$new_events" -gt 0 ]]; then
-                          ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "
+                          psql -h /run/postgresql -d sinex -c "
                             SELECT
                               '[' || ts_ingest::timestamp(0) || '] ' ||
                               source || ':' || event_type ||
@@ -850,7 +845,7 @@
                             ORDER BY ts_ingest DESC
                           " 2>/dev/null
 
-                          last_id=$(${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -t -c "
+                          last_id=$(psql -h /run/postgresql -d sinex -t -c "
                             SELECT id FROM raw.events ORDER BY ts_ingest DESC LIMIT 1
                           " 2>/dev/null | xargs)
                         fi
@@ -869,7 +864,7 @@
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
                     # Show postgres status
-                    if ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                    if pg_isready -h /run/postgresql >/dev/null 2>&1; then
                       success "PostgreSQL: Running"
                     else
                       warning "PostgreSQL: Not running"
@@ -901,7 +896,7 @@
                     if check_database; then
                       echo ""
                       echo "🗄️  Database Size:"
-                      ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "
+                      psql -h /run/postgresql -d sinex -c "
                         SELECT
                           schemaname,
                           tablename,
@@ -1128,10 +1123,10 @@
               }
 
               # Auto-setup development database if PostgreSQL is running
-              if ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
+              if pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_dev; then
                   echo "🗄️ Setting up development database..."
-                  ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_dev >/dev/null 2>&1 || true
+                  createdb -h /run/postgresql sinex_dev >/dev/null 2>&1 || true
                   sqlx migrate run --source migration >/dev/null 2>&1 || true
                   echo "✅ Database ready"
                 fi
