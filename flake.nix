@@ -344,9 +344,9 @@
                       DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
                       success "Development database ready at $DATABASE_URL"
                       ;;
-                    test)
-                      log "Setting up test database"
-                      export DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
+                    prod)
+                      log "Setting up production database"
+                      export DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
 
                       # Check PostgreSQL
                       if ! ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
@@ -354,25 +354,25 @@
                         exit 1
                       fi
 
-                      # Create test database
-                      if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex_test; then
-                        log "Creating database sinex_test"
-                        ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex_test || {
-                          error "Failed to create test database"
+                      # Create production database
+                      if ! ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw sinex; then
+                        log "Creating database sinex"
+                        ${postgresqlWithExtensions}/bin/createdb -h /run/postgresql sinex || {
+                          error "Failed to create production database"
                           exit 1
                         }
                       fi
 
-                    # Extensions
-                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
-                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
-                    ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
+                      # Extensions
+                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS ulid;" 2>/dev/null || true
+                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
+                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" 2>/dev/null || true
 
-                    # Migrations
-                    DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
-                    success "Test database ready at $DATABASE_URL"
-                    ;;
+                      # Migrations
+                      DATABASE_URL="$DATABASE_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run
+                      success "Production database ready at $DATABASE_URL"
+                      ;;
                   reset)
                     log "Resetting development database"
                       export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
@@ -407,15 +407,251 @@
                         warning "Development database: sinex_dev not found (run 'nix run .#db-setup dev')"
                       fi
 
-                      # Check test database
-                      if ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex_test -c "SELECT 1;" >/dev/null 2>&1; then
-                        success "Test database: sinex_test accessible"
+                      # Check production database
+                      if ${postgresqlWithExtensions}/bin/psql -h /run/postgresql -d sinex -c "SELECT 1;" >/dev/null 2>&1; then
+                        success "Production database: sinex accessible"
                       else
-                        warning "Test database: sinex_test not found (run 'nix run .#db-setup test')"
+                        warning "Production database: sinex not found (run 'nix run .#db-setup prod')"
                       fi
                       ;;
                     *)
-                      error "Usage: nix run .#db-setup [dev|test|reset|check]"
+                      error "Usage: nix run .#db-setup [dev|prod|reset|check]"
+                      exit 1
+                      ;;
+                  esac
+                ''
+              );
+            };
+
+            # Database switching
+            db = {
+              type = "app";
+              program = toString (
+                pkgs.writeShellScript "db-switcher" ''
+                  set -euo pipefail
+
+                  # Colors
+                  RED='\033[0;31m'
+                  GREEN='\033[0;32m'
+                  BLUE='\033[0;34m'
+                  YELLOW='\033[1;33m'
+                  NC='\033[0m'
+
+                  log() { echo -e "''${BLUE}🗄️''${NC}  $*"; }
+                  success() { echo -e "''${GREEN}✅''${NC} $*"; }
+                  warning() { echo -e "''${YELLOW}⚠️''${NC}  $*"; }
+                  error() { echo -e "''${RED}❌''${NC} $*" >&2; }
+
+                  STATE_FILE="$HOME/.sinex_current_db"
+                  EPHEMERAL_BASE="/tmp/sinex_ephemeral"
+
+                  # Function to create ephemeral database
+                  create_ephemeral() {
+                    local NUM="$1"
+                    local EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
+                    local EPHEMERAL_URL="postgresql:///sinex_ephemeral_$NUM?host=$EPHEMERAL_DIR&port=5432$NUM"
+                    
+                    if [ -d "$EPHEMERAL_DIR" ] && ${postgresqlWithExtensions}/bin/pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
+                      log "Reusing existing ephemeral database $NUM"
+                    else
+                      log "Creating ephemeral database $NUM"
+                      mkdir -p "$EPHEMERAL_DIR"/{data,logs}
+                      
+                      # Initialize database
+                      ${postgresqlWithExtensions}/bin/initdb -D "$EPHEMERAL_DIR/data" --no-locale --encoding=UTF8 >/dev/null
+                      
+                      # Configure
+                      echo "unix_socket_directories = '$EPHEMERAL_DIR'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      echo "shared_preload_libraries = 'timescaledb'" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      echo "port = 5432$NUM" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      echo "listen_addresses = ''" >> "$EPHEMERAL_DIR/data/postgresql.conf"
+                      
+                      # Start PostgreSQL
+                      ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" -l "$EPHEMERAL_DIR/logs/postgres.log" start >/dev/null
+                      
+                      # Wait for startup
+                      for i in {1..10}; do
+                        if ${postgresqlWithExtensions}/bin/pg_isready -h "$EPHEMERAL_DIR" -p "5432$NUM" >/dev/null 2>&1; then
+                          break
+                        fi
+                        sleep 0.5
+                      done
+                      
+                      # Create database and extensions
+                      ${postgresqlWithExtensions}/bin/createdb -h "$EPHEMERAL_DIR" -p "5432$NUM" "sinex_ephemeral_$NUM"
+                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS ulid;" >/dev/null
+                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
+                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" >/dev/null
+                      ${postgresqlWithExtensions}/bin/psql -h "$EPHEMERAL_DIR" -p "5432$NUM" -d "sinex_ephemeral_$NUM" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" >/dev/null
+                      
+                      # Run migrations
+                      DATABASE_URL="$EPHEMERAL_URL" ${pkgs.sqlx-cli}/bin/sqlx migrate run >/dev/null
+                    fi
+                    
+                    echo "$EPHEMERAL_URL"
+                  }
+
+                  # Function to show current database
+                  show_current() {
+                    if [ -f "$STATE_FILE" ]; then
+                      local CURRENT=$(cat "$STATE_FILE")
+                      echo "$CURRENT"
+                    else
+                      echo "sinex_dev"
+                    fi
+                  }
+
+                  # Main command handling
+                  TARGET="''${1:-}"
+                  
+                  if [ -z "$TARGET" ]; then
+                    # Show current database
+                    CURRENT=$(show_current)
+                    log "Current database: $CURRENT"
+                    case "$CURRENT" in
+                      sinex_dev) echo "  URL: postgresql:///sinex_dev?host=/run/postgresql" ;;
+                      sinex) echo "  URL: postgresql:///sinex?host=/run/postgresql" ;;
+                      tmp*) 
+                        NUM="''${CURRENT#tmp}"
+                        NUM="''${NUM:-0}"
+                        echo "  URL: postgresql:///sinex_ephemeral_$NUM?host=/tmp/sinex_ephemeral_$NUM&port=5432$NUM" 
+                        ;;
+                    esac
+                    exit 0
+                  fi
+
+                  case "$TARGET" in
+                    dev)
+                      log "Switching to development database"
+                      export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
+                      echo "sinex_dev" > "$STATE_FILE"
+                      echo "export DATABASE_URL=\"$DATABASE_URL\""
+                      success "Switched to sinex_dev"
+                      ;;
+                    
+                    prod)
+                      log "Switching to production database"
+                      export DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
+                      echo "sinex" > "$STATE_FILE"
+                      echo "export DATABASE_URL=\"$DATABASE_URL\""
+                      success "Switched to sinex (production)"
+                      ;;
+                    
+                    tmp|tmp_*)
+                      # Handle tmp (alias for tmp_0) and tmp_N
+                      if [ "$TARGET" = "tmp" ]; then
+                        NUM=0
+                      else
+                        NUM="''${TARGET#tmp_}"
+                        if ! [[ "$NUM" =~ ^[0-9]$ ]]; then
+                          error "Invalid ephemeral database number. Use tmp or tmp_0 through tmp_9"
+                          exit 1
+                        fi
+                      fi
+                      
+                      log "Switching to ephemeral database $NUM"
+                      URL=$(create_ephemeral "$NUM")
+                      echo "tmp_$NUM" > "$STATE_FILE"
+                      echo "export DATABASE_URL=\"$URL\""
+                      success "Switched to ephemeral database $NUM"
+                      ;;
+                    
+                    reset)
+                      CURRENT=$(show_current)
+                      warning "This will reset the current database ($CURRENT)"
+                      read -p "Continue? [y/N] " -n 1 -r
+                      echo
+                      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                        log "Reset cancelled"
+                        exit 0
+                      fi
+                      
+                      case "$CURRENT" in
+                        sinex_dev|sinex)
+                          ${postgresqlWithExtensions}/bin/dropdb -h /run/postgresql "$CURRENT" 2>/dev/null || true
+                          nix run .#db-setup "''${CURRENT#sinex_}"
+                          ;;
+                        tmp*)
+                          NUM="''${CURRENT#tmp_}"
+                          EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
+                          ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
+                          rm -rf "$EPHEMERAL_DIR"
+                          create_ephemeral "$NUM" >/dev/null
+                          success "Reset ephemeral database $NUM"
+                          ;;
+                      esac
+                      ;;
+                    
+                    destroy)
+                      CURRENT=$(show_current)
+                      if [[ "$CURRENT" =~ ^tmp ]]; then
+                        NUM="''${CURRENT#tmp_}"
+                        EPHEMERAL_DIR="''${EPHEMERAL_BASE}_$NUM"
+                        warning "This will destroy ephemeral database $NUM"
+                        read -p "Continue? [y/N] " -n 1 -r
+                        echo
+                        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                          log "Destroy cancelled"
+                          exit 0
+                        fi
+                        ${postgresqlWithExtensions}/bin/pg_ctl -D "$EPHEMERAL_DIR/data" stop 2>/dev/null || true
+                        rm -rf "$EPHEMERAL_DIR"
+                        success "Destroyed ephemeral database $NUM"
+                        # Switch to dev
+                        echo "sinex_dev" > "$STATE_FILE"
+                        echo "export DATABASE_URL=\"postgresql:///sinex_dev?host=/run/postgresql\""
+                        success "Switched to sinex_dev"
+                      else
+                        error "Can only destroy ephemeral databases"
+                        exit 1
+                      fi
+                      ;;
+                    
+                    setup)
+                      # Setup dev or prod database
+                      DB_TYPE="''${2:-dev}"
+                      case "$DB_TYPE" in
+                        dev|prod)
+                          nix run .#db-setup "$DB_TYPE"
+                          ;;
+                        *)
+                          error "Usage: db setup [dev|prod]"
+                          exit 1
+                          ;;
+                      esac
+                      ;;
+                    
+                    shell|psql)
+                      # Connect to current database
+                      CURRENT=$(show_current)
+                      case "$CURRENT" in
+                        sinex_dev) 
+                          DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
+                          ;;
+                        sinex) 
+                          DATABASE_URL="postgresql:///sinex?host=/run/postgresql"
+                          ;;
+                        tmp*) 
+                          NUM="''${CURRENT#tmp_}"
+                          DATABASE_URL="postgresql:///sinex_ephemeral_$NUM?host=/tmp/sinex_ephemeral_$NUM&port=5432$NUM"
+                          ;;
+                      esac
+                      log "Connecting to $CURRENT database"
+                      ${postgresqlWithExtensions}/bin/psql "$DATABASE_URL"
+                      ;;
+                    
+                    *)
+                      error "Usage: db [command] [args]"
+                      echo "Commands:"
+                      echo "  db              - Show current database"
+                      echo "  db dev          - Switch to development database"
+                      echo "  db prod         - Switch to production database"
+                      echo "  db tmp          - Switch to ephemeral database 0"
+                      echo "  db tmp_N        - Switch to ephemeral database N (0-9)"
+                      echo "  db reset        - Reset current database"
+                      echo "  db destroy      - Destroy current ephemeral database"
+                      echo "  db setup [dev|prod] - Initialize dev or prod database"
+                      echo "  db shell        - Connect to current database with psql"
                       exit 1
                       ;;
                   esac
@@ -1104,8 +1340,17 @@
             shellHook = ''
               # Use local peer authentication via Unix socket
               export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
-              export TEST_DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
               export SQLX_OFFLINE=true
+              
+              # Database switching function
+              db() {
+                local output=$(nix run .#db -- "$@")
+                if [[ "$output" =~ ^export ]]; then
+                  eval "$output"
+                else
+                  echo "$output"
+                fi
+              }
 
               # Auto-setup development database if PostgreSQL is running
               if ${postgresqlWithExtensions}/bin/pg_isready -h /run/postgresql >/dev/null 2>&1; then
@@ -1129,19 +1374,21 @@
               ┃   dev env  : nix run .#dev                                 ┃
               ┃   monitor  : nix run .#monitor                             ┃
               ┃                                                            ┃
-              ┃ 📡 INGESTORS (default: sinex_dev database)                  ┃
+              ┃ 📡 INGESTORS (uses current database)                        ┃
               ┃   filesystem: cargo run --bin filesystem-ingestor          ┃
               ┃   hyprland  : cargo run --bin hyprland-ingestor            ┃
               ┃   kitty     : cargo run --bin kitty-ingestor               ┃
               ┃   unified   : cargo run --bin unified-ingestor             ┃
               ┃   dry run   : cargo run --bin <ingestor> -- --dry-run      ┃
-              ┃   isolated  : nix run .#ephemeral interactive              ┃
               ┃                                                            ┃
-              ┃ 🗄️  DATABASE (current: sinex_dev)                          ┃
-              ┃   setup    : nix run .#db-setup [dev|test|reset|check]     ┃
-              ┃   connect  : psql $DATABASE_URL                            ┃
+              ┃ 🗄️  DATABASE SWITCHING                                     ┃
+              ┃   setup    : db setup [dev|prod]                           ┃
+              ┃   shell    : db shell (connect to current database)        ┃
               ┃   sqlx     : nix run .#sqlx-prepare                        ┃
-              ┃   override : DATABASE_URL="custom://url" <command>         ┃
+              ┃   current  : db                                            ┃
+              ┃   switch   : db [dev|prod|tmp|tmp_0-9]                     ┃
+              ┃   reset    : db reset (reset current database)             ┃
+              ┃   destroy  : db destroy (remove ephemeral database)        ┃
               ┃                                                            ┃
               ┃ 🧪 TESTING                                                  ┃
               ┃   run      : nix run .#test [unit|integration|all]         ┃
@@ -1153,12 +1400,11 @@
               ┃   check    : nix run .#check                               ┃
               ┃   watch    : cargo watch -x check                          ┃
               ┃                                                            ┃
-              ┃ 📊 MONITORING (default: sinex_dev database)                 ┃
+              ┃ 📊 MONITORING (uses current database)                       ┃
               ┃   dashboard: nix run .#monitor                             ┃
               ┃   live tail: nix run .#monitor live                        ┃
               ┃   events   : nix run .#monitor events                      ┃
               ┃   query cli: ./cli/exo.py query --limit 10                 ┃
-              ┃   isolated : nix run .#ephemeral interactive               ┃
               ┃                                                            ┃
               ┃ 📦 ALL APPS: nix flake show                                ┃
               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
