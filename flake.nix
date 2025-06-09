@@ -75,6 +75,14 @@
               bacon
               sqlx-cli
 
+              # Python and testing
+              python3
+              python3Packages.pytest
+              python3Packages.click
+              python3Packages.psycopg2
+              python3Packages.rich
+              python3Packages.pyyaml
+
               # Process management and monitoring
               mprocs
               btop

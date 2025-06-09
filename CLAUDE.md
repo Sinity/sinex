@@ -39,6 +39,7 @@ impl SimpleIngestor for MyIngestor {
 - Tests go in categorized subdirectories under `test/`
 - Put my working docs in `spec/docs/claude/`
 - Clean up obsolete code/files proactively
+- Avoid proliferating around arbitrary ad-hoc scripts, documentation and other such files. There's designated space for such documentation needs you might have - spec/docs/claude
 
 ## 🌟 Memory Bank
 

@@ -5,6 +5,43 @@ default:
 test:
     cargo test
 
+test-unit:
+    cargo test --lib
+
+test-integration:
+    cargo test --test integration
+
+test-dlq:
+    cargo test --test integration ingestor::dlq_tests
+
+test-e2e:
+    cargo test --test integration e2e:: -- --nocapture
+
+test-e2e-full:
+    cargo test --test integration e2e::full_system_test -- --ignored --nocapture
+
+test-e2e-dry-run:
+    cargo test --test integration e2e::test_full_system_dry_run -- --nocapture
+
+test-cli:
+    python3 -m pytest test/cli/test_exo_cli.py -v
+
+test-cli-integration:
+    python3 -m pytest test/cli/test_exo_cli_integration.py -v
+
+test-cli-all:
+    python3 -m pytest test/cli/ -v
+
+test-all:
+    echo "🧪 Running comprehensive test suite..."
+    just test
+    echo "✅ Rust tests completed"
+    nix develop --command python3 -m pytest test/cli/test_exo_cli.py -v
+    echo "✅ CLI unit tests completed"
+    just test-e2e-dry-run
+    echo "✅ E2E dry-run tests completed"
+    echo "🎉 All core tests passed!"
+
 watch:
     cargo watch -x test
 
@@ -33,7 +70,15 @@ migrate-create NAME:
     sqlx migrate add {{NAME}}
 
 sqlx-prepare:
-    ./script/sqlx-prepare.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🗄️  Updating SQLX offline cache..."
+    # Ensure migrations are up to date
+    sqlx migrate run --source migration
+    # Update the cache
+    cargo sqlx prepare --workspace -- --all-targets --all-features
+    echo "✅ SQLX cache updated successfully"
+    echo "⚠️  Don't forget to commit the changes in .sqlx/"
 
 sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features

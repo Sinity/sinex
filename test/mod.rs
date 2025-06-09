@@ -19,6 +19,12 @@ mod agent {
 }
 
 #[cfg(test)]
+mod ingestor {
+    mod filesystem_tests;
+    mod dlq_tests;
+}
+
+#[cfg(test)]
 mod pipeline {
     mod end_to_end_pipeline_test;
     mod event_pipeline_integration_tests;
