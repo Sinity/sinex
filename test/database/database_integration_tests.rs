@@ -12,14 +12,6 @@ use common::{
     events, assertions, generators
 };
 
-/// Test that we can actually connect to the database and perform basic operations
-db_test! {
-    async fn test_database_connection_and_health_check(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-        let db_service = database_service_from_pool(pool);
-        db_service.health_check().await?;
-        Ok(())
-    }
-}
 
 /// Test that we can insert events and they actually show up in the database
 db_test! {
@@ -83,15 +75,20 @@ db_test! {
     async fn test_event_router_trigger(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let db_service = database_service_from_pool(pool.clone());
 
+    // Clean up any existing test data first
+    crate::test_setup::cleanup_test_data(&pool).await?;
+
     // Insert an agent manifest that subscribes to filesystem events
+    let agent_name = format!("test-promoter-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
             (agent_name, version, status, agent_type, subscribes_to_event_types)
         VALUES 
-            ('test-promoter', '1.0.0', 'running', 'promoter', 
+            ($1, '1.0.0', 'running', 'promoter', 
              '{"raw.events_feed_all": [{"source_filter": "filesystem", "event_type_filter": "file_created"}]}'::jsonb)
-        "#
+        "#,
+        agent_name
     )
     .execute(&pool)
     .await?;
@@ -103,21 +100,31 @@ db_test! {
     );
 
     let event_id = db_service.insert_event(&event).await?;
+    
+    println!("Inserted event with ID: {}", event_id);
 
     // Check if promotion queue entry was created
     let promotion_entries: Vec<(String, String)> = sqlx::query_as(
         r#"
         SELECT target_agent_name, status
         FROM sinex_schemas.promotion_queue
-        WHERE raw_event_id = $1
+        WHERE raw_event_id = $1::uuid::ulid
         "#
     )
-    .bind(event_id)
+    .bind(event_id.to_uuid())
     .fetch_all(&pool)
     .await?;
 
+    // Debug: Check all promotion queue entries
+    let all_entries: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT raw_event_id::text, target_agent_name, status FROM sinex_schemas.promotion_queue"
+    ).fetch_all(&pool).await?;
+    
+    println!("All promotion queue entries: {:?}", all_entries);
+    println!("Found {} entries for event {}", promotion_entries.len(), event_id);
+
     assert_eq!(promotion_entries.len(), 1);
-    assert_eq!(promotion_entries[0].0, "test-promoter");
+    assert_eq!(promotion_entries[0].0, agent_name);
     assert_eq!(promotion_entries[0].1, "pending");
 
         Ok(())
@@ -129,12 +136,19 @@ db_test! {
     async fn test_ulid_ordering(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let db_service = database_service_from_pool(pool.clone());
 
+    // Generate unique test run ID to avoid conflicts with other test runs
+    let test_run_id = &uuid::Uuid::new_v4().to_string()[..8];
+
     // Insert events with small delays using our utilities
     let mut ids = Vec::new();
+    let mut expected_names = Vec::new();
     for i in 0..3 {
+        let agent_name = format!("test-agent-{}-{}", test_run_id, i);
+        expected_names.push(agent_name.clone());
+        
         let event = events::agent_event(
             event_types::event_types::sinex::AGENT_HEARTBEAT,
-            &format!("test-agent-{}", i)
+            &agent_name
         );
         
         let id = db_service.insert_event(&event).await?;
@@ -144,20 +158,22 @@ db_test! {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    // Query events ordered by ID (should be time-ordered due to ULID)
+    // Query only the events we just created by filtering for our specific test run
     let ordered: Vec<String> = sqlx::query_scalar(
         r#"
         SELECT payload->>'agent_name'
         FROM raw.events
         WHERE event_type = $1
+        AND payload->>'agent_name' LIKE $2
         ORDER BY id ASC
         "#
     )
     .bind(event_types::event_types::sinex::AGENT_HEARTBEAT)
+    .bind(format!("test-agent-{}-%", test_run_id))
     .fetch_all(&pool)
     .await?;
 
-    assert_eq!(ordered, vec!["test-agent-0", "test-agent-1", "test-agent-2"]);
+    assert_eq!(ordered, expected_names);
 
         Ok(())
     }

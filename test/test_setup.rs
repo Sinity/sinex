@@ -29,8 +29,8 @@ async fn setup_test_database() -> PgPool {
             }
         });
 
-    // Connect to the database
-    let pool = PgPool::connect(&database_url)
+    // Use the high-concurrency test pool
+    let pool = sinex_db::create_test_pool(&database_url)
         .await
         .expect("Failed to connect to test database");
 

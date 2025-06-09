@@ -31,7 +31,7 @@ async fn test_basic_event_insertion(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         FROM raw.events
         WHERE id = $1::uuid::ulid
         "#,
-        event_id
+        event_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;
@@ -118,7 +118,7 @@ async fn test_error_event_creation(pool: sqlx::PgPool) -> Result<(), Box<dyn std
         FROM raw.events
         WHERE id = $1::uuid::ulid
         "#,
-        error_id
+        error_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;

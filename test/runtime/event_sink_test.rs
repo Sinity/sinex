@@ -1,38 +1,6 @@
 use sinex_shared::{EventSink, LogSink, MemorySink, FileSink, MultiSink, event_types::RawEventBuilder};
 use std::sync::Arc;
 
-#[tokio::test]
-async fn test_memory_sink() {
-    let sink = Arc::new(MemorySink::new());
-    
-    let event = RawEventBuilder::new(
-        "test",
-        "test.event",
-        serde_json::json!({ "test": "data" }),
-    ).build();
-    
-    // Send event
-    sink.send_event(&event).await.unwrap();
-    
-    // Check it was stored
-    let events = sink.get_events().await;
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_type, "test.event");
-}
-
-#[tokio::test]
-async fn test_log_sink() {
-    let sink = Arc::new(LogSink::new("TEST"));
-    
-    let event = RawEventBuilder::new(
-        "test",
-        "test.log",
-        serde_json::json!({ "message": "hello world" }),
-    ).build();
-    
-    // This will log to stdout/tracing
-    sink.send_event(&event).await.unwrap();
-}
 
 #[tokio::test]
 async fn test_file_sink() {

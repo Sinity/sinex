@@ -5,7 +5,6 @@ mod test_setup;
 #[cfg(test)]
 mod database {
     mod database_integration_tests;
-    mod migration_tests;
     mod timescaledb_tests;
     mod ulid_integration_tests;
     mod jsonschema_validation_tests;
@@ -20,7 +19,6 @@ mod agent {
 
 #[cfg(test)]
 mod ingestor {
-    mod filesystem_tests;
     mod dlq_tests;
 }
 

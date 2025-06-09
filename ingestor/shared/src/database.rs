@@ -3,7 +3,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 use tracing::{debug, info};
 use sinex_db::models::RawEvent;
-use uuid::Uuid;
+use sinex_ulid::Ulid;
 
 /// Database connection configuration
 #[derive(Debug, Clone)]
@@ -83,7 +83,7 @@ impl DatabaseService {
     }
 
     /// Insert a raw event into the database
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<Uuid> {
+    pub async fn insert_event(&self, event: &RawEvent) -> Result<Ulid> {
         // Validate event if validator is enabled
         if let Some(ref validator) = self.validator {
             validator.validate(&event.source, &event.event_type, &event.payload)
@@ -104,7 +104,7 @@ impl DatabaseService {
             event.ts_orig,
             &event.host,
             event.ingestor_version.as_deref(),
-            event.payload_schema_id.map(|ulid| uuid::Uuid::from(ulid)),
+            event.payload_schema_id.map(|ulid| ulid.to_uuid()),
             &event.payload
         )
         .fetch_one(&self.pool)
@@ -116,11 +116,11 @@ impl DatabaseService {
             event.source, event.event_type, record.id
         );
 
-        Ok(record.id)
+        Ok(Ulid::from_uuid(record.id))
     }
 
     /// Insert multiple events in a batch
-    pub async fn insert_events_batch(&self, events: &[RawEvent]) -> Result<Vec<Uuid>> {
+    pub async fn insert_events_batch(&self, events: &[RawEvent]) -> Result<Vec<Ulid>> {
         // Validate all events first if validator is enabled
         if let Some(ref validator) = self.validator {
             for (i, event) in events.iter().enumerate() {
@@ -146,14 +146,14 @@ impl DatabaseService {
                 event.ts_orig,
                 &event.host,
                 event.ingestor_version.as_deref(),
-                event.payload_schema_id.map(|ulid| uuid::Uuid::from(ulid)),
+                event.payload_schema_id.map(|ulid| ulid.to_uuid()),
                 &event.payload
             )
             .fetch_one(&mut *tx)
             .await
             .context("Failed to insert event in batch")?;
 
-            ids.push(record.id);
+            ids.push(Ulid::from_uuid(record.id));
         }
 
         tx.commit().await?;

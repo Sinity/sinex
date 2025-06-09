@@ -75,7 +75,12 @@ pub mod events {
             event_type,
             json!({
                 "agent_name": agent_name,
-                "timestamp": "2025-01-01T00:00:00Z"
+                "status": "running",
+                "version": "1.0.0",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "uptime_seconds": 3600,
+                "events_processed_session": 42,
+                "dlq_size": 0
             })
         ).build()
     }

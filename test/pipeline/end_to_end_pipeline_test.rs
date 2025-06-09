@@ -298,7 +298,7 @@ async fn test_error_handling_and_retry(pool: sqlx::PgPool) -> Result<(), Box<dyn
         FROM sinex_schemas.promotion_queue 
         WHERE raw_event_id = $1::uuid::ulid
         "#,
-        event_id
+        event_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;

@@ -19,7 +19,7 @@ BEGIN
         FROM sinex_schemas.event_payload_schemas ps
         WHERE ps.id = NEW.payload_schema_id
         AND ps.is_active = TRUE
-        AND jsonb_matches_schema(ps.json_schema_definition, NEW.payload)
+        AND jsonb_matches_schema(ps.json_schema_definition::json, NEW.payload)
     ) THEN
         RAISE EXCEPTION 'Event payload does not conform to schema % or schema is inactive', NEW.payload_schema_id;
     END IF;
