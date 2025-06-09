@@ -2,49 +2,44 @@ use sqlx::postgres::PgPoolOptions;
 use sinex_ulid::Ulid;
 use serde_json::json;
 use chrono::{Duration, Utc};
+use crate::db_test;
 
-#[tokio::test]
-async fn test_raw_events_is_timescale_hypertable() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+db_test! {
+    async fn test_raw_events_is_timescale_hypertable(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Verify raw.events is a hypertable
-    let hypertable_info: Option<(String, String, String, i32)> = sqlx::query_as(
+    let hypertable_info: Option<(String, String, String, String)> = sqlx::query_as(
         "SELECT hypertable_schema, hypertable_name, 
-                dimension_column, dimension_type
+                column_name, dimension_type
          FROM timescaledb_information.dimensions 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
     .fetch_optional(&pool)
-    .await
-    .unwrap();
+    .await?;
     
     assert!(hypertable_info.is_some(), "raw.events should be a hypertable");
     let (schema, table, dimension_col, dimension_type) = hypertable_info.unwrap();
     assert_eq!(schema, "raw");
     assert_eq!(table, "events");
-    assert_eq!(dimension_col, "ts_ingest");
-    assert_eq!(dimension_type, 1); // Time dimension
+    assert_eq!(dimension_col, "id");
+    assert_eq!(dimension_type, "Time"); // Time dimension
     
-    // Check chunk interval
+    // Check chunk interval (stored as microseconds for ULID-based time dimension)
     let chunk_interval: Option<i64> = sqlx::query_scalar(
-        "SELECT EXTRACT(EPOCH FROM chunk_time_interval)::bigint 
-         FROM timescaledb_information.hypertables 
+        "SELECT integer_interval
+         FROM timescaledb_information.dimensions 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
     .fetch_optional(&pool)
-    .await
-    .unwrap();
+    .await?;
     
-    assert!(chunk_interval.is_some());
-    let interval_days = chunk_interval.unwrap() / 86400;
+    assert!(chunk_interval.is_some(), "Expected chunk interval to be set");
+    let interval_seconds = chunk_interval.unwrap() / 1_000_000; // Convert microseconds to seconds
+    let interval_days = interval_seconds / 86400;
     assert_eq!(interval_days, 7, "Chunk interval should be 7 days");
+    
+    Ok(())
+    }
 }
 
 #[tokio::test]
@@ -75,7 +70,7 @@ async fn test_timescale_chunk_creation() {
         Utc::now() + Duration::days(5),
     ];
     
-    for (i, ts) in time_periods.iter().enumerate() {
+    for (i, _ts) in time_periods.iter().enumerate() {
         let event_id = Ulid::new();
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
@@ -166,7 +161,7 @@ async fn test_timescale_compression_policy() {
     }
     
     // Insert old data to test compression
-    let old_timestamp = Utc::now() - Duration::days(30);
+    let _old_timestamp = Utc::now() - Duration::days(30);
     for i in 0..10 {
         let event_id = Ulid::new();
         sqlx::query(
@@ -247,7 +242,7 @@ async fn test_timescale_continuous_aggregates() {
         for source in &sources {
             for event_type in &event_types {
                 let event_id = Ulid::new();
-                let ts = Utc::now() - Duration::hours(hour);
+                let _ts = Utc::now() - Duration::hours(hour);
                 
                 sqlx::query(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 

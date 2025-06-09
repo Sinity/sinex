@@ -1,4 +1,3 @@
-use chrono::Utc;
 use serde_json::json;
 use sinex_shared::{DatabaseService, RawEventBuilder, AssumptionDetector, sources, event_type_constants};
 
@@ -147,9 +146,9 @@ async fn test_version_mismatch_detection(pool: sqlx::PgPool) -> Result<(), Box<d
     for analysis in field_analysis {
         let ratio = analysis.usage_ratio.unwrap_or(0.0);
         println!("Field '{}': {}/{} events ({:.1}%)", 
-                 analysis.field_name, 
-                 analysis.usage_count, 
-                 analysis.total,
+                 analysis.field_name.unwrap_or_default(), 
+                 analysis.usage_count.unwrap_or(0), 
+                 analysis.total.unwrap_or(0),
                  ratio * 100.0);
         
         // Fields used in less than 80% of events might indicate version mismatch
@@ -256,10 +255,12 @@ async fn test_configuration_drift_detection(pool: sqlx::PgPool) -> Result<(), Bo
     let mut field_hosts: HashMap<String, HashSet<String>> = HashMap::new();
     
     for analysis in host_analysis {
-        field_hosts
-            .entry(analysis.field_name)
-            .or_default()
-            .insert(analysis.host);
+        if let Some(field_name) = analysis.field_name {
+            field_hosts
+                .entry(field_name)
+                .or_default()
+                .insert(analysis.host);
+        }
     }
     
     let all_hosts: HashSet<String> = field_hosts.values()
@@ -357,10 +358,11 @@ async fn test_environment_data_corruption(pool: sqlx::PgPool) -> Result<(), Box<
         r#"
         SELECT 
             host,
-            ARRAY_AGG(DISTINCT jsonb_object_keys(payload)) as all_fields,
-            COUNT(*) as event_count
-        FROM raw.events  
-        WHERE source = 'filesystem' AND event_type = 'file_created'
+            ARRAY_AGG(DISTINCT keys.key) as all_fields,
+            COUNT(DISTINCT e.id) as event_count
+        FROM raw.events e
+        CROSS JOIN LATERAL jsonb_object_keys(e.payload) as keys(key)
+        WHERE e.source = 'filesystem' AND e.event_type = 'file_created'
         GROUP BY host
         "#
     )
@@ -374,11 +376,11 @@ async fn test_environment_data_corruption(pool: sqlx::PgPool) -> Result<(), Box<
         let has_container_fields = fields.iter().any(|f| ["container_id", "image", "pod_name"].contains(&f.as_str()));
         
         println!("Host '{}': {} events with fields: {:?}", 
-                 analysis.host, analysis.event_count, fields);
+                 analysis.host, analysis.event_count.unwrap_or(0), fields);
         
         if !has_filesystem_fields && has_container_fields {
             println!("  🚨 Environment corruption detected: {} events with container fields instead of filesystem", 
-                     analysis.event_count);
+                     analysis.event_count.unwrap_or(0));
             corrupted_environments += 1;
         }
     }

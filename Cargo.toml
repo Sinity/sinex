@@ -23,6 +23,7 @@ authors.workspace = true
 name = "integration"
 path = "test/mod.rs"
 
+
 [dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
@@ -36,6 +37,9 @@ async-trait.workspace = true
 # Testing dependencies needed for integration tests
 futures = "0.3"
 
+# Example dependencies
+tracing-subscriber = { workspace = true }
+
 # Local dependencies  
 sinex-core = { path = "crate/sinex-core" }
 sinex-db = { path = "crate/sinex-db" }
@@ -45,6 +49,7 @@ sinex-shared = { path = "ingestor/shared" }
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile = "3"
 
 [workspace.package]
 version = "0.3.0"

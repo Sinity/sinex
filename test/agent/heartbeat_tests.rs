@@ -104,9 +104,9 @@ async fn test_stale_heartbeat_detection() {
     
     // Create agents with different heartbeat times
     let agents = vec![
-        ("stale_agent_1", "1 hour ago"),
-        ("stale_agent_2", "5 minutes ago"),
-        ("healthy_agent", "30 seconds ago"),
+        ("stale_agent_1", Some("1 hour ago")),
+        ("stale_agent_2", Some("5 minutes ago")),
+        ("healthy_agent", Some("30 seconds ago")),
         ("new_agent", None), // No heartbeat yet
     ];
     

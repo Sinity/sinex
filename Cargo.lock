@@ -2747,8 +2747,10 @@ dependencies = [
  "sinex-ulid",
  "sinex-worker",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

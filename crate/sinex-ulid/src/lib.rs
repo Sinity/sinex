@@ -69,6 +69,12 @@ impl Ulid {
     pub fn to_uuid(&self) -> Uuid {
         Uuid::from_bytes(self.0.to_bytes())
     }
+    
+    /// Get as UUID for SQLX parameter binding
+    /// This is an alias for to_uuid() but makes the intent clearer in queries
+    pub fn as_uuid(&self) -> Uuid {
+        self.to_uuid()
+    }
 
     /// Create from UUID
     pub fn from_uuid(uuid: Uuid) -> Self {

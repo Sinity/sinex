@@ -422,7 +422,7 @@ def agent_status(agent_name: str):
         
         for hb in heartbeats:
             payload = hb['payload']
-            table.add_row(
+            hb_table.add_row(
                 hb['ts_ingest'].strftime('%H:%M:%S'),
                 payload.get('status', 'unknown'),
                 f"{payload.get('uptime_seconds', 0)}s",
