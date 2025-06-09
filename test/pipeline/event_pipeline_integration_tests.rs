@@ -16,7 +16,7 @@ struct PipelineTestProcessor {
 
 #[async_trait]
 impl EventProcessor for PipelineTestProcessor {
-    async fn process_event(&self, pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
+    async fn process_event(&self, _pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
         // Simulate processing time
         tokio::time::sleep(Duration::from_millis(self.process_delay_ms)).await;
         
@@ -116,22 +116,13 @@ async fn test_end_to_end_event_pipeline() {
     // Phase 3: Process with enrichment agent
     println!("Phase 3: Processing with enrichment agent");
     
-    let db = Database::new(&database_url).await.unwrap();
     let processor = Arc::new(PipelineTestProcessor {
         agent_name: "enrichment_agent".to_string(),
         process_delay_ms: 10,
         create_derived_events: true,
     });
     
-    let config = WorkerConfig {
-        worker_id: "enrichment_worker_1".to_string(),
-        batch_size: 5,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 3,
-        base_retry_delay: Duration::from_secs(1),
-    };
-    
-    let mut worker = Worker::new(db, processor, config);
+    let worker = Worker::new(pool.clone(), processor, "enrichment_worker_1".to_string());
     
     // Run worker for limited time
     let _ = tokio::time::timeout(

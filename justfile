@@ -1,209 +1,134 @@
-# Sinex Development Workflows
-# Run `just` to see all available commands
-
-# Default: show all recipes
 default:
     @just --list --unsorted
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🚀 Quick Start
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Testing  
+test:
+    cargo test
 
-# Start full development environment with process management
-dev:
-    nix run .#dev
+test-unit:
+    cargo test --lib
 
-# Start database only
-db:
-    nix run .#db-setup dev
+test-integration:
+    cargo test --test integration
 
-# Quick status check
-status:
-    @echo "🗄️  Database Status:"
-    @nix run .#db-setup check 2>/dev/null && echo "✅ Connected" || echo "❌ Not running"
-    @echo ""
-    @echo "📊 Event Count:"
-    @psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM raw.events" 2>/dev/null || echo "N/A"
+test-dlq:
+    cargo test --test integration ingestor::dlq_tests
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🧪 Testing
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+test-e2e:
+    cargo test --test integration e2e:: -- --nocapture
 
-# Run tests (unit, integration, or all)
-test TYPE="unit":
-    nix run .#test {{TYPE}}
+test-e2e-full:
+    cargo test --test integration e2e::full_system_test -- --ignored --nocapture
 
-# Run tests in isolated ephemeral environment
-test-isolated:
-    nix run .#ephemeral test
+test-e2e-dry-run:
+    cargo test --test integration e2e::test_full_system_dry_run -- --nocapture
 
-# Interactive ephemeral environment
-ephemeral:
-    nix run .#ephemeral interactive
+test-cli:
+    python3 -m pytest test/cli/test_exo_cli.py -v
 
-# Watch tests
+test-cli-integration:
+    python3 -m pytest test/cli/test_exo_cli_integration.py -v
+
+test-cli-all:
+    python3 -m pytest test/cli/ -v
+
+test-all:
+    echo "🧪 Running comprehensive test suite..."
+    just test
+    echo "✅ Rust tests completed"
+    nix develop --command python3 -m pytest test/cli/test_exo_cli.py -v
+    echo "✅ CLI unit tests completed"
+    just test-e2e-dry-run
+    echo "✅ E2E dry-run tests completed"
+    echo "🎉 All core tests passed!"
+
 watch:
     cargo watch -x test
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔨 Build & Check
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Check code (fast)
+# Build
 check:
     cargo check --all-features
 
-# Full check with clippy
 check-all:
     cargo check --all-features
     cargo clippy --all-features -- -D warnings
 
-# Build everything
 build:
     cargo build --all-features
 
-# Build release
 release:
     cargo build --release --all-features
 
-# Format code
 fmt:
     cargo fmt --all
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🗄️  Database Operations
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Setup development database
-db-setup:
-    nix run .#db-setup dev
-
-# Reset database (WARNING: destructive)
-db-reset:
-    nix run .#db-setup reset
-
-# Connect to database
-psql:
-    psql $DATABASE_URL
-
-# Run migrations
+# Migrations
 migrate:
     sqlx migrate run
 
-# Create a new migration
 migrate-create NAME:
     sqlx migrate add {{NAME}}
 
-# Update SQLX offline cache
 sqlx-prepare:
-    nix run .#sqlx-prepare
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🗄️  Updating SQLX offline cache..."
+    # Ensure migrations are up to date
+    sqlx migrate run --source migration
+    # Update the cache
+    cargo sqlx prepare --workspace -- --all-targets --all-features
+    echo "✅ SQLX cache updated successfully"
+    echo "⚠️  Don't forget to commit the changes in .sqlx/"
 
-# Check if SQLX cache is up to date
 sqlx-check:
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 📊 Monitoring & Queries
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Ingestors
+filesystem *ARGS:
+    nix run .#filesystemIngestor -- {{ARGS}}
 
-# Live monitoring dashboard
-monitor:
-    nix run .#monitor
+kitty *ARGS:
+    nix run .#kittyIngestor -- {{ARGS}}
 
-# Query recent events
+hyprland *ARGS:
+    nix run .#hyprlandIngestor -- {{ARGS}}
+
+worker *ARGS:
+    nix run .#sinexPromoWorker -- {{ARGS}}
+
+# Run all ingestors in background
+ingestors-start *ARGS:
+    #!/usr/bin/env bash
+    echo "Starting all ingestors in background..."
+    nix run .#filesystemIngestor -- {{ARGS}} &
+    nix run .#kittyIngestor -- {{ARGS}} &
+    nix run .#hyprlandIngestor -- {{ARGS}} &
+    nix run .#sinexPromoWorker -- {{ARGS}} &
+    echo "All ingestors started. Use 'just ingestors-stop' to stop them."
+
+# Stop all running ingestors
+ingestors-stop:
+    pkill -f "filesystem-ingestor" || true
+    pkill -f "kitty-ingestor" || true
+    pkill -f "hyprland-ingestor" || true
+    pkill -f "sinex-promo-worker" || true
+    @echo "All ingestors stopped."
+
+# Query
 query LIMIT="10":
     @python3 ./cli/exo.py query --limit {{LIMIT}}
 
-# Show event flow demo
-demo:
-    ./script/demo_event_flow.sh
 
-# Diagnose event assumptions
-diagnose:
-    ./script/diagnose_assumptions.sh
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🎛️  Complex Orchestration
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Start ingestors individually
-ingestor NAME:
-    #!/usr/bin/env bash
-    case {{NAME}} in
-        filesystem)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL filesystem-ingestor run
-            ;;
-        kitty)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL kitty-ingestor run
-            ;;
-        hyprland)
-            RUST_LOG=info DATABASE_URL=$DATABASE_URL hyprland-ingestor run
-            ;;
-        *)
-            echo "Unknown ingestor: {{NAME}}"
-            echo "Available: filesystem, kitty, hyprland"
-            exit 1
-            ;;
-    esac
-
-# Kill all ingestors
-kill-ingestors:
-    pkill -f "ingestor" || true
-
-# Full system test with real data
-system-test:
-    #!/usr/bin/env bash
-    set -e
-    echo "🧪 Starting full system test..."
-    
-    # Ensure clean state
-    just db-reset
-    
-    # Start database
-    just db-setup
-    
-    # Run ingestors in background for 10 seconds
-    echo "📡 Starting ingestors..."
-    just ingestor filesystem &
-    FILESYSTEM_PID=$!
-    
-    sleep 10
-    
-    # Stop ingestors
-    kill $FILESYSTEM_PID 2>/dev/null || true
-    
-    # Check results
-    EVENT_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM raw.events" | xargs)
-    echo "✅ Captured $EVENT_COUNT events"
-    
-    # Run diagnostics
-    just diagnose
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🧹 Maintenance
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Clean build artifacts
 clean:
     cargo clean
 
-# Update dependencies
 update:
     cargo update
 
-# Show disk usage
-disk-usage:
-    @echo "📁 Project disk usage:"
-    @du -sh target/ 2>/dev/null || echo "  target/: not built yet"
-    @du -sh ~/.cargo/registry/ 2>/dev/null || echo "  cargo registry: N/A"
+# Database utilities
+psql:
+    psql "$DATABASE_URL"
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🎯 Shortcuts (even shorter aliases)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+# Aliases
 alias c := check
-alias ca := check-all
-alias b := build
 alias t := test
-alias m := monitor
-alias d := dev

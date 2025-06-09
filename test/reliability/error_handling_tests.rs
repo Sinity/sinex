@@ -1,7 +1,6 @@
-use sinex_worker::{Worker, WorkerConfig, EventProcessor, ProcessResult};
-use sinex_db::Database;
+use sinex_worker::{worker::Worker, EventProcessor};
 use sinex_ulid::Ulid;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{postgres::PgPoolOptions, Row};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -15,12 +14,12 @@ struct FailingProcessor {
 
 #[async_trait]
 impl EventProcessor for FailingProcessor {
-    async fn process_event(&self, _event_id: &str, _payload: &serde_json::Value) -> ProcessResult {
+    async fn process_event(&self, _pool: &sqlx::PgPool, _item: &sinex_db::models::PromotionQueueItem) -> anyhow::Result<()> {
         let count = self.fail_count.fetch_add(1, Ordering::SeqCst);
         if count < self.fail_after {
-            ProcessResult::Error(self.error_message.clone())
+            anyhow::bail!(self.error_message.clone())
         } else {
-            ProcessResult::Success
+            Ok(())
         }
     }
     
@@ -32,16 +31,12 @@ impl EventProcessor for FailingProcessor {
 #[tokio::test]
 async fn test_database_connection_failure() {
     // Try to connect to non-existent database
-    let result = Database::new("postgres://invalid:invalid@nonexistent:5432/invalid").await;
+    let result = PgPoolOptions::new()
+        .max_connections(1)
+        .connect("postgres://invalid:invalid@nonexistent:5432/invalid")
+        .await;
     
     assert!(result.is_err(), "Should fail to connect to invalid database");
-    
-    match result {
-        Err(sinex_db::Error::Database(e)) => {
-            println!("Expected database error: {}", e);
-        }
-        _ => panic!("Expected database connection error"),
-    }
 }
 
 #[tokio::test]
@@ -97,8 +92,11 @@ async fn test_worker_retry_logic() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
-    let db = Database::new(&database_url).await.unwrap();
-    let pool = db.pool();
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
     
     // Set up test data
     sqlx::query(
@@ -107,7 +105,7 @@ async fn test_worker_retry_logic() {
     )
     .bind("error_test_agent")
     .bind("1.0.0")
-    .execute(pool)
+    .execute(&pool)
     .await
     .unwrap();
     
@@ -121,7 +119,7 @@ async fn test_worker_retry_logic() {
     .bind("test_event")
     .bind("test_host")
     .bind(serde_json::json!({"test": "data"}))
-    .execute(pool)
+    .execute(&pool)
     .await
     .unwrap();
     
@@ -132,7 +130,7 @@ async fn test_worker_retry_logic() {
     .bind(&event_id.to_string())
     .bind("error_test_agent")
     .bind(3)
-    .execute(pool)
+    .execute(&pool)
     .await
     .unwrap();
     
@@ -143,15 +141,7 @@ async fn test_worker_retry_logic() {
         error_message: "Simulated failure".to_string(),
     });
     
-    let config = WorkerConfig {
-        worker_id: "retry_test_worker".to_string(),
-        batch_size: 1,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 3,
-        base_retry_delay: Duration::from_millis(100),
-    };
-    
-    let mut worker = Worker::new(db, processor, config);
+    let worker = Worker::new(pool.clone(), processor, "retry_test_worker".to_string());
     
     // Run worker for limited time
     let _ = tokio::time::timeout(
@@ -165,7 +155,7 @@ async fn test_worker_retry_logic() {
          FROM sinex_schemas.promotion_queue 
          WHERE target_agent_name = 'error_test_agent'"
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await
     .unwrap();
     
@@ -246,7 +236,8 @@ async fn test_max_retry_exhaustion() {
     .await;
     
     assert!(result.is_ok());
-    let (status,): (String,) = result.unwrap();
+    let row = result.unwrap();
+    let status: String = row.get("status");
     assert_eq!(status, "failed_permanent", "Should be permanently failed after max attempts");
 }
 
@@ -449,7 +440,7 @@ async fn test_concurrent_error_handling() {
     }
     
     // Wait for all to complete
-    let results: Vec<_> = futures::future::join_all(handles).await;
+    let _results: Vec<_> = futures::future::join_all(handles).await;
     
     // Check results
     let statuses: Vec<(String, String, Option<String>)> = sqlx::query_as(

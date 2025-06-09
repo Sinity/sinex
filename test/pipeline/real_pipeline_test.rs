@@ -1,7 +1,6 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_shared::{DatabaseService, RawEventBuilder, sources, event_type_constants};
-use std::time::Duration;
 
 /// Simple test that verifies we can insert events and they appear in the database
 #[sqlx::test]
@@ -30,9 +29,9 @@ async fn test_basic_event_insertion(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         r#"
         SELECT source, event_type, host, payload
         FROM raw.events
-        WHERE id = $1
+        WHERE id = $1::uuid::ulid
         "#,
-        event_id
+        event_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;
@@ -81,7 +80,7 @@ async fn test_batch_event_insertion(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(count, 5);
+    assert_eq!(count.unwrap_or(0), 5);
 
     Ok(())
 }
@@ -117,9 +116,9 @@ async fn test_error_event_creation(pool: sqlx::PgPool) -> Result<(), Box<dyn std
         r#"
         SELECT source, event_type, payload
         FROM raw.events
-        WHERE id = $1
+        WHERE id = $1::uuid::ulid
         "#,
-        error_id
+        error_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;

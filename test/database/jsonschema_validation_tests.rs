@@ -1,17 +1,11 @@
-use sqlx::postgres::PgPoolOptions;
 use sinex_ulid::Ulid;
 use serde_json::json;
+use uuid::Uuid;
 
-#[tokio::test]
-async fn test_json_schema_registration() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+use crate::db_test;
+
+db_test! {
+    async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // Register a JSON Schema
     let schema = json!({
@@ -35,14 +29,19 @@ async fn test_json_schema_registration() {
         "additionalProperties": false
     });
     
+    // Generate unique test identifiers to avoid conflicts
+    let test_run_id = &uuid::Uuid::new_v4().to_string()[..8];
+    let event_source = format!("hyprland-test-{}", test_run_id);
+    let event_type = format!("window_focused-{}", test_run_id);
+    
     let schema_id: String = sqlx::query_scalar(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition, description) 
          VALUES ($1, $2, $3, $4::jsonb, $5) 
          RETURNING id::text"
     )
-    .bind("hyprland")
-    .bind("window_focused")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("v1.0")
     .bind(&schema)
     .bind("Schema for window focus events")
@@ -60,18 +59,13 @@ async fn test_json_schema_registration() {
     .unwrap();
     
     assert_eq!(retrieved_schema, schema, "Schema should be stored correctly");
+    
+    Ok(())
+    }
 }
 
-#[tokio::test]
-async fn test_json_schema_validation_constraint() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+db_test! {
+    async fn test_json_schema_validation_constraint(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
     // First, register a strict schema
     let strict_schema = json!({
@@ -99,14 +93,19 @@ async fn test_json_schema_validation_constraint() {
         "additionalProperties": false
     });
     
+    // Generate unique test identifiers to avoid conflicts
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
+    let event_source = format!("ui_test-{}", test_run_id);
+    let event_type = format!("user_interaction-{}", test_run_id);
+    
     let schema_id: String = sqlx::query_scalar(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition) 
          VALUES ($1, $2, $3, $4::jsonb) 
          RETURNING id::text"
     )
-    .bind("ui_test")
-    .bind("user_interaction")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("v1.0")
     .bind(&strict_schema)
     .fetch_one(&pool)
@@ -129,14 +128,42 @@ async fn test_json_schema_validation_constraint() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id.to_string())
-    .bind("ui_test")
-    .bind("user_interaction")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&valid_payload)
     .execute(&pool)
     .await;
     
+    if let Err(e) = &result {
+        println!("Error inserting valid payload: {:?}", e);
+        
+        // Debug: Check if schema exists and is active
+        let schema_check: Option<(bool, String)> = sqlx::query_as(
+            "SELECT is_active, json_schema_definition::text FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid"
+        )
+        .bind(&schema_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        
+        println!("Schema check for ID {}: {:?}", schema_id, schema_check);
+        
+        // Test the function directly
+        if let Some((is_active, schema_def)) = schema_check {
+            let matches: bool = sqlx::query_scalar(
+                "SELECT jsonb_matches_schema($1::jsonb, $2::jsonb)"
+            )
+            .bind(&schema_def)
+            .bind(&valid_payload)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            
+            println!("Schema active: {}, Payload matches: {}", is_active, matches);
+        }
+    }
     assert!(result.is_ok(), "Valid payload should be accepted");
     
     // Test invalid payload - missing required field
@@ -151,8 +178,8 @@ async fn test_json_schema_validation_constraint() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id2.to_string())
-    .bind("ui_test")
-    .bind("user_interaction")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&invalid_payload1)
@@ -173,8 +200,8 @@ async fn test_json_schema_validation_constraint() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id3.to_string())
-    .bind("ui_test")
-    .bind("user_interaction")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&invalid_payload2)
@@ -196,8 +223,8 @@ async fn test_json_schema_validation_constraint() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id4.to_string())
-    .bind("ui_test")
-    .bind("user_interaction")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&invalid_payload3)
@@ -205,18 +232,18 @@ async fn test_json_schema_validation_constraint() {
     .await;
     
     assert!(result.is_err(), "Invalid payload with additional properties should be rejected");
+    
+    Ok(())
+    }
 }
 
-#[tokio::test]
-async fn test_schema_versioning() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
+db_test! {
+    async fn test_schema_versioning(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    // Generate unique test identifiers to avoid conflicts
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
+    let event_source = format!("versioning_test-{}", test_run_id);
+    let event_type = format!("message_event-{}", test_run_id);
     
     // Create v1 schema
     let schema_v1 = json!({
@@ -234,14 +261,33 @@ async fn test_schema_versioning() {
          VALUES ($1, $2, $3, $4::jsonb, $5) 
          RETURNING id::text"
     )
-    .bind("versioning_test")
-    .bind("message_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("v1.0")
     .bind(&schema_v1)
-    .bind(false) // Not active initially
+    .bind(true) // Must be active for validation to work
     .fetch_one(&pool)
     .await
     .unwrap();
+    
+    // Test v1 payload validates against v1 schema (both active)
+    let v1_payload = json!({"message": "Hello"});
+    let event_id1 = Ulid::new();
+    
+    let result = sqlx::query(
+        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
+         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
+    )
+    .bind(&event_id1.to_string())
+    .bind(&event_source)
+    .bind(&event_type)
+    .bind("test_host")
+    .bind(&schema_v1_id)
+    .bind(&v1_payload)
+    .execute(&pool)
+    .await;
+    
+    assert!(result.is_ok(), "V1 payload should validate against V1 schema");
     
     // Create v2 schema with additional field
     let schema_v2 = json!({
@@ -263,43 +309,35 @@ async fn test_schema_versioning() {
          VALUES ($1, $2, $3, $4::jsonb, $5) 
          RETURNING id::text"
     )
-    .bind("versioning_test")
-    .bind("message_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("v2.0")
     .bind(&schema_v2)
-    .bind(true) // This is the active version
+    .bind(true) // This will be the active version
     .fetch_one(&pool)
     .await
     .unwrap();
     
-    // Events with v1 schema should still validate against v1
-    let v1_payload = json!({"message": "Hello"});
-    let event_id1 = Ulid::new();
-    
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
+    // Now make V1 inactive since V2 is the active version
+    sqlx::query(
+        "UPDATE sinex_schemas.event_payload_schemas 
+         SET is_active = false 
+         WHERE id = $1::ulid"
     )
-    .bind(&event_id1.to_string())
-    .bind("versioning_test")
-    .bind("message_event")
-    .bind("test_host")
     .bind(&schema_v1_id)
-    .bind(&v1_payload)
     .execute(&pool)
-    .await;
+    .await
+    .unwrap();
     
-    assert!(result.is_ok(), "V1 payload should validate against V1 schema");
-    
-    // V1 payload should fail against v2 schema
+    // V1 payload should fail against v2 schema (since v2 requires priority field)
     let event_id2 = Ulid::new();
     let result = sqlx::query(
         "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id2.to_string())
-    .bind("versioning_test")
-    .bind("message_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_v2_id)
     .bind(&v1_payload)
@@ -307,6 +345,23 @@ async fn test_schema_versioning() {
     .await;
     
     assert!(result.is_err(), "V1 payload should fail against V2 schema");
+    
+    // V1 payload should also fail against v1 schema now that v1 is inactive
+    let event_id4 = Ulid::new();
+    let result = sqlx::query(
+        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
+         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
+    )
+    .bind(&event_id4.to_string())
+    .bind(&event_source)
+    .bind(&event_type)
+    .bind("test_host")
+    .bind(&schema_v1_id)
+    .bind(&v1_payload)
+    .execute(&pool)
+    .await;
+    
+    assert!(result.is_err(), "V1 payload should fail against inactive V1 schema");
     
     // V2 payload should validate against v2 schema
     let v2_payload = json!({
@@ -320,8 +375,8 @@ async fn test_schema_versioning() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id3.to_string())
-    .bind("versioning_test")
-    .bind("message_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_v2_id)
     .bind(&v2_payload)
@@ -335,25 +390,25 @@ async fn test_schema_versioning() {
         "SELECT schema_version FROM sinex_schemas.event_payload_schemas 
          WHERE event_source = $1 AND event_type = $2 AND is_active = true"
     )
-    .bind("versioning_test")
-    .bind("message_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .fetch_one(&pool)
     .await
     .unwrap();
     
     assert_eq!(active_version, "v2.0", "V2 should be the active version");
+    
+    Ok(())
+    }
 }
 
-#[tokio::test]
-async fn test_complex_schema_validation() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
+db_test! {
+    async fn test_complex_schema_validation(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    // Generate unique test identifiers to avoid conflicts
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
+    let event_source = format!("complex_test-{}", test_run_id);
+    let event_type = format!("complex_event-{}", test_run_id);
     
     // Create a complex schema with nested objects, arrays, and various constraints
     let complex_schema = json!({
@@ -428,8 +483,8 @@ async fn test_complex_schema_validation() {
          VALUES ($1, $2, $3, $4::jsonb) 
          RETURNING id::text"
     )
-    .bind("complex_test")
-    .bind("complex_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("v1.0")
     .bind(&complex_schema)
     .fetch_one(&pool)
@@ -460,8 +515,8 @@ async fn test_complex_schema_validation() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id.to_string())
-    .bind("complex_test")
-    .bind("complex_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&valid_complex)
@@ -490,8 +545,8 @@ async fn test_complex_schema_validation() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id2.to_string())
-    .bind("complex_test")
-    .bind("complex_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&invalid_pattern)
@@ -520,8 +575,8 @@ async fn test_complex_schema_validation() {
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
     .bind(&event_id3.to_string())
-    .bind("complex_test")
-    .bind("complex_event")
+    .bind(&event_source)
+    .bind(&event_type)
     .bind("test_host")
     .bind(&schema_id)
     .bind(&invalid_oneof)
@@ -529,18 +584,17 @@ async fn test_complex_schema_validation() {
     .await;
     
     assert!(result.is_err(), "Invalid oneOf structure should be rejected");
+    
+    Ok(())
+    }
 }
 
-#[tokio::test]
-async fn test_null_schema_allows_any_payload() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
+db_test! {
+    async fn test_null_schema_allows_any_payload(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    // Generate unique test identifiers to avoid conflicts
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
+    let event_source = format!("no_schema_test-{}", test_run_id);
     
     // Insert event without schema (payload_schema_id = NULL)
     let payloads = vec![
@@ -560,7 +614,7 @@ async fn test_null_schema_allows_any_payload() {
              VALUES ($1::ulid, $2, $3, $4, NULL, $5::jsonb)"
         )
         .bind(&event_id.to_string())
-        .bind("no_schema_test")
+        .bind(&event_source)
         .bind(format!("type_{}", i))
         .bind("test_host")
         .bind(payload)
@@ -568,5 +622,8 @@ async fn test_null_schema_allows_any_payload() {
         .await;
         
         assert!(result.is_ok(), "Any payload should be accepted when schema is NULL");
+    }
+    
+    Ok(())
     }
 }

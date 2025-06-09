@@ -39,6 +39,7 @@ impl SimpleIngestor for MyIngestor {
 - Tests go in categorized subdirectories under `test/`
 - Put my working docs in `spec/docs/claude/`
 - Clean up obsolete code/files proactively
+- Avoid proliferating around arbitrary ad-hoc scripts, documentation and other such files. There's designated space for such documentation needs you might have - spec/docs/claude
 
 ## 🌟 Memory Bank
 
@@ -78,74 +79,93 @@ sinex/
 
 ### Development Setup
 ```bash
-nix develop                      # Always run first - enters dev shell
-db setup dev                    # Initialize database
+nix develop                      # Always run first - enters dev shell, database setup is automatic
 cargo check --workspace         # Verify build
+just                            # See available commands
 ```
 
 ### Database Management
+The database (`sinex_dev`) is automatically created and migrations applied when entering the nix shell. No manual setup needed!
+
 ```bash
-db                              # Show current database
-db dev                         # Switch to development database  
-db prod                        # Switch to production database
-db tmp                         # Switch to ephemeral database (tmp_0)
-db tmp_3                       # Switch to ephemeral database 3 (0-9)
-db setup [dev|prod]            # Setup/initialize database
-db reset                       # Reset current database
-db destroy                     # Destroy ephemeral database
-db shell                       # Connect with psql to current database
+just psql                       # Direct database connection
+just migrate                    # Apply migrations manually if needed
+just migrate-create feature_name # Create new migration
+
+# If you need to reset the database:
+dropdb sinex_dev && createdb sinex_dev && just migrate
+```
+
+### PostgreSQL Extension Setup
+The project requires `pg_jsonschema` extension for JSON Schema validation. Since we use the global PostgreSQL system, install it via:
+
+**Option 1: NixOS System Configuration**
+```nix
+services.postgresql = {
+  enable = true;
+  package = pkgs.postgresql_16;
+  extraPlugins = with pkgs.postgresql16Packages; [
+    # ... other extensions
+    # Add pg_jsonschema when available in nixpkgs
+  ];
+};
+```
+
+**Option 2: Manual Installation**
+```bash
+# Download and install from releases
+# https://github.com/supabase/pg_jsonschema/releases
+# Follow installation instructions for your PostgreSQL version
 ```
 
 ### Running Ingestors
 ```bash
-cargo run --bin filesystem-ingestor -- --dry-run
-cargo run --bin kitty-ingestor -- --output-file events.json
-cargo run --bin hyprland-ingestor
+# Individual ingestors (config logged at startup)
+just filesystem                 # Run filesystem ingestor
+just kitty                     # Run kitty ingestor  
+just hyprland                  # Run hyprland ingestor
+just worker                    # Run promotion worker
+
+# With options
+just filesystem --dry-run       # Test mode without database
+just kitty --output-file events.json
+just filesystem --config my-config.toml
+
+# All at once
+just ingestors-start           # Start all in background
+just ingestors-start --dry-run # All in dry-run mode
+just ingestors-stop            # Stop all
 ```
+
+Config loading priority:
+1. `INGESTOR-NAME.toml` in current directory
+2. `~/.config/INGESTOR-NAME.toml`
+3. Built-in defaults (uses DATABASE_URL automatically)
 
 ### Database Work
 ```bash
-sqlx migrate run                # Apply migrations
-sqlx migrate add feature_name   # New migration
-psql $DATABASE_URL             # Direct connection
+just migrate                    # Apply migrations
+just migrate-create feature_name # New migration
+just psql                      # Direct connection
 
-# SQLX cache management (NEW)
-nix run .#sqlx-prepare          # Update SQLX cache (replaces old script)
+# SQLX cache management
+just sqlx-prepare              # Update SQLX cache
+just sqlx-check               # Check if cache is up to date
 ```
 
 ### Testing
 ```bash
-# Regular testing
-cargo test                      # All tests
-cargo test --package sinex-db   # Specific crate
-cargo test --test database/     # Test category
-
-# Isolated testing with ephemeral database
-db tmp                          # Switch to ephemeral database
-cargo test test_full_system_end_to_end -- --ignored  # Run specific test
-
-# Continuous testing
-bacon                           # Continuous testing
-cargo watch -x test           # Watch mode
+just test                       # All tests
+just test -- --package sinex-db # Specific crate
+just test -- --test database/   # Test category
+just watch                      # Continuous testing
 ```
 
-### Development Environment (NEW)
-```bash
-nix run .#dev                  # Full interactive development environment (mprocs)
-nix run .#dev db-only         # Just setup database
-nix run .#dev background      # Start services in background
-```
-
-### Monitoring (NEW)
-```bash
-nix run .#monitor             # Interactive dashboard
-nix run .#monitor live        # Live event tail
-nix run .#monitor events      # Recent events
-```
 
 ### Debugging
 ```bash
-./cli/exo.py query --limit 10  # View recent events
+just query                      # View recent 10 events
+just query 50                  # View recent 50 events
 ./cli/exo.py query --source filesystem --after "1 hour ago"
 cargo test -- --nocapture      # See test output
 ```
@@ -172,7 +192,7 @@ sinex-db = { path = "../../crate/sinex-db" }    # Not src/!
 
 ### Local PostgreSQL
 ```
-postgresql:///sinex?host=/run/postgresql
+postgresql:///sinex_dev?host=/run/postgresql
 ```
 
 ### Event Types
@@ -195,9 +215,9 @@ postgresql:///sinex?host=/run/postgresql
 ## 🚦 Environment Checks
 
 - Always in nix shell? (`nix develop`)
-- Database running? (`psql $DATABASE_URL`)
-- Migrations applied? (`sqlx migrate run`)
-- SQLX cache current? (`./script/update-sqlx-cache.sh`)
+- Database running? (automatic in nix shell)
+- Migrations applied? (automatic in nix shell)
+- SQLX cache current? (`just sqlx-check`)
 
 ## 💡 Principles
 

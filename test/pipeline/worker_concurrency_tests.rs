@@ -101,22 +101,14 @@ async fn test_multiple_workers_no_duplicate_processing() {
     let mut handles = Vec::new();
     
     for worker_id in 0..5 {
-        let db = Database::new(&database_url).await.unwrap();
+        let db = pool.clone();
         let processor = Arc::new(ConcurrencyTestProcessor {
             processed_items: processed_items.clone(),
             process_count: process_count.clone(),
             delay_ms: 10, // Small delay to allow concurrency
         });
         
-        let config = WorkerConfig {
-            worker_id: format!("worker_{}", worker_id),
-            batch_size: 5,
-            poll_interval: Duration::from_millis(50),
-            max_retries: 3,
-            base_retry_delay: Duration::from_secs(1),
-        };
-        
-        let mut worker = Worker::new(db, processor, config);
+        let worker = Worker::new(db, processor, format!("worker_{}", worker_id));
         
         // Run worker for a limited time
         let handle = tokio::spawn(async move {

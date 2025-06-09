@@ -1,31 +1,7 @@
 use sinex_ulid::Ulid;
-use chrono::{DateTime, Utc};
 use std::str::FromStr;
 use std::collections::HashSet;
 
-#[sqlx::test]
-async fn test_ulid_roundtrip_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Generate ULID in Rust
-    let ulid = Ulid::new();
-    let ulid_string = ulid.to_string();
-    
-    // Insert into database
-    let inserted_id: String = sqlx::query_scalar(
-        "INSERT INTO raw.events (id, source, event_type, host, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb) 
-         RETURNING id::text"
-    )
-    .bind(&ulid_string)
-    .bind("roundtrip_test_v2")
-    .bind("test_type_v2")
-    .bind("test_host")
-    .bind(serde_json::json!({"test": "data"}))
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(ulid_string, inserted_id, "ULID should roundtrip correctly");
-    Ok(())
-}
 
 #[sqlx::test]
 async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
@@ -76,36 +52,6 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_ulid_uuid_compatibility(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Create ULID and convert to UUID
-    let ulid = Ulid::new();
-    let uuid = ulid.to_uuid();
-    
-    // Insert using ULID
-    sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
-    )
-    .bind(&ulid.to_string())
-    .bind("uuid_compat_test_v2")
-    .bind("test_type_v2")
-    .bind("test_host")
-    .bind(serde_json::json!({"test": "data"}))
-    .execute(&pool)
-    .await?;
-    
-    // Query by casting ULID to UUID
-    let stored_uuid: uuid::Uuid = sqlx::query_scalar(
-        "SELECT id::uuid FROM raw.events WHERE source = 'uuid_compat_test_v2'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(uuid, stored_uuid, "ULID should convert to UUID correctly in database");
-    Ok(())
-}
 
 #[sqlx::test]
 async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {

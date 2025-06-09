@@ -11,14 +11,29 @@ use tracing::info;
 /// Create a database connection pool with default settings
 pub async fn create_pool(database_url: &str) -> Result<PgPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(20)
-        .min_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(600))
+        .max_connections(500)  // Massive pool size
+        .min_connections(50)
+        .acquire_timeout(Duration::from_secs(120))  // Very long timeout
+        .idle_timeout(Duration::from_secs(1800))
         .connect(database_url)
         .await?;
 
     info!("Database pool created successfully");
+    Ok(pool)
+}
+
+/// Create a database connection pool optimized for testing with high concurrency
+pub async fn create_test_pool(database_url: &str) -> Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(2000)  // Even more massive limit for concurrent tests
+        .min_connections(200)
+        .acquire_timeout(Duration::from_secs(600))  // 10 minute timeout
+        .idle_timeout(Duration::from_secs(1200))
+        .test_before_acquire(false)  // Skip connection testing for speed
+        .connect(database_url)
+        .await?;
+
+    info!("Test database pool created successfully with ultra-high concurrency settings");
     Ok(pool)
 }
 

@@ -26,8 +26,15 @@ pub struct DlqManager {
 impl DlqManager {
     pub fn new(agent_name: impl Into<String>) -> Result<Self> {
         let agent_name = agent_name.into();
-        let base_path = PathBuf::from("/var/lib/sinex/dlq").join(&agent_name);
-        let critical_failures_log = PathBuf::from("/var/log/sinex")
+        
+        // Allow overriding paths via environment variables for testing
+        let dlq_base = std::env::var("SINEX_DLQ_BASE")
+            .unwrap_or_else(|_| "/var/lib/sinex/dlq".to_string());
+        let log_base = std::env::var("SINEX_LOG_BASE")
+            .unwrap_or_else(|_| "/var/log/sinex".to_string());
+            
+        let base_path = PathBuf::from(dlq_base).join(&agent_name);
+        let critical_failures_log = PathBuf::from(log_base)
             .join(&agent_name)
             .join("critical_meta_failures.log");
 
@@ -61,10 +68,11 @@ impl DlqManager {
             original_event: event.clone(),
         };
 
-        // Generate filename with timestamp and event type
+        // Generate filename with timestamp and event type (include microseconds for uniqueness)
         let filename = format!(
-            "{}_{}_{}.json",
+            "{}_{:06}_{}_{}.json",
             entry.failed_at.format("%Y%m%d_%H%M%S"),
+            entry.failed_at.timestamp_subsec_micros(),
             event.source.replace('.', "_"),
             event.event_type.replace('.', "_")
         );

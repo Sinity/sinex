@@ -5,11 +5,8 @@ A personal data substrate that captures digital events across devices and modali
 ## 🚀 Quick Start
 
 ```bash
-# Enter development environment
+# Enter development environment (database setup is automatic)
 nix develop
-
-# Initialize database
-./script/db_reset.sh
 
 # Run a simple test
 cargo run --bin filesystem-ingestor -- --dry-run
@@ -65,64 +62,67 @@ All events follow a universal structure:
 ### Building & Testing
 
 ```bash
-# Build everything
-cargo build --workspace
-
-# Run all tests
-cargo test
-
-# Test specific component
-cargo test --package filesystem-ingestor
-
-# Continuous testing
-bacon
+just check    # Fast compile check
+just test     # Run all tests
+just build    # Build everything
+just watch    # Continuous testing
 ```
 
 ### Running Ingestors
 
 ```bash
-# Filesystem monitoring
-cargo run --bin filesystem-ingestor
+# Run individual ingestors
+just filesystem              # Filesystem monitoring
+just kitty                  # Terminal capture (Kitty)
+just hyprland               # Window manager events (Hyprland)
+just worker                 # Promotion worker
 
-# Terminal capture (Kitty)
-cargo run --bin kitty-ingestor
+# Run with options
+just filesystem --dry-run    # Test without database writes
+just kitty --output-file events.json  # Output to file
+just filesystem --config config/filesystem/production.toml
 
-# Window manager events (Hyprland)
-cargo run --bin hyprland-ingestor
-
-# Dry run mode (no database)
-cargo run --bin filesystem-ingestor -- --dry-run
-
-# Output to file
-cargo run --bin kitty-ingestor -- --output-file events.json
+# Manage all ingestors
+just ingestors-start        # Start all in background
+just ingestors-start --dry-run  # Start all in dry-run mode
+just ingestors-stop         # Stop all running ingestors
 ```
 
 ### Database Operations
 
+The database (`sinex_dev`) is automatically created and migrations applied when entering the nix shell.
+
 ```bash
-# Apply migrations
-sqlx migrate run
+# Apply migrations manually if needed
+just migrate
 
 # Create new migration
-sqlx migrate add feature_name
+just migrate-create feature_name
 
-# Direct connection
-psql $DATABASE_URL
+# Direct database connection
+just psql
 
 # Update SQLX cache after query changes
-./script/update-sqlx-cache.sh
+just sqlx-prepare
 ```
 
 ## 🔧 Configuration
 
-Each ingestor can be configured via TOML files. Example configurations are in `config/`:
+Each ingestor automatically loads configuration from (in priority order):
+1. `INGESTOR-NAME.toml` in current directory
+2. `~/.config/INGESTOR-NAME.toml`
+3. Built-in defaults (uses DATABASE_URL from environment)
 
 ```bash
-# Use custom config
-cargo run --bin filesystem-ingestor -- --config config/filesystem/development.toml
+# Use custom config file
+just filesystem --config my-config.toml
 
-# View current config
-cargo run --bin hyprland-ingestor -- config
+# Configuration is logged at startup
+just filesystem
+# [INFO] Configuration loaded:
+# [INFO]   Database URL: postgresql:///sinex_dev?host=/run/postgresql
+# [INFO]   Watch directories: ["~/Documents", "~/Projects"]
+# ...
 ```
 
 ## 🧪 Testing Strategy
@@ -135,14 +135,9 @@ Tests are organized by category in `test/`:
 - `reliability/` - Error handling and failure scenarios
 
 ```bash
-# Run specific test category
-cargo test --test database/
-
-# Run with test database
-TEST_DATABASE_URL=postgresql://... cargo test
-
-# See test output
-cargo test -- --nocapture
+just test                    # Run all tests
+just test -- --test database/  # Run specific test category  
+just test -- --nocapture     # See test output
 ```
 
 ## 🏗️ Key Patterns
