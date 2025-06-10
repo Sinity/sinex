@@ -20,6 +20,9 @@ mod agent {
 #[cfg(test)]
 mod ingestor {
     mod dlq_tests;
+    mod unified_collector_tests;
+    mod event_source_tests;
+    mod config_integration_tests;
 }
 
 #[cfg(test)]

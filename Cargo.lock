@@ -2787,6 +2787,7 @@ dependencies = [
  "sinex-db",
  "sinex-shared",
  "sinex-ulid",
+ "sinex-unified-collector",
  "sinex-worker",
  "sqlx",
  "tempfile",
