@@ -75,9 +75,6 @@ db_test! {
     async fn test_promotion_queue_basic(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let db_service = database_service_from_pool(pool.clone());
 
-    // Clean up any existing test data first
-    crate::test_setup::cleanup_test_data(&pool).await?;
-
     // Insert an agent manifest 
     let agent_name = format!("test-promoter-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     sqlx::query!(
@@ -183,6 +180,7 @@ db_test! {
 /// Test schema validation when a schema is registered
 db_test! {
     async fn test_event_schema_validation(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    
     // First, register a schema
     let schema_id: uuid::Uuid = sqlx::query_scalar!(
         r#"

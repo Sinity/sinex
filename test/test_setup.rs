@@ -52,8 +52,17 @@ macro_rules! db_test {
             let pool_arc = crate::test_setup::get_test_db().await;
             let $pool = pool_arc.as_ref().clone();
             
+            // Clean up before test to ensure clean state
+            let _ = crate::test_setup::cleanup_test_data(&$pool).await;
+            
+            // Clone pool for cleanup after
+            let cleanup_pool = $pool.clone();
+            
             // Run the test body
             let result = async move $body.await;
+            
+            // Clean up after test (best effort, don't fail the test if cleanup fails)
+            let _ = crate::test_setup::cleanup_test_data(&cleanup_pool).await;
             
             result
         }
@@ -63,13 +72,25 @@ macro_rules! db_test {
 /// Clean up test data (if needed between test runs)
 #[allow(dead_code)]
 pub async fn cleanup_test_data(pool: &PgPool) -> Result<(), sqlx::Error> {
-    // Only clean up data that might interfere with tests
-    // Don't drop tables as other tests might be using them
-    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test_%'")
+    // Clean up in dependency order (foreign keys)
+    
+    // Clean promotion queue entries first
+    sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE target_agent_name LIKE 'test-%' OR target_agent_name = 'concurrency_test_agent'")
         .execute(pool)
         .await?;
     
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
+    // Clean test events
+    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source = 'concurrency_test' OR source = 'filesystem' AND payload->>'path' LIKE '/test/%'")
+        .execute(pool)
+        .await?;
+    
+    // Clean test agent manifests
+    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test-%' OR agent_name = 'concurrency_test_agent'")
+        .execute(pool)
+        .await?;
+    
+    // Clean test schemas
+    sqlx::query!("DELETE FROM sinex_schemas.event_payload_schemas WHERE event_source = 'test'")
         .execute(pool)
         .await?;
     
