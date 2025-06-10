@@ -62,16 +62,43 @@ pub fn create_registry() -> EventRegistry {
             "file.modified", 
             "file.deleted",
             "command.executed",
+            // Window events
             "window.focused",
+            "window.opened",
+            "window.closed",
+            "window.moved",
+            "window.title_changed",
+            "window.urgent",
+            // Workspace events
             "workspace.changed",
+            "workspace.created",
+            "workspace.destroyed",
+            // Monitor events
+            "monitor.focused",
+            "monitor.added",
+            "monitor.removed",
+            // State dumps
+            "state.snapshot",
         ],
         event_to_source: &[
             ("file.created", "filesystem"),
             ("file.modified", "filesystem"),
             ("file.deleted", "filesystem"),
             ("command.executed", "terminal.kitty"),
+            // All window manager events
             ("window.focused", "window_manager.hyprland"),
+            ("window.opened", "window_manager.hyprland"),
+            ("window.closed", "window_manager.hyprland"),
+            ("window.moved", "window_manager.hyprland"),
+            ("window.title_changed", "window_manager.hyprland"),
+            ("window.urgent", "window_manager.hyprland"),
             ("workspace.changed", "window_manager.hyprland"),
+            ("workspace.created", "window_manager.hyprland"),
+            ("workspace.destroyed", "window_manager.hyprland"),
+            ("monitor.focused", "window_manager.hyprland"),
+            ("monitor.added", "window_manager.hyprland"),
+            ("monitor.removed", "window_manager.hyprland"),
+            ("state.snapshot", "window_manager.hyprland"),
         ],
         schema_generators: HashMap::new(), // Will be populated by build script
     }

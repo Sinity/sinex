@@ -31,8 +31,26 @@ pub mod event_type_constants {
     }
     
     pub mod window_manager {
+        // Window events
         pub const WINDOW_FOCUSED: &str = "window.focused";
+        pub const WINDOW_OPENED: &str = "window.opened";
+        pub const WINDOW_CLOSED: &str = "window.closed";
+        pub const WINDOW_MOVED: &str = "window.moved";
+        pub const WINDOW_TITLE_CHANGED: &str = "window.title_changed";
+        pub const WINDOW_URGENT: &str = "window.urgent";
+        
+        // Workspace events
         pub const WORKSPACE_CHANGED: &str = "workspace.changed";
+        pub const WORKSPACE_CREATED: &str = "workspace.created";
+        pub const WORKSPACE_DESTROYED: &str = "workspace.destroyed";
+        
+        // Monitor events
+        pub const MONITOR_FOCUSED: &str = "monitor.focused";
+        pub const MONITOR_ADDED: &str = "monitor.added";
+        pub const MONITOR_REMOVED: &str = "monitor.removed";
+        
+        // State dumps (periodic)
+        pub const STATE_SNAPSHOT: &str = "state.snapshot";
     }
 }
 
