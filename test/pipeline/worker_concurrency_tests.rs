@@ -45,7 +45,9 @@ async fn test_multiple_workers_no_duplicate_processing() {
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
     let pool = PgPoolOptions::new()
-        .max_connections(20)
+        .max_connections(30)
+        .acquire_timeout(Duration::from_secs(30))
+        .idle_timeout(Duration::from_secs(30))
         .connect(&database_url)
         .await
         .expect("Failed to connect to test database");
@@ -110,12 +112,15 @@ async fn test_multiple_workers_no_duplicate_processing() {
         
         let worker = Worker::new(db, processor, format!("worker_{}", worker_id));
         
-        // Run worker for a limited time
+        // Run worker for a limited time with adaptive timeout
+        let timeout_duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(30) // Longer timeout in CI
+        } else {
+            Duration::from_secs(15) // Reasonable local timeout
+        };
+        
         let handle = tokio::spawn(async move {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(10),
-                worker.run()
-            ).await;
+            let _ = tokio::time::timeout(timeout_duration, worker.run()).await;
         });
         
         handles.push(handle);

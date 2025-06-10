@@ -254,15 +254,26 @@ heartbeat_interval_secs = 60
         if !socket_path.starts_with("unix:") {
             info!("Kitty control socket not available, trying to find running instance");
             
-            // Try to use kitty @ command
-            let output = TokioCommand::new("kitty")
-                .args(&["@", "ls"])
-                .output()
-                .await;
+            // Try to use kitty @ command with timeout
+            let output = tokio::time::timeout(
+                Duration::from_secs(5),
+                TokioCommand::new("kitty")
+                    .args(&["@", "ls"])
+                    .output()
+            ).await;
                 
-            if output.is_err() || !output.unwrap().status.success() {
-                info!("No accessible kitty instance, skipping kitty events");
-                return Ok(());
+            match output {
+                Ok(Ok(result)) if result.status.success() => {
+                    info!("Found accessible kitty instance");
+                },
+                Ok(Ok(_)) => {
+                    info!("Kitty command failed, skipping kitty events");
+                    return Ok(());
+                },
+                Ok(Err(_)) | Err(_) => {
+                    info!("No accessible kitty instance or timeout, skipping kitty events");
+                    return Ok(());
+                }
             }
         }
 

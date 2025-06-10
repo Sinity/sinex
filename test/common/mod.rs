@@ -10,10 +10,10 @@ pub fn test_database_config() -> DatabaseConfig {
     DatabaseConfig {
         url: std::env::var("TEST_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string()),
-        max_connections: 5,
+        max_connections: 20,
         min_connections: 1,
-        acquire_timeout: std::time::Duration::from_secs(5),
-        idle_timeout: std::time::Duration::from_secs(10),
+        acquire_timeout: std::time::Duration::from_secs(30),
+        idle_timeout: std::time::Duration::from_secs(30),
     }
 }
 

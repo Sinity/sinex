@@ -207,21 +207,29 @@ async fn test_kitty_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn std::
     if remote_result.is_ok() && remote_result.unwrap().status.success() {
         debug!("Sent command via Kitty remote control");
     } else {
-        // Method 2: Try to find kitty socket directly
-        let sockets = std::fs::read_dir("/tmp")?
-            .filter_map(Result::ok)
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .map(|s| s.starts_with("kitty-") && s.ends_with(".sock"))
-                    .unwrap_or(false)
-            })
-            .collect::<Vec<_>>();
+        // Method 2: Try to find kitty socket directly with timeout
+        let socket_search = tokio::time::timeout(
+            Duration::from_secs(5),
+            async {
+                std::fs::read_dir("/tmp")?
+                    .filter_map(Result::ok)
+                    .filter(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|s| s.starts_with("kitty-") && s.ends_with(".sock"))
+                            .unwrap_or(false)
+                    })
+                    .collect::<Vec<_>>()
+            }
+        ).await;
 
-        if !sockets.is_empty() {
-            debug!("Found {} Kitty sockets", sockets.len());
-        } else {
-            warn!("No Kitty sockets found");
+        match socket_search {
+            Ok(Ok(sockets)) if !sockets.is_empty() => {
+                debug!("Found {} Kitty sockets", sockets.len());
+            },
+            Ok(Ok(_)) => warn!("No Kitty sockets found"),
+            Ok(Err(e)) => warn!("Error reading /tmp directory: {}", e),
+            Err(_) => warn!("Timeout while searching for Kitty sockets"),
         }
     }
 
@@ -238,10 +246,20 @@ async fn test_kitty_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn std::
 async fn test_hyprland_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn std::error::Error>> {
     let initial = count_recent_events(pool, sources::HYPRLAND).await?;
 
+    // Get current workspace before switching
+    let current_workspace = Command::new("hyprctl")
+        .args(&["activeworkspace", "-j"])
+        .output()
+        .await
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|v| v["id"].as_i64())
+        .unwrap_or(1);
+
     // Try hyprctl commands
     let commands = vec![
         vec!["dispatch", "workspace", "2"],
-        vec!["dispatch", "workspace", "1"],
         vec!["clients"],  // List windows
         vec!["monitors"], // List monitors
     ];
@@ -259,6 +277,18 @@ async fn test_hyprland_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn st
         }
         
         sleep(Duration::from_millis(200)).await;
+    }
+
+    // Switch back to original workspace and wait for completion
+    let switch_back = Command::new("hyprctl")
+        .args(&["dispatch", "workspace", &current_workspace.to_string()])
+        .output()
+        .await;
+    
+    if switch_back.is_ok() {
+        // Wait for workspace switch to complete
+        sleep(Duration::from_millis(500)).await;
+        debug!("Switched back to workspace {}", current_workspace);
     }
 
     // Wait for periodic snapshot
