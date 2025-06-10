@@ -26,7 +26,7 @@ mkdir -p test-data
 
 # Run in dry-run mode
 echo "Starting unified collector..."
-timeout 10s cargo run --bin unified-collector -- --dry-run --config test-unified.toml || true
+timeout 10s cargo run --package unified-collector -- --dry-run --config test-unified.toml || true
 
 # Create some test files to trigger events
 echo "Creating test files..."
@@ -37,7 +37,7 @@ echo "modified" >> test-data/test1.txt
 
 # Run again to see events
 echo "Running collector to capture events..."
-timeout 5s cargo run --bin unified-collector -- --dry-run --config test-unified.toml || true
+timeout 5s cargo run --package unified-collector -- --dry-run --config test-unified.toml || true
 
 # Cleanup
 rm -rf test-data test-unified.toml
