@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fs;
 use tempfile::{TempDir, NamedTempFile};
 use std::io::Write;
-use sinex_unified_collector::{UnifiedConfig, CollectionConfig, DatabaseConfig, LoggingConfig};
+use unified_collector::{TestUnifiedConfig as UnifiedConfig, CollectionConfig, DatabaseConfig, LoggingConfig};
 use sinex_shared::ingestor_framework::IngestorConfig;
 
 /// Test configuration loading from various sources

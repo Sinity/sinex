@@ -1,4 +1,12 @@
-# Sinnix Exocortex: System Technical Architecture Document (STAD) v1.1
+# Sinex Exocortex: System Technical Architecture Document (STAD) v1.1
+
+> **📊 CURRENT IMPLEMENTATION MATURITY**: 
+> - 🏗️ **Foundation Phase** (~20% of vision complete)
+> - ✅ **Event substrate operational** - PostgreSQL + TimescaleDB + ULID
+> - ✅ **Basic ingestion working** - File/terminal/window events  
+> - ✅ **Worker framework functional** - Promotion queue + agents
+> - ⚠️ **Limited validation** - Schema registry exists, enforcement weak
+> - ❌ **Missing major components** - PKM, AI/LLM integration, semantic search, user interfaces
 
 **(A High-Level Architectural Map linking to detailed Architectural Modules, TIMs, and ADRs)**
 

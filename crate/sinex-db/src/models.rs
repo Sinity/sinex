@@ -4,6 +4,9 @@ use sinex_ulid::Ulid;
 use sqlx::FromRow;
 
 /// Raw event from the events table
+/// 
+/// NOTE: This struct uses ULID directly. When using with SQLX queries,
+/// use type overrides like: `id::uuid as "id: _"` for proper type inference
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RawEvent {
     pub id: Ulid,
@@ -18,7 +21,10 @@ pub struct RawEvent {
 }
 
 impl RawEvent {
-    // These conversion methods are no longer needed since we're using Ulid directly
+    /// Extract ingestion timestamp from ULID (convenience method)
+    pub fn ts_ingest_from_ulid(&self) -> DateTime<Utc> {
+        self.id.timestamp()
+    }
 }
 
 /// Event payload schema

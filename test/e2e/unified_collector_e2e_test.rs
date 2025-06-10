@@ -5,7 +5,7 @@ use sinex_shared::ingestor_framework::{Ingestor, IngestorConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
-use sinex_unified_collector::{UnifiedIngestor, UnifiedConfig, CollectionConfig, DatabaseConfig, LoggingConfig};
+use unified_collector::{UnifiedIngestor, TestUnifiedConfig as UnifiedConfig, CollectionConfig, DatabaseConfig, LoggingConfig};
 
 // Import test database utilities
 use crate::test_setup::get_test_db;

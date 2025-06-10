@@ -3,6 +3,10 @@ name = "unified-collector"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "unified_collector"
+path = "src/lib.rs"
+
 [[bin]]
 name = "unified-collector"
 path = "src/main.rs"

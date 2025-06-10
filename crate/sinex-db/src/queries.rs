@@ -1,10 +1,10 @@
 use crate::models::{AgentManifest, PromotionQueueItem, RawEvent};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use sinex_ulid::Ulid;
 use sqlx::PgPool;
-use uuid::Uuid;
 
-/// Insert a raw event
+/// Insert a raw event using SQLX query! with manual struct construction
 pub async fn insert_raw_event(
     pool: &PgPool,
     source: &str,
@@ -13,24 +13,22 @@ pub async fn insert_raw_event(
     payload: serde_json::Value,
     ts_orig: Option<DateTime<Utc>>,
     ingestor_version: Option<&str>,
-    payload_schema_id: Option<Uuid>,
+    payload_schema_id: Option<Ulid>,
 ) -> Result<RawEvent> {
-    // Since we can't use query_as! with ULID conversions directly,
-    // we'll use query! and construct the struct manually
     let record = sqlx::query!(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7::uuid::ulid)
         RETURNING 
-            id::uuid as "id!", 
-            source as "source!", 
-            event_type as "event_type!", 
-            ts_ingest as "ts_ingest!",
+            id::uuid as id, 
+            source, 
+            event_type, 
+            ts_ingest,
             ts_orig,
-            host as "host!", 
+            host, 
             ingestor_version, 
-            payload_schema_id::uuid as "payload_schema_id", 
-            payload as "payload!"
+            payload_schema_id::uuid as payload_schema_id, 
+            payload
         "#,
         source,
         event_type,
@@ -38,20 +36,20 @@ pub async fn insert_raw_event(
         payload,
         ts_orig,
         ingestor_version,
-        payload_schema_id
+        payload_schema_id.map(|id| id.to_uuid())
     )
     .fetch_one(pool)
     .await?;
 
     Ok(RawEvent {
-        id: record.id.into(),
+        id: Ulid::from_uuid(record.id.expect("id should never be null")),
         source: record.source,
         event_type: record.event_type,
-        ts_ingest: record.ts_ingest,
+        ts_ingest: record.ts_ingest.expect("ts_ingest should never be null"),
         ts_orig: record.ts_orig,
         host: record.host,
         ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(Into::into),
+        payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
         payload: record.payload,
     })
 }
@@ -181,10 +179,10 @@ pub async fn claim_promotion_queue_items(
 }
 
 /// Mark a promotion queue item as successfully processed
-pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Uuid) -> Result<()> {
+pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
         "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
-        queue_id
+        queue_id.to_uuid()
     )
     .execute(pool)
     .await?;
@@ -195,7 +193,7 @@ pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Uuid) -> Res
 /// Mark a promotion queue item as failed and schedule retry
 pub async fn fail_promotion_queue_item(
     pool: &PgPool,
-    queue_id: Uuid,
+    queue_id: Ulid,
     error_message: &str,
     next_retry_ts: DateTime<Utc>,
 ) -> Result<()> {
@@ -210,7 +208,7 @@ pub async fn fail_promotion_queue_item(
             processing_worker_id = NULL
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id,
+        queue_id.to_uuid(),
         error_message,
         next_retry_ts
     )

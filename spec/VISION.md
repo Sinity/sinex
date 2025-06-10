@@ -1,5 +1,7 @@
 
-# Sinnix Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty (v3.0)
+# Sinex Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty (v3.0)
+
+> **⚠️ IMPLEMENTATION STATUS**: This document describes the **vision and aspirational goals** of the Sinex project. Current implementation provides ~15-20% of the described capabilities, focusing on basic event capture and database infrastructure. See individual sections for specific status markers.
 
 ## Foreword: The Imperative of Cognitive Sovereignty
 

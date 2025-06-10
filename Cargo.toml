@@ -44,6 +44,7 @@ sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-shared = { path = "ingestor/shared" }
+unified-collector = { path = "ingestor/unified-collector" }
 
 [dev-dependencies]
 proptest.workspace = true
