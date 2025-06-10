@@ -5,11 +5,13 @@ members = [
     "crate/sinex-db", 
     "crate/sinex-worker",
     "crate/sinex-promo-worker",
+    "crate/sinex-events",
     "ingestor/shared",
     "ingestor/hyprland",
     "ingestor/kitty",
     "ingestor/filesystem",
     "ingestor/unified",
+    "ingestor/unified-collector",
 ]
 resolver = "2"
 

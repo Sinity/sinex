@@ -96,6 +96,9 @@ hyprland *ARGS:
 worker *ARGS:
     nix run .#sinexPromoWorker -- {{ARGS}}
 
+unified *ARGS:
+    nix run .#unifiedCollector -- {{ARGS}}
+
 # Run all ingestors in background
 ingestors-start *ARGS:
     #!/usr/bin/env bash

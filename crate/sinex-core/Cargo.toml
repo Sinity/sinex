@@ -23,3 +23,11 @@ gethostname = { workspace = true }
 
 # For UUID
 uuid = { workspace = true }
+
+# For unified collector
+async-trait = { workspace = true }
+tokio = { workspace = true }
+schemars = "0.8"
+
+# For RawEvent type in unified collector
+sinex-db = { path = "../sinex-db" }

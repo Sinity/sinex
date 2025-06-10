@@ -1,0 +1,17 @@
+[package]
+name = "sinex-events"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sinex-core = { path = "../sinex-core" }
+sinex-db = { path = "../sinex-db" }
+schemars = { version = "0.8", features = ["chrono"] }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+anyhow = "1.0"
+notify = "6.1"
+uuid = { version = "1.6", features = ["v4", "serde"] }

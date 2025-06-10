@@ -60,6 +60,7 @@
             filesystemIngestor = buildRustPackage "filesystem-ingestor";
             kittyIngestor = buildRustPackage "kitty-ingestor";
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
+            unifiedCollector = buildRustPackage "unified-collector";
             default = buildRustPackage "sinex-promo-worker";
           };
 
