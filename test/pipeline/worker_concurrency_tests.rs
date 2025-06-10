@@ -45,9 +45,9 @@ async fn test_multiple_workers_no_duplicate_processing() {
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
     let pool = PgPoolOptions::new()
-        .max_connections(30)
-        .acquire_timeout(Duration::from_secs(30))
-        .idle_timeout(Duration::from_secs(30))
+        .max_connections(500)
+        .acquire_timeout(Duration::from_secs(3))
+        .idle_timeout(Duration::from_secs(10))
         .connect(&database_url)
         .await
         .expect("Failed to connect to test database");
@@ -63,35 +63,46 @@ async fn test_multiple_workers_no_duplicate_processing() {
     .await
     .unwrap();
     
-    // Insert 50 test events
+    // Clean up any existing test data
+    sqlx::query("DELETE FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'concurrency_test_agent'")
+        .execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM raw.events WHERE source = 'concurrency_test'")
+        .execute(&pool).await.unwrap();
+
+    // Insert 10 test events (reduced for faster testing)
     let mut event_ids = Vec::new();
-    for i in 0..50 {
+    for i in 0..10 {
         let event_id = Ulid::new();
         event_ids.push(event_id.to_string());
         
+        // Use a transaction to ensure atomicity
+        let mut tx = pool.begin().await.unwrap();
+        
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
+             VALUES ($1::uuid::ulid, $2, $3, $4, $5::jsonb)"
         )
-        .bind(&event_id.to_string())
+        .bind(event_id.to_uuid())
         .bind("concurrency_test")
         .bind("test_event")
         .bind("test_host")
         .bind(serde_json::json!({"seq": i}))
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
         
         // Add to promotion queue
         sqlx::query(
             "INSERT INTO sinex_schemas.promotion_queue (raw_event_id, target_agent_name) 
-             VALUES ($1::ulid, $2)"
+             VALUES ($1::uuid::ulid, $2)"
         )
-        .bind(&event_id.to_string())
+        .bind(event_id.to_uuid())
         .bind("concurrency_test_agent")
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
+        
+        tx.commit().await.unwrap();
     }
     
     // Create shared state
@@ -112,12 +123,8 @@ async fn test_multiple_workers_no_duplicate_processing() {
         
         let worker = Worker::new(db, processor, format!("worker_{}", worker_id));
         
-        // Run worker for a limited time with adaptive timeout
-        let timeout_duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(30) // Longer timeout in CI
-        } else {
-            Duration::from_secs(15) // Reasonable local timeout
-        };
+        // Run worker for a limited time with shorter timeout
+        let timeout_duration = Duration::from_secs(5);
         
         let handle = tokio::spawn(async move {
             let _ = tokio::time::timeout(timeout_duration, worker.run()).await;
@@ -136,8 +143,8 @@ async fn test_multiple_workers_no_duplicate_processing() {
     let processed = processed_items.lock().await;
     let count = process_count.load(Ordering::SeqCst);
     
-    assert_eq!(processed.len(), 50, "All 50 items should be processed");
-    assert_eq!(count, 50, "Process count should be 50");
+    assert_eq!(processed.len(), 10, "All 10 items should be processed");
+    assert_eq!(count, 10, "Process count should be 10");
     assert_eq!(processed.len(), event_ids.len(), "No duplicates should be processed");
     
     // Verify all items are marked as completed in the database

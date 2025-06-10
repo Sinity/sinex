@@ -256,7 +256,7 @@ heartbeat_interval_secs = 60
             
             // Try to use kitty @ command with timeout
             let output = tokio::time::timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(2),
                 TokioCommand::new("kitty")
                     .args(&["@", "ls"])
                     .output()

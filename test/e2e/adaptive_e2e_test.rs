@@ -209,9 +209,9 @@ async fn test_kitty_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn std::
     } else {
         // Method 2: Try to find kitty socket directly with timeout
         let socket_search = tokio::time::timeout(
-            Duration::from_secs(5),
-            async {
-                std::fs::read_dir("/tmp")?
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking(|| -> Result<usize, std::io::Error> {
+                let count = std::fs::read_dir("/tmp")?
                     .filter_map(Result::ok)
                     .filter(|e| {
                         e.file_name()
@@ -219,16 +219,18 @@ async fn test_kitty_adaptive(pool: &sqlx::PgPool) -> Result<usize, Box<dyn std::
                             .map(|s| s.starts_with("kitty-") && s.ends_with(".sock"))
                             .unwrap_or(false)
                     })
-                    .collect::<Vec<_>>()
-            }
+                    .count();
+                Ok(count)
+            })
         ).await;
 
         match socket_search {
-            Ok(Ok(sockets)) if !sockets.is_empty() => {
-                debug!("Found {} Kitty sockets", sockets.len());
+            Ok(Ok(Ok(count))) if count > 0 => {
+                debug!("Found {} Kitty sockets", count);
             },
-            Ok(Ok(_)) => warn!("No Kitty sockets found"),
-            Ok(Err(e)) => warn!("Error reading /tmp directory: {}", e),
+            Ok(Ok(Ok(_))) => warn!("No Kitty sockets found"),
+            Ok(Ok(Err(e))) => warn!("Error reading /tmp directory: {}", e),
+            Ok(Err(_)) => warn!("Task panic while searching for Kitty sockets"),
             Err(_) => warn!("Timeout while searching for Kitty sockets"),
         }
     }
