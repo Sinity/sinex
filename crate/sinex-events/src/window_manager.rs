@@ -124,7 +124,7 @@ impl EventType for MonitorFocused {
 pub struct StateSnapshot;
 impl EventType for StateSnapshot {
     type Payload = StateSnapshotPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandStateSnapshotter;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::STATE_SNAPSHOT;
 }
 
@@ -183,15 +183,42 @@ struct FocusHistoryEntry {
     window_data: Option<Value>,
 }
 
-pub struct HyprlandListener {
+// ============================================================================
+// Event Sources
+// ============================================================================
+
+/// Real-time IPC monitor for Hyprland socket2 events
+pub struct HyprlandIPCMonitor {
     config: HyprlandConfig,
     socket_path: PathBuf,
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
     focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
 }
 
+/// Config for state snapshotter
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotterConfig {
+    pub interval_secs: u64,
+}
+
+impl Default for SnapshotterConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300, // 5 minutes
+        }
+    }
+}
+
+/// Periodic state snapshotter using hyprctl
+pub struct HyprlandStateSnapshotter {
+    interval_secs: u64,
+}
+
+// Legacy alias for compatibility
+pub type HyprlandListener = HyprlandIPCMonitor;
+
 #[async_trait]
-impl EventSource for HyprlandListener {
+impl EventSource for HyprlandIPCMonitor {
     type Config = HyprlandConfig;
     
     const SOURCE_NAME: &'static str = sources::WINDOW_MANAGER_HYPRLAND;
@@ -229,12 +256,8 @@ impl EventSource for HyprlandListener {
             socket_path = ?self.socket_path,
             window_augmentation = ?self.config.window_augmentation,
             workspace_tracking = ?self.config.workspace_tracking,
-            state_snapshot_interval_secs = self.config.state_snapshot_interval_secs,
-            "Starting Hyprland event source with socket2 capture"
+            "Starting Hyprland IPC monitor with socket2 capture"
         );
-
-        // Spawn state snapshot task
-        let snapshot_handle = self.spawn_snapshot_task(tx.clone());
 
         // Spawn cache cleanup task
         let cache_cleanup_handle = self.spawn_cache_cleanup_task();
@@ -242,15 +265,14 @@ impl EventSource for HyprlandListener {
         // Start socket listener
         let socket_result = self.listen_socket_events(tx).await;
 
-        // Cancel background tasks
-        snapshot_handle.abort();
+        // Cancel background task
         cache_cleanup_handle.abort();
 
         socket_result
     }
 }
 
-impl HyprlandListener {
+impl HyprlandIPCMonitor {
     /// Listen to socket2 events
     async fn listen_socket_events(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
         loop {
@@ -515,52 +537,90 @@ impl HyprlandListener {
         }
     }
 
-    /// Spawn state snapshot task
-    fn spawn_snapshot_task(&self, event_tx: mpsc::Sender<RawEvent>) -> tokio::task::JoinHandle<()> {
-        let interval_secs = self.config.state_snapshot_interval_secs;
-        let config = self.config.clone();
+
+    /// Spawn cache cleanup task
+    fn spawn_cache_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
+        let cache = Arc::clone(&self.hyprctl_cache);
         
         tokio::spawn(async move {
-            if interval_secs == 0 {
-                // Disabled
-                return;
-            }
-
-            let mut interval = time::interval(Duration::from_secs(interval_secs));
+            let mut interval = time::interval(Duration::from_secs(60));
             
             loop {
                 interval.tick().await;
                 
-                // Create state snapshot event
-                let snapshot = match Self::create_state_snapshot(&config).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!("Failed to create state snapshot: {}", e);
-                        continue;
-                    }
-                };
-
-                let event = RawEvent {
-                    id: sinex_ulid::Ulid::new(),
-                    source: sources::WINDOW_MANAGER_HYPRLAND.to_string(),
-                    event_type: event_type_constants::window_manager::STATE_SNAPSHOT.to_string(),
-                    ts_ingest: Utc::now(),
-                    ts_orig: Some(Utc::now()),
-                    host: gethostname::gethostname().to_string_lossy().to_string(),
-                    ingestor_version: Some("0.1.0".to_string()),
-                    payload_schema_id: None,
-                    payload: snapshot,
-                };
-
-                if event_tx.send(event).await.is_err() {
-                    break;
-                }
+                let mut cache_guard = cache.lock().unwrap();
+                cache_guard.retain(|_, entry| {
+                    entry.timestamp.elapsed() < Duration::from_secs(30)
+                });
             }
         })
     }
+}
 
+#[async_trait]
+impl EventSource for HyprlandStateSnapshotter {
+    type Config = SnapshotterConfig;
+    
+    const SOURCE_NAME: &'static str = "window_manager.hyprland_snapshotter";
+    
+    async fn initialize(config: Self::Config) -> Result<Self> {
+        info!(
+            interval_secs = config.interval_secs,
+            "Initializing Hyprland state snapshotter"
+        );
+        Ok(Self {
+            interval_secs: config.interval_secs,
+        })
+    }
+    
+    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        if self.interval_secs == 0 {
+            info!("State snapshots disabled (interval_secs = 0)");
+            // Keep running but don't send events
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        
+        info!(
+            interval_secs = self.interval_secs,
+            "Starting Hyprland state snapshotter"
+        );
+        
+        let mut interval = time::interval(Duration::from_secs(self.interval_secs));
+        
+        loop {
+            interval.tick().await;
+            
+            // Create state snapshot
+            let snapshot = match Self::create_state_snapshot().await {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("Failed to create state snapshot: {}", e);
+                    continue;
+                }
+            };
+
+            let event = RawEvent {
+                id: sinex_ulid::Ulid::new(),
+                source: Self::SOURCE_NAME.to_string(),
+                event_type: event_type_constants::window_manager::STATE_SNAPSHOT.to_string(),
+                ts_ingest: Utc::now(),
+                ts_orig: Some(Utc::now()),
+                host: gethostname::gethostname().to_string_lossy().to_string(),
+                ingestor_version: Some("0.1.0".to_string()),
+                payload_schema_id: None,
+                payload: snapshot,
+            };
+
+            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+        }
+    }
+}
+
+impl HyprlandStateSnapshotter {
     /// Create a state snapshot
-    async fn create_state_snapshot(_config: &HyprlandConfig) -> Result<Value> {
+    async fn create_state_snapshot() -> Result<Value> {
         // Execute hyprctl commands to get full state
         let mut snapshot = json!({
             "timestamp": Utc::now(),
@@ -595,23 +655,5 @@ impl HyprlandListener {
         }
 
         Ok(snapshot)
-    }
-
-    /// Spawn cache cleanup task
-    fn spawn_cache_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
-        let cache = Arc::clone(&self.hyprctl_cache);
-        
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(60));
-            
-            loop {
-                interval.tick().await;
-                
-                let mut cache_guard = cache.lock().unwrap();
-                cache_guard.retain(|_, entry| {
-                    entry.timestamp.elapsed() < Duration::from_secs(30)
-                });
-            }
-        })
     }
 }

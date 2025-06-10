@@ -88,11 +88,15 @@ impl Default for FilesystemConfig {
     }
 }
 
-pub struct FilesystemWatcher {
+/// File system monitor using the notify crate (inotify on Linux)
+pub struct FilesystemMonitor {
     config: FilesystemConfig,
 }
 
-impl FilesystemWatcher {
+// Legacy alias for compatibility
+pub type FilesystemWatcher = FilesystemMonitor;
+
+impl FilesystemMonitor {
     fn process_notify_event(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
@@ -175,7 +179,7 @@ impl FilesystemWatcher {
 }
 
 #[async_trait]
-impl EventSource for FilesystemWatcher {
+impl EventSource for FilesystemMonitor {
     type Config = FilesystemConfig;
     
     const SOURCE_NAME: &'static str = sources::FILESYSTEM;
