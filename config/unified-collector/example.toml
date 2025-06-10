@@ -1,0 +1,109 @@
+# Unified Collector Configuration Example
+# This demonstrates the event-centric configuration approach
+
+# List of enabled events - this is all you need to get started!
+enabled_events = [
+    # File events
+    "file.created",
+    "file.modified",
+    "file.deleted",
+    
+    # Terminal events
+    "command.executed",
+    
+    # Window manager events
+    "window.focused",
+    "window.opened", 
+    "window.closed",
+    "workspace.changed",
+    
+    # Periodic state dumps
+    "state.snapshot"
+]
+
+# Event-specific configuration (optional)
+# Uses hierarchical merging: event.category + event.specific_event
+
+# Configuration for all file.* events
+[event.files]
+watch_patterns = ["~/Documents/**/*", "~/Code/**/*", "/etc/**/*"]
+ignore_patterns = [
+    "**/target/**",
+    "**/.git/**", 
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/.*"  # Hidden files
+]
+debounce_ms = 100
+max_depth = 10
+
+# Specific config for file.created (merges with event.files)
+[event.file_created]
+# Only watch for specific file types being created
+watch_patterns = ["**/*.rs", "**/*.py", "**/*.js", "**/*.toml", "**/*.md"]
+debounce_ms = 50  # Faster debounce for file creation
+
+# Configuration for command execution tracking
+[event.command_executed]
+socket_path = "/tmp/kitty_socket"  # Or use $KITTY_LISTEN_ON
+capture_env_vars = ["PATH", "PWD", "USER", "HOME", "SHELL"]
+max_command_length = 4096
+# Filter out certain commands from being recorded
+ignore_commands = ["ls", "cd", "pwd", "clear"]
+
+# Window manager configuration
+[event.windows]
+monitored_events = [
+    "activewindow",
+    "activewindowv2", 
+    "openwindow",
+    "closewindow",
+    "workspace",
+    "workspacev2",
+    "focusedmon"
+]
+
+# State snapshot configuration  
+[event.state_snapshot]
+# Interval in seconds (300 = 5 minutes, 0 = disabled)
+interval_secs = 300
+# What to include in snapshots
+include_monitors = true
+include_workspaces = true
+include_clients = true
+include_layouts = false  # Hyprland layouts can be large
+
+# Individual window events can have their own config too
+[event.window_focused]
+# Augment with additional window data from hyprctl
+augment_with_details = true
+# Track focus history
+track_history = true
+history_size = 100
+
+# Workspace tracking
+[event.workspace_changed]
+# Include list of windows in workspace
+include_window_list = true
+# Track empty workspaces
+track_empty = false
+
+# Output configuration (not event-specific)
+[output]
+# Where to send events
+database = true
+logging = false  # Set to true for debugging
+debug_file = "/tmp/unified-collector-debug.json"  # Optional
+
+# Database configuration (if output.database = true)
+[database]
+# Uses DATABASE_URL environment variable by default
+# url = "postgresql:///sinex_dev?host=/run/postgresql"
+max_connections = 10
+connection_timeout_secs = 10
+
+# Logging configuration
+[logging]
+level = "info"  # debug, info, warn, error
+format = "pretty"  # pretty, json
