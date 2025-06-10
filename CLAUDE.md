@@ -54,14 +54,12 @@ sinex/
 │   ├── sinex-db/             # Database models and pooling
 │   ├── sinex-ulid/           # ULID ↔ UUID conversion
 │   ├── sinex-worker/         # Worker implementations
-│   └── sinex-promo-worker/   # Promotion queue worker
+│   ├── sinex-promo-worker/   # Promotion queue worker
+│   └── sinex-events/         # Event type definitions
 ├── ingestor/
 │   ├── shared/               # Shared utilities (gradually migrating to crate)
-│   ├── filesystem/           # Watch file system changes
-│   ├── kitty/               # Capture terminal commands
-│   ├── hyprland/            # Window manager events
-│   └── unified/             # Example multi-source collector
-├── config/                   # Example configurations for each ingestor
+│   └── unified-collector/    # Unified multi-source collector
+├── config/                   # Example configurations
 ├── test/                    # Categorized test suites
 │   ├── database/            # Schema, migrations, ULID
 │   ├── pipeline/            # Event processing, workers
@@ -120,16 +118,14 @@ services.postgresql = {
 
 ### Running Ingestors
 ```bash
-# Individual ingestors (config logged at startup)
-just filesystem                 # Run filesystem ingestor
-just kitty                     # Run kitty ingestor  
-just hyprland                  # Run hyprland ingestor
+# Run the unified collector (config logged at startup)
+just unified                   # Run unified collector
 just worker                    # Run promotion worker
 
 # With options
-just filesystem --dry-run       # Test mode without database
-just kitty --output-file events.json
-just filesystem --config my-config.toml
+just unified --dry-run         # Test mode without database
+just unified --output-file events.json
+just unified --config my-config.toml
 
 # All at once
 just ingestors-start           # Start all in background
@@ -197,8 +193,7 @@ postgresql:///sinex_dev?host=/run/postgresql
 
 ### Event Types
 - `sources::FILESYSTEM`, `sources::TERMINAL_KITTY`, `sources::HYPRLAND`
-- `event_type_constants::filesystem::FILE_CREATED`
-- `event_type_constants::terminal::COMMAND_EXECUTED`
+- Event types defined in `crate/sinex-events/`
 
 ### Key Crates
 - `sinex-core` - Common types all crates use

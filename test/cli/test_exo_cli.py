@@ -214,7 +214,7 @@ class TestCLICommands:
         """Test agent list command."""
         mock_db.fetchall.return_value = [
             {
-                'agent_name': 'filesystem-ingestor',
+                'agent_name': 'unified-collector',
                 'description': 'Monitors filesystem changes',
                 'version': '0.3.0',
                 'status': 'stable',
@@ -228,7 +228,7 @@ class TestCLICommands:
         
         result = runner.invoke(exo.cli, ['agent', 'list'])
         assert result.exit_code == 0
-        assert 'filesystem-ingestor' in result.output
+        assert 'unified-collector' in result.output
         assert '0.3.0' in result.output
         assert 'stable' in result.output
     
@@ -420,22 +420,22 @@ class TestEventSummaryExtraction:
             'sinex',
             'agent.heartbeat',
             {
-                'agent_name': 'filesystem-ingestor',
+                'agent_name': 'unified-collector',
                 'status': 'running'
             }
         )
-        assert summary == 'filesystem-ingestor: running'
+        assert summary == 'unified-collector: running'
         
         # Error
         summary = exo.extract_event_summary(
             'sinex',
             'agent.error',
             {
-                'agent_name': 'kitty-ingestor',
+                'agent_name': 'unified-collector',
                 'severity': 'warning'
             }
         )
-        assert summary == 'kitty-ingestor [warning]'
+        assert summary == 'unified-collector [warning]'
     
     def test_fallback_summary(self):
         """Test fallback summary extraction."""

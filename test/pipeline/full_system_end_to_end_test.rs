@@ -56,12 +56,12 @@ impl TestHarness {
         
         // Build the binary first
         let check = std::process::Command::new("cargo")
-            .args(&["build", "-p", "filesystem-ingestor"])
+            .args(&["build", "-p", "unified-collector"])
             .output()?;
         
         if !check.status.success() {
-            error!("Failed to build filesystem-ingestor: {:?}", String::from_utf8_lossy(&check.stderr));
-            return Err(anyhow::anyhow!("Could not build filesystem-ingestor"));
+            error!("Failed to build unified-collector: {:?}", String::from_utf8_lossy(&check.stderr));
+            return Err(anyhow::anyhow!("Could not build unified-collector"));
         }
         
         // Create a temporary config file
@@ -86,7 +86,7 @@ heartbeat_interval_secs = 60
         std::fs::write(&config_path, config_content)?;
 
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "-p", "filesystem-ingestor", "--", "--config", &config_path.to_string_lossy()])
+        cmd.args(&["run", "-p", "unified-collector", "--", "--config", &config_path.to_string_lossy()])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
@@ -126,7 +126,7 @@ heartbeat_interval_secs = 60
         info!("Starting hyprland ingestor");
         
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "-p", "hyprland-ingestor"])
+        cmd.args(&["run", "-p", "unified-collector"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())
@@ -158,7 +158,7 @@ heartbeat_interval_secs = 60
         info!("Starting kitty ingestor");
         
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "-p", "kitty-ingestor"])
+        cmd.args(&["run", "-p", "unified-collector"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL")?)
             .env("RUST_LOG", "info,sinex=debug")
             .stdout(Stdio::piped())

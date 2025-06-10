@@ -325,7 +325,7 @@ impl AdaptiveIngestorHarness {
             .args(&[
                 "run", 
                 "--package", 
-                "filesystem-ingestor",
+                "unified-collector",
                 "--",
                 "--config",
                 config_path.to_str().unwrap(),
@@ -351,7 +351,7 @@ impl AdaptiveIngestorHarness {
 
     async fn start_kitty(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match Command::new("cargo")
-            .args(&["run", "--package", "kitty-ingestor"])
+            .args(&["run", "--package", "unified-collector"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql:///sinex_test".to_string()))
             .spawn()
         {
@@ -373,7 +373,7 @@ impl AdaptiveIngestorHarness {
 
     async fn start_hyprland(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match Command::new("cargo")
-            .args(&["run", "--package", "hyprland-ingestor"])
+            .args(&["run", "--package", "unified-collector"])
             .env("DATABASE_URL", std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql:///sinex_test".to_string()))
             .spawn()
         {

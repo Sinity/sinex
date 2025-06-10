@@ -393,7 +393,7 @@ impl IngestorHarness {
 
     async fn start_filesystem(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "filesystem-ingestor", "--", "--config", config_path.to_str().unwrap()])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap()])
             .spawn()?;
         
         self.processes.push(IngestorProcess {
@@ -407,7 +407,7 @@ impl IngestorHarness {
 
     async fn start_filesystem_dry_run(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "filesystem-ingestor", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
             .spawn()?;
         
         self.processes.push(IngestorProcess {
@@ -421,7 +421,7 @@ impl IngestorHarness {
 
     async fn start_kitty(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "kitty-ingestor", "--", "--config", config_path.to_str().unwrap()])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap()])
             .spawn()?;
         
         self.processes.push(IngestorProcess {
@@ -435,7 +435,7 @@ impl IngestorHarness {
 
     async fn start_kitty_dry_run(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "kitty-ingestor", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
             .spawn()?;
         
         self.processes.push(IngestorProcess {
@@ -449,7 +449,7 @@ impl IngestorHarness {
 
     async fn start_hyprland(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "hyprland-ingestor", "--", "--config", config_path.to_str().unwrap()])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap()])
             .spawn()?;
         
         self.processes.push(IngestorProcess {
@@ -463,7 +463,7 @@ impl IngestorHarness {
 
     async fn start_hyprland_dry_run(&mut self, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let child = Command::new("cargo")
-            .args(&["run", "--package", "hyprland-ingestor", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
+            .args(&["run", "--package", "unified-collector", "--", "--config", config_path.to_str().unwrap(), "--dry-run"])
             .spawn()?;
         
         self.processes.push(IngestorProcess {

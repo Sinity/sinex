@@ -1,58 +1,73 @@
 # Sinex Ingestors
 
-This directory contains the event ingestors for the Sinex system.
+This directory contains the unified event collector for the Sinex system.
 
 ## Structure
 
 ```
 ingestor/
-├── shared/           # Shared libraries and utilities for all ingestors
-│   ├── src/         # Source code
-│   └── tests/       # Unit tests for shared components
-├── filesystem/       # Filesystem change monitoring ingestor
-│   ├── src/         # Source code
-│   └── tests/       # Filesystem ingestor tests
-├── kitty/           # Kitty terminal emulator ingestor
-│   └── src/         # Source code
-├── hyprland/        # Hyprland window manager ingestor
-│   └── src/         # Source code
-└── unified/         # Example unified collector using SimpleIngestor
+├── shared/               # Shared libraries and utilities
+│   ├── src/             # Source code
+│   └── tests/           # Unit tests for shared components
+└── unified-collector/    # Unified collector for all event sources
+    ├── src/             # Source code
+    │   ├── main.rs      # Entry point
+    │   ├── lib.rs       # Library exports
+    │   ├── collector.rs # UnifiedCollector implementation
+    │   └── config.rs    # Configuration
+    └── tests/           # Integration tests
 
 ```
 
-## Ingestor Architecture
+## Architecture
 
-All ingestors follow the SimpleIngestor pattern:
-1. Implement the `SimpleIngestor` trait (focus only on event capture)
-2. Use `IngestorRuntime` for lifecycle management (heartbeats, retries, DLQ)
-3. Send events through `EventSink` abstraction
+The unified collector uses an event-centric architecture:
+1. **Events are primary** - Event types declare which sources produce them
+2. **Sources are secondary** - EventSource implementations are just streaming details
+3. **Single binary** - One collector manages all enabled event sources
+4. **SimpleIngestor pattern** - Uses `IngestorRuntime` for lifecycle management
 
-## Module Organization
+## Event Sources
 
-Each ingestor has been organized to reduce file atomization:
-- `watcher.rs` - Main implementation with SimpleIngestor trait
-- `config.rs` - Configuration structures  
-- `cli.rs` - Command-line interface
-- `main.rs` - Entry point using IngestorRuntime
-- `lib.rs` - Public API exports
+Event sources are defined in `crate/sinex-events/`:
+- `FilesystemMonitor` - Monitors file system changes
+- `KittySocketListener` - Captures terminal commands from Kitty
+- `HyprlandIPCMonitor` - Real-time window manager events
+- `HyprlandStateSnapshotter` - Periodic state snapshots
+
+## Configuration
+
+The unified collector uses event-centric configuration:
+```toml
+enabled_events = [
+    "file.created",
+    "file.modified", 
+    "command.executed",
+    "window.focused",
+    "state.snapshot"
+]
+
+[event.files]
+watch_patterns = ["~/Documents/**/*"]
+ignore_patterns = ["*.tmp"]
+
+[event.state_snapshot]
+interval_secs = 300
+```
 
 ## Testing
-
-Tests are organized as follows:
-- Unit tests: In `#[cfg(test)]` modules within source files
-- Integration tests: In `tests/` directories within each ingestor
-- System tests: In `/tests` at project root
 
 Run tests with:
 ```bash
 # All tests
 cargo test --workspace
 
-# Specific ingestor tests
-cargo test --package filesystem-ingestor
-cargo test --package kitty-ingestor
-cargo test --package hyprland-ingestor
+# Unified collector tests
+cargo test --package unified-collector
 
-# Shared component tests
-cargo test --package sinex-shared
+# Event sources tests
+cargo test --package sinex-events
+
+# Integration tests
+cargo test --test integration ingestor::
 ```

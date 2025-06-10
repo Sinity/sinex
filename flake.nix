@@ -56,12 +56,9 @@
         in
         {
           packages = {
-            hyprlandIngestor = buildRustPackage "hyprland-ingestor";
-            filesystemIngestor = buildRustPackage "filesystem-ingestor";
-            kittyIngestor = buildRustPackage "kitty-ingestor";
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
             unifiedCollector = buildRustPackage "unified-collector";
-            default = buildRustPackage "sinex-promo-worker";
+            default = buildRustPackage "unified-collector";
           };
 
           devShells.default = pkgs.mkShell {

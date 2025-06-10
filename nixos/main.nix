@@ -7,9 +7,7 @@ let
   
   # Import the flake packages for this module
   # These should be provided by the system that imports this module
-  hyprlandIngestor = pkgs.sinex-hyprland-ingestor or (throw "sinex-hyprland-ingestor package not found");
-  filesystemIngestor = pkgs.sinex-filesystem-ingestor or (throw "sinex-filesystem-ingestor package not found"); 
-  kittyIngestor = pkgs.sinex-kitty-ingestor or (throw "sinex-kitty-ingestor package not found");
+  unifiedCollector = pkgs.sinex-unified-collector or (throw "sinex-unified-collector package not found");
   promoWorker = pkgs.sinex-promo-worker or (throw "sinex-promo-worker package not found");
   
   
@@ -91,19 +89,21 @@ in {
       };
     };
     
-    ingestors = {
-      hyprland = {
-        enable = mkEnableOption "Hyprland window activity ingestor";
-        
-        interval = mkOption {
-          type = types.int;
-          default = 5;
-          description = "Polling interval in seconds";
-        };
+    unifiedCollector = {
+      enable = mkEnableOption "Unified collector for filesystem, terminal, and window manager events";
+      
+      configFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to unified collector configuration file";
       };
       
       filesystem = {
-        enable = mkEnableOption "Filesystem activity ingestor";
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable filesystem monitoring";
+        };
         
         watchDirectories = mkOption {
           type = types.listOf types.str;
@@ -116,33 +116,21 @@ in {
           default = [ "*.tmp" "*.log" "*.cache" ".git/**" "node_modules/**" "__pycache__/**" ];
           description = "Glob patterns to exclude from monitoring";
         };
-        
-        debounceMs = mkOption {
-          type = types.int;
-          default = 500;
-          description = "Debounce delay in milliseconds";
+      };
+      
+      terminal = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable terminal activity monitoring";
         };
       };
       
-      kitty = {
-        enable = mkEnableOption "Kitty terminal activity ingestor";
-        
-        captureCommands = mkOption {
+      windowManager = {
+        enable = mkOption {
           type = types.bool;
           default = true;
-          description = "Capture command execution events";
-        };
-        
-        captureOutput = mkOption {
-          type = types.bool;
-          default = false;
-          description = "Capture command output (privacy consideration)";
-        };
-        
-        shellIntegration = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable shell integration for better command tracking";
+          description = "Enable window manager activity monitoring";
         };
       };
     };
@@ -165,17 +153,13 @@ in {
     systemd.tmpfiles.rules = [
       "d /var/lib/sinex 0755 ${cfg.systemUser} sinex -"
       "d /var/lib/sinex/dlq 0755 ${cfg.systemUser} sinex -"
-      "d /var/lib/sinex/dlq/filesystem-ingestor 0755 ${cfg.systemUser} sinex -"
-      "d /var/lib/sinex/dlq/hyprland-ingestor 0755 ${cfg.systemUser} sinex -"
-      "d /var/lib/sinex/dlq/kitty-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/lib/sinex/dlq/unified-collector 0755 ${cfg.systemUser} sinex -"
       "d /var/log/sinex 0755 ${cfg.systemUser} sinex -"
-      "d /var/log/sinex/filesystem-ingestor 0755 ${cfg.systemUser} sinex -"
-      "d /var/log/sinex/hyprland-ingestor 0755 ${cfg.systemUser} sinex -"
-      "d /var/log/sinex/kitty-ingestor 0755 ${cfg.systemUser} sinex -"
+      "d /var/log/sinex/unified-collector 0755 ${cfg.systemUser} sinex -"
     ];
     
     # System tuning for filesystem monitoring
-    boot.kernel.sysctl = mkIf cfg.ingestors.filesystem.enable {
+    boot.kernel.sysctl = mkIf (cfg.unifiedCollector.enable && cfg.unifiedCollector.filesystem.enable) {
       "fs.inotify.max_user_watches" = mkForce 1048576;
       "fs.inotify.max_user_instances" = mkForce 512;
     };
@@ -251,9 +235,9 @@ in {
       MaxRetentionSec=1month
     '';
     
-    # Hyprland ingestor service
-    systemd.services.sinex-hyprland = mkIf cfg.ingestors.hyprland.enable {
-      description = "Sinex Hyprland activity ingestor";
+    # Unified collector service
+    systemd.services.sinex-unified-collector = mkIf cfg.unifiedCollector.enable {
+      description = "Sinex Unified Collector";
       wantedBy = [ "multi-user.target" ];
       after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
       
@@ -265,133 +249,37 @@ in {
       serviceConfig = {
         Type = "simple";
         User = cfg.systemUser;
-        ExecStart = "${pkgs.writeShellScript "hyprland-ingestor-wrapper" ''
-          #!/usr/bin/env bash
-          # Wait for Hyprland to be available
-          while ! pgrep -f "Hyprland" > /dev/null; do
-            echo "Waiting for Hyprland to start..."
-            sleep 5
-          done
-          
-          # Find the actual user running Hyprland
-          HYPRLAND_USER=$(pgrep -f "Hyprland" -o | xargs ps -o user= -p | tr -d ' ')
-          HYPRLAND_UID=$(id -u "$HYPRLAND_USER" 2>/dev/null || echo "1000")
-          
-          # Get the user's runtime directory  
-          export XDG_RUNTIME_DIR="/run/user/$HYPRLAND_UID"
-          
-          # Find the Hyprland instance socket
-          export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "$XDG_RUNTIME_DIR"/hypr/ 2>/dev/null | grep -v '\.lock$' | head -n1)
-          
-          if [ -z "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
-            echo "Error: Could not find Hyprland instance"
-            exit 1
-          fi
-          
-          echo "Found Hyprland instance: $HYPRLAND_INSTANCE_SIGNATURE"
-          
-          # Start the actual ingestor
-          exec ${hyprlandIngestor}/bin/hyprland-ingestor
-        ''}";
-        Restart = "always";
-        RestartSec = 10;
-      };
-    };
-    
-    # Filesystem ingestor service
-    systemd.services.sinex-filesystem = mkIf cfg.ingestors.filesystem.enable {
-      description = "Sinex Filesystem activity ingestor";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
-      
-      environment = {
-        DATABASE_URL = cfg.database.url;
-        RUST_LOG = "info";
-      };
-      
-      serviceConfig = {
-        Type = "simple";
-        User = cfg.systemUser;
-        ExecStart = pkgs.writeShellScript "filesystem-ingestor-wrapper" ''
-          #!/usr/bin/env bash
-          
-          # Create config directory
-          mkdir -p ~/.config/sinex
-          
-          # Generate configuration file
-          cat > ~/.config/sinex/filesystem-ingestor.toml <<EOF
+        ExecStart = if cfg.unifiedCollector.configFile != null
+          then "${unifiedCollector}/bin/unified-collector --config ${cfg.unifiedCollector.configFile}"
+          else pkgs.writeShellScript "unified-collector-wrapper" ''
+            #!/usr/bin/env bash
+            
+            # Create config directory
+            mkdir -p ~/.config/sinex
+            
+            # Generate configuration file
+            cat > ~/.config/sinex/unified-collector.toml <<EOF
 [database]
 url = "${cfg.database.url}"
-max_connections = 5
+max_connections = 10
 
 [logging]
 level = "info"
 format = "json"
+
+[sources]
+filesystem = ${if cfg.unifiedCollector.filesystem.enable then "true" else "false"}
+terminal = ${if cfg.unifiedCollector.terminal.enable then "true" else "false"}
+window_manager = ${if cfg.unifiedCollector.windowManager.enable then "true" else "false"}
 
 [filesystem]
-watch_directories = [${builtins.concatStringsSep ", " (map (dir: "\"${dir}\"") cfg.ingestors.filesystem.watchDirectories)}]
-exclude_patterns = [${builtins.concatStringsSep ", " (map (pattern: "\"${pattern}\"") cfg.ingestors.filesystem.excludePatterns)}]
-debounce_ms = ${toString cfg.ingestors.filesystem.debounceMs}
-batch_size_events = 50
-batch_timeout_ms = 5000
-hash_files = true
-max_hash_size_bytes = 10485760
-heartbeat_interval_secs = 60
-max_retries = 3
-retry_delay_secs = 5
+watch_directories = [${builtins.concatStringsSep ", " (map (dir: "\"${dir}\"") cfg.unifiedCollector.filesystem.watchDirectories)}]
+exclude_patterns = [${builtins.concatStringsSep ", " (map (pattern: "\"${pattern}\"") cfg.unifiedCollector.filesystem.excludePatterns)}]
 EOF
-          
-          # Start the actual ingestor
-          exec ${filesystemIngestor}/bin/filesystem-ingestor run
-        '';
-        Restart = "always";
-        RestartSec = 10;
-      };
-    };
-    
-    # Kitty ingestor service
-    systemd.services.sinex-kitty = mkIf cfg.ingestors.kitty.enable {
-      description = "Sinex Kitty terminal activity ingestor";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "sinex-init.service" "sinex-grant-permissions.service" "sinex-fix-ownership.service" ];
-      
-      environment = {
-        DATABASE_URL = cfg.database.url;
-        RUST_LOG = "info";
-      };
-      
-      serviceConfig = {
-        Type = "simple";
-        User = cfg.systemUser;
-        ExecStart = pkgs.writeShellScript "kitty-ingestor-wrapper" ''
-          #!/usr/bin/env bash
-          
-          # Create config directory
-          mkdir -p ~/.config/sinex
-          
-          # Generate configuration file
-          cat > ~/.config/sinex/kitty-ingestor.toml <<EOF
-[database]
-url = "${cfg.database.url}"
-max_connections = 5
-
-[logging]
-level = "info"
-format = "json"
-
-[kitty]
-socket_path = "/tmp/kitty-*"
-polling_interval_secs = 5
-command_timeout_secs = 30
-heartbeat_interval_secs = 60
-capture_commands = ${if cfg.ingestors.kitty.captureCommands then "true" else "false"}
-capture_output = ${if cfg.ingestors.kitty.captureOutput then "true" else "false"}
-shell_integration = ${if cfg.ingestors.kitty.shellIntegration then "true" else "false"}
-EOF
-          
-          # Start the actual ingestor
-          exec ${kittyIngestor}/bin/kitty-ingestor run
-        '';
+            
+            # Start the actual collector
+            exec ${unifiedCollector}/bin/unified-collector
+          '';
         Restart = "always";
         RestartSec = 10;
       };
@@ -470,8 +358,8 @@ EOF
     warnings = mkIf (cfg.enable && !cfg.autoConfigureSystem) [
       ''
         Sinex auto-configuration is disabled. You may need to manually configure:
-        1. Kitty terminal: allow_remote_control = "yes" and listen_on = "unix:/tmp/kitty"
-        2. Shell integration for command tracking (see Sinex documentation)
+        1. Terminal support: Kitty with allow_remote_control = "yes" and listen_on = "unix:/tmp/kitty"
+        2. Window manager support: Hyprland with IPC enabled
         3. Filesystem monitoring: increase inotify limits if needed
       ''
     ];

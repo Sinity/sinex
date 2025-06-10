@@ -159,7 +159,7 @@ test/
 ## Recommendations
 
 ### High Priority:
-1. Add kitty and hyprland ingestor tests
+1. Add unified collector comprehensive tests
 2. Create benchmarks for event throughput
 3. Add DLQ processing tests
 4. Test configuration hot-reloading

@@ -7,10 +7,6 @@ members = [
     "crate/sinex-promo-worker",
     "crate/sinex-events",
     "ingestor/shared",
-    "ingestor/hyprland",
-    "ingestor/kitty",
-    "ingestor/filesystem",
-    "ingestor/unified",
     "ingestor/unified-collector",
 ]
 resolver = "2"
@@ -48,7 +44,7 @@ sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-shared = { path = "ingestor/shared" }
-sinex-unified-collector = { path = "ingestor/unified" }
+unified-collector = { path = "ingestor/unified-collector" }
 
 [dev-dependencies]
 proptest.workspace = true
