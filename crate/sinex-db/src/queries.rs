@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 
-/// Insert a raw event using SQLX query! with manual struct construction
+/// Insert a raw event with ULID type conversion (compile-time safe with manual mapping)
 pub async fn insert_raw_event(
     pool: &PgPool,
     source: &str,
@@ -15,20 +15,21 @@ pub async fn insert_raw_event(
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
 ) -> Result<RawEvent> {
+    // Use query! for compile-time checking, then map to our ULID-based struct
     let record = sqlx::query!(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7::uuid::ulid)
         RETURNING 
-            id::uuid as id, 
-            source, 
-            event_type, 
-            ts_ingest,
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
             ts_orig,
-            host, 
+            host as "host!", 
             ingestor_version, 
-            payload_schema_id::uuid as payload_schema_id, 
-            payload
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
         "#,
         source,
         event_type,
@@ -41,11 +42,12 @@ pub async fn insert_raw_event(
     .fetch_one(pool)
     .await?;
 
+    // Map the UUID fields to ULID with compile-time verified field access
     Ok(RawEvent {
-        id: Ulid::from_uuid(record.id.expect("id should never be null")),
+        id: Ulid::from_uuid(record.id),
         source: record.source,
         event_type: record.event_type,
-        ts_ingest: record.ts_ingest.expect("ts_ingest should never be null"),
+        ts_ingest: record.ts_ingest,
         ts_orig: record.ts_orig,
         host: record.host,
         ingestor_version: record.ingestor_version,
@@ -119,7 +121,7 @@ pub async fn claim_promotion_queue_items(
     worker_id: &str,
     batch_size: i64,
 ) -> Result<Vec<PromotionQueueItem>> {
-    // Need to handle ULID conversions manually
+    // Use query! for compile-time checking, then map UUIDs to ULIDs
     let records = sqlx::query!(
         r#"
         UPDATE sinex_schemas.promotion_queue
@@ -158,11 +160,12 @@ pub async fn claim_promotion_queue_items(
     .fetch_all(pool)
     .await?;
 
-    let mut items = Vec::new();
-    for record in records {
-        items.push(PromotionQueueItem {
-            queue_id: record.queue_id.into(),
-            raw_event_id: record.raw_event_id.into(),
+    // Map UUID fields to ULID with compile-time verified field access
+    let items = records
+        .into_iter()
+        .map(|record| PromotionQueueItem {
+            queue_id: Ulid::from_uuid(record.queue_id),
+            raw_event_id: Ulid::from_uuid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
             status: record.status,
             attempts: record.attempts,
@@ -172,8 +175,8 @@ pub async fn claim_promotion_queue_items(
             error_message_last: record.error_message_last,
             created_at: record.created_at,
             processing_worker_id: record.processing_worker_id,
-        });
-    }
+        })
+        .collect();
 
     Ok(items)
 }
