@@ -62,6 +62,7 @@ struct KittyWindow {
     id: u32,
     #[allow(dead_code)]
     pid: u32,
+    #[allow(dead_code)]
     cwd: String,
     #[allow(dead_code)]
     title: String,
@@ -297,6 +298,7 @@ impl KittySocketListener {
 
 // Alternative source for command execution (example of multiple sources)
 pub struct BashHistoryWatcher {
+    #[allow(dead_code)]
     history_file: PathBuf,
 }
 
