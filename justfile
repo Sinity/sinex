@@ -74,7 +74,7 @@ sqlx-prepare:
     set -euo pipefail
     echo "🗄️  Updating SQLX offline cache..."
     # Ensure migrations are up to date
-    sqlx migrate run --source migration
+    sqlx migrate run
     # Update the cache
     cargo sqlx prepare --workspace -- --all-targets --all-features
     echo "✅ SQLX cache updated successfully"

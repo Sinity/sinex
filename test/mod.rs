@@ -25,13 +25,16 @@ mod collector;
 mod ulid;
 
 #[cfg(test)]
-mod models;
+mod model;
 
 #[cfg(test)]
 mod validation;
 
 #[cfg(test)]
 mod worker;
+
+#[cfg(test)]
+mod events;
 
 #[cfg(test)]
 mod property_tests;

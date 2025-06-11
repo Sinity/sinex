@@ -49,7 +49,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 /// Run database migrations
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
-    sqlx::migrate!("../../migration")
+    sqlx::migrate!("../../migrations")
         .run(pool)
         .await?;
     
