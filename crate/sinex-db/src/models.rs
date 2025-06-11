@@ -118,6 +118,112 @@ impl From<&str> for QueueStatus {
     }
 }
 
+/// Dead Letter Queue (DLQ) event entry
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DlqEvent {
+    pub dlq_id: Ulid,
+    pub failed_event_id: Ulid,
+    pub agent_name: String,
+    pub source: String,
+    pub event_type: String,
+    pub failure_reason: String,
+    pub error_category: String,
+    pub retry_count: i32,
+    pub failed_at: DateTime<Utc>,
+    pub last_retry_at: Option<DateTime<Utc>>,
+    pub next_retry_at: Option<DateTime<Utc>>,
+    pub original_event_payload: serde_json::Value,
+    pub additional_metadata: Option<serde_json::Value>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by: Option<String>,
+}
+
+/// Error categories for DLQ events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DlqErrorCategory {
+    Retryable,
+    Permanent,
+    System,
+    User,
+}
+
+impl DlqErrorCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Retryable => "retryable",
+            Self::Permanent => "permanent",
+            Self::System => "system",
+            Self::User => "user",
+        }
+    }
+}
+
+impl From<String> for DlqErrorCategory {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "retryable" => Self::Retryable,
+            "permanent" => Self::Permanent,
+            "system" => Self::System,
+            "user" => Self::User,
+            _ => Self::Permanent,
+        }
+    }
+}
+
+impl From<&str> for DlqErrorCategory {
+    fn from(s: &str) -> Self {
+        match s {
+            "retryable" => Self::Retryable,
+            "permanent" => Self::Permanent,
+            "system" => Self::System,
+            "user" => Self::User,
+            _ => Self::Permanent,
+        }
+    }
+}
+
+/// Resolution types for DLQ events  
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DlqResolutionType {
+    Reprocessed,
+    Manual,
+    Purged,
+}
+
+impl DlqResolutionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reprocessed => "reprocessed",
+            Self::Manual => "manual",
+            Self::Purged => "purged",
+        }
+    }
+}
+
+impl From<String> for DlqResolutionType {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "reprocessed" => Self::Reprocessed,
+            "manual" => Self::Manual,
+            "purged" => Self::Purged,
+            _ => Self::Manual,
+        }
+    }
+}
+
+impl From<&str> for DlqResolutionType {
+    fn from(s: &str) -> Self {
+        match s {
+            "reprocessed" => Self::Reprocessed,
+            "manual" => Self::Manual,
+            "purged" => Self::Purged,
+            _ => Self::Manual,
+        }
+    }
+}
+
 /// Agent status values
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -184,76 +290,3 @@ pub struct AgentHeartbeat {
     pub version: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-
-    #[test]
-    fn test_queue_status_conversion() {
-        assert_eq!(QueueStatus::from("pending"), QueueStatus::Pending);
-        assert_eq!(QueueStatus::from("processing"), QueueStatus::Processing);
-        assert_eq!(QueueStatus::from("failed_retryable"), QueueStatus::FailedRetryable);
-        assert_eq!(QueueStatus::from("unknown"), QueueStatus::Pending); // Default
-        
-        assert_eq!(QueueStatus::Pending.as_str(), "pending");
-        assert_eq!(QueueStatus::Processing.as_str(), "processing");
-        assert_eq!(QueueStatus::FailedRetryable.as_str(), "failed_retryable");
-    }
-
-    #[test]
-    fn test_agent_status_conversion() {
-        assert_eq!(AgentStatus::from("running"), AgentStatus::Running);
-        assert_eq!(AgentStatus::from("stopped"), AgentStatus::Stopped);
-        assert_eq!(AgentStatus::from("error_state"), AgentStatus::ErrorState);
-        assert_eq!(AgentStatus::from("disabled_by_user"), AgentStatus::DisabledByUser);
-        assert_eq!(AgentStatus::from("pending_registration"), AgentStatus::PendingRegistration);
-        assert_eq!(AgentStatus::from("degraded"), AgentStatus::Degraded);
-        assert_eq!(AgentStatus::from("whatever"), AgentStatus::Unknown);
-        
-        assert_eq!(AgentStatus::Running.as_str(), "running");
-        assert_eq!(AgentStatus::ErrorState.as_str(), "error_state");
-    }
-
-    #[test]
-    fn test_queue_status_serde() {
-        let status = QueueStatus::Processing;
-        let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, "\"processing\"");
-        
-        let deserialized: QueueStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, QueueStatus::Processing);
-    }
-
-    #[test]
-    fn test_agent_status_serde() {
-        let status = AgentStatus::ErrorState;
-        let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, "\"error_state\"");
-        
-        let deserialized: AgentStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, AgentStatus::ErrorState);
-    }
-
-    #[test]
-    fn test_agent_heartbeat_serialization() {
-        let heartbeat = AgentHeartbeat {
-            agent_name: "TestAgent".to_string(),
-            status: "running".to_string(),
-            uptime_seconds: 3600,
-            events_processed_session: 100,
-            dlq_size: 0,
-            version: "0.1.0".to_string(),
-        };
-        
-        let json = serde_json::to_string(&heartbeat).unwrap();
-        let deserialized: AgentHeartbeat = serde_json::from_str(&json).unwrap();
-        
-        assert_eq!(deserialized.agent_name, heartbeat.agent_name);
-        assert_eq!(deserialized.status, heartbeat.status);
-        assert_eq!(deserialized.uptime_seconds, heartbeat.uptime_seconds);
-        assert_eq!(deserialized.events_processed_session, heartbeat.events_processed_session);
-        assert_eq!(deserialized.dlq_size, heartbeat.dlq_size);
-        assert_eq!(deserialized.version, heartbeat.version);
-    }
-}

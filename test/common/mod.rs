@@ -1,32 +1,26 @@
 use anyhow::Result;
 use serde_json::{json, Value};
-use sinex_shared::{DatabaseConfig, DatabaseService, RawEventBuilder, sources, event_types};
+use sinex_core::{RawEventBuilder, sources, event_type_constants};
+use sinex_db::{create_test_pool, queries};
 use sinex_ulid::Ulid;
-use std::sync::Arc;
+use sqlx::PgPool;
 
-/// Test database configuration helper
-#[allow(dead_code)]
-pub fn test_database_config() -> DatabaseConfig {
-    DatabaseConfig {
-        url: std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string()),
-        max_connections: 500,
-        min_connections: 1,
-        acquire_timeout: std::time::Duration::from_secs(3),
-        idle_timeout: std::time::Duration::from_secs(10),
-    }
+/// Get test database URL with fallback
+pub fn test_database_url() -> String {
+    std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
 }
 
-/// Create a test database service with appropriate configuration
-#[allow(dead_code)]
-pub async fn test_database_service() -> Result<Arc<DatabaseService>> {
-    let config = test_database_config();
-    Ok(Arc::new(DatabaseService::new(config).await?))
+/// Create a test database pool with high concurrency settings
+pub async fn create_test_db_pool() -> Result<PgPool> {
+    let db_url = test_database_url();
+    create_test_pool(&db_url).await
 }
 
-/// Create a database service from an existing pool (for sqlx::test)
-pub fn database_service_from_pool(pool: sqlx::PgPool) -> Arc<DatabaseService> {
-    Arc::new(DatabaseService::from_pool(pool))
+/// Helper for inserting test events directly via queries
+pub async fn insert_test_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
+    let inserted = queries::insert_event(pool, event).await?;
+    Ok(inserted.id)
 }
 
 /// Event builder utilities for testing
@@ -50,7 +44,7 @@ pub mod events {
     pub fn kitty_event(command: &str) -> sinex_db::models::RawEvent {
         RawEventBuilder::new(
             sources::TERMINAL_KITTY,
-            event_types::event_types::terminal::COMMAND_EXECUTED,
+            event_type_constants::terminal::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -93,6 +87,21 @@ pub mod events {
             json!(null)
         ).build()
     }
+
+    /// Create a test file created event
+    pub fn file_created_event(path: &str) -> sinex_db::models::RawEvent {
+        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+    }
+
+    /// Create a test file modified event
+    pub fn file_modified_event(path: &str) -> sinex_db::models::RawEvent {
+        filesystem_event(event_type_constants::filesystem::FILE_MODIFIED, path)
+    }
+
+    /// Create a test agent heartbeat event
+    pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::models::RawEvent {
+        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
+    }
 }
 
 /// Assertion helpers for common test patterns
@@ -111,31 +120,40 @@ pub mod assertions {
 
     /// Assert that an event was inserted successfully
     pub async fn assert_event_inserted(
-        db: &DatabaseService,
+        pool: &PgPool,
         event: &RawEvent
     ) -> Result<Ulid> {
-        let inserted_id = db.insert_event(event).await?;
-        assert!(!inserted_id.to_string().is_empty());
-        Ok(inserted_id.into())
+        let inserted = queries::insert_event(pool, event).await?;
+        assert!(!inserted.id.to_string().is_empty());
+        Ok(inserted.id)
     }
 
     /// Assert that an event insertion fails with validation error
     pub async fn assert_event_insertion_fails(
-        db: &DatabaseService,
+        pool: &PgPool,
         event: &RawEvent
     ) -> Result<()> {
-        let result = db.insert_event(event).await;
+        let result = queries::insert_event(pool, event).await;
         assert!(result.is_err(), "Expected event insertion to fail, but it succeeded");
         Ok(())
     }
 
     /// Assert that manifest was registered successfully
     pub async fn assert_manifest_registered(
-        _db: &DatabaseService,
+        pool: &PgPool,
         manifest: &AgentManifest
     ) -> Result<()> {
-        // This would need the actual manifest insertion method
-        // For now, just verify the structure is valid
+        let result = queries::upsert_agent_manifest(
+            pool,
+            &manifest.agent_name,
+            &manifest.description.as_deref().unwrap_or(""),
+            &manifest.version,
+            &manifest.status,
+            Some(&manifest.agent_type),
+            manifest.config_template_json.clone(),
+            manifest.produces_event_types.clone(),
+        ).await;
+        assert!(result.is_ok(), "Expected manifest registration to succeed");
         assert!(!manifest.agent_name.is_empty());
         assert!(!manifest.version.is_empty());
         Ok(())
@@ -160,7 +178,7 @@ pub mod generators {
     pub fn test_event(index: usize) -> sinex_db::models::RawEvent {
         match index % 3 {
             0 => events::filesystem_event(
-                event_types::event_types::filesystem::FILE_CREATED,
+                event_type_constants::filesystem::FILE_CREATED,
                 &test_file_path(&format!("file_{}", index))
             ),
             1 => events::kitty_event(&test_commands()[index % test_commands().len()]),
@@ -172,11 +190,35 @@ pub mod generators {
     pub fn test_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
         (0..count).map(test_event).collect()
     }
+
+    /// Generate test agent manifest
+    pub fn test_agent_manifest(name: &str) -> AgentManifest {
+        use sinex_db::models::AgentManifest;
+        use chrono::Utc;
+        
+        AgentManifest {
+            agent_name: name.to_string(),
+            description: Some(format!("Test agent {}", name)),
+            version: "1.0.0".to_string(),
+            status: "development".to_string(),
+            agent_type: "test".to_string(),
+            config_template_json: Some(json!({"test": true})),
+            produces_event_types: Some(json!(["test.event"])),
+            subscribes_to_event_types: None,
+            required_capabilities: None,
+            llm_dependencies: None,
+            repo_url: Some("https://github.com/test/test".to_string()),
+            last_heartbeat_ts: None,
+            last_error_ts: None,
+            last_error_summary: None,
+            registered_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
 }
 
 /// Helper for querying events by ULID
-/// This encapsulates the UUID conversion needed for SQLX compile-time macros
-pub async fn get_event_by_id(pool: &sqlx::PgPool, event_id: Ulid) -> Result<sinex_db::models::RawEvent> {
+pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<sinex_db::models::RawEvent> {
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -210,16 +252,23 @@ pub async fn get_event_by_id(pool: &sqlx::PgPool, event_id: Ulid) -> Result<sine
     })
 }
 
+/// Helper for getting event count from database
+pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
+    let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
+        .fetch_one(pool)
+        .await?;
+    Ok(record.count.unwrap_or(0))
+}
+
 /// Helper for checking if an event exists by ULID
-#[allow(dead_code)]
-pub async fn event_exists(pool: &sqlx::PgPool, event_id: uuid::Uuid) -> Result<bool> {
+pub async fn event_exists(pool: &PgPool, event_id: Ulid) -> Result<bool> {
     let exists = sqlx::query!(
         r#"
         SELECT EXISTS(
             SELECT 1 FROM raw.events WHERE id = $1::uuid::ulid
         ) as "exists!"
         "#,
-        event_id
+        event_id.to_uuid()
     )
     .fetch_one(pool)
     .await?;
@@ -231,13 +280,11 @@ pub async fn event_exists(pool: &sqlx::PgPool, event_id: uuid::Uuid) -> Result<b
 #[macro_export]
 macro_rules! test_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
-        crate::db_test! {
-            async fn $test_name(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-                let db = crate::common::database_service_from_pool(pool);
-                let event = $event_builder;
-                crate::common::assertions::assert_event_inserted(&db, &event).await?;
-                Ok(())
-            }
+        #[sqlx::test]
+        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+            let event = $event_builder;
+            crate::common::assertions::assert_event_inserted(&pool, &event).await?;
+            Ok(())
         }
     };
 }
@@ -245,13 +292,11 @@ macro_rules! test_event_insertion {
 #[macro_export]
 macro_rules! test_invalid_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
-        crate::db_test! {
-            async fn $test_name(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-                let db = crate::common::database_service_from_pool(pool);
-                let event = $event_builder;
-                crate::common::assertions::assert_event_insertion_fails(&db, &event).await?;
-                Ok(())
-            }
+        #[sqlx::test]
+        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+            let event = $event_builder;
+            crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
+            Ok(())
         }
     };
 }
@@ -259,24 +304,28 @@ macro_rules! test_invalid_event_insertion {
 /// Test environment utilities
 pub mod env {
     /// Check if we're running in a test environment
-    #[allow(dead_code)]
     pub fn is_test_env() -> bool {
         std::env::var("TEST_DATABASE_URL").is_ok() || 
         std::env::var("CARGO_TEST").is_ok()
     }
 
-    /// Get test database URL with fallback
-    #[allow(dead_code)]
-    pub fn test_database_url() -> String {
-        std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
-    }
-
     /// Setup test environment variables
-    #[allow(dead_code)]
     pub fn setup_test_env() {
         if std::env::var("RUST_LOG").is_err() {
             std::env::set_var("RUST_LOG", "debug");
         }
+        if std::env::var("DATABASE_URL").is_err() {
+            std::env::set_var("DATABASE_URL", super::test_database_url());
+        }
+    }
+    
+    /// Initialize test logging
+    pub fn init_test_logging() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .try_init();
     }
 }
+
+// Re-export commonly used items for convenience
+pub use sinex_db::models::AgentManifest;

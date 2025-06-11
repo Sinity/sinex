@@ -19,6 +19,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 once_cell = { workspace = true }
+jsonschema = "0.17"
 
 [dev-dependencies]
 tokio-test = "0.4"

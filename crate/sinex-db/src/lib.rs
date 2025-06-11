@@ -1,6 +1,7 @@
 pub mod models;
 pub mod pool;
 pub mod queries;
+pub mod validation;
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;

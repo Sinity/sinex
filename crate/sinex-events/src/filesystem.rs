@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use notify::Watcher;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, error};
 
 use sinex_core::{EventType, EventSource, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
