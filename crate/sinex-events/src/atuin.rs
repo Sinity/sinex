@@ -25,6 +25,7 @@ pub struct CommandExecutedAtuinPayload {
     pub duration_ns: i64,
     pub atuin_history_id: String,
     pub atuin_session_id: String,
+    pub timestamp: i64,  // Unix timestamp in nanoseconds
     pub ts_start_orig: DateTime<Utc>,
     pub ts_end_orig: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,7 +70,7 @@ impl Default for AtuinConfig {
 
 pub struct AtuinDbReader {
     config: AtuinConfig,
-    last_processed_id: Option<String>,
+    last_processed_timestamp: Option<i64>,
 }
 
 #[async_trait]
@@ -93,18 +94,18 @@ impl EventSource for AtuinDbReader {
         
         Ok(Self { 
             config,
-            last_processed_id: None,
+            last_processed_timestamp: None,
         })
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
-        // Try to get last processed ID and count from database
+        // Try to get last processed timestamp and count from database
         if let Ok(database_url) = std::env::var("DATABASE_URL") {
             match self.get_startup_info(&database_url).await {
-                Ok((last_id, our_count)) => {
-                    if let Some(ref id) = last_id {
-                        info!("Resuming from last processed Atuin ID: {}", id);
-                        self.last_processed_id = last_id;
+                Ok((last_timestamp, our_count)) => {
+                    if let Some(ref ts) = last_timestamp {
+                        info!("Resuming from last processed Atuin timestamp: {}", ts);
+                        self.last_processed_timestamp = last_timestamp;
                     } else {
                         info!("No previous Atuin history found, starting from beginning");
                     }
@@ -166,7 +167,7 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info(&self, database_url: &str) -> Result<(Option<String>, usize)> {
+    async fn get_startup_info(&self, database_url: &str) -> Result<(Option<i64>, usize)> {
         use sqlx::{postgres::PgPoolOptions, Row};
         
         let pool = PgPoolOptions::new()
@@ -175,18 +176,16 @@ impl AtuinDbReader {
             .await
             .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
         
-        // Get both last ID and count in one query
+        // Get both last timestamp and count in one query
         let query = r#"
             WITH stats AS (
                 SELECT 
-                    (payload->>'atuin_history_id')::text as last_id,
-                    COUNT(*) OVER () as total_count
+                    MAX((payload->>'timestamp')::bigint) as last_timestamp,
+                    COUNT(*) as total_count
                 FROM raw.events
                 WHERE event_type = 'shell.command.executed_atuin'
-                ORDER BY payload->>'atuin_history_id' DESC
-                LIMIT 1
             )
-            SELECT last_id, total_count FROM stats
+            SELECT last_timestamp, total_count FROM stats
         "#;
         
         let result = sqlx::query(query)
@@ -196,9 +195,9 @@ impl AtuinDbReader {
         
         match result {
             Some(row) => {
-                let last_id: Option<String> = row.try_get("last_id").ok();
+                let last_timestamp: Option<i64> = row.try_get("last_timestamp").ok();
                 let count: i64 = row.try_get("total_count").unwrap_or(0);
-                Ok((last_id, count as usize))
+                Ok((last_timestamp, count as usize))
             }
             None => Ok((None, 0))
         }
@@ -267,7 +266,7 @@ impl AtuinDbReader {
     
     async fn poll_atuin_history(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
         let db_path = self.config.db_path.clone();
-        let last_id = self.last_processed_id.clone();
+        let last_timestamp = self.last_processed_timestamp.clone();
         let batch_size = self.config.batch_size;
         
         // Use spawn_blocking to run database operations
@@ -282,7 +281,7 @@ impl AtuinDbReader {
             ))?;
             
             // Log the total number of entries if this is the first run
-            if last_id.is_none() {
+            if last_timestamp.is_none() {
                 let count: i64 = conn.query_row(
                     "SELECT COUNT(*) FROM history",
                     [],
@@ -292,8 +291,8 @@ impl AtuinDbReader {
                 info!("Atuin database contains {} history entries", count);
             }
             
-            // Query new entries
-            let query = if last_id.is_some() {
+            // Query new entries using timestamp
+            let query = if last_timestamp.is_some() {
                 "SELECT
                     id,
                     timestamp,
@@ -304,8 +303,8 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
-                WHERE id > ?1
-                ORDER BY id ASC
+                WHERE timestamp > ?1
+                ORDER BY timestamp ASC
                 LIMIT ?2"
             } else {
                 "SELECT
@@ -318,7 +317,7 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
-                ORDER BY id ASC
+                ORDER BY timestamp ASC
                 LIMIT ?1"
             };
             
@@ -326,9 +325,9 @@ impl AtuinDbReader {
                 format!("Failed to prepare query: {}", e)
             ))?;
             
-            let result: Vec<AtuinHistoryEntry> = if let Some(ref last_id) = last_id {
+            let result: Vec<AtuinHistoryEntry> = if let Some(ref last_ts) = last_timestamp {
                 stmt.query_map(
-                    rusqlite::params![last_id, batch_size],
+                    rusqlite::params![last_ts, batch_size],
                     |row| {
                         Ok(AtuinHistoryEntry {
                             id: row.get(0)?,
@@ -377,12 +376,12 @@ impl AtuinDbReader {
             format!("Failed to execute database query: {}", e)
         ))??;
         
-        let mut max_id = self.last_processed_id.clone();
+        let mut max_timestamp = self.last_processed_timestamp.clone();
         let mut count = 0;
         
         for entry in entries {
-            if max_id.is_none() || max_id.as_ref().unwrap() < &entry.id {
-                max_id = Some(entry.id.clone());
+            if max_timestamp.is_none() || max_timestamp.as_ref().unwrap() < &entry.timestamp_ns {
+                max_timestamp = Some(entry.timestamp_ns);
             }
             
             // Convert to event
@@ -398,7 +397,7 @@ impl AtuinDbReader {
         
         if count > 0 {
             info!("Processed {} new Atuin history entries", count);
-            self.last_processed_id = max_id;
+            self.last_processed_timestamp = max_timestamp;
         } else {
             debug!("No new Atuin history entries");
         }
@@ -432,6 +431,7 @@ impl AtuinDbReader {
             duration_ns: entry.duration_ns,
             atuin_history_id: entry.id,
             atuin_session_id: entry.session,
+            timestamp: entry.timestamp_ns,
             ts_start_orig: ts_start,
             ts_end_orig: ts_end,
             terminal_session_ulid: None, // Could be enhanced to extract from env
