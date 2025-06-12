@@ -89,6 +89,8 @@
               # Build dependencies
               openssl
               pkg-config
+              dbus
+              dbus.dev
             ];
 
             shellHook = ''
