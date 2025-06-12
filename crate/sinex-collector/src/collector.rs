@@ -5,6 +5,7 @@ use sinex_events::{
     filesystem::{FilesystemMonitor, FilesystemConfig},
     terminal::{KittySocketListener, KittyConfig},
     window_manager::{HyprlandIPCMonitor, HyprlandConfig},
+    atuin::{AtuinDbReader, AtuinConfig},
 };
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -98,6 +99,11 @@ impl UnifiedCollector {
             handles.push(handle);
         }
         
+        if self.needs_source("ingestor.atuin_db_reader") {
+            let handle = self.start_atuin_source(event_tx.clone()).await?;
+            handles.push(handle);
+        }
+        
         info!("Started {} event sources for {} enabled events", 
               handles.len(), self.enabled_events.len());
         
@@ -179,6 +185,29 @@ impl UnifiedCollector {
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {
                 error!("Window manager source failed: {}", e);
+            }
+        });
+        
+        Ok(handle)
+    }
+    
+    async fn start_atuin_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+        info!("Starting atuin source");
+        
+        let mut atuin_config = AtuinConfig::default();
+        
+        // Apply configuration
+        if let Some(config_value) = self.config.event.get("shell.command.executed_atuin") {
+            if let Ok(custom_config) = config_value.clone().try_into() {
+                atuin_config = custom_config;
+            }
+        }
+        
+        let mut source = AtuinDbReader::initialize(atuin_config).await?;
+        
+        let handle = tokio::spawn(async move {
+            if let Err(e) = source.stream_events(event_tx).await {
+                error!("Atuin source failed: {}", e);
             }
         });
         

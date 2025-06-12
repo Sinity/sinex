@@ -166,6 +166,7 @@ pub fn create_registry() -> EventRegistry {
             "file.modified", 
             "file.deleted",
             "command.executed",
+            "shell.command.executed_atuin",
             // Window events
             "window.focused",
             "window.opened",
@@ -189,6 +190,7 @@ pub fn create_registry() -> EventRegistry {
             ("file.modified", "filesystem"),
             ("file.deleted", "filesystem"),
             ("command.executed", "terminal.kitty"),
+            ("shell.command.executed_atuin", "ingestor.atuin_db_reader"),
             // All window manager events
             ("window.focused", "window_manager.hyprland"),
             ("window.opened", "window_manager.hyprland"),

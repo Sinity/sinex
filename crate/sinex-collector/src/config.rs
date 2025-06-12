@@ -84,6 +84,7 @@ impl Default for CollectorConfig {
                 "file.modified".to_string(),
                 "file.deleted".to_string(),
                 "command.executed".to_string(),
+                "shell.command.executed_atuin".to_string(),
                 "window.focused".to_string(),
                 "workspace.changed".to_string(),
             ],

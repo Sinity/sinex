@@ -10,6 +10,7 @@ enabled_events = [
     
     # Terminal events
     "command.executed",
+    "shell.command.executed_atuin",
     
     # Window manager events
     "window.focused",
@@ -51,6 +52,15 @@ capture_env_vars = ["PATH", "PWD", "USER", "HOME", "SHELL"]
 max_command_length = 4096
 # Filter out certain commands from being recorded
 ignore_commands = ["ls", "cd", "pwd", "clear"]
+
+# Configuration for Atuin history ingestion
+[event.shell_command_executed_atuin]
+# Path to Atuin's SQLite database
+db_path = "~/.local/share/atuin/history.db"
+# How often to poll for new entries (seconds)
+polling_interval_secs = 10
+# How many entries to process in each batch
+batch_size = 100
 
 # Window manager configuration
 [event.windows]

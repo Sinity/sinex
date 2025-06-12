@@ -57,8 +57,8 @@
         {
           packages = {
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
-            unifiedCollector = buildRustPackage "unified-collector";
-            default = buildRustPackage "unified-collector";
+            unifiedCollector = buildRustPackage "sinex-collector";
+            default = buildRustPackage "sinex-collector";
           };
 
           devShells.default = pkgs.mkShell {

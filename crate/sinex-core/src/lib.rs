@@ -56,6 +56,7 @@ pub mod sources {
     pub const TERMINAL_KITTY: &str = "terminal.kitty";
     pub const HYPRLAND: &str = "hyprland";
     pub const WINDOW_MANAGER_HYPRLAND: &str = "window_manager.hyprland";
+    pub const ATUIN_DB_READER: &str = "ingestor.atuin_db_reader";
 }
 
 /// Common event type constants
