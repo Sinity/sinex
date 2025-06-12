@@ -6,7 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::time;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use sinex_core::{EventType, EventSource, Result};
 use sinex_db::models::RawEvent;
@@ -49,6 +49,8 @@ pub struct AtuinConfig {
     pub db_path: PathBuf,
     pub polling_interval_secs: u64,
     pub batch_size: usize,
+    #[serde(default)]
+    pub use_file_watch: bool,
 }
 
 impl Default for AtuinConfig {
@@ -56,8 +58,9 @@ impl Default for AtuinConfig {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
         Self {
             db_path: PathBuf::from(home).join(".local/share/atuin/history.db"),
-            polling_interval_secs: 10,
+            polling_interval_secs: 3,
             batch_size: 100,
+            use_file_watch: true,
         }
     }
 }
@@ -96,9 +99,25 @@ impl EventSource for AtuinDbReader {
         info!(
             db_path = ?self.config.db_path,
             polling_interval = self.config.polling_interval_secs,
+            use_file_watch = self.config.use_file_watch,
             "Starting Atuin history event source"
         );
         
+        if self.config.use_file_watch {
+            // File watching implementation would go here
+            // For now, just use polling with a more responsive interval
+            warn!("File watching not yet implemented, using polling mode");
+            self.poll_mode(tx).await?;
+        } else {
+            self.poll_mode(tx).await?;
+        }
+        
+        Ok(())
+    }
+}
+
+impl AtuinDbReader {
+    async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
         loop {
@@ -109,9 +128,7 @@ impl EventSource for AtuinDbReader {
             }
         }
     }
-}
-
-impl AtuinDbReader {
+    
     async fn poll_atuin_history(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
         let db_path = self.config.db_path.clone();
         let last_id = self.last_processed_id.clone();

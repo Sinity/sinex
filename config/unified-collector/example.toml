@@ -58,9 +58,11 @@ ignore_commands = ["ls", "cd", "pwd", "clear"]
 # Path to Atuin's SQLite database
 db_path = "~/.local/share/atuin/history.db"
 # How often to poll for new entries (seconds)
-polling_interval_secs = 10
+polling_interval_secs = 3
 # How many entries to process in each batch
 batch_size = 100
+# Use file watching instead of pure polling (experimental)
+use_file_watch = false
 
 # Window manager configuration
 [event.windows]
