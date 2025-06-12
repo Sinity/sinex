@@ -45,7 +45,15 @@ impl CollectorConfig {
     
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        
+        // Try TOML first
+        if let Ok(config) = toml::from_str::<Self>(&content) {
+            return Ok(config);
+        }
+        
+        // Fall back to JSON
+        let config: Self = serde_json::from_str(&content)
+            .context("Failed to parse config as TOML or JSON")?;
         Ok(config)
     }
     

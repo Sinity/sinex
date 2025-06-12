@@ -184,6 +184,13 @@ pub fn create_registry() -> EventRegistry {
             "monitor.removed",
             // State dumps
             "state.snapshot",
+            // Shell history
+            "shell.history.command",
+            // Terminal recording
+            "terminal.asciinema.session_started",
+            "terminal.asciinema.session_ended",
+            "terminal.scrollback.captured",
+            "terminal.command_output.captured",
         ],
         event_to_source: &[
             ("file.created", "filesystem"),
@@ -191,6 +198,11 @@ pub fn create_registry() -> EventRegistry {
             ("file.deleted", "filesystem"),
             ("command.executed", "terminal.kitty"),
             ("shell.command.executed_atuin", "ingestor.atuin_db_reader"),
+            ("shell.history.command", "ingestor.shell_history_reader"),
+            ("terminal.asciinema.session_started", "ingestor.asciinema_recorder"),
+            ("terminal.asciinema.session_ended", "ingestor.asciinema_recorder"),
+            ("terminal.scrollback.captured", "ingestor.scrollback_capture"),
+            ("terminal.command_output.captured", "ingestor.scrollback_capture"),
             // All window manager events
             ("window.focused", "window_manager.hyprland"),
             ("window.opened", "window_manager.hyprland"),

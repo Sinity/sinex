@@ -2506,6 +2506,7 @@ dependencies = [
  "glob",
  "notify",
  "notify-debouncer-full",
+ "regex",
  "rusqlite",
  "schemars",
  "serde",

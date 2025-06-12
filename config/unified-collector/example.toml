@@ -11,6 +11,13 @@ enabled_events = [
     # Terminal events
     "command.executed",
     "shell.command.executed_atuin",
+    "shell.history.command",
+    
+    # Terminal recording
+    "terminal.asciinema.session_started",
+    "terminal.asciinema.session_ended",
+    "terminal.scrollback.captured",
+    "terminal.command_output.captured",
     
     # Window manager events
     "window.focused",
@@ -119,3 +126,42 @@ connection_timeout_secs = 10
 [logging]
 level = "info"  # debug, info, warn, error
 format = "pretty"  # pretty, json
+
+# Shell history file monitoring
+[event.shell_history_command]
+# History files to monitor
+history_files = ["~/.zsh_history", "~/.bash_history"]
+# Polling interval (seconds)
+polling_interval_secs = 10
+# Use file watching instead of polling
+use_file_watch = true
+# Deduplicate commands within this window (seconds)
+dedup_window_secs = 300
+
+# Asciinema recording monitoring
+[event.terminal_asciinema]
+# Directory containing asciinema recordings
+recordings_dir = "~/.local/share/asciinema/asciicast"
+# File pattern for recordings
+file_pattern = "*.cast"
+# How often to check for recordings (seconds)
+polling_interval_secs = 5
+# Auto-start recording in new terminals
+auto_start_recording = false
+
+# Terminal scrollback capture
+[event.terminal_scrollback]
+# Kitty socket path
+kitty_socket_path = "/tmp/kitty"
+# Capture interval (seconds) - 300 = 5 minutes
+capture_interval_secs = 300
+# Maximum scrollback lines to capture
+max_scrollback_lines = 10000
+# Include ANSI escape codes
+include_ansi_codes = false
+# Capture command output separately (requires shell integration)
+capture_command_output = true
+# Save scrollback to files
+save_to_files = true
+# Directory for scrollback files
+scrollback_dir = "~/.local/share/sinex/scrollback"

@@ -6,6 +6,9 @@ use sinex_events::{
     terminal::{KittySocketListener, KittyConfig},
     window_manager::{HyprlandIPCMonitor, HyprlandConfig},
     atuin::{AtuinDbReader, AtuinConfig},
+    shell_history::{ShellHistoryReader, ShellHistoryConfig},
+    asciinema::{AsciinemaRecorder, AsciinemaConfig},
+    scrollback::{ScrollbackCapture, ScrollbackConfig},
 };
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -101,6 +104,21 @@ impl UnifiedCollector {
         
         if self.needs_source("ingestor.atuin_db_reader") {
             let handle = self.start_atuin_source(event_tx.clone()).await?;
+            handles.push(handle);
+        }
+        
+        if self.needs_source("ingestor.shell_history_reader") {
+            let handle = self.start_shell_history_source(event_tx.clone()).await?;
+            handles.push(handle);
+        }
+        
+        if self.needs_source("ingestor.asciinema_recorder") {
+            let handle = self.start_asciinema_source(event_tx.clone()).await?;
+            handles.push(handle);
+        }
+        
+        if self.needs_source("ingestor.scrollback_capture") {
+            let handle = self.start_scrollback_source(event_tx.clone()).await?;
             handles.push(handle);
         }
         
@@ -208,6 +226,75 @@ impl UnifiedCollector {
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {
                 error!("Atuin source failed: {}", e);
+            }
+        });
+        
+        Ok(handle)
+    }
+    
+    async fn start_shell_history_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+        info!("Starting shell history source");
+        
+        let mut shell_config = ShellHistoryConfig::default();
+        
+        // Apply configuration
+        if let Some(config_value) = self.config.event.get("shell.history.command") {
+            if let Ok(custom_config) = config_value.clone().try_into() {
+                shell_config = custom_config;
+            }
+        }
+        
+        let mut source = ShellHistoryReader::initialize(shell_config).await?;
+        
+        let handle = tokio::spawn(async move {
+            if let Err(e) = source.stream_events(event_tx).await {
+                error!("Shell history source failed: {}", e);
+            }
+        });
+        
+        Ok(handle)
+    }
+    
+    async fn start_asciinema_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+        info!("Starting asciinema recorder");
+        
+        let mut asciinema_config = AsciinemaConfig::default();
+        
+        // Apply configuration
+        if let Some(config_value) = self.config.event.get("terminal.asciinema") {
+            if let Ok(custom_config) = config_value.clone().try_into() {
+                asciinema_config = custom_config;
+            }
+        }
+        
+        let mut source = AsciinemaRecorder::initialize(asciinema_config).await?;
+        
+        let handle = tokio::spawn(async move {
+            if let Err(e) = source.stream_events(event_tx).await {
+                error!("Asciinema recorder failed: {}", e);
+            }
+        });
+        
+        Ok(handle)
+    }
+    
+    async fn start_scrollback_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+        info!("Starting scrollback capture");
+        
+        let mut scrollback_config = ScrollbackConfig::default();
+        
+        // Apply configuration
+        if let Some(config_value) = self.config.event.get("terminal.scrollback") {
+            if let Ok(custom_config) = config_value.clone().try_into() {
+                scrollback_config = custom_config;
+            }
+        }
+        
+        let mut source = ScrollbackCapture::initialize(scrollback_config).await?;
+        
+        let handle = tokio::spawn(async move {
+            if let Err(e) = source.stream_events(event_tx).await {
+                error!("Scrollback capture failed: {}", e);
             }
         });
         
