@@ -22,3 +22,4 @@ shellexpand = "3.1"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 gethostname = "0.4"
 rusqlite = { version = "0.30", features = ["bundled"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }

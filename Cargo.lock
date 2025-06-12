@@ -2514,6 +2514,7 @@ dependencies = [
  "sinex-core",
  "sinex-db",
  "sinex-ulid",
+ "sqlx",
  "tokio",
  "tracing",
  "uuid",

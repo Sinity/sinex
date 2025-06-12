@@ -68,7 +68,6 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_id: Option<String>,
-    hostname: String,
 }
 
 #[async_trait]
@@ -90,21 +89,31 @@ impl EventSource for AtuinDbReader {
             ));
         }
         
-        // Get current hostname for filtering
-        let hostname = gethostname::gethostname()
-            .to_string_lossy()
-            .to_string();
-        
-        info!("Will filter Atuin history to host: {}", hostname);
-        
         Ok(Self { 
             config,
             last_processed_id: None,
-            hostname,
         })
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        // Try to get last processed ID from database
+        if let Ok(database_url) = std::env::var("DATABASE_URL") {
+            match self.get_last_processed_id(&database_url).await {
+                Ok(last_id) => {
+                    if let Some(ref id) = last_id {
+                        info!("Resuming from last processed Atuin ID: {}", id);
+                        self.last_processed_id = last_id;
+                    } else {
+                        info!("No previous Atuin history found, starting from beginning");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to query last processed ID: {}, starting from beginning", e);
+                }
+            }
+        } else {
+            warn!("DATABASE_URL not set, cannot resume from last position");
+        }
         info!(
             db_path = ?self.config.db_path,
             polling_interval = self.config.polling_interval_secs,
@@ -126,6 +135,30 @@ impl EventSource for AtuinDbReader {
 }
 
 impl AtuinDbReader {
+    async fn get_last_processed_id(&self, database_url: &str) -> Result<Option<String>> {
+        use sqlx::{postgres::PgPoolOptions, Row};
+        
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(database_url)
+            .await
+            .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
+        
+        let query = r#"
+            SELECT (payload->>'atuin_history_id')::text as last_id
+            FROM raw.events
+            WHERE event_type = 'shell.command.executed_atuin'
+            ORDER BY payload->>'atuin_history_id' DESC
+            LIMIT 1
+        "#;
+        
+        let result = sqlx::query(query)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
+        
+        Ok(result.and_then(|row| row.try_get("last_id").ok()))
+    }
     async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
@@ -142,7 +175,6 @@ impl AtuinDbReader {
         let db_path = self.config.db_path.clone();
         let last_id = self.last_processed_id.clone();
         let batch_size = self.config.batch_size;
-        let hostname = self.hostname.clone();
         
         // Use spawn_blocking to run database operations
         let entries = tokio::task::spawn_blocking(move || -> Result<Vec<AtuinHistoryEntry>> {
@@ -178,7 +210,7 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
-                WHERE id > ?1 AND hostname = ?3
+                WHERE id > ?1
                 ORDER BY id ASC
                 LIMIT ?2"
             } else {
@@ -192,7 +224,6 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
-                WHERE hostname = ?2
                 ORDER BY id ASC
                 LIMIT ?1"
             };
@@ -203,7 +234,7 @@ impl AtuinDbReader {
             
             let result: Vec<AtuinHistoryEntry> = if let Some(ref last_id) = last_id {
                 stmt.query_map(
-                    rusqlite::params![last_id, batch_size, hostname],
+                    rusqlite::params![last_id, batch_size],
                     |row| {
                         Ok(AtuinHistoryEntry {
                             id: row.get(0)?,
@@ -225,7 +256,7 @@ impl AtuinDbReader {
                 ))?
             } else {
                 stmt.query_map(
-                    rusqlite::params![batch_size, hostname],
+                    rusqlite::params![batch_size],
                     |row| {
                         Ok(AtuinHistoryEntry {
                             id: row.get(0)?,
