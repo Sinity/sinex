@@ -68,6 +68,7 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_id: Option<String>,
+    hostname: String,
 }
 
 #[async_trait]
@@ -89,9 +90,17 @@ impl EventSource for AtuinDbReader {
             ));
         }
         
+        // Get current hostname for filtering
+        let hostname = gethostname::gethostname()
+            .to_string_lossy()
+            .to_string();
+        
+        info!("Will filter Atuin history to host: {}", hostname);
+        
         Ok(Self { 
             config,
             last_processed_id: None,
+            hostname,
         })
     }
     
@@ -133,6 +142,7 @@ impl AtuinDbReader {
         let db_path = self.config.db_path.clone();
         let last_id = self.last_processed_id.clone();
         let batch_size = self.config.batch_size;
+        let hostname = self.hostname.clone();
         
         // Use spawn_blocking to run database operations
         let entries = tokio::task::spawn_blocking(move || -> Result<Vec<AtuinHistoryEntry>> {
@@ -168,7 +178,7 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
-                WHERE id > ?1
+                WHERE id > ?1 AND hostname = ?3
                 ORDER BY id ASC
                 LIMIT ?2"
             } else {
@@ -182,6 +192,7 @@ impl AtuinDbReader {
                     session,
                     hostname
                 FROM history
+                WHERE hostname = ?2
                 ORDER BY id ASC
                 LIMIT ?1"
             };
@@ -192,7 +203,7 @@ impl AtuinDbReader {
             
             let result: Vec<AtuinHistoryEntry> = if let Some(ref last_id) = last_id {
                 stmt.query_map(
-                    rusqlite::params![last_id, batch_size],
+                    rusqlite::params![last_id, batch_size, hostname],
                     |row| {
                         Ok(AtuinHistoryEntry {
                             id: row.get(0)?,
@@ -214,7 +225,7 @@ impl AtuinDbReader {
                 ))?
             } else {
                 stmt.query_map(
-                    rusqlite::params![batch_size],
+                    rusqlite::params![batch_size, hostname],
                     |row| {
                         Ok(AtuinHistoryEntry {
                             id: row.get(0)?,
@@ -272,10 +283,18 @@ impl AtuinDbReader {
     
     fn convert_to_event(&self, entry: AtuinHistoryEntry) -> Result<RawEvent> {
         // Convert nanosecond timestamp to DateTime
+        // Atuin stores timestamps in nanoseconds since Unix epoch
         let ts_end = DateTime::from_timestamp(
             entry.timestamp_ns / 1_000_000_000,
             (entry.timestamp_ns % 1_000_000_000) as u32
         ).unwrap_or_else(Utc::now);
+        
+        // Debug log to check timestamp conversion
+        debug!(
+            "Atuin timestamp: {} ns -> {}", 
+            entry.timestamp_ns, 
+            ts_end.format("%Y-%m-%d %H:%M:%S UTC")
+        );
         
         // Calculate start time from duration
         let duration_secs = entry.duration_ns as f64 / 1_000_000_000.0;

@@ -63,6 +63,8 @@ polling_interval_secs = 3
 batch_size = 100
 # Use file watching instead of pure polling (experimental)
 use_file_watch = false
+# NOTE: Currently watermarking is only in-memory, so the collector
+# will re-process all history on restart. This is a known limitation.
 
 # Window manager configuration
 [event.windows]
