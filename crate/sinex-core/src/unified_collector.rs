@@ -191,6 +191,22 @@ pub fn create_registry() -> EventRegistry {
             "terminal.asciinema.session_ended",
             "terminal.scrollback.captured",
             "terminal.command_output.captured",
+            // D-Bus events
+            "dbus.signal",
+            "dbus.method_call",
+            "system.notification",
+            "media.playback.changed",
+            "system.power.event",
+            "hardware.device.event",
+            "session.state.changed",
+            "security.policykit.authorization",
+            "bluetooth.device.event",
+            "network.connection.event",
+            "screen.saver.event",
+            "storage.mount.event",
+            // Clipboard events
+            "clipboard.content.changed",
+            "clipboard.selection.changed",
         ],
         event_to_source: &[
             ("file.created", "filesystem"),
@@ -217,6 +233,29 @@ pub fn create_registry() -> EventRegistry {
             ("monitor.added", "window_manager.hyprland"),
             ("monitor.removed", "window_manager.hyprland"),
             ("state.snapshot", "window_manager.hyprland"),
+            // Shell history
+            ("shell.history.command", "ingestor.shell_history_reader"),
+            // Terminal recording
+            ("terminal.asciinema.session_started", "ingestor.asciinema_recorder"),
+            ("terminal.asciinema.session_ended", "ingestor.asciinema_recorder"),
+            ("terminal.scrollback.captured", "ingestor.scrollback_capture"),
+            ("terminal.command_output.captured", "ingestor.scrollback_capture"),
+            // D-Bus events
+            ("dbus.signal", "dbus.monitor"),
+            ("dbus.method_call", "dbus.monitor"),
+            ("system.notification", "dbus.monitor"),
+            ("media.playback.changed", "dbus.monitor"),
+            ("system.power.event", "dbus.monitor"),
+            ("hardware.device.event", "dbus.monitor"),
+            ("session.state.changed", "dbus.monitor"),
+            ("security.policykit.authorization", "dbus.monitor"),
+            ("bluetooth.device.event", "dbus.monitor"),
+            ("network.connection.event", "dbus.monitor"),
+            ("screen.saver.event", "dbus.monitor"),
+            ("storage.mount.event", "dbus.monitor"),
+            // Clipboard events
+            ("clipboard.content.changed", "clipboard.monitor"),
+            ("clipboard.selection.changed", "clipboard.monitor"),
         ],
         schema_generators: HashMap::new(), // Will be populated by build script
     }

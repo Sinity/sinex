@@ -5,6 +5,8 @@ pub mod atuin;
 pub mod shell_history;
 pub mod asciinema;
 pub mod scrollback;
+pub mod dbus;
+pub mod clipboard;
 
 // Re-export all event types
 pub use filesystem::{FileCreated, FileModified, FileDeleted};
@@ -17,3 +19,9 @@ pub use atuin::CommandExecutedAtuin;
 pub use shell_history::ShellHistoryCommand;
 pub use asciinema::{AsciinemaSessionStarted, AsciinemaSessionEnded};
 pub use scrollback::{TerminalScrollbackCaptured, CommandOutputCaptured};
+pub use dbus::{
+    DbusSignal, DbusMethodCall, SystemNotification, MediaPlaybackChanged, PowerEvent,
+    HardwareEvent, SessionEvent, PolicyKitEvent, BluetoothEvent, NetworkEvent,
+    ScreenSaverEvent, MountEvent
+};
+pub use clipboard::{ClipboardChanged, ClipboardSelection};

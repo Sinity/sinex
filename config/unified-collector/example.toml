@@ -25,6 +25,13 @@ enabled_events = [
     "window.closed",
     "workspace.changed",
     
+    # D-Bus events
+    "dbus.signal",
+    "dbus.method_call",
+    "system.notification",
+    "media.playback.changed",
+    "system.power.event",
+    
     # Periodic state dumps
     "state.snapshot"
 ]
@@ -165,3 +172,21 @@ capture_command_output = true
 save_to_files = true
 # Directory for scrollback files
 scrollback_dir = "~/.local/share/sinex/scrollback"
+
+# D-Bus monitoring configuration
+[event.dbus]
+# Monitor session bus (user events)
+monitor_session = true
+# Monitor system bus (system events)
+monitor_system = true
+# Log all signals for debugging
+log_all_signals = false
+# Extract specific event types
+extract_notifications = true
+extract_media = true
+extract_power = true
+# Interfaces to exclude (reduce noise)
+exclude_interfaces = [
+    "org.freedesktop.DBus.Properties",
+    "org.freedesktop.DBus.Introspectable"
+]
