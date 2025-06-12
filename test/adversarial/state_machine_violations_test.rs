@@ -2,7 +2,7 @@ use crate::common::create_test_db_pool;
 use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
 use std::sync::Arc;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
 use futures::future::join_all;
 use serde_json::json;

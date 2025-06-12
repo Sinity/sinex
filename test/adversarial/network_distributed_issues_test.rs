@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tokio::time::{Duration, timeout};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
 use futures::future::join_all;
 
 #[tokio::test]

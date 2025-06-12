@@ -1,10 +1,11 @@
 use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::{RawEvent, AgentManifest, AgentStatus}};
+use sinex_db::{queries, models::{RawEvent, AgentManifest}};
 use sinex_ulid::Ulid;
 use std::sync::Arc;
-use tokio::time::{Duration, timeout};
 use std::sync::atomic::{AtomicU64, Ordering};
 use futures::future::join_all;
+use chrono::Utc;
+use serde_json::json;
 
 #[tokio::test]
 async fn test_agent_registering_from_multiple_instances() {
@@ -23,21 +24,39 @@ async fn test_agent_registering_from_multiple_instances() {
         
         let handle = tokio::spawn(async move {
             let manifest = AgentManifest {
-                id: Ulid::new(),
-                name: agent_name.to_string(),
+                agent_name: agent_name.to_string(),
+                description: Some(format!("Chaos agent instance {}", instance_id)),
                 version: format!("1.0.{}", instance_id), // Slightly different versions
-                status: AgentStatus::Active,
-                capabilities: vec!["file.created".to_string(), "file.modified".to_string()],
-                config_schema: Some(serde_json::json!({
+                status: "running".to_string(),
+                agent_type: "filesystem".to_string(),
+                config_template_json: Some(json!({
                     "type": "object",
                     "properties": {
                         "paths": {"type": "array"}
                     }
                 })),
-                last_heartbeat: chrono::Utc::now(),
+                produces_event_types: Some(json!(["file.created", "file.modified"])),
+                subscribes_to_event_types: None,
+                required_capabilities: Some(json!(["read", "write"])),
+                llm_dependencies: None,
+                repo_url: None,
+                last_heartbeat_ts: Some(Utc::now()),
+                last_error_ts: None,
+                last_error_summary: None,
+                registered_at: Utc::now(),
+                updated_at: Utc::now(),
             };
             
-            match queries::register_agent(&pool_clone, &manifest).await {
+            match queries::upsert_agent_manifest(
+                &pool_clone,
+                &manifest.agent_name,
+                &manifest.version,
+                &manifest.status,
+                &manifest.agent_type,
+                manifest.description.as_deref(),
+                manifest.produces_event_types.clone(),
+                manifest.subscribes_to_event_types.clone(),
+            ).await {
                 Ok(_) => {
                     println!("Instance {} successfully registered agent {}", instance_id, agent_name);
                     success_count.fetch_add(1, Ordering::SeqCst);
@@ -62,8 +81,29 @@ async fn test_agent_registering_from_multiple_instances() {
     println!("- Failed registrations: {}", failures);
     
     // Check database state
-    let agents = sqlx::query!(
-        "SELECT * FROM sinex_schemas.agent_manifests WHERE name = $1",
+    let agents = sqlx::query_as!(
+        AgentManifest,
+        r#"
+        SELECT 
+            agent_name,
+            description,
+            version,
+            status,
+            agent_type,
+            config_template_json,
+            produces_event_types,
+            subscribes_to_event_types,
+            required_capabilities,
+            llm_dependencies,
+            repo_url,
+            last_heartbeat_ts,
+            last_error_ts,
+            last_error_summary,
+            registered_at,
+            updated_at
+        FROM sinex_schemas.agent_manifests 
+        WHERE agent_name = $1
+        "#,
         agent_name
     ).fetch_all(&pool).await.unwrap();
     
@@ -90,12 +130,12 @@ async fn test_heartbeat_from_unregistered_agent() {
         id: Ulid::new(),
         source: "agent".to_string(),
         event_type: "agent.heartbeat".to_string(),
-        ts_ingest: chrono::Utc::now(),
+        ts_ingest: Utc::now(),
         ts_orig: None,
         host: "test".to_string(),
         ingestor_version: None,
         payload_schema_id: None,
-        payload: serde_json::json!({
+        payload: json!({
             "agent_name": phantom_agent,
             "status": "alive",
             "metrics": {
@@ -115,14 +155,14 @@ async fn test_heartbeat_from_unregistered_agent() {
             
             // Check if phantom agent was auto-created
             let phantom_agents = sqlx::query!(
-                "SELECT * FROM sinex_schemas.agent_manifests WHERE name = $1",
+                "SELECT agent_name, version FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 phantom_agent
             ).fetch_all(&pool).await.unwrap();
             
             if !phantom_agents.is_empty() {
                 println!("SECURITY ISSUE: Phantom agent auto-registered from heartbeat!");
                 for agent in phantom_agents {
-                    println!("  Phantom agent: {} v{}", agent.name, agent.version);
+                    println!("  Phantom agent: {} v{}", agent.agent_name, agent.version);
                 }
             }
         }
@@ -140,22 +180,40 @@ async fn test_agent_downgrade_during_operation() {
     
     // Register agent v2.0
     let manifest_v2 = AgentManifest {
-        id: Ulid::new(),
-        name: agent_name.to_string(),
+        agent_name: agent_name.to_string(),
+        description: Some("Version chaos test agent v2".to_string()),
         version: "2.0.0".to_string(),
-        status: AgentStatus::Active,
-        capabilities: vec!["file.created".to_string(), "file.modified".to_string(), "file.deleted".to_string()],
-        config_schema: Some(serde_json::json!({
+        status: "running".to_string(),
+        agent_type: "filesystem".to_string(),
+        config_template_json: Some(json!({
             "type": "object",
             "properties": {
                 "paths": {"type": "array"},
                 "new_feature": {"type": "boolean"}  // v2.0 feature
             }
         })),
-        last_heartbeat: chrono::Utc::now(),
+        produces_event_types: Some(json!(["file.created", "file.modified", "file.deleted"])),
+        subscribes_to_event_types: None,
+        required_capabilities: Some(json!(["read", "write", "delete"])),
+        llm_dependencies: None,
+        repo_url: None,
+        last_heartbeat_ts: Some(Utc::now()),
+        last_error_ts: None,
+        last_error_summary: None,
+        registered_at: Utc::now(),
+        updated_at: Utc::now(),
     };
     
-    queries::register_agent(&pool, &manifest_v2).await.unwrap();
+    queries::upsert_agent_manifest(
+        &pool,
+        &manifest_v2.agent_name,
+        &manifest_v2.version,
+        &manifest_v2.status,
+        &manifest_v2.agent_type,
+        manifest_v2.description.as_deref(),
+        manifest_v2.produces_event_types.clone(),
+        manifest_v2.subscribes_to_event_types.clone(),
+    ).await.unwrap();
     println!("Registered agent v2.0");
     
     // Send some v2.0 events
@@ -163,12 +221,12 @@ async fn test_agent_downgrade_during_operation() {
         id: Ulid::new(),
         source: "filesystem".to_string(),
         event_type: "file.deleted".to_string(), // v2.0 capability
-        ts_ingest: chrono::Utc::now(),
+        ts_ingest: Utc::now(),
         ts_orig: None,
         host: "test".to_string(),
         ingestor_version: Some("2.0.0".to_string()),
         payload_schema_id: None,
-        payload: serde_json::json!({
+        payload: json!({
             "path": "/tmp/deleted.txt",
             "v2_feature_data": true
         }),
@@ -177,38 +235,56 @@ async fn test_agent_downgrade_during_operation() {
     queries::insert_event(&pool, &v2_event).await.unwrap();
     println!("Sent v2.0 event");
     
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Now try to "downgrade" to v1.0 (different capabilities, schema)
     let manifest_v1 = AgentManifest {
-        id: Ulid::new(),
-        name: agent_name.to_string(),
+        agent_name: agent_name.to_string(),
+        description: Some("Version chaos test agent v1".to_string()),
         version: "1.0.0".to_string(),
-        status: AgentStatus::Active,
-        capabilities: vec!["file.created".to_string(), "file.modified".to_string()], // No file.deleted
-        config_schema: Some(serde_json::json!({
+        status: "running".to_string(),
+        agent_type: "filesystem".to_string(),
+        config_template_json: Some(json!({
             "type": "object",
             "properties": {
                 "paths": {"type": "array"}
                 // No new_feature property
             }
         })),
-        last_heartbeat: chrono::Utc::now(),
+        produces_event_types: Some(json!(["file.created", "file.modified"])), // No file.deleted
+        subscribes_to_event_types: None,
+        required_capabilities: Some(json!(["read", "write"])), // No delete
+        llm_dependencies: None,
+        repo_url: None,
+        last_heartbeat_ts: Some(Utc::now()),
+        last_error_ts: None,
+        last_error_summary: None,
+        registered_at: Utc::now(),
+        updated_at: Utc::now(),
     };
     
-    match queries::register_agent(&pool, &manifest_v1).await {
+    match queries::upsert_agent_manifest(
+        &pool,
+        &manifest_v1.agent_name,
+        &manifest_v1.version,
+        &manifest_v1.status,
+        &manifest_v1.agent_type,
+        manifest_v1.description.as_deref(),
+        manifest_v1.produces_event_types.clone(),
+        manifest_v1.subscribes_to_event_types.clone(),
+    ).await {
         Ok(_) => {
             println!("Agent downgrade succeeded - checking for issues");
             
             // Check what version is actually registered
             let current_agents = sqlx::query!(
-                "SELECT * FROM sinex_schemas.agent_manifests WHERE name = $1",
+                "SELECT agent_name, version FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
             ).fetch_all(&pool).await.unwrap();
             
             println!("Agents after downgrade attempt: {}", current_agents.len());
             for agent in &current_agents {
-                println!("  Agent: {} v{}", agent.name, agent.version);
+                println!("  Agent: {} v{}", agent.agent_name, agent.version);
             }
             
             if current_agents.len() > 1 {
@@ -220,12 +296,12 @@ async fn test_agent_downgrade_during_operation() {
                 id: Ulid::new(),
                 source: "filesystem".to_string(),
                 event_type: "file.deleted".to_string(), // This capability no longer exists in v1.0
-                ts_ingest: chrono::Utc::now(),
+                ts_ingest: Utc::now(),
                 ts_orig: None,
                 host: "test".to_string(),
                 ingestor_version: Some("1.0.0".to_string()),
                 payload_schema_id: None,
-                payload: serde_json::json!({
+                payload: json!({
                     "path": "/tmp/another_deleted.txt"
                 }),
             };
@@ -253,52 +329,71 @@ async fn test_concurrent_agent_status_updates() {
     
     // Register agent
     let manifest = AgentManifest {
-        id: Ulid::new(),
-        name: agent_name.to_string(),
+        agent_name: agent_name.to_string(),
+        description: Some("Status chaos test agent".to_string()),
         version: "1.0.0".to_string(),
-        status: AgentStatus::Active,
-        capabilities: vec!["file.created".to_string()],
-        config_schema: None,
-        last_heartbeat: chrono::Utc::now(),
+        status: "running".to_string(),
+        agent_type: "filesystem".to_string(),
+        config_template_json: None,
+        produces_event_types: Some(json!(["file.created"])),
+        subscribes_to_event_types: None,
+        required_capabilities: Some(json!(["read"])),
+        llm_dependencies: None,
+        repo_url: None,
+        last_heartbeat_ts: Some(Utc::now()),
+        last_error_ts: None,
+        last_error_summary: None,
+        registered_at: Utc::now(),
+        updated_at: Utc::now(),
     };
     
-    queries::register_agent(&pool, &manifest).await.unwrap();
+    queries::upsert_agent_manifest(
+        &pool,
+        &manifest.agent_name,
+        &manifest.version,
+        &manifest.status,
+        &manifest.agent_type,
+        manifest.description.as_deref(),
+        manifest.produces_event_types.clone(),
+        manifest.subscribes_to_event_types.clone(),
+    ).await.unwrap();
     
     let mut handles = vec![];
     let status_updates = Arc::new(AtomicU64::new(0));
     
     // Multiple workers try to update agent status simultaneously
     let statuses = vec![
-        AgentStatus::Active,
-        AgentStatus::Inactive,
-        AgentStatus::Error,
-        AgentStatus::Active,
-        AgentStatus::Inactive,
+        "running",
+        "stopped",
+        "error_state",
+        "running",
+        "degraded",
     ];
     
     for (i, status) in statuses.iter().enumerate() {
         let pool_clone = pool.clone();
         let update_count = status_updates.clone();
-        let status_clone = status.clone();
+        let status_str = status.to_string();
         
         let handle = tokio::spawn(async move {
             // Try to update status
             let result = sqlx::query!(
                 r#"
                 UPDATE sinex_schemas.agent_manifests 
-                SET status = $2, last_heartbeat = $3
-                WHERE name = $1
+                SET status = $2, last_heartbeat_ts = $3, updated_at = $4
+                WHERE agent_name = $1
                 "#,
                 agent_name,
-                status_clone as AgentStatus,
-                chrono::Utc::now()
+                status_str,
+                Utc::now(),
+                Utc::now()
             ).execute(&pool_clone).await;
             
             match result {
                 Ok(rows) => {
                     if rows.rows_affected() > 0 {
                         update_count.fetch_add(1, Ordering::SeqCst);
-                        println!("Worker {} updated status to {:?}", i, status_clone);
+                        println!("Worker {} updated status to {}", i, status_str);
                     }
                 }
                 Err(e) => {
@@ -307,7 +402,7 @@ async fn test_concurrent_agent_status_updates() {
             }
             
             // Add some processing delay to increase race condition chances
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         });
         
         handles.push(handle);
@@ -317,14 +412,14 @@ async fn test_concurrent_agent_status_updates() {
     
     // Check final status
     let final_agent = sqlx::query!(
-        "SELECT * FROM sinex_schemas.agent_manifests WHERE name = $1",
+        "SELECT agent_name, status FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     ).fetch_one(&pool).await.unwrap();
     
     let total_updates = status_updates.load(Ordering::SeqCst);
     println!("Status update chaos results:");
     println!("- Total successful updates: {}", total_updates);
-    println!("- Final status: {:?}", final_agent.status);
+    println!("- Final status: {}", final_agent.status);
     
     // The final status is essentially random due to race conditions
     // This test exposes lost update problems in agent status management
@@ -338,38 +433,74 @@ async fn test_agent_zombie_heartbeat_scenario() {
     
     // Register agent
     let manifest = AgentManifest {
-        id: Ulid::new(),
-        name: agent_name.to_string(),
+        agent_name: agent_name.to_string(),
+        description: Some("Zombie test agent".to_string()),
         version: "1.0.0".to_string(),
-        status: AgentStatus::Active,
-        capabilities: vec!["file.created".to_string()],
-        config_schema: None,
-        last_heartbeat: chrono::Utc::now(),
+        status: "running".to_string(),
+        agent_type: "filesystem".to_string(),
+        config_template_json: None,
+        produces_event_types: Some(json!(["file.created"])),
+        subscribes_to_event_types: None,
+        required_capabilities: Some(json!(["read"])),
+        llm_dependencies: None,
+        repo_url: None,
+        last_heartbeat_ts: Some(Utc::now()),
+        last_error_ts: None,
+        last_error_summary: None,
+        registered_at: Utc::now(),
+        updated_at: Utc::now(),
     };
     
-    queries::register_agent(&pool, &manifest).await.unwrap();
+    queries::upsert_agent_manifest(
+        &pool,
+        &manifest.agent_name,
+        &manifest.version,
+        &manifest.status,
+        &manifest.agent_type,
+        manifest.description.as_deref(),
+        manifest.produces_event_types.clone(),
+        manifest.subscribes_to_event_types.clone(),
+    ).await.unwrap();
     
     // Simulate agent that stops sending heartbeats but doesn't unregister
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // New agent with same name tries to register (recovery scenario)
     let recovery_manifest = AgentManifest {
-        id: Ulid::new(),
-        name: agent_name.to_string(),
+        agent_name: agent_name.to_string(),
+        description: Some("Zombie test agent (recovered)".to_string()),
         version: "1.0.1".to_string(), // Slightly newer
-        status: AgentStatus::Active,
-        capabilities: vec!["file.created".to_string()],
-        config_schema: None,
-        last_heartbeat: chrono::Utc::now(),
+        status: "running".to_string(),
+        agent_type: "filesystem".to_string(),
+        config_template_json: None,
+        produces_event_types: Some(json!(["file.created"])),
+        subscribes_to_event_types: None,
+        required_capabilities: Some(json!(["read"])),
+        llm_dependencies: None,
+        repo_url: None,
+        last_heartbeat_ts: Some(Utc::now()),
+        last_error_ts: None,
+        last_error_summary: None,
+        registered_at: Utc::now(),
+        updated_at: Utc::now(),
     };
     
-    match queries::register_agent(&pool, &recovery_manifest).await {
+    match queries::upsert_agent_manifest(
+        &pool,
+        &recovery_manifest.agent_name,
+        &recovery_manifest.version,
+        &recovery_manifest.status,
+        &recovery_manifest.agent_type,
+        recovery_manifest.description.as_deref(),
+        recovery_manifest.produces_event_types.clone(),
+        recovery_manifest.subscribes_to_event_types.clone(),
+    ).await {
         Ok(_) => {
             println!("Recovery agent registration succeeded");
             
             // Check how many agents exist now
             let agents = sqlx::query!(
-                "SELECT * FROM sinex_schemas.agent_manifests WHERE name = $1",
+                "SELECT agent_name, version, status, last_heartbeat_ts FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
             ).fetch_all(&pool).await.unwrap();
             
@@ -378,8 +509,8 @@ async fn test_agent_zombie_heartbeat_scenario() {
             if agents.len() > 1 {
                 println!("ZOMBIE AGENT DETECTED: Multiple instances of same agent exist!");
                 for (i, agent) in agents.iter().enumerate() {
-                    println!("  Agent {}: v{} status={:?} last_heartbeat={:?}", 
-                             i, agent.version, agent.status, agent.last_heartbeat);
+                    println!("  Agent {}: v{} status={} last_heartbeat={:?}", 
+                             i, agent.version, agent.status, agent.last_heartbeat_ts);
                 }
             }
         }
@@ -393,12 +524,12 @@ async fn test_agent_zombie_heartbeat_scenario() {
         id: Ulid::new(),
         source: "agent".to_string(),
         event_type: "agent.heartbeat".to_string(),
-        ts_ingest: chrono::Utc::now(),
+        ts_ingest: Utc::now(),
         ts_orig: None,
         host: "test".to_string(),
         ingestor_version: Some("1.0.1".to_string()),
         payload_schema_id: None,
-        payload: serde_json::json!({
+        payload: json!({
             "agent_name": agent_name,
             "status": "alive",
             "version": "1.0.1"

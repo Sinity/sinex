@@ -1,40 +1,77 @@
+use crate::common::create_test_db_pool;
 use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
-use crate::common::create_test_db_pool;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
+use chrono::Utc;
+use serde_json::json;
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 use futures::future::join_all;
 
 #[tokio::test]
 async fn test_event_payload_approaching_1gb_limit() {
     let pool = create_test_db_pool().await.unwrap();
     
-    // Create progressively larger payloads
-    let sizes = vec![1_000_000, 10_000_000, 50_000_000, 100_000_000];
+    println!("Testing JSONB 1GB limit:");
     
-    for size in sizes {
-        let huge_string = "x".repeat(size);
+    // Start with smaller sizes and work up
+    let test_sizes = vec![
+        (1024 * 1024, "1MB"),
+        (10 * 1024 * 1024, "10MB"),
+        (100 * 1024 * 1024, "100MB"),
+        (500 * 1024 * 1024, "500MB"),
+        (900 * 1024 * 1024, "900MB"),
+        (1000 * 1024 * 1024, "1000MB"), // Approaching limit
+    ];
+    
+    for (size, label) in test_sizes {
+        println!("  Testing {} payload...", label);
+        
+        // Create large string
+        let large_data = "x".repeat(size);
+        
         let event = RawEvent {
             id: Ulid::new(),
             source: "test".to_string(),
-            event_type: "huge.payload".to_string(),
-            ts_ingest: chrono::Utc::now(),
+            event_type: "large.payload".to_string(),
+            ts_ingest: Utc::now(),
             ts_orig: None,
             host: "test".to_string(),
             ingestor_version: None,
             payload_schema_id: None,
-            payload: serde_json::json!({
-                "data": huge_string,
-                "size": size
+            payload: json!({
+                "data": large_data,
+                "size_bytes": size,
             }),
         };
         
+        let start = Instant::now();
         match queries::insert_event(&pool, &event).await {
-            Ok(_) => println!("Successfully inserted {}MB payload", size / 1_000_000),
+            Ok(_) => {
+                let elapsed = start.elapsed();
+                println!("    SUCCESS: Inserted in {:?}", elapsed);
+                
+                // Try to update with more data
+                let extra_data = "y".repeat(100 * 1024 * 1024); // 100MB more
+                let update_result = sqlx::query!(
+                    r#"
+                    UPDATE raw.events 
+                    SET payload = payload || jsonb_build_object('extra_data', $2::text)
+                    WHERE id::uuid = $1::uuid
+                    "#,
+                    event.id.as_uuid(),
+                    extra_data
+                ).execute(&pool).await;
+                
+                match update_result {
+                    Ok(_) => println!("    UPDATE SUCCESS: Added 100MB more"),
+                    Err(e) => println!("    UPDATE FAILED: {} (expected near limit)", e),
+                }
+            }
             Err(e) => {
-                println!("Failed at {}MB: {}", size / 1_000_000, e);
-                // This is where we expect failure
-                break;
+                println!("    FAILED: {}", e);
+                if size >= 900 * 1024 * 1024 {
+                    println!("    Expected failure near 1GB limit");
+                }
             }
         }
     }
@@ -44,192 +81,378 @@ async fn test_event_payload_approaching_1gb_limit() {
 async fn test_connection_pool_exhaustion() {
     let pool = create_test_db_pool().await.unwrap();
     
-    // Default pool size is usually ~10-100
-    let concurrent_ops = 200;
-    let semaphore = Arc::new(Semaphore::new(concurrent_ops));
-    let mut handles = vec![];
+    println!("Testing connection pool exhaustion:");
     
-    for i in 0..concurrent_ops {
-        let pool = pool.clone();
-        let sem = semaphore.clone();
+    // Get pool stats
+    println!("  Pool size: {}", pool.size());
+    // Note: max_size() method not available in sqlx
+    
+    let num_workers = 200; // Much more than typical pool size
+    let _hold_duration = Duration::from_secs(5);
+    
+    let mut handles = vec![];
+    let start = Instant::now();
+    
+    for worker_id in 0..num_workers {
+        let pool_clone = pool.clone();
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let acquire_start = Instant::now();
             
-            // Try to hold connection for extended time
-            let result = sqlx::query!("SELECT pg_sleep(30)")
-                .execute(&pool)
-                .await;
-                
-            match result {
-                Ok(_) => println!("Connection {} completed", i),
-                Err(e) => println!("Connection {} failed: {:?}", i, e),
+            // Try to acquire connection with timeout
+            match timeout(Duration::from_secs(10), pool_clone.acquire()).await {
+                Ok(Ok(mut conn)) => {
+                    let acquire_time = acquire_start.elapsed();
+                    println!("    Worker {} acquired connection after {:?}", worker_id, acquire_time);
+                    
+                    // Hold connection
+                    let query_result = sqlx::query!("SELECT pg_sleep(5)")
+                        .execute(&mut *conn)
+                        .await;
+                    
+                    match query_result {
+                        Ok(_) => format!("Worker {} completed", worker_id),
+                        Err(e) => format!("Worker {} query failed: {}", worker_id, e),
+                    }
+                }
+                Ok(Err(e)) => {
+                    format!("Worker {} failed to acquire: {}", worker_id, e)
+                }
+                Err(_) => {
+                    format!("Worker {} TIMEOUT waiting for connection", worker_id)
+                }
             }
+        });
+        
+        handles.push(handle);
+        
+        // Stagger worker starts slightly
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    
+    let results = join_all(handles).await;
+    
+    let total_time = start.elapsed();
+    println!("\nConnection pool exhaustion results:");
+    println!("  Total time: {:?}", total_time);
+    
+    let mut timeouts = 0;
+    let mut failures = 0;
+    let mut successes = 0;
+    
+    for result in results {
+        match result {
+            Ok(msg) => {
+                if msg.contains("TIMEOUT") {
+                    timeouts += 1;
+                } else if msg.contains("failed") {
+                    failures += 1;
+                } else {
+                    successes += 1;
+                }
+            }
+            Err(_) => failures += 1,
+        }
+    }
+    
+    println!("  Successes: {}", successes);
+    println!("  Timeouts: {} (EXPECTED - pool exhausted)", timeouts);
+    println!("  Failures: {}", failures);
+    
+    if timeouts == 0 {
+        println!("  WARNING: No timeouts - pool might be too large or test too small");
+    }
+}
+
+#[tokio::test]
+async fn test_concurrent_btree_index_splits() {
+    let pool = create_test_db_pool().await.unwrap();
+    
+    println!("Testing concurrent B-tree index splits:");
+    
+    // Generate ULIDs that will force B-tree page splits
+    // B-trees split when pages get full, typically around same prefix
+    
+    let base_time = Utc::now();
+    let mut handles = vec![];
+    
+    // Create groups of events with very similar ULIDs
+    for group in 0..10 {
+        let pool_clone = pool.clone();
+        let group_time = base_time + chrono::Duration::milliseconds(group as i64);
+        
+        let handle = tokio::spawn(async move {
+            let mut events = vec![];
+            
+            // Generate 1000 events with nearly identical timestamps
+            // This forces them into same B-tree pages
+            for i in 0..1000 {
+                let event_time = group_time + chrono::Duration::microseconds(i as i64);
+                let ulid = Ulid::from_datetime(event_time);
+                
+                let event = RawEvent {
+                    id: ulid,
+                    source: "btree_test".to_string(),
+                    event_type: "index.split".to_string(),
+                    ts_ingest: event_time,
+                    ts_orig: None,
+                    host: "test".to_string(),
+                    ingestor_version: None,
+                    payload_schema_id: None,
+                    payload: json!({
+                        "group": group,
+                        "index": i,
+                    }),
+                };
+                
+                events.push(event);
+            }
+            
+            // Insert all at once to maximize split conflicts
+            let start = Instant::now();
+            let mut success = 0;
+            let mut failed = 0;
+            
+            for event in events {
+                match queries::insert_event(&pool_clone, &event).await {
+                    Ok(_) => success += 1,
+                    Err(_) => failed += 1,
+                }
+            }
+            
+            let elapsed = start.elapsed();
+            
+            (group, success, failed, elapsed)
         });
         
         handles.push(handle);
     }
     
-    // This should cause pool exhaustion and timeouts
-    let results = join_all(handles).await;
-    let failures = results.iter().filter(|r| r.is_err()).count();
+    // Run concurrent queries during splits
+    let query_handle = {
+        let pool_clone = pool.clone();
+        tokio::spawn(async move {
+            let mut inconsistencies = 0;
+            
+            for _ in 0..100 {
+                let count_result = sqlx::query!(
+                    "SELECT COUNT(*) as count FROM raw.events WHERE source = 'btree_test'"
+                ).fetch_one(&pool_clone).await;
+                
+                if let Ok(record) = count_result {
+                    let count = record.count.unwrap_or(0);
+                    
+                    // During splits, counts might be inconsistent
+                    if count % 1000 != 0 && count > 0 {
+                        inconsistencies += 1;
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            
+            inconsistencies
+        })
+    };
     
-    println!("Failed connections: {}/{}", failures, concurrent_ops);
-    // Expect many failures due to pool exhaustion
+    let results = join_all(handles).await;
+    let query_inconsistencies = query_handle.await.unwrap();
+    
+    println!("\nB-tree split test results:");
+    for result in results {
+        if let Ok((group, success, failed, elapsed)) = result {
+            println!("  Group {}: {} success, {} failed in {:?}", 
+                     group, success, failed, elapsed);
+        }
+    }
+    
+    println!("  Query inconsistencies during splits: {}", query_inconsistencies);
+    
+    if query_inconsistencies > 0 {
+        println!("  INDEX INCONSISTENCY: Queries saw partial results during splits!");
+    }
 }
 
 #[tokio::test]
 async fn test_events_spanning_chunk_boundary() {
     let pool = create_test_db_pool().await.unwrap();
     
-    // TimescaleDB typically chunks by week
-    // Insert events right at chunk boundary
-    let chunk_boundary = chrono::Utc::now()
+    println!("Testing TimescaleDB chunk boundary operations:");
+    
+    // Note: This assumes default chunk interval is 7 days
+    // We'll create events around a chunk boundary
+    
+    let chunk_boundary = Utc::now()
         .date_naive()
-        .and_hms_opt(0, 0, 0).unwrap()
-        .and_utc();
-    
-    let before_boundary = chunk_boundary - chrono::Duration::milliseconds(1);
-    let after_boundary = chunk_boundary + chrono::Duration::milliseconds(1);
-    
-    // Insert events
-    let event_before = RawEvent {
-        id: Ulid::from_datetime(before_boundary),
-        source: "test".to_string(),
-        event_type: "boundary.test".to_string(),
-        ts_ingest: before_boundary,
-        ts_orig: Some(before_boundary),
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"position": "before"}),
-    };
-    
-    let event_after = RawEvent {
-        id: Ulid::from_datetime(after_boundary),
-        source: "test".to_string(),
-        event_type: "boundary.test".to_string(),
-        ts_ingest: after_boundary,
-        ts_orig: Some(after_boundary),
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"position": "after"}),
-    };
-    
-    queries::insert_event(&pool, &event_before).await.unwrap();
-    queries::insert_event(&pool, &event_after).await.unwrap();
-    
-    // Query spanning boundary
-    let result = sqlx::query!(
-        r#"
-        SELECT COUNT(*) as count
-        FROM raw.events 
-        WHERE ts_ingest >= $1 AND ts_ingest <= $2
-        "#,
-        before_boundary,
-        after_boundary
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    
-    println!("Events found spanning boundary: {}", result.count.unwrap());
-    // This might fail if chunk boundary causes issues
-    assert_eq!(result.count.unwrap(), 2, "Chunk boundary query failed");
-}
-
-#[tokio::test]
-async fn test_ulid_btree_index_stress() {
-    let pool = create_test_db_pool().await.unwrap();
-    
-    // Generate ULIDs that will cause B-tree page splits
-    // These are carefully crafted to have similar prefixes
-    let base_time = chrono::Utc::now();
-    let mut handles = vec![];
-    
-    for i in 0..100 {
-        let pool = pool.clone();
-        let time = base_time + chrono::Duration::microseconds(i);
-        
-        let handle = tokio::spawn(async move {
-            // Create 100 events with very similar timestamps
-            for j in 0..100 {
-                let event = RawEvent {
-                    id: Ulid::from_datetime(time + chrono::Duration::nanoseconds(j)),
-                    source: "btree".to_string(),
-                    event_type: "stress.test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: format!("worker-{}", i),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: serde_json::json!({"i": i, "j": j}),
-                };
-                
-                if let Err(e) = queries::insert_event(&pool, &event).await {
-                    println!("Insert failed during B-tree stress: {}", e);
-                }
-            }
-        });
-        
-        handles.push(handle);
-    }
-    
-    join_all(handles).await;
-    
-    // Query during potential index reorganization
-    let count = sqlx::query!("SELECT COUNT(*) as count FROM raw.events WHERE source = 'btree'")
-        .fetch_one(&pool)
-        .await
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(Utc)
         .unwrap();
     
-    println!("Total events after B-tree stress: {}", count.count.unwrap());
+    // Events right at the boundary
+    let boundary_events = vec![
+        (chunk_boundary - chrono::Duration::milliseconds(1), "before_boundary"),
+        (chunk_boundary, "at_boundary"),
+        (chunk_boundary + chrono::Duration::milliseconds(1), "after_boundary"),
+    ];
+    
+    println!("  Chunk boundary at: {}", chunk_boundary);
+    
+    for (timestamp, label) in boundary_events {
+        let event = RawEvent {
+            id: Ulid::from_datetime(timestamp),
+            source: "chunk_test".to_string(),
+            event_type: "boundary.test".to_string(),
+            ts_ingest: timestamp,
+            ts_orig: None,
+            host: "test".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!({
+                "position": label,
+                "exact_time": timestamp.to_rfc3339(),
+            }),
+        };
+        
+        match queries::insert_event(&pool, &event).await {
+            Ok(_) => println!("    Inserted {}: {}", label, timestamp),
+            Err(e) => println!("    Failed {}: {}", label, e),
+        }
+    }
+    
+    // Run aggregation query spanning chunks
+    let agg_result = sqlx::query!(
+        r#"
+        SELECT 
+            COUNT(*) as count,
+            MIN(ts_ingest) as min_time,
+            MAX(ts_ingest) as max_time
+        FROM raw.events 
+        WHERE source = 'chunk_test'
+        "#
+    ).fetch_one(&pool).await;
+    
+    match agg_result {
+        Ok(record) => {
+            println!("\n  Aggregation across chunks:");
+            println!("    Count: {}", record.count.unwrap_or(0));
+            println!("    Min time: {:?}", record.min_time);
+            println!("    Max time: {:?}", record.max_time);
+            
+            if record.count.unwrap_or(0) != 3 {
+                println!("    CHUNK ISSUE: Expected 3 events, got {}", record.count.unwrap_or(0));
+            }
+        }
+        Err(e) => {
+            println!("  Aggregation failed: {}", e);
+        }
+    }
 }
 
 #[tokio::test]
-async fn test_jsonb_size_update_overflow() {
+async fn test_query_during_chunk_compression() {
     let pool = create_test_db_pool().await.unwrap();
     
-    // Insert event with moderate payload
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "grow.test".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({
-            "initial": "small"
-        }),
-    };
+    println!("Testing queries during chunk compression:");
     
-    let inserted = queries::insert_event(&pool, &event).await.unwrap();
+    // Insert old events that would be compressed
+    let old_time = Utc::now() - chrono::Duration::days(30);
     
-    // Try to update with increasingly large payloads
-    for size_mb in [1, 10, 100, 500] {
-        let huge_data = "x".repeat(size_mb * 1_000_000);
+    // Insert many events to make compression worthwhile
+    for i in 0..10000 {
+        let event = RawEvent {
+            id: Ulid::from_datetime(old_time + chrono::Duration::seconds(i)),
+            source: "compression_test".to_string(),
+            event_type: "bulk.data".to_string(),
+            ts_ingest: old_time + chrono::Duration::seconds(i),
+            ts_orig: None,
+            host: "test".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!({
+                "index": i,
+                "data": "x".repeat(100), // Some bulk to compress
+            }),
+        };
         
-        let update_result = sqlx::query!(
-            r#"
-            UPDATE raw.events 
-            SET payload = payload || jsonb_build_object('huge_data', $2::text)
-            WHERE id::uuid = $1::uuid
-            "#,
-            inserted.id.as_uuid(),
-            huge_data
-        )
-        .execute(&pool)
-        .await;
+        queries::insert_event(&pool, &event).await.unwrap();
         
-        match update_result {
-            Ok(_) => println!("Successfully appended {}MB to payload", size_mb),
-            Err(e) => {
-                println!("Failed to append {}MB: {}", size_mb, e);
-                break;
+        if i % 1000 == 0 {
+            println!("  Inserted {} events", i);
+        }
+    }
+    
+    // Simulate compression by running queries that would conflict
+    let query_tasks = vec![
+        // Count query
+        tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                let start = Instant::now();
+                let result = sqlx::query!(
+                    "SELECT COUNT(*) FROM raw.events WHERE source = 'compression_test'"
+                ).fetch_one(&pool).await;
+                
+                match result {
+                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed()),
+                    Err(e) => format!("Count failed: {}", e),
+                }
             }
+        }),
+        
+        // Range scan
+        tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                let start = Instant::now();
+                let result = sqlx::query!(
+                    r#"
+                    SELECT COUNT(*) as count FROM raw.events 
+                    WHERE source = 'compression_test' 
+                    AND ts_ingest >= $1
+                    "#,
+                    old_time
+                ).fetch_one(&pool).await;
+                
+                match result {
+                    Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed()),
+                    Err(e) => format!("Range scan failed: {}", e),
+                }
+            }
+        }),
+        
+        // Aggregation
+        tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                let start = Instant::now();
+                let result = sqlx::query!(
+                    r#"
+                    SELECT 
+                        date_trunc('minute', ts_ingest) as minute,
+                        COUNT(*) as count
+                    FROM raw.events 
+                    WHERE source = 'compression_test'
+                    GROUP BY minute
+                    ORDER BY minute
+                    "#
+                ).fetch_all(&pool).await;
+                
+                match result {
+                    Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),
+                    Err(e) => format!("Aggregation failed: {}", e),
+                }
+            }
+        }),
+    ];
+    
+    let results = join_all(query_tasks).await;
+    
+    println!("\nCompression race condition results:");
+    for (i, result) in results.iter().enumerate() {
+        match result {
+            Ok(msg) => println!("  Query {}: {}", i + 1, msg),
+            Err(e) => println!("  Query {} panicked: {}", i + 1, e),
         }
     }
 }

@@ -6,6 +6,8 @@ use thiserror::Error;
 use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
 
+pub mod monotonic;
+
 #[derive(Error, Debug)]
 pub enum UlidError {
     #[error("Invalid ULID format: {0}")]
