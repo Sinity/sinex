@@ -1,8 +1,4 @@
 use crate::common;
-
-use chrono::Utc;
-use serde_json::json;
-use sinex_db::models::RawEvent;
 use sinex_core::event_type_constants;
 use std::time::Duration;
 

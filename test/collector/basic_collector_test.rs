@@ -1,4 +1,3 @@
-use crate::common;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
 use std::collections::HashMap;

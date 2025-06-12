@@ -37,4 +37,13 @@ mod worker;
 mod events;
 
 #[cfg(test)]
+mod bugs;
+
+#[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
+mod pipeline;
+
+#[cfg(test)]
 mod property_tests;

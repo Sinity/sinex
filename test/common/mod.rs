@@ -18,12 +18,14 @@ pub async fn create_test_db_pool() -> Result<PgPool> {
 }
 
 /// Helper for inserting test events directly via queries
+#[allow(dead_code)]
 pub async fn insert_test_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
     let inserted = queries::insert_event(pool, event).await?;
     Ok(inserted.id)
 }
 
 /// Event builder utilities for testing
+#[allow(dead_code)]
 pub mod events {
     use super::*;
 
@@ -105,6 +107,7 @@ pub mod events {
 }
 
 /// Assertion helpers for common test patterns
+#[allow(dead_code)]
 pub mod assertions {
     use super::*;
     use sinex_db::models::{RawEvent, AgentManifest};
@@ -161,6 +164,7 @@ pub mod assertions {
 }
 
 /// Test data generation utilities
+#[allow(dead_code)]
 pub mod generators {
     use super::*;
 
@@ -302,6 +306,7 @@ macro_rules! test_invalid_event_insertion {
 }
 
 /// Test environment utilities
+#[allow(dead_code)]
 pub mod env {
     /// Check if we're running in a test environment
     pub fn is_test_env() -> bool {

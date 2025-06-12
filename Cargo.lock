@@ -2385,6 +2385,7 @@ dependencies = [
  "sinex-collector",
  "sinex-core",
  "sinex-db",
+ "sinex-events",
  "sinex-ulid",
  "sinex-worker",
  "sqlx",

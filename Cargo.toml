@@ -47,6 +47,7 @@ sinex-collector = { path = "crate/sinex-collector" }
 [dev-dependencies]
 proptest.workspace = true
 tempfile = "3"
+sinex-events = { path = "crate/sinex-events" }
 
 [workspace.package]
 version = "0.3.0"

@@ -1,5 +1,4 @@
 use sinex_collector::config::CollectorConfig;
-use std::collections::HashMap;
 
 #[test]
 fn test_default_config() {
