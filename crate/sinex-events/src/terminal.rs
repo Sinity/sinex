@@ -50,7 +50,7 @@ pub struct KittyConfig {
 impl Default for KittyConfig {
     fn default() -> Self {
         Self {
-            socket_path: "/tmp/mykitty-*".to_string(),
+            socket_path: "/tmp/kitty".to_string(),
             polling_interval_secs: 2,
         }
     }

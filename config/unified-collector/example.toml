@@ -47,7 +47,7 @@ debounce_ms = 50  # Faster debounce for file creation
 
 # Configuration for command execution tracking
 [event.command_executed]
-socket_path = "/tmp/kitty_socket"  # Or use $KITTY_LISTEN_ON
+socket_path = "/tmp/kitty"  # Standard Kitty socket location
 capture_env_vars = ["PATH", "PWD", "USER", "HOME", "SHELL"]
 max_command_length = 4096
 # Filter out certain commands from being recorded
