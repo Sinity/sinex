@@ -10,6 +10,7 @@ use sinex_events::{
     asciinema::{AsciinemaRecorder, AsciinemaConfig},
     scrollback::{ScrollbackCapture, ScrollbackConfig},
     dbus::{DbusMonitor, DbusConfig},
+    clipboard::{ClipboardMonitor, ClipboardConfig},
 };
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -125,6 +126,11 @@ impl UnifiedCollector {
         
         if self.needs_source("dbus.monitor") {
             let handle = self.start_dbus_source(event_tx.clone()).await?;
+            handles.push(handle);
+        }
+        
+        if self.needs_source("clipboard.monitor") {
+            let handle = self.start_clipboard_source(event_tx.clone()).await?;
             handles.push(handle);
         }
         
@@ -324,6 +330,29 @@ impl UnifiedCollector {
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {
                 error!("D-Bus monitor failed: {}", e);
+            }
+        });
+        
+        Ok(handle)
+    }
+    
+    async fn start_clipboard_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+        info!("Starting clipboard monitor");
+        
+        let mut clipboard_config = ClipboardConfig::default();
+        
+        // Apply configuration
+        if let Some(config_value) = self.config.event.get("clipboard") {
+            if let Ok(custom_config) = config_value.clone().try_into() {
+                clipboard_config = custom_config;
+            }
+        }
+        
+        let mut source = ClipboardMonitor::initialize(clipboard_config).await?;
+        
+        let handle = tokio::spawn(async move {
+            if let Err(e) = source.stream_events(event_tx).await {
+                error!("Clipboard monitor failed: {}", e);
             }
         });
         
