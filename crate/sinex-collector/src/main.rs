@@ -43,7 +43,7 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     
-    // Initialize logging
+    // Initialize logging - timestamps will be in local time by default
     tracing_subscriber::fmt()
         .with_env_filter(&args.log_level)
         .init();

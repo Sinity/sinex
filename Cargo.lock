@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "sinex"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-collector"
-version = "0.1.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-core"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2478,7 +2478,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-db"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-events"
-version = "0.1.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-promo-worker"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2545,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-ulid"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "lazy_static",
@@ -2560,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "sinex-worker"
-version = "0.3.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",

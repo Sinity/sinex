@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use tokio::time;
+use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
+use notify::{Watcher, RecursiveMode, EventKind};
+use notify::event::{ModifyKind, DataChange};
 
 use sinex_core::{EventType, EventSource, Result};
 use sinex_db::models::RawEvent;
@@ -96,19 +98,28 @@ impl EventSource for AtuinDbReader {
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
-        // Try to get last processed ID from database
+        // Try to get last processed ID and count from database
         if let Ok(database_url) = std::env::var("DATABASE_URL") {
-            match self.get_last_processed_id(&database_url).await {
-                Ok(last_id) => {
+            match self.get_startup_info(&database_url).await {
+                Ok((last_id, our_count)) => {
                     if let Some(ref id) = last_id {
                         info!("Resuming from last processed Atuin ID: {}", id);
                         self.last_processed_id = last_id;
                     } else {
                         info!("No previous Atuin history found, starting from beginning");
                     }
+                    
+                    // Compare counts
+                    let atuin_count = self.get_atuin_total_count().await?;
+                    info!(
+                        "Event count comparison - Atuin DB: {}, Our DB: {}, Difference: {}",
+                        atuin_count,
+                        our_count,
+                        atuin_count.saturating_sub(our_count as i64)
+                    );
                 }
                 Err(e) => {
-                    warn!("Failed to query last processed ID: {}, starting from beginning", e);
+                    warn!("Failed to query startup info: {}, starting from beginning", e);
                 }
             }
         } else {
@@ -122,10 +133,7 @@ impl EventSource for AtuinDbReader {
         );
         
         if self.config.use_file_watch {
-            // File watching implementation would go here
-            // For now, just use polling with a more responsive interval
-            warn!("File watching not yet implemented, using polling mode");
-            self.poll_mode(tx).await?;
+            self.watch_mode(tx).await?;
         } else {
             self.poll_mode(tx).await?;
         }
@@ -135,7 +143,30 @@ impl EventSource for AtuinDbReader {
 }
 
 impl AtuinDbReader {
-    async fn get_last_processed_id(&self, database_url: &str) -> Result<Option<String>> {
+    async fn get_atuin_total_count(&self) -> Result<i64> {
+        let db_path = self.config.db_path.clone();
+        
+        tokio::task::spawn_blocking(move || -> Result<i64> {
+            let conn = rusqlite::Connection::open_with_flags(
+                &db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            ).map_err(|e| sinex_core::CoreError::Other(
+                format!("Failed to open Atuin database: {}", e)
+            ))?;
+            
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM history",
+                [],
+                |row| row.get(0)
+            ).unwrap_or(0);
+            
+            Ok(count)
+        }).await.map_err(|e| sinex_core::CoreError::Other(
+            format!("Failed to get Atuin count: {}", e)
+        ))?
+    }
+    
+    async fn get_startup_info(&self, database_url: &str) -> Result<(Option<String>, usize)> {
         use sqlx::{postgres::PgPoolOptions, Row};
         
         let pool = PgPoolOptions::new()
@@ -144,12 +175,18 @@ impl AtuinDbReader {
             .await
             .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
         
+        // Get both last ID and count in one query
         let query = r#"
-            SELECT (payload->>'atuin_history_id')::text as last_id
-            FROM raw.events
-            WHERE event_type = 'shell.command.executed_atuin'
-            ORDER BY payload->>'atuin_history_id' DESC
-            LIMIT 1
+            WITH stats AS (
+                SELECT 
+                    (payload->>'atuin_history_id')::text as last_id,
+                    COUNT(*) OVER () as total_count
+                FROM raw.events
+                WHERE event_type = 'shell.command.executed_atuin'
+                ORDER BY payload->>'atuin_history_id' DESC
+                LIMIT 1
+            )
+            SELECT last_id, total_count FROM stats
         "#;
         
         let result = sqlx::query(query)
@@ -157,8 +194,65 @@ impl AtuinDbReader {
             .await
             .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
         
-        Ok(result.and_then(|row| row.try_get("last_id").ok()))
+        match result {
+            Some(row) => {
+                let last_id: Option<String> = row.try_get("last_id").ok();
+                let count: i64 = row.try_get("total_count").unwrap_or(0);
+                Ok((last_id, count as usize))
+            }
+            None => Ok((None, 0))
+        }
     }
+    
+    async fn watch_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        let (notify_tx, mut notify_rx) = mpsc::channel(100);
+        let db_path = self.config.db_path.clone();
+        
+        // Set up file watcher
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if matches!(event.kind, EventKind::Modify(ModifyKind::Data(DataChange::Any))) {
+                    let _ = notify_tx.blocking_send(());
+                }
+            }
+        }).map_err(|e| sinex_core::CoreError::Other(
+            format!("Failed to create file watcher: {}", e)
+        ))?;
+        
+        watcher.watch(&self.config.db_path, RecursiveMode::NonRecursive)
+            .map_err(|e| sinex_core::CoreError::Other(
+                format!("Failed to watch Atuin database: {}", e)
+            ))?;
+        
+        info!("Started file watching on Atuin database: {:?}", db_path);
+        
+        // Track last poll time to reset interval on each event
+        let poll_interval = Duration::from_secs(self.config.polling_interval_secs);
+        let mut last_poll = Instant::now();
+        
+        loop {
+            tokio::select! {
+                // File change detected
+                Some(_) = notify_rx.recv() => {
+                    debug!("Atuin database file changed, polling for new entries");
+                    if let Err(e) = self.poll_atuin_history(&tx).await {
+                        error!("Error polling Atuin history after file change: {}", e);
+                    }
+                    // Reset poll timer on activity
+                    last_poll = Instant::now();
+                }
+                // Periodic poll as fallback (only if no activity)
+                _ = time::sleep_until(last_poll + poll_interval) => {
+                    debug!("No activity for {} seconds, running periodic poll", self.config.polling_interval_secs);
+                    if let Err(e) = self.poll_atuin_history(&tx).await {
+                        error!("Error during periodic Atuin poll: {}", e);
+                    }
+                    last_poll = Instant::now();
+                }
+            }
+        }
+    }
+    
     async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
