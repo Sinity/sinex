@@ -1242,7 +1242,6 @@ checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.3",
- "serde",
 ]
 
 [[package]]
@@ -2447,6 +2446,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "ulid",
+ "unicode-normalization",
  "uuid",
 ]
 
@@ -2487,7 +2487,6 @@ dependencies = [
  "sinex-core",
  "sinex-db",
  "sinex-ulid",
- "sinex-validation",
  "tokio",
  "tracing",
  "uuid",
@@ -2532,23 +2531,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-validation"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "lazy_static",
- "rand 0.8.5",
- "regex",
- "serde",
- "serde_json",
- "siphasher",
- "tempfile",
- "thiserror 1.0.69",
- "tracing",
- "unicode-normalization",
-]
-
-[[package]]
 name = "sinex-worker"
 version = "0.3.0"
 dependencies = [
@@ -2570,12 +2552,6 @@ dependencies = [
  "tracing",
  "uuid",
 ]
-
-[[package]]
-name = "siphasher"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "slab"

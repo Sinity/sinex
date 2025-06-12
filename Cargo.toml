@@ -7,7 +7,6 @@ members = [
     "crate/sinex-promo-worker",
     "crate/sinex-events",
     "crate/sinex-collector",
-    "crate/sinex-validation",
 ]
 resolver = "2"
 

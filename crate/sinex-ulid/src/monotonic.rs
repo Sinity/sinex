@@ -155,8 +155,8 @@ pub struct GeneratorStats {
     pub process_id: u16,
 }
 
-/// Global monotonic ULID generator for convenience
 lazy_static::lazy_static! {
+    /// Global monotonic ULID generator for convenience
     static ref GLOBAL_GENERATOR: MonotonicUlidGenerator = MonotonicUlidGenerator::new();
 }
 

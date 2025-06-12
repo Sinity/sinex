@@ -31,3 +31,6 @@ schemars = "0.8"
 
 # For RawEvent type in unified collector
 sinex-db = { path = "../sinex-db" }
+
+# For validation
+unicode-normalization = "0.1"

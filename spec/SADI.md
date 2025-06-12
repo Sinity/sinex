@@ -51,7 +51,7 @@ The Exocortex is built on a local-first, robust, and extensible technical founda
 
 This section clarifies the role of each primary project document in the new modular structure.
 
-1. **`VISION.md` (Refactored Vision Document - e.g., "Sinnix Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty v3.0")**
+1. **`VISION.md` (Refactored Vision Document - e.g., "Sinex Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty v3.0")**
     * **Role:** The **foundational "Why" and high-level "What"** of the project. Articulates:
         * Core philosophy, manifesto, pledges, and human-centric design context.
         * Conceptual overview of key user-facing capabilities (Living Document, PKM, Universal Capture, Agentic Partnership, Query & Reflection concepts).

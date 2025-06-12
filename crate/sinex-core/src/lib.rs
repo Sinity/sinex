@@ -1,5 +1,6 @@
 pub mod event;
 pub mod unified_collector;
+pub mod validation;
 
 pub use event::{RawEvent, RawEventBuilder};
 pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
@@ -44,6 +45,7 @@ impl From<serde_json::Error> for CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+pub type Error = CoreError;
 
 // ===== Common types and constants (from types.rs) =====
 

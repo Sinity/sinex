@@ -49,6 +49,9 @@ impl EventValidator {
             schemas: HashMap::new(),
         };
         
+        // Add default security validation for all events
+        validator.add_default_security_rules();
+        
         // Register hardcoded validation rules
         validator.register_filesystem_rules();
         validator.register_window_manager_rules();
@@ -107,22 +110,27 @@ impl EventValidator {
     
     /// Validate using hardcoded rules only
     pub fn validate_with_rules(&self, source: &str, event_type: &str, payload: &Value) -> Result<(), ValidationError> {
+        // First check for exact match
         let key = (source.to_string(), event_type.to_string());
-        
-        match self.rules.get(&key) {
-            Some(validator) => validator(payload),
-            None => {
-                // For unknown event types, just ensure it's an object
-                if !payload.is_object() {
-                    return Err(ValidationError::InvalidType {
-                        field: "payload".to_string(),
-                        expected: "object".to_string(),
-                        actual: format!("{:?}", payload),
-                    });
-                }
-                Ok(())
-            }
+        if let Some(validator) = self.rules.get(&key) {
+            return validator(payload);
         }
+        
+        // Check for wildcard validator
+        let wildcard_key = ("*".to_string(), "*".to_string());
+        if let Some(validator) = self.rules.get(&wildcard_key) {
+            validator(payload)?;
+        }
+        
+        // For unknown event types, just ensure it's an object
+        if !payload.is_object() {
+            return Err(ValidationError::InvalidType {
+                field: "payload".to_string(),
+                expected: "object".to_string(),
+                actual: format!("{:?}", payload),
+            });
+        }
+        Ok(())
     }
     
     fn register_rule<F>(&mut self, source: &str, event_type: &str, validator: F)
@@ -348,6 +356,60 @@ impl EventValidator {
                             actual: format!("{:?}", exit_code),
                         })?;
                 }
+                
+                Ok(())
+            },
+        );
+    }
+    
+    fn add_default_security_rules(&mut self) {
+        // Add a catch-all security validator for JSON payloads
+        self.register_rule(
+            "*",  // Special source to match all
+            "*",  // Special event_type to match all
+            |payload| {
+                // Check JSON size (this is just structure validation, not the raw size)
+                let json_str = serde_json::to_string(payload).map_err(|e| {
+                    ValidationError::InvalidValue {
+                        field: "payload".to_string(),
+                        reason: format!("Failed to serialize: {}", e),
+                    }
+                })?;
+                
+                // Basic size check - actual enforcement should be at parse time
+                if json_str.len() > 50_000_000 { // 50MB serialized
+                    return Err(ValidationError::InvalidValue {
+                        field: "payload".to_string(),
+                        reason: "Payload too large".to_string(),
+                    });
+                }
+                
+                // Check for excessive nesting
+                fn check_depth(val: &Value, depth: usize) -> Result<(), ValidationError> {
+                    if depth > 32 {
+                        return Err(ValidationError::InvalidValue {
+                            field: "payload".to_string(),
+                            reason: "JSON too deeply nested".to_string(),
+                        });
+                    }
+                    
+                    match val {
+                        Value::Object(map) => {
+                            for (_, v) in map {
+                                check_depth(v, depth + 1)?;
+                            }
+                        }
+                        Value::Array(arr) => {
+                            for v in arr {
+                                check_depth(v, depth + 1)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                }
+                
+                check_depth(payload, 0)?;
                 
                 Ok(())
             },

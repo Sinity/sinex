@@ -9,7 +9,6 @@ use tracing::{debug, info, error};
 
 use sinex_core::{EventType, EventSource, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
-use sinex_validation::PathValidator;
 
 // ============================================================================
 // Event Payloads
@@ -106,8 +105,7 @@ impl FilesystemMonitor {
         let path_str = path.to_string_lossy().to_string();
         
         // Validate path for security issues
-        let path_validator = PathValidator::default();
-        match path_validator.validate(&path_str) {
+        match sinex_core::validation::validate_path(&path_str) {
             Ok(_) => {
                 // Path is safe, continue processing
             }
