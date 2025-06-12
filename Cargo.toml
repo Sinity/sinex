@@ -7,6 +7,7 @@ members = [
     "crate/sinex-promo-worker",
     "crate/sinex-events",
     "crate/sinex-collector",
+    "crate/sinex-annex",
 ]
 resolver = "2"
 
@@ -98,3 +99,5 @@ criterion = "0.5"
 # System
 gethostname = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
+which = "5.0"
+tempfile = "3.0"
