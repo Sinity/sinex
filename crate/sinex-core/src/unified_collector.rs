@@ -69,8 +69,8 @@ pub trait EventSource: Send + Sync + 'static {
     /// Canonical source name
     const SOURCE_NAME: &'static str;
     
-    /// Initialize the source with config
-    async fn initialize(config: Self::Config) -> Result<Self>
+    /// Initialize the source with context containing config and shared resources
+    async fn initialize(ctx: crate::EventSourceContext) -> Result<Self>
     where
         Self: Sized;
     

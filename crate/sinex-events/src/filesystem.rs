@@ -7,7 +7,7 @@ use notify::Watcher;
 use tokio::sync::mpsc;
 use tracing::{debug, info, error};
 
-use sinex_core::{EventType, EventSource, Result, event_type_constants, sources};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -195,7 +195,11 @@ impl EventSource for FilesystemMonitor {
     
     const SOURCE_NAME: &'static str = sources::FILESYSTEM;
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        // Extract config from context
+        let config: FilesystemConfig = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!(
             patterns = ?config.watch_patterns,
             "Initializing filesystem watcher"

@@ -1,8 +1,10 @@
 pub mod event;
+pub mod event_source_context;
 pub mod unified_collector;
 pub mod validation;
 
 pub use event::{RawEvent, RawEventBuilder};
+pub use event_source_context::EventSourceContext;
 pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
 
 use serde::{Deserialize, Serialize};
