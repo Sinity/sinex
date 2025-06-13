@@ -194,11 +194,9 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        // Extract annex_repo_path from config if present
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        // Use global annex_repo_path from collector config
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         // Initialize the source
@@ -227,10 +225,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = KittySocketListener::initialize(ctx).await?;
@@ -258,10 +254,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = HyprlandIPCMonitor::initialize(ctx).await?;
@@ -289,10 +283,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = AtuinDbReader::initialize(ctx).await?;
@@ -320,10 +312,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = ShellHistoryReader::initialize(ctx).await?;
@@ -351,10 +341,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = AsciinemaRecorder::initialize(ctx).await?;
@@ -382,10 +370,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = ScrollbackCapture::initialize(ctx).await?;
@@ -413,10 +399,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = DbusMonitor::initialize(ctx).await?;
@@ -444,10 +428,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = ClipboardMonitor::initialize(ctx).await?;
@@ -475,10 +457,8 @@ impl UnifiedCollector {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_json.get("annex_repo_path")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()) {
-            ctx = ctx.with_annex_path(annex_path);
+        if let Some(annex_path) = &self.config.annex_repo_path {
+            ctx = ctx.with_annex_path(annex_path.clone());
         }
         
         let mut source = JournalMonitor::initialize(ctx).await?;

@@ -1,5 +1,8 @@
 # Example configuration for clipboard monitoring with git-annex integration
 
+# Global git-annex repository for large content storage
+annex_repo_path = "/var/lib/sinex/annex"
+
 # Enable clipboard events
 enabled_events = [
     "clipboard.content.changed",
@@ -23,10 +26,6 @@ max_history_entries = 1000
 
 # Content larger than this will be stored in git-annex
 max_content_size = 1048576  # 1MB
-
-# Path to git-annex repository for large content
-# If not set, large content will be rejected
-annex_repo_path = "/var/lib/sinex/clipboard-annex"
 
 # Note: The git-annex repository will be automatically initialized
 # if it doesn't exist. Large clipboard content will be stored

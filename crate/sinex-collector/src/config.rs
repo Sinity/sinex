@@ -19,6 +19,10 @@ pub struct CollectorConfig {
     /// Direct event config (e.g., event.file_created)
     #[serde(flatten)]
     pub flat_config: HashMap<String, toml::Value>,
+    
+    /// Path to git-annex repository for large content storage
+    #[serde(default)]
+    pub annex_repo_path: Option<String>,
 }
 
 impl CollectorConfig {

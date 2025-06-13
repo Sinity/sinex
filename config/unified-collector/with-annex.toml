@@ -1,0 +1,76 @@
+# Unified Collector Configuration with Git-Annex Support
+# This example shows how to configure Sinex with a centralized git-annex repository
+
+# Global git-annex repository path
+# This single repository stores ALL large content from various sources:
+# - Large clipboard content (images, files)
+# - Terminal scrollback captures
+# - Asciinema recordings
+# - Any other large artifacts
+# 
+# The repository uses content-addressed storage with BLAKE3 hashing
+# for automatic deduplication across all sources
+annex_repo_path = "/var/lib/sinex/annex"
+
+# Enable events that might produce large content
+enabled_events = [
+    # Clipboard monitoring
+    "clipboard.content.changed",
+    "clipboard.selection.changed",
+    
+    # Terminal recording and capture
+    "terminal.asciinema.session_started",
+    "terminal.asciinema.session_ended",
+    "terminal.scrollback.captured",
+    "terminal.command_output.captured",
+    
+    # Standard events
+    "file.created",
+    "file.modified",
+    "command.executed",
+    "window.focused",
+    "workspace.changed",
+]
+
+# Clipboard configuration
+[event.clipboard]
+monitor_clipboard = true
+monitor_primary = true
+poll_interval_ms = 500
+max_preview_length = 100
+enable_history = true
+max_history_entries = 1000
+# Content larger than 1MB will be stored in git-annex
+max_content_size = 1048576
+
+# Terminal scrollback configuration
+[event.terminal_scrollback]
+kitty_socket_path = "/tmp/kitty"
+capture_interval_secs = 300
+max_scrollback_lines = 10000
+include_ansi_codes = false
+capture_command_output = true
+# Large scrollback captures go to git-annex
+save_to_files = true
+
+# Asciinema recording configuration
+[event.terminal_asciinema]
+recordings_dir = "~/.local/share/asciinema/asciicast"
+file_pattern = "*.cast"
+polling_interval_secs = 5
+# Recordings are stored in git-annex for efficient storage
+
+# Note: The git-annex repository structure might look like:
+# /var/lib/sinex/annex/
+# ├── .git/
+# ├── clipboard/
+# │   ├── images/
+# │   └── files/
+# ├── terminal/
+# │   ├── scrollback/
+# │   └── recordings/
+# └── media/
+#     └── screenshots/
+#
+# All content is deduplicated using BLAKE3 hashing, so copying
+# the same image multiple times only stores it once.

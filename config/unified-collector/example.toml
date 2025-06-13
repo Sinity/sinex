@@ -1,6 +1,10 @@
 # Unified Collector Configuration Example
 # This demonstrates the event-centric configuration approach
 
+# Global git-annex repository for large content storage
+# This is shared across all event sources that need to store large data
+annex_repo_path = "/var/lib/sinex/annex"
+
 # List of enabled events - this is all you need to get started!
 enabled_events = [
     # File events
