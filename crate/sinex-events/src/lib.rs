@@ -7,6 +7,7 @@ pub mod asciinema;
 pub mod scrollback;
 pub mod dbus;
 pub mod clipboard;
+pub mod journal;
 
 // Re-export all event types
 pub use filesystem::{FileCreated, FileModified, FileDeleted};
@@ -25,3 +26,4 @@ pub use dbus::{
     ScreenSaverEvent, MountEvent
 };
 pub use clipboard::{ClipboardChanged, ClipboardSelection};
+pub use journal::{JournalEntry, JournalSync};

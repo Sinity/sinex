@@ -207,6 +207,9 @@ pub fn create_registry() -> EventRegistry {
             // Clipboard events
             "clipboard.content.changed",
             "clipboard.selection.changed",
+            // Journal events
+            "system.journal.entry",
+            "system.journal.sync",
         ],
         event_to_source: &[
             ("file.created", "filesystem"),
@@ -256,6 +259,9 @@ pub fn create_registry() -> EventRegistry {
             // Clipboard events
             ("clipboard.content.changed", "clipboard.monitor"),
             ("clipboard.selection.changed", "clipboard.monitor"),
+            // Journal events
+            ("system.journal.entry", "journal.monitor"),
+            ("system.journal.sync", "journal.monitor"),
         ],
         schema_generators: HashMap::new(), // Will be populated by build script
     }
