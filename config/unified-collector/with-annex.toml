@@ -46,13 +46,19 @@ max_content_size = 1048576
 # Terminal scrollback configuration
 [event.terminal_scrollback]
 kitty_socket_path = "/tmp/kitty"
-capture_interval_secs = 300
+# Capture more frequently to minimize data loss on exit
+capture_interval_secs = 60  # Every minute instead of 5 minutes
 max_scrollback_lines = 10000
 include_ansi_codes = false
 capture_command_output = true
 # Store scrollback directly in database (text compresses well)
 # Set to true only if you want file copies for some reason
 save_to_files = false
+# Capture after commands (requires monitoring)
+capture_on_command = true
+command_capture_delay_ms = 500
+# Process urgent capture requests (for clear command detection)
+process_urgent_requests = true
 
 # Asciinema recording configuration
 [event.terminal_asciinema]
