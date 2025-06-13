@@ -22,6 +22,27 @@ use tracing::{info, error};
 use crate::config::CollectorConfig;
 use crate::OutputConfig;
 
+/// Convert TOML value to JSON value
+fn toml_to_json(toml_val: toml::Value) -> serde_json::Value {
+    match toml_val {
+        toml::Value::String(s) => serde_json::Value::String(s),
+        toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
+        toml::Value::Float(f) => serde_json::json!(f),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
+        toml::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(toml_to_json).collect())
+        }
+        toml::Value::Table(table) => {
+            let map: serde_json::Map<String, serde_json::Value> = table
+                .into_iter()
+                .map(|(k, v)| (k, toml_to_json(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+    }
+}
+
 /// Unified collector that manages all event sources
 pub struct UnifiedCollector {
     config: CollectorConfig,
@@ -160,12 +181,13 @@ impl UnifiedCollector {
         info!("Starting filesystem source");
         
         // Get config for filesystem events
-        let config_value = self.config.event.get("files")
+        let config_json = self.config.event.get("files")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(FilesystemConfig::default()).unwrap());
         
         // Create context with database pool and config
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         // Add database pool if available
         if let Some(pool) = &self.db_pool {
@@ -173,7 +195,7 @@ impl UnifiedCollector {
         }
         
         // Extract annex_repo_path from config if present
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -194,17 +216,18 @@ impl UnifiedCollector {
     async fn start_terminal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting terminal source");
         
-        let config_value = self.config.event.get("commands")
+        let config_json = self.config.event.get("commands")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(KittyConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -224,17 +247,18 @@ impl UnifiedCollector {
     async fn start_window_manager_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting window manager source");
         
-        let config_value = self.config.event.get("windows")
+        let config_json = self.config.event.get("windows")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(HyprlandConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -254,17 +278,18 @@ impl UnifiedCollector {
     async fn start_atuin_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting atuin source");
         
-        let config_value = self.config.event.get("shell.command.executed_atuin")
+        let config_json = self.config.event.get("shell.command.executed_atuin")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(AtuinConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -284,17 +309,18 @@ impl UnifiedCollector {
     async fn start_shell_history_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting shell history source");
         
-        let config_value = self.config.event.get("shell.history.command")
+        let config_json = self.config.event.get("shell.history.command")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(ShellHistoryConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -314,17 +340,18 @@ impl UnifiedCollector {
     async fn start_asciinema_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting asciinema recorder");
         
-        let config_value = self.config.event.get("terminal.asciinema")
+        let config_json = self.config.event.get("terminal.asciinema")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(AsciinemaConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -344,17 +371,18 @@ impl UnifiedCollector {
     async fn start_scrollback_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting scrollback capture");
         
-        let config_value = self.config.event.get("terminal.scrollback")
+        let config_json = self.config.event.get("terminal.scrollback")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(ScrollbackConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -374,17 +402,18 @@ impl UnifiedCollector {
     async fn start_dbus_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting D-Bus monitor");
         
-        let config_value = self.config.event.get("dbus")
+        let config_json = self.config.event.get("dbus")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(DbusConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -404,17 +433,18 @@ impl UnifiedCollector {
     async fn start_clipboard_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting clipboard monitor");
         
-        let config_value = self.config.event.get("clipboard")
+        let config_json = self.config.event.get("clipboard")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(ClipboardConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);
@@ -434,17 +464,18 @@ impl UnifiedCollector {
     async fn start_journal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
         info!("Starting journal monitor");
         
-        let config_value = self.config.event.get("journal")
+        let config_json = self.config.event.get("journal")
             .cloned()
+            .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(JournalConfig::default()).unwrap());
         
-        let mut ctx = EventSourceContext::new(config_value.clone());
+        let mut ctx = EventSourceContext::new(config_json.clone());
         
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
         }
         
-        if let Some(annex_path) = config_value.get("annex_repo_path")
+        if let Some(annex_path) = config_json.get("annex_repo_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()) {
             ctx = ctx.with_annex_path(annex_path);

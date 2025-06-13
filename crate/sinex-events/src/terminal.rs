@@ -311,7 +311,10 @@ impl EventSource for BashHistoryWatcher {
     
     const SOURCE_NAME: &'static str = "terminal.bash_history";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         Ok(Self { history_file: config })
     }
     

@@ -189,7 +189,7 @@ impl AtuinDbReader {
         "#;
         
         let result = sqlx::query(query)
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await
             .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
         
