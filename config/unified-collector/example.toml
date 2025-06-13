@@ -172,9 +172,9 @@ max_scrollback_lines = 10000
 include_ansi_codes = false
 # Capture command output separately (requires shell integration)
 capture_command_output = true
-# Save scrollback to files
-save_to_files = true
-# Directory for scrollback files
+# Save scrollback to files (usually not needed - DB storage is sufficient)
+save_to_files = false
+# Directory for scrollback files (only used if save_to_files = true)
 scrollback_dir = "~/.local/share/sinex/scrollback"
 
 # D-Bus monitoring configuration

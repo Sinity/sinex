@@ -50,8 +50,9 @@ capture_interval_secs = 300
 max_scrollback_lines = 10000
 include_ansi_codes = false
 capture_command_output = true
-# Large scrollback captures go to git-annex
-save_to_files = true
+# Store scrollback directly in database (text compresses well)
+# Set to true only if you want file copies for some reason
+save_to_files = false
 
 # Asciinema recording configuration
 [event.terminal_asciinema]
