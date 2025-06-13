@@ -1,0 +1,60 @@
+# Development configuration for unified collector
+# Useful for testing and debugging
+
+# Enable all available events to test the system
+enabled_events = [
+    # File events
+    "file.created",
+    "file.modified",
+    "file.deleted",
+    
+    # Terminal events  
+    "command.executed",
+    
+    # Window events
+    "window.focused",
+    "window.opened",
+    "window.closed", 
+    "window.moved",
+    "window.title_changed",
+    "window.urgent",
+    
+    # Workspace events
+    "workspace.changed",
+    "workspace.created", 
+    "workspace.destroyed",
+    
+    # Monitor events
+    "monitor.focused",
+    "monitor.added",
+    "monitor.removed",
+    
+    # State dumps (more frequent for testing)
+    "state.snapshot"
+]
+
+# File watching - just watch test directory
+[event.files]
+watch_patterns = ["./test-data/**/*"]
+ignore_patterns = []
+debounce_ms = 50  # Faster for testing
+
+# Terminal - if testing with kitty
+[event.command_executed]
+socket_path = "/tmp/kitty_test_socket"
+capture_env_vars = ["PATH", "PWD"]
+max_command_length = 1024
+
+# Window manager - more frequent snapshots for testing
+[event.state_snapshot]
+interval_secs = 30  # Every 30 seconds for testing
+
+# Enable debug output
+[output]
+database = false  # Don't write to DB during testing
+logging = true    # See events in console
+debug_file = "./unified-collector-debug.json"
+
+[logging]
+level = "debug"
+format = "pretty"

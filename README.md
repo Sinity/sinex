@@ -9,7 +9,7 @@ A personal data substrate that captures digital events across devices and modali
 nix develop
 
 # Run a simple test
-cargo run --bin filesystem-ingestor -- --dry-run
+cargo run --bin unified-collector -- --dry-run
 
 # Query captured events
 ./cli/exo.py query --limit 10
@@ -31,11 +31,11 @@ sinex/
 │   ├── sinex-core/         # Common types (RawEvent, errors)
 │   ├── sinex-db/           # Database models and pooling
 │   ├── sinex-ulid/         # ULID implementation
-│   └── sinex-worker/       # Event processing workers
+│   ├── sinex-worker/       # Event processing workers
+│   └── sinex-events/       # Event type definitions
 ├── ingestor/              # Event capture implementations
-│   ├── filesystem/         # File system monitoring
-│   ├── kitty/             # Terminal command capture
-│   └── hyprland/          # Window manager events
+│   ├── shared/             # Shared utilities
+│   └── unified-collector/  # Unified multi-source collector
 ├── config/                 # Example configurations
 ├── test/                  # Organized test suites
 └── cli/                    # Python query tools
@@ -71,16 +71,14 @@ just watch    # Continuous testing
 ### Running Ingestors
 
 ```bash
-# Run individual ingestors
-just filesystem              # Filesystem monitoring
-just kitty                  # Terminal capture (Kitty)
-just hyprland               # Window manager events (Hyprland)
-just worker                 # Promotion worker
+# Run the unified collector
+just unified                # Run unified collector
+just worker                 # Run promotion worker
 
 # Run with options
-just filesystem --dry-run    # Test without database writes
-just kitty --output-file events.json  # Output to file
-just filesystem --config config/filesystem/production.toml
+just unified --dry-run      # Test without database writes
+just unified --output-file events.json  # Output to file
+just unified --config config/unified-collector.toml
 
 # Manage all ingestors
 just ingestors-start        # Start all in background
@@ -108,20 +106,20 @@ just sqlx-prepare
 
 ## 🔧 Configuration
 
-Each ingestor automatically loads configuration from (in priority order):
-1. `INGESTOR-NAME.toml` in current directory
-2. `~/.config/INGESTOR-NAME.toml`
+The unified collector automatically loads configuration from (in priority order):
+1. `unified-collector.toml` in current directory
+2. `~/.config/unified-collector.toml`
 3. Built-in defaults (uses DATABASE_URL from environment)
 
 ```bash
 # Use custom config file
-just filesystem --config my-config.toml
+just unified --config my-config.toml
 
 # Configuration is logged at startup
-just filesystem
+just unified
 # [INFO] Configuration loaded:
 # [INFO]   Database URL: postgresql:///sinex_dev?host=/run/postgresql
-# [INFO]   Watch directories: ["~/Documents", "~/Projects"]
+# [INFO]   Enabled sources: [filesystem, terminal, window_manager]
 # ...
 ```
 

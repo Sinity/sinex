@@ -1,0 +1,172 @@
+digraph SinexCrateDependencies {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="JetBrains Mono", fontsize=10];
+    edge [fontsize=8, fontname="JetBrains Mono"];
+    
+    // Application binaries
+    subgraph cluster_binaries {
+        label="Application Binaries";
+        style=filled;
+        fillcolor="#e6f3ff";
+        fontname="JetBrains Mono Bold";
+        
+        unified_collector [
+            label="unified-collector\n(Binary)",
+            fillcolor="#87CEEB",
+            shape=oval
+        ];
+        
+        promo_worker [
+            label="sinex-promo-worker\n(Binary)",
+            fillcolor="#87CEEB",
+            shape=oval
+        ];
+        
+        cli [
+            label="exo CLI\n(Python)",
+            fillcolor="#FFE4B5",
+            shape=oval
+        ];
+    }
+    
+    // Core libraries
+    subgraph cluster_core {
+        label="Core Libraries";
+        style=filled;
+        fillcolor="#f0fff0";
+        fontname="JetBrains Mono Bold";
+        
+        sinex_core [
+            label="sinex-core\n• RawEvent types\n• EventType/EventSource traits\n• Error handling",
+            fillcolor="#90EE90"
+        ];
+        
+        sinex_db [
+            label="sinex-db\n• Database models\n• Connection pooling\n• Query implementations",
+            fillcolor="#90EE90"
+        ];
+        
+        sinex_ulid [
+            label="sinex-ulid\n• ULID utilities\n• UUID conversion\n• Time extraction",
+            fillcolor="#90EE90"
+        ];
+        
+        sinex_events [
+            label="sinex-events\n• Event type definitions\n• Filesystem, Terminal, WM\n• Payload structures",
+            fillcolor="#90EE90"
+        ];
+        
+        sinex_worker [
+            label="sinex-worker\n• EventProcessor trait\n• Worker framework\n• Metrics collection",
+            fillcolor="#90EE90"
+        ];
+    }
+    
+    // Shared utilities (being phased out)
+    subgraph cluster_shared {
+        label="Shared Utilities (Legacy)";
+        style=filled;
+        fillcolor="#fff5ee";
+        fontname="JetBrains Mono Bold";
+        
+        ingestor_shared [
+            label="ingestor/shared\n• SimpleIngestor trait\n• IngestorRuntime\n• EventSink abstractions\n(Being migrated to crates)",
+            fillcolor="#DDD",
+            style="dashed"
+        ];
+    }
+    
+    // External dependencies (key ones)
+    subgraph cluster_external {
+        label="Key External Dependencies";
+        style=filled;
+        fillcolor="#ffeef0";
+        fontname="JetBrains Mono Bold";
+        
+        sqlx [label="sqlx\n(Database)", fillcolor="#FFB6C1"];
+        tokio [label="tokio\n(Async Runtime)", fillcolor="#FFB6C1"];
+        serde [label="serde\n(Serialization)", fillcolor="#FFB6C1"];
+        notify [label="notify\n(Filesystem)", fillcolor="#FFB6C1"];
+        clap [label="clap\n(CLI)", fillcolor="#FFB6C1"];
+    }
+    
+    // Dependency relationships
+    
+    // Binaries depend on crates
+    unified_collector -> sinex_core;
+    unified_collector -> sinex_db;
+    unified_collector -> sinex_events;
+    unified_collector -> ingestor_shared;
+    
+    promo_worker -> sinex_core;
+    promo_worker -> sinex_db;
+    promo_worker -> sinex_worker;
+    
+    cli -> sinex_db [style=dashed, label="via SQL"];
+    
+    // Core crate dependencies
+    sinex_db -> sinex_core;
+    sinex_db -> sinex_ulid;
+    sinex_events -> sinex_core;
+    sinex_worker -> sinex_core;
+    sinex_worker -> sinex_db;
+    
+    // Shared utilities depend on core
+    ingestor_shared -> sinex_core;
+    ingestor_shared -> sinex_db;
+    ingestor_shared -> sinex_events;
+    
+    // External dependencies
+    sinex_db -> sqlx;
+    sinex_core -> serde;
+    unified_collector -> tokio;
+    unified_collector -> notify;
+    unified_collector -> clap;
+    promo_worker -> tokio;
+    sinex_worker -> tokio;
+    
+    // Future migration paths (dashed)
+    ingestor_shared -> sinex_core [
+        style="dashed",
+        color="red",
+        label="migrate to\nsinex-core"
+    ];
+    
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=filled;
+        fillcolor="#ffffff";
+        fontname="JetBrains Mono Bold";
+        
+        legend_binary [
+            label="Application Binary",
+            fillcolor="#87CEEB",
+            shape=oval,
+            fontsize=8
+        ];
+        
+        legend_crate [
+            label="Rust Crate",
+            fillcolor="#90EE90",
+            shape=box,
+            fontsize=8
+        ];
+        
+        legend_legacy [
+            label="Legacy/Transitional",
+            fillcolor="#DDD",
+            shape=box,
+            style="dashed",
+            fontsize=8
+        ];
+        
+        legend_external [
+            label="External Dependency",
+            fillcolor="#FFB6C1",
+            shape=box,
+            fontsize=8
+        ];
+    }
+    
+}

@@ -1,0 +1,15 @@
+mod time_ulid_attacks_test;
+mod database_boundary_test;
+mod security_attacks_test;
+mod race_conditions_test;
+mod resource_exhaustion_test;
+mod agent_lifecycle_chaos_test;
+mod config_reload_attacks_test;
+mod filesystem_edge_cases_test;
+mod advanced_time_attacks_test;
+mod sophisticated_json_attacks_test;
+mod state_machine_violations_test;
+mod network_distributed_issues_test;
+mod query_interface_exploits_test;
+mod event_type_specific_test;
+mod worker_coordination_test;

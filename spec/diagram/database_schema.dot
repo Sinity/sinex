@@ -1,0 +1,288 @@
+digraph SinexDatabaseSchema {
+    rankdir=TB;
+    node [shape=record, style=filled, fontname="JetBrains Mono", fontsize=10];
+    edge [fontsize=8, fontname="JetBrains Mono"];
+    
+    // Color scheme
+    // Green: Implemented and working
+    // Yellow: Implemented but limited usage
+    // Red: Planned but not implemented
+    
+    // Raw schema - Core event storage
+    subgraph cluster_raw {
+        label="raw schema";
+        style=filled;
+        fillcolor="#e8f8e8";
+        fontname="JetBrains Mono Bold";
+        
+        events [
+            label="{events (TimescaleDB hypertable)|{
+                id: ULID PRIMARY KEY|
+                source: TEXT NOT NULL|
+                event_type: TEXT NOT NULL|
+                ts_ingest: TIMESTAMPTZ GENERATED|
+                ts_orig: TIMESTAMPTZ|
+                host: TEXT|
+                ingestor_version: TEXT|
+                payload_schema_id: ULID|
+                payload: JSONB NOT NULL
+            }}",
+            fillcolor="#90EE90",
+            color="#006400"
+        ];
+    }
+    
+    // Schema management
+    subgraph cluster_schemas {
+        label="sinex_schemas";
+        style=filled;
+        fillcolor="#fff8dc";
+        fontname="JetBrains Mono Bold";
+        
+        event_payload_schemas [
+            label="{event_payload_schemas|{
+                id: ULID PRIMARY KEY|
+                event_source: TEXT NOT NULL|
+                event_type: TEXT NOT NULL|
+                schema_version: TEXT NOT NULL|
+                json_schema_definition: JSONB|
+                is_active: BOOLEAN DEFAULT true|
+                created_at: TIMESTAMPTZ DEFAULT now()
+            }}",
+            fillcolor="#FFD700",
+            color="#FF8C00"
+        ];
+        
+        agent_manifests [
+            label="{agent_manifests|{
+                agent_name: TEXT PRIMARY KEY|
+                version: TEXT NOT NULL|
+                status: TEXT|
+                agent_type: TEXT|
+                produces_event_types: JSONB|
+                subscribes_to_event_types: JSONB|
+                last_heartbeat_ts: TIMESTAMPTZ|
+                registered_at: TIMESTAMPTZ DEFAULT now()
+            }}",
+            fillcolor="#90EE90",
+            color="#006400"
+        ];
+        
+        promotion_queue [
+            label="{promotion_queue|{
+                queue_id: ULID PRIMARY KEY|
+                raw_event_id: ULID NOT NULL|
+                target_agent_name: TEXT NOT NULL|
+                status: TEXT DEFAULT 'pending'|
+                priority: INTEGER DEFAULT 10|
+                attempts: INTEGER DEFAULT 0|
+                max_attempts: INTEGER DEFAULT 3|
+                next_retry_ts: TIMESTAMPTZ|
+                created_at: TIMESTAMPTZ DEFAULT now()|
+                error_message: TEXT
+            }}",
+            fillcolor="#90EE90",
+            color="#006400"
+        ];
+    }
+    
+    // Future knowledge management schemas
+    subgraph cluster_future_knowledge {
+        label="Future: Knowledge Management";
+        style=filled;
+        fillcolor="#ffe4e1";
+        fontname="JetBrains Mono Bold";
+        
+        artifacts [
+            label="{artifacts|{
+                id: ULID PRIMARY KEY|
+                artifact_type: TEXT NOT NULL|
+                title: TEXT|
+                content: TEXT|
+                content_hash: TEXT|
+                source_event_ids: ULID[]|
+                created_at: TIMESTAMPTZ|
+                updated_at: TIMESTAMPTZ
+            }}",
+            fillcolor="#FFB6C1",
+            color="#DC143C",
+            style="dashed"
+        ];
+        
+        knowledge_entities [
+            label="{knowledge_entities|{
+                id: ULID PRIMARY KEY|
+                entity_type: TEXT NOT NULL|
+                entity_name: TEXT NOT NULL|
+                properties: JSONB|
+                confidence_score: REAL|
+                source_artifact_ids: ULID[]|
+                created_at: TIMESTAMPTZ
+            }}",
+            fillcolor="#FFB6C1",
+            color="#DC143C",
+            style="dashed"
+        ];
+        
+        entity_relationships [
+            label="{entity_relationships|{
+                id: ULID PRIMARY KEY|
+                from_entity_id: ULID NOT NULL|
+                to_entity_id: ULID NOT NULL|
+                relationship_type: TEXT NOT NULL|
+                strength: REAL|
+                evidence_artifact_ids: ULID[]|
+                created_at: TIMESTAMPTZ
+            }}",
+            fillcolor="#FFB6C1",
+            color="#DC143C",
+            style="dashed"
+        ];
+    }
+    
+    // Future vector/semantic search
+    subgraph cluster_future_vectors {
+        label="Future: Vector & Semantic";
+        style=filled;
+        fillcolor="#f0f0ff";
+        fontname="JetBrains Mono Bold";
+        
+        embeddings [
+            label="{embeddings|{
+                id: ULID PRIMARY KEY|
+                source_id: ULID NOT NULL|
+                source_type: TEXT NOT NULL|
+                embedding: VECTOR(1536)|
+                model_name: TEXT NOT NULL|
+                model_version: TEXT|
+                created_at: TIMESTAMPTZ
+            }}",
+            fillcolor="#FFB6C1",
+            color="#DC143C",
+            style="dashed"
+        ];
+        
+        semantic_clusters [
+            label="{semantic_clusters|{
+                id: ULID PRIMARY KEY|
+                cluster_name: TEXT|
+                centroid: VECTOR(1536)|
+                member_count: INTEGER|
+                created_at: TIMESTAMPTZ|
+                updated_at: TIMESTAMPTZ
+            }}",
+            fillcolor="#FFB6C1",
+            color="#DC143C",
+            style="dashed"
+        ];
+    }
+    
+    // Current relationships (solid lines)
+    promotion_queue -> events [
+        label="raw_event_id",
+        color="#006400",
+        fontcolor="#006400"
+    ];
+    
+    agent_manifests -> promotion_queue [
+        label="target_agent_name",
+        color="#006400",
+        fontcolor="#006400"
+    ];
+    
+    events -> event_payload_schemas [
+        label="payload_schema_id\n(optional)",
+        color="#FF8C00",
+        fontcolor="#FF8C00",
+        style="dashed"
+    ];
+    
+    // Future relationships (dashed lines)
+    events -> artifacts [
+        label="source_event_ids",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    artifacts -> knowledge_entities [
+        label="source_artifact_ids",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    knowledge_entities -> entity_relationships [
+        label="from/to_entity_id",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    events -> embeddings [
+        label="source_id (event)",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    artifacts -> embeddings [
+        label="source_id (artifact)",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    embeddings -> semantic_clusters [
+        label="cluster membership",
+        color="#DC143C",
+        fontcolor="#DC143C",
+        style="dashed"
+    ];
+    
+    // Constraints and indexes (as notes)
+    subgraph cluster_constraints {
+        label="Key Constraints & Indexes";
+        style=filled;
+        fillcolor="#f9f9f9";
+        fontname="JetBrains Mono Bold";
+        fontsize=8;
+        
+        constraints [
+            shape=box,
+            label="✅ IMPLEMENTED:\l• events: Hypertable on ts_ingest\l• events: ULID → TIMESTAMPTZ extraction\l• promotion_queue: FOR UPDATE SKIP LOCKED\l• agent_manifests: Heartbeat tracking\l\l❌ PLANNED:\l• JSON Schema validation via pg_jsonschema\l• Vector similarity indexes (pgvector)\l• Entity uniqueness constraints\l• Referential integrity for future tables",
+            fillcolor="#f0f0f0",
+            style="filled"
+        ];
+    }
+    
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=filled;
+        fillcolor="#ffffff";
+        fontname="JetBrains Mono Bold";
+        
+        legend_impl [
+            label="✅ Implemented & Active",
+            fillcolor="#90EE90",
+            shape=box,
+            fontsize=8
+        ];
+        
+        legend_partial [
+            label="🟡 Implemented, Limited Use",
+            fillcolor="#FFD700",
+            shape=box,
+            fontsize=8
+        ];
+        
+        legend_future [
+            label="❌ Planned, Not Implemented",
+            fillcolor="#FFB6C1",
+            shape=box,
+            style="dashed",
+            fontsize=8
+        ];
+    }
+}

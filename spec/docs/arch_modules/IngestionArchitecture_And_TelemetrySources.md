@@ -2,6 +2,7 @@
 
 *   **Version:** 1.0
 *   **Date:** 2024-03-11
+*   **Implementation Status:** ⚠️ **BASIC FOUNDATION** - Simple file/terminal/window capture ✅ **WORKING**, advanced sources ❌ **NOT IMPLEMENTED**
 *   **Purpose:** This document describes the overall architecture of the Sinnix Exocortex's ingestion layer, also known as its "Sensory Network." It outlines common ingestor patterns, management strategies, and provides architectural overviews for each major telemetry domain, detailing what data is captured, why it's important, and the chosen technical approaches. It links to specific Technical Implementation Modules (TIMs) for detailed implementation specifications.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Parts II & III; Vision Document Part III.2.
 

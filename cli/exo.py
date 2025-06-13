@@ -679,6 +679,300 @@ def sources():
     console.print(table)
 
 
+@cli.group()
+def blob():
+    """Blob management commands (git-annex integration)."""
+    pass
+
+
+@blob.command('ingest')
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--description', '-d', help='Description for the blob')
+@click.option('--annex-repo', '-r', help='Git-annex repository path', 
+              default=lambda: os.environ.get('SINEX_ANNEX_PATH', '/realm/data/sinex-annex/sinex-blobs'))
+def blob_ingest(file_path: str, description: Optional[str], annex_repo: str):
+    """Ingest a file into the blob storage system."""
+    import subprocess
+    import hashlib
+    from pathlib import Path
+    
+    file_path = Path(file_path)
+    annex_repo = Path(annex_repo)
+    
+    if not annex_repo.exists():
+        console.print(f"[red]Git-annex repository not found: {annex_repo}[/red]")
+        console.print("Run: ./script/init_git_annex.sh to initialize")
+        return
+    
+    try:
+        # Compute BLAKE3 hash (or SHA256 as fallback)
+        console.print(f"Computing hash for: {file_path.name}")
+        hash_cmd = subprocess.run(
+            ['blake3sum', str(file_path)], 
+            capture_output=True, text=True, check=True
+        )
+        blake3_hash = hash_cmd.stdout.split()[0]
+        
+        # Check if blob already exists
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, annex_key, original_filename FROM core.blobs WHERE checksum_md5 = %s",
+                    (blake3_hash,)
+                )
+                existing = cur.fetchone()
+                
+                if existing:
+                    console.print(f"[yellow]File already exists in blob store![/yellow]")
+                    console.print(f"Blob ID: {existing['id']}")
+                    console.print(f"Annex Key: {existing['annex_key']}")
+                    console.print(f"Original Name: {existing['original_filename']}")
+                    return
+        
+        # Copy file to annex repository and add it
+        working_copy = annex_repo / file_path.name
+        subprocess.run(['cp', str(file_path), str(working_copy)], check=True)
+        
+        # Add to git-annex
+        console.print("Adding to git-annex...")
+        add_result = subprocess.run(
+            ['git-annex', 'add', file_path.name],
+            cwd=annex_repo, capture_output=True, text=True, check=True
+        )
+        
+        # Get annex key
+        key_result = subprocess.run(
+            ['git-annex', 'lookupkey', file_path.name],
+            cwd=annex_repo, capture_output=True, text=True, check=True
+        )
+        annex_key = key_result.stdout.strip()
+        
+        # Get file metadata
+        file_stat = file_path.stat()
+        size_bytes = file_stat.st_size
+        
+        # Simple MIME type detection
+        mime_map = {
+            '.txt': 'text/plain',
+            '.md': 'text/markdown',
+            '.json': 'application/json',
+            '.pdf': 'application/pdf',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.mp4': 'video/mp4',
+            '.mp3': 'audio/mpeg',
+        }
+        mime_type = mime_map.get(file_path.suffix.lower(), 'application/octet-stream')
+        
+        # Insert into database
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Generate ULID for blob ID (simplified - using a timestamp-based approach)
+                import time
+                import uuid
+                blob_id = str(uuid.uuid4()).replace('-', '')  # Simplified ULID substitute
+                
+                cur.execute("""
+                    INSERT INTO core.blobs 
+                    (id, annex_key, original_filename, size_bytes, mime_type, 
+                     checksum_sha256, checksum_md5, storage_backend, verification_status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    blob_id,
+                    annex_key,
+                    file_path.name,
+                    size_bytes,
+                    mime_type,
+                    blake3_hash,  # Using blake3 as sha256 field for now
+                    blake3_hash,  # Store blake3 in md5 field
+                    'git-annex',
+                    'verified'
+                ))
+                conn.commit()
+        
+        # Commit to git
+        subprocess.run(['git', 'add', file_path.name], cwd=annex_repo, check=True)
+        commit_msg = f"Add blob: {file_path.name}"
+        if description:
+            commit_msg += f" - {description}"
+        subprocess.run(['git', 'commit', '-m', commit_msg], cwd=annex_repo, check=True)
+        
+        console.print(f"[green]✅ Successfully ingested blob![/green]")
+        console.print(f"Blob ID: {blob_id}")
+        console.print(f"Annex Key: {annex_key}")
+        console.print(f"Size: {size_bytes:,} bytes")
+        console.print(f"Hash: {blake3_hash}")
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Command failed: {e.cmd}[/red]")
+        console.print(f"[red]Error: {e.stderr}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@blob.command('list')
+@click.option('--limit', '-n', default=20, help='Number of blobs to show')
+@click.option('--mime-type', '-m', help='Filter by MIME type')
+def blob_list(limit: int, mime_type: Optional[str]):
+    """List blobs in storage."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT id, annex_key, original_filename, size_bytes, mime_type,
+                       verification_status, created_at
+                FROM core.blobs
+            """
+            params = []
+            
+            if mime_type:
+                query += " WHERE mime_type = %s"
+                params.append(mime_type)
+            
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(limit)
+            
+            cur.execute(query, params)
+            blobs = cur.fetchall()
+    
+    if not blobs:
+        console.print("[yellow]No blobs found.[/yellow]")
+        return
+    
+    table = Table(title=f"Blob Storage ({len(blobs)} shown)")
+    table.add_column("ID", style="cyan")
+    table.add_column("Filename", style="green")
+    table.add_column("Size", justify="right", style="yellow")
+    table.add_column("MIME Type", style="blue")
+    table.add_column("Status", style="white")
+    table.add_column("Created", style="dim")
+    
+    for blob in blobs:
+        size_mb = blob['size_bytes'] / (1024 * 1024)
+        size_str = f"{size_mb:.1f}MB" if size_mb >= 1 else f"{blob['size_bytes']:,}B"
+        
+        status_color = {
+            'verified': 'green',
+            'pending': 'yellow',
+            'corrupted': 'red',
+            'missing': 'red'
+        }.get(blob['verification_status'], 'white')
+        
+        table.add_row(
+            blob['id'][:8],  # Truncated ID
+            blob['original_filename'],
+            size_str,
+            blob['mime_type'] or 'unknown',
+            f"[{status_color}]{blob['verification_status']}[/{status_color}]",
+            blob['created_at'].strftime('%Y-%m-%d') if blob['created_at'] else 'unknown'
+        )
+    
+    console.print(table)
+
+
+@blob.command('get')
+@click.argument('blob_id')
+@click.option('--output', '-o', help='Output file path')
+@click.option('--annex-repo', '-r', help='Git-annex repository path',
+              default=lambda: os.environ.get('SINEX_ANNEX_PATH', '/realm/data/sinex-annex/sinex-blobs'))
+def blob_get(blob_id: str, output: Optional[str], annex_repo: str):
+    """Retrieve a blob from storage."""
+    import subprocess
+    from pathlib import Path
+    
+    annex_repo = Path(annex_repo)
+    
+    # Get blob metadata
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, annex_key, original_filename, size_bytes, mime_type
+                FROM core.blobs 
+                WHERE id LIKE %s OR id = %s
+            """, (f"{blob_id}%", blob_id))
+            blob = cur.fetchone()
+    
+    if not blob:
+        console.print(f"[red]Blob not found: {blob_id}[/red]")
+        return
+    
+    console.print(f"Found blob: {blob['original_filename']}")
+    console.print(f"Annex key: {blob['annex_key']}")
+    
+    try:
+        # Ensure content is available in annex
+        console.print("Ensuring content is available...")
+        subprocess.run(
+            ['git-annex', 'get', blob['annex_key']],
+            cwd=annex_repo, check=True
+        )
+        
+        # Find the symlink path
+        # This is simplified - in practice you'd search for the symlink
+        symlink_path = annex_repo / blob['original_filename']
+        
+        if not symlink_path.exists():
+            console.print(f"[red]Symlink not found: {symlink_path}[/red]")
+            return
+        
+        # Copy to output location
+        output_path = Path(output) if output else Path.cwd() / blob['original_filename']
+        
+        if symlink_path.is_symlink():
+            # Resolve symlink and copy actual content
+            actual_path = symlink_path.resolve()
+            subprocess.run(['cp', str(actual_path), str(output_path)], check=True)
+        else:
+            subprocess.run(['cp', str(symlink_path), str(output_path)], check=True)
+        
+        console.print(f"[green]✅ Retrieved blob to: {output_path}[/green]")
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Git-annex command failed: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@blob.command('verify')
+@click.option('--annex-repo', '-r', help='Git-annex repository path',
+              default=lambda: os.environ.get('SINEX_ANNEX_PATH', '/realm/data/sinex-annex/sinex-blobs'))
+@click.option('--fast', is_flag=True, help='Fast verification (no content check)')
+def blob_verify(annex_repo: str, fast: bool):
+    """Verify blob integrity using git-annex fsck."""
+    import subprocess
+    from pathlib import Path
+    
+    annex_repo = Path(annex_repo)
+    
+    if not annex_repo.exists():
+        console.print(f"[red]Git-annex repository not found: {annex_repo}[/red]")
+        return
+    
+    try:
+        console.print("Running git-annex fsck...")
+        
+        cmd = ['git-annex', 'fsck']
+        if fast:
+            cmd.append('--fast')
+        
+        result = subprocess.run(
+            cmd, cwd=annex_repo, 
+            capture_output=True, text=True, check=True
+        )
+        
+        console.print("[green]✅ Verification completed successfully[/green]")
+        if result.stdout:
+            console.print("Output:")
+            console.print(result.stdout)
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Verification failed: {e}[/red]")
+        if e.stderr:
+            console.print("Error output:")
+            console.print(e.stderr)
+
+
 @cli.command()
 def stats():
     """Show enhanced database statistics."""

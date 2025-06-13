@@ -2,6 +2,7 @@
 
 *   **Version:** 1.0
 *   **Date:** 2024-03-11
+*   **Implementation Status:** ✅ **LARGELY IMPLEMENTED** - Core components operational, validation partial
 *   **Purpose:** This document provides a comprehensive architectural understanding of the Sinnix Exocortex's core data storage, event logging, fundamental data structuring mechanisms, and knowledge representation. It details the "what" and "why" of the data layer, linking to specific Technical Implementation Modules (TIMs) for detailed implementation specifications and Architectural Decision Records (ADRs) for key design choices.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Part I; Vision Document Part III.1, III.3, III.4.
 
@@ -35,6 +36,8 @@ The Exocortex data substrate relies on a carefully selected stack of technologie
 *   **`git-annex`:** A content-addressed filesystem for managing large binary objects (blobs), integrated with PostgreSQL for metadata storage.
 
 ## 2. The Canonical Event Substrate: `raw.events`
+
+> **✅ IMPLEMENTATION STATUS: COMPLETE** - Table created, indexed, TimescaleDB hypertable operational, ULID primary keys working
 
 At the absolute core of the Exocortex lies the `raw.events` table, serving as the universal, immutable entry point for all data.
 
@@ -79,6 +82,8 @@ The primary key for `raw.events` (and other core tables) is the `id` column, usi
     *   `[TIM-PrimaryKeyImplementation.md](docs/tims/data_substrate/TIM-PrimaryKeyImplementation.md)` for `pgx_ulid` setup, DDL examples, and client-side generation.
 
 ## 3. Event Schema Management and Validation
+
+> **⚠️ IMPLEMENTATION STATUS: PARTIAL** - Schema registry table ✅ **COMPLETE**, application-level validation ✅ **BASIC**, database-level enforcement ❌ **MISSING**
 
 Managing the structure of the flexible `raw.events.payload` is critical for data quality and interoperability.
 

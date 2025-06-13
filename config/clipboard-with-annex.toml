@@ -1,0 +1,32 @@
+# Example configuration for clipboard monitoring with git-annex integration
+
+# Global git-annex repository for large content storage
+annex_repo_path = "/var/lib/sinex/annex"
+
+# Enable clipboard events
+enabled_events = [
+    "clipboard.content.changed",
+    "clipboard.selection.changed"
+]
+
+[event.clipboard]
+# Monitor both standard clipboard and primary selection
+monitor_clipboard = true
+monitor_primary = true
+
+# Poll every 500ms for changes
+poll_interval_ms = 500
+
+# Text preview length for small content
+max_preview_length = 100
+
+# Enable history tracking with deduplication
+enable_history = true
+max_history_entries = 1000
+
+# Content larger than this will be stored in git-annex
+max_content_size = 1048576  # 1MB
+
+# Note: The git-annex repository will be automatically initialized
+# if it doesn't exist. Large clipboard content will be stored
+# with BLAKE3 hash-based deduplication.
