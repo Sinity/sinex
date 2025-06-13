@@ -8,6 +8,7 @@ use tracing::{error, info, debug};
 
 use sinex_core::{EventType, EventSource, Result};
 use sinex_db::models::RawEvent;
+use sinex_annex::{GitAnnex, AnnexConfig};
 
 // ============================================================================
 // Event Payloads
@@ -36,6 +37,10 @@ pub struct ClipboardChangedPayload {
     pub content_hash: String,
     /// If this is a re-copy, hash of first occurrence
     pub original_hash: Option<String>,
+    /// Git-annex key if content was stored externally
+    pub annex_key: Option<String>,
+    /// Blob ID from core_blobs table if stored
+    pub blob_id: Option<String>,
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -57,6 +62,10 @@ pub struct ClipboardSelectionPayload {
     pub content_hash: String,
     /// If this is a re-selection, hash of first occurrence
     pub original_hash: Option<String>,
+    /// Git-annex key if content was stored externally
+    pub annex_key: Option<String>,
+    /// Blob ID from core_blobs table if stored
+    pub blob_id: Option<String>,
     /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
@@ -103,8 +112,8 @@ pub struct ClipboardConfig {
     pub max_history_entries: usize,
     /// Maximum content size to fully capture (bytes)
     pub max_content_size: usize,
-    /// Store large content externally (like git-annex)
-    pub external_storage_path: Option<String>,
+    /// Git-annex repository path for large content
+    pub annex_repo_path: Option<String>,
 }
 
 impl Default for ClipboardConfig {
@@ -119,7 +128,7 @@ impl Default for ClipboardConfig {
             enable_history: true,
             max_history_entries: 1000,
             max_content_size: 10 * 1024 * 1024, // 10MB default
-            external_storage_path: None,
+            annex_repo_path: None,
         }
     }
 }
@@ -133,6 +142,7 @@ pub struct ClipboardMonitor {
     last_clipboard: Option<String>,
     last_primary: Option<String>,
     clipboard_history: Vec<ClipboardHistoryEntry>,
+    git_annex: Option<GitAnnex>,
 }
 
 #[derive(Clone)]
@@ -180,11 +190,40 @@ impl EventSource for ClipboardMonitor {
             xclip_available
         );
         
+        // Initialize git-annex if configured
+        let git_annex = if let Some(ref repo_path) = config.annex_repo_path {
+            let path = std::path::PathBuf::from(repo_path);
+            
+            // Initialize git-annex repository if it doesn't exist
+            if !path.join(".git").exists() {
+                GitAnnex::init(&path, Some("sinex-clipboard-annex")).await
+                    .map_err(|e| sinex_core::CoreError::Other(
+                        format!("Failed to initialize git-annex: {}", e)
+                    ))?;
+            }
+            
+            let annex_config = AnnexConfig {
+                repo_path: path.clone(),
+                num_copies: Some(2),
+                large_files: None,
+            };
+            
+            let git_annex = GitAnnex::new(annex_config)
+                .map_err(|e| sinex_core::CoreError::Other(
+                    format!("Failed to create GitAnnex: {}", e)
+                ))?;
+            
+            Some(git_annex)
+        } else {
+            None
+        };
+        
         Ok(Self {
             config,
             last_clipboard: None,
             last_primary: None,
             clipboard_history: Vec::new(),
+            git_annex,
         })
     }
     
@@ -250,16 +289,21 @@ impl ClipboardMonitor {
                 None
             };
             
-            // Handle large content
-            let (text_preview, _stored_externally) = if content.len() > self.config.max_content_size {
-                // For large content, store externally if configured
-                if let Some(ref _storage_path) = self.config.external_storage_path {
-                    // TODO: Implement external storage (git-annex style)
-                    debug!("Large clipboard content ({} bytes) would be stored externally", content.len());
+            // Handle large content with git-annex
+            let (text_preview, annex_key, blob_id) = if content.len() > self.config.max_content_size {
+                match self.store_large_content(&content, &content_hash).await {
+                    Ok((key, id)) => {
+                        info!("Stored large clipboard content ({} bytes) in git-annex: {}", 
+                              content.len(), key);
+                        (Some("[Content stored in git-annex]".to_string()), Some(key), id)
+                    }
+                    Err(e) => {
+                        error!("Failed to store large content in git-annex: {}", e);
+                        (Some("[Content too large - storage failed]".to_string()), None, None)
+                    }
                 }
-                (Some("[Content too large for preview]".to_string()), true)
             } else {
-                (preview.clone(), false)
+                (preview.clone(), None, None)
             };
             
             // Create appropriate event
@@ -275,6 +319,8 @@ impl ClipboardMonitor {
                     window_title,
                     content_hash: content_hash.clone(),
                     original_hash: original_hash.clone(),
+                    annex_key: annex_key.clone(),
+                    blob_id: blob_id.clone(),
                     timestamp: Utc::now(),
                 };
                 
@@ -294,6 +340,8 @@ impl ClipboardMonitor {
                     source_app,
                     content_hash: content_hash.clone(),
                     original_hash: original_hash.clone(),
+                    annex_key: annex_key.clone(),
+                    blob_id: blob_id.clone(),
                     timestamp: Utc::now(),
                 };
                 
@@ -502,6 +550,53 @@ impl ClipboardMonitor {
                 self.clipboard_history.remove(0);
             }
         }
+    }
+    
+    async fn store_large_content(&mut self, content: &str, content_hash: &str) -> Result<(String, Option<String>)> {
+        // Check if we have git-annex configured
+        let git_annex = self.git_annex.as_ref()
+            .ok_or_else(|| sinex_core::CoreError::Other(
+                "Git-annex not configured for large content storage".to_string()
+            ))?;
+        
+        // Create a temporary file with the content
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("clipboard_{}.tmp", content_hash));
+        
+        tokio::fs::write(&temp_file, content.as_bytes()).await
+            .map_err(|e| sinex_core::CoreError::Other(
+                format!("Failed to write temporary file: {}", e)
+            ))?;
+        
+        // Add to git-annex
+        let annex_key = git_annex.add_file(&temp_file).await
+            .map_err(|e| sinex_core::CoreError::Other(
+                format!("Failed to add file to git-annex: {}", e)
+            ))?;
+        
+        // Clean up temp file (git-annex has moved it)
+        let _ = tokio::fs::remove_file(&temp_file).await;
+        
+        // Note: We can't use BlobManager without a database connection
+        // In a real implementation, the EventSource would have access to the database pool
+        // For now, we just return the annex key without storing in core_blobs
+        let blob_id = None;
+        
+        // TODO: When database pool is available, use BlobManager to store metadata:
+        // let blob_metadata = BlobMetadata {
+        //     blob_id: Ulid::new(),
+        //     annex_key: annex_key.key.clone(),
+        //     original_filename: "clipboard_content".to_string(),
+        //     size_bytes: content.len() as i64,
+        //     mime_type: Some("text/plain".to_string()),
+        //     checksum_sha256: annex_key.hash.clone(),
+        //     checksum_blake3: Some(content_hash.to_string()),
+        //     storage_backend: "git-annex".to_string(),
+        //     verification_status: Some("verified".to_string()),
+        // };
+        // blob_manager.insert_blob(&blob_metadata).await?;
+        
+        Ok((annex_key.key, blob_id))
     }
     
     fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {

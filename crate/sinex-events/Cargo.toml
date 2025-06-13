@@ -30,3 +30,4 @@ dbus-tokio = "0.7"
 futures-util = "0.3"
 blake3 = "1.5"
 urlencoding = "2.1"
+sinex-annex = { path = "../sinex-annex" }

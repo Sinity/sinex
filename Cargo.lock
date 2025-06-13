@@ -2617,6 +2617,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "sinex-annex",
  "sinex-core",
  "sinex-db",
  "sinex-ulid",
