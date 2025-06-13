@@ -1,32 +1,8 @@
+// Re-export the canonical RawEvent from sinex-db
+pub use sinex_db::models::RawEvent;
+
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
-use uuid::Uuid;
-
-/// Core raw event structure used throughout the system
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawEvent {
-    pub id: Uuid,
-    pub source: String,
-    pub event_type: String,
-    pub ts_ingest: DateTime<Utc>,
-    pub ts_orig: Option<DateTime<Utc>>,
-    pub host: String,
-    pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<Uuid>,
-    pub payload: serde_json::Value,
-}
-
-impl RawEvent {
-    /// Convert database UUID to ULID for application layer
-    pub fn id_as_ulid(&self) -> Result<Ulid, sinex_ulid::Error> {
-        Ulid::from_bytes(*self.id.as_bytes())
-    }
-    
-    pub fn payload_schema_id_as_ulid(&self) -> Option<Result<Ulid, sinex_ulid::Error>> {
-        self.payload_schema_id.map(|uuid| Ulid::from_bytes(*uuid.as_bytes()))
-    }
-}
 
 /// Builder for creating RawEvent instances
 pub struct RawEventBuilder {
@@ -36,7 +12,7 @@ pub struct RawEventBuilder {
     ts_orig: Option<DateTime<Utc>>,
     host: Option<String>,
     ingestor_version: Option<String>,
-    payload_schema_id: Option<Uuid>,
+    payload_schema_id: Option<Ulid>,
 }
 
 impl RawEventBuilder {
@@ -67,13 +43,13 @@ impl RawEventBuilder {
         self
     }
 
-    pub fn with_payload_schema_id(mut self, id: Uuid) -> Self {
+    pub fn with_payload_schema_id(mut self, id: Ulid) -> Self {
         self.payload_schema_id = Some(id);
         self
     }
 
     pub fn build(self) -> RawEvent {
-        let id_ulid = Ulid::new();
+        let id = Ulid::new();
         let hostname = self.host.unwrap_or_else(|| {
             gethostname::gethostname()
                 .to_string_lossy()
@@ -81,7 +57,7 @@ impl RawEventBuilder {
         });
 
         RawEvent {
-            id: Uuid::from_bytes(id_ulid.to_bytes()),
+            id,
             source: self.source,
             event_type: self.event_type,
             ts_ingest: Utc::now(),

@@ -17,36 +17,33 @@ mod agent {
     mod heartbeat_tests;
 }
 
-#[cfg(test)]
-mod ingestor {
-    mod dlq_tests;
-}
 
 #[cfg(test)]
-mod pipeline {
-    mod end_to_end_pipeline_test;
-    mod event_pipeline_integration_tests;
-    mod full_system_end_to_end_test;
-    mod real_pipeline_test;
-    mod worker_concurrency_tests;
-}
+mod collector;
 
 #[cfg(test)]
-mod reliability {
-    mod assumption_mismatch_tests;
-    mod error_handling_tests;
-    mod realistic_failure_tests;
-}
+mod ulid;
 
 #[cfg(test)]
-mod runtime {
-    mod event_sink_test;
-    mod runtime_test;
-    mod validation_unit_tests;
-}
+mod model;
+
+#[cfg(test)]
+mod validation;
+
+#[cfg(test)]
+mod worker;
+
+#[cfg(test)]
+mod events;
+
+#[cfg(test)]
+mod bugs;
+
+#[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
+mod pipeline;
 
 #[cfg(test)]
 mod property_tests;
-
-#[cfg(test)]
-mod e2e;

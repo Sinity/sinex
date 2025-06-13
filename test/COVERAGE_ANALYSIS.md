@@ -1,195 +1,141 @@
-# Sinex Test Suite Coverage Analysis
+# Test Coverage Analysis
 
-## Test Directory Structure
+## Overview
+This document analyzes the test coverage for the Sinex project as of the current state.
 
-The test suite is well-organized into categorized subdirectories:
+## Crate Coverage
 
-```
-test/
-├── agent/           # Agent manifest and heartbeat tests
-├── common/          # Shared test utilities
-├── database/        # Database layer tests
-├── ingestor/        # Ingestor-specific tests
-├── pipeline/        # Event processing pipeline tests
-├── property_tests/  # Property-based tests
-├── reliability/     # Error handling and failure tests
-└── runtime/         # Runtime and event sink tests
-```
+### ✅ Well-Tested Crates
 
-## Coverage by Category
+#### sinex-ulid
+- **Unit Tests**: `test/ulid/ulid_unit_tests.rs`
+  - ULID creation
+  - UUID conversion
+  - String roundtrip
+  - Monotonic ULID generation
+  - Property-based tests: `test/property_tests.rs`
+- **Integration Tests**: `test/database/ulid_integration_tests.rs`
+  - Database storage and retrieval
 
-### 1. Database Tests (`database/`)
-**What's Tested:**
-- ✅ Basic database connectivity and health checks
-- ✅ Event insertion and retrieval with ULID primary keys
-- ✅ Batch event insertion
-- ✅ Event router trigger functionality
-- ✅ JSON Schema validation
-- ✅ TimescaleDB hypertable features
-- ✅ ULID integration with PostgreSQL
-- ✅ Schema validation
-- ✅ Migration tests
+#### sinex-db
+- **Model Tests**: `test/model/status_conversion_tests.rs`
+  - QueueStatus conversions
+  - AgentStatus conversions
+  - AgentHeartbeat serialization
+- **Validation Tests**: `test/validation/event_validation_tests.rs`
+  - Event payload validation rules
+  - Unknown event type handling
+- **Database Tests**:
+  - `test/database/database_integration_tests.rs` - Basic DB operations
+  - `test/database/timescaledb_tests.rs` - TimescaleDB features
+  - `test/database/jsonschema_validation_tests.rs` - Schema validation
+  - `test/database/schema_validation_tests.rs` - Schema operations
 
-**What's Missing:**
-- ❌ Connection pool exhaustion scenarios
-- ❌ Large-scale performance tests
-- ❌ Concurrent write/read stress tests
-- ❌ Index performance validation
-- ❌ Partition management for hypertables
+#### sinex-worker
+- **Unit Tests**: `test/worker/backoff_tests.rs`
+  - Backoff calculation logic
+  - Min/max bounds
+  - Jitter behavior
 
-### 2. Agent Tests (`agent/`)
-**What's Tested:**
-- ✅ Agent manifest CRUD operations
-- ✅ Complex agent capabilities and dependencies
-- ✅ Agent status transitions
-- ✅ Event subscription queries
-- ✅ Heartbeat functionality
-- ✅ Cascade deletion of related data
+### ⚠️ Partially Tested Crates
 
-**What's Missing:**
-- ❌ Agent registration/deregistration race conditions
-- ❌ Multi-agent coordination tests
-- ❌ Agent failure recovery scenarios
-- ❌ Dynamic capability negotiation
+#### sinex-collector
+- **Config Tests**: `test/collector/config_tests.rs`
+  - Default configuration
+  - Event config lookup
+- **Basic Integration**: `test/collector/basic_collector_test.rs`
+  - Basic collector lifecycle
+- **Missing**:
+  - Event collection logic
+  - Recovery manager tests
+  - DLQ manager tests
+  - Agent registration
 
-### 3. Pipeline Tests (`pipeline/`)
-**What's Tested:**
-- ✅ End-to-end event flow
-- ✅ Worker concurrency with `FOR UPDATE SKIP LOCKED`
-- ✅ Promotion queue processing
-- ✅ Multi-phase event processing
-- ✅ Worker failure and retry logic
+#### sinex-core
+- **No dedicated tests** - functionality tested through integration tests
+- Core types (RawEvent, errors) tested indirectly
 
-**What's Missing:**
-- ❌ Backpressure handling tests
-- ❌ Pipeline throughput benchmarks
-- ❌ Dead letter queue processing
-- ❌ Complex event routing scenarios
-- ❌ Pipeline reconfiguration during runtime
+### ❌ Untested Crates
 
-### 4. Runtime Tests (`runtime/`)
-**What's Tested:**
-- ✅ Basic ingestor runtime lifecycle
-- ✅ Event batching functionality
-- ✅ Heartbeat generation
-- ✅ Error handling in runtime
-- ✅ Event sink implementations (Memory, Log, File, Multi)
-- ✅ Validation unit tests
+#### sinex-events
+- **No tests** for event type definitions
+- Should test:
+  - Event builders
+  - Event type constants
+  - Payload construction
 
-**What's Missing:**
-- ❌ Runtime metrics collection tests
-- ❌ Dynamic configuration updates
-- ❌ Resource leak detection
-- ❌ Long-running stability tests
+#### sinex-promo-worker
+- Binary crate - limited testing options
+- Could benefit from:
+  - Integration tests
+  - Worker logic extraction to library
 
-### 5. Ingestor Tests (`ingestor/`)
-**What's Tested:**
-- ✅ Filesystem event creation
-- ✅ Event payload structures
-- ✅ Event builder features
-- ✅ Integration tests
+## Test Categories
 
-**What's Missing:**
-- ❌ Kitty terminal ingestor tests
-- ❌ Hyprland window manager ingestor tests
-- ❌ Unified multi-source ingestor tests
-- ❌ Ingestor crash recovery
-- ❌ Rate limiting and throttling
+### Integration Tests
+- **Database**: Comprehensive coverage of DB operations
+- **Agent**: `test/agent/` - manifest and heartbeat tests
+- **Property Tests**: `test/property_tests.rs` - ULID properties
 
-### 6. Property Tests (`property_tests.rs`)
-**What's Tested:**
-- ✅ JSON value equivalence with floating-point tolerance
-- ✅ Arbitrary JSON generation
-- ✅ Valid event source/type generation
-- ✅ ULID string roundtrip (in sinex-ulid crate)
+### Missing Test Categories
+1. **End-to-End Pipeline Tests**
+   - Full event flow from collector to database
+   - Worker processing pipeline
+   
+2. **Performance Tests**
+   - High-volume event ingestion
+   - Concurrent worker processing
+   
+3. **Error Recovery Tests**
+   - DLQ processing
+   - Retry logic
+   - Connection failures
 
-**What's Missing:**
-- ❌ Event serialization/deserialization invariants
-- ❌ Database constraint satisfaction
-- ❌ Concurrent operation properties
-- ❌ State machine properties for workers
-
-### 7. Reliability Tests (`reliability/`)
-**What's Tested:**
-- ✅ Database connection failures
-- ✅ Transaction rollback on errors
-- ✅ Worker retry logic with failing processors
-- ✅ Assumption mismatch detection
-- ✅ Realistic failure scenarios
-
-**What's Missing:**
-- ❌ Network partition simulation
-- ❌ Cascading failure tests
-- ❌ Resource exhaustion scenarios
-- ❌ Clock drift/time synchronization issues
-
-## Coverage by Component
-
-### Core Components Well-Tested:
-1. **sinex-ulid**: Has unit tests for creation, monotonic generation, UUID conversion
-2. **sinex-db**: Database operations, models, pooling
-3. **sinex-worker**: Worker lifecycle, processing, error handling
-4. **Event Substrate**: Schema, routing, validation
-
-### Components Lacking Tests:
-1. **sinex-core**: No dedicated test file
-2. **sinex-promo-worker**: Main binary, no unit tests
-3. **Config Management**: Limited configuration testing
-4. **Observability**: No metrics/logging verification
-5. **DLQ Manager**: Dead letter queue functionality
-6. **Manifest Management**: Agent manifest lifecycle
-7. **Assumption Detector**: Runtime assumption validation
-
-## Test Infrastructure Quality
-
-### Strengths:
-- Well-structured test utilities in `common/`
-- Good use of test builders and generators
-- Proper test database isolation with `db_test!` macro
-- Clear separation of test categories
-- Property-based testing foundation
-
-### Weaknesses:
-- No performance benchmarks
-- Limited integration test scenarios
-- No load testing framework
-- Missing chaos engineering tests
-- No test coverage metrics
+4. **Configuration Tests**
+   - Hot reload functionality
+   - Invalid configuration handling
 
 ## Recommendations
 
-### High Priority:
-1. Add kitty and hyprland ingestor tests
-2. Create benchmarks for event throughput
-3. Add DLQ processing tests
-4. Test configuration hot-reloading
-5. Add metrics verification tests
+### High Priority
+1. Add tests for `sinex-events` event builders
+2. Create end-to-end pipeline tests
+3. Add recovery/error handling tests for collector
 
-### Medium Priority:
-1. Expand property tests for invariants
-2. Add long-running stability tests
-3. Create multi-agent coordination tests
-4. Test resource limits and quotas
-5. Add observability testing
+### Medium Priority
+1. Extract promo-worker logic to testable library
+2. Add performance benchmarks
+3. Test configuration hot-reload
 
-### Low Priority:
-1. Mock external dependencies
-2. Add fuzzing for parsers
-3. Create visual test reports
-4. Add mutation testing
-5. Create test data generators
+### Low Priority
+1. Add more property-based tests
+2. Create stress tests for concurrent operations
+3. Add integration tests with external systems
 
-## Test Execution Strategy
+## Test Infrastructure
 
-Current test execution uses:
-- `cargo test` - All tests
-- `cargo test --test database/` - Category tests
-- `just test` - Convenience wrapper
-- `nix run .#ephemeral test` - Isolated environment
+### Strengths
+- Good test organization in `test/` directory
+- Shared test utilities in `test/common/`
+- Property-based testing setup
+- Database test fixtures
 
-Missing:
-- Parallel test execution optimization
-- Test result caching
-- Flaky test detection
-- Performance regression detection
-- Coverage reporting integration
+### Areas for Improvement
+- No code coverage metrics
+- Limited mocking capabilities
+- No performance benchmarks
+- Missing continuous integration test categories
+
+## Coverage Metrics
+
+Current test distribution:
+- Database: 5 test files
+- Agent: 2 test files
+- Collector: 2 test files
+- Worker: 1 test file
+- Validation: 1 test file
+- Models: 1 test file
+- ULID: 1 test file
+- Property tests: 1 test file
+
+Total: 15 test files (excluding mod.rs files)

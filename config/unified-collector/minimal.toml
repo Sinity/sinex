@@ -1,0 +1,14 @@
+# Minimal Unified Collector Configuration
+# Just the essentials to get started
+
+# Simply list the events you want to capture
+enabled_events = [
+    "file.created",
+    "file.modified",
+    "command.executed",
+    "window.focused"
+]
+
+# That's it! The collector will use sensible defaults for everything else.
+# Sources are automatically determined from the enabled events.
+# No need to configure individual ingestors or sources.

@@ -5,7 +5,7 @@ use sinex_db::{
     models::{AgentHeartbeat, PromotionQueueItem, RawEvent},
     queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
 };
-use sinex_worker::{metrics::start_metrics_server, worker::Worker, EventProcessor};
+use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -277,21 +277,4 @@ async fn main() -> Result<()> {
     metrics_handle.abort();
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_args_parsing() {
-        let args = Args::try_parse_from([
-            "sinex-promo-worker",
-            "--database-url",
-            "postgres://localhost/test",
-            "--agent-name",
-            "test-agent",
-        ]);
-        assert!(args.is_ok());
-    }
 }

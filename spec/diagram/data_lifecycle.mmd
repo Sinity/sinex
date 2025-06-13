@@ -1,0 +1,62 @@
+stateDiagram-v2
+    [*] --> EventOccurs : Real-world event
+    
+    state "Event Sources" as Sources {
+        EventOccurs --> FilesystemEvent : File operation
+        EventOccurs --> TerminalEvent : Command execution
+        EventOccurs --> HyprlandEvent : Window/workspace change
+        EventOccurs --> FutureEvent : Web/Audio/etc
+    }
+    
+    state "Unified Collection" as Collection {
+        FilesystemEvent --> EventType : to_raw_event
+        TerminalEvent --> EventType
+        HyprlandEvent --> EventType
+        FutureEvent --> EventType
+        
+        EventType --> RawEventBuilder : Add metadata
+        RawEventBuilder --> Validated : Schema check (optional)
+    }
+    
+    state "Event Substrate" as Substrate {
+        Validated --> StoredEvent : INSERT raw.events
+        StoredEvent --> TriggerFired : Auto-promotion trigger
+        TriggerFired --> QueuedWork : promotion_queue entry
+    }
+    
+    state "Work Processing" as Processing {
+        QueuedWork --> ClaimedWork : Worker claims batch
+        ClaimedWork --> ProcessingWork : process_event
+        
+        ProcessingWork --> ProcessedSuccess : Success
+        ProcessingWork --> ProcessingFailed : Error
+        
+        ProcessingFailed --> RetryScheduled : attempts < max_retries
+        ProcessingFailed --> DeadLettered : max_retries exceeded
+        
+        RetryScheduled --> QueuedWork : Wait for next_retry_ts
+        ProcessedSuccess --> [*] : Task complete
+        DeadLettered --> [*] : Manual intervention needed
+    }
+    
+    state "Future Enhancement" as Future {
+        ProcessedSuccess --> LLMAnalysis : AI enrichment ❌
+        LLMAnalysis --> VectorEmbedding : Semantic processing ❌  
+        VectorEmbedding --> KnowledgeGraph : Graph updates ❌
+        KnowledgeGraph --> [*] : Enhanced data ❌
+    }
+    
+    state "Query Access" as Query {
+        StoredEvent --> CLIQuery : exo CLI access ✅
+        KnowledgeGraph --> SemanticSearch : Advanced queries ❌
+        CLIQuery --> UserInsight : Data exploration ✅
+        SemanticSearch --> UserInsight : Enhanced discovery ❌
+        UserInsight --> [*] : User understanding
+    }
+    
+    note right of Sources : ✅ Implemented
+    note right of Collection : ✅ Implemented  
+    note right of Substrate : ✅ Implemented
+    note right of Processing : ✅ Implemented
+    note right of Future : ❌ Not implemented
+    note right of Query : 🟡 Basic only

@@ -56,11 +56,9 @@
         in
         {
           packages = {
-            hyprlandIngestor = buildRustPackage "hyprland-ingestor";
-            filesystemIngestor = buildRustPackage "filesystem-ingestor";
-            kittyIngestor = buildRustPackage "kitty-ingestor";
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
-            default = buildRustPackage "sinex-promo-worker";
+            unifiedCollector = buildRustPackage "sinex-collector";
+            default = buildRustPackage "sinex-collector";
           };
 
           devShells.default = pkgs.mkShell {
@@ -91,6 +89,8 @@
               # Build dependencies
               openssl
               pkg-config
+              dbus
+              dbus.dev
             ];
 
             shellHook = ''
