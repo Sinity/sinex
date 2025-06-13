@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 use sinex_annex::{GitAnnex, AnnexConfig};
 
@@ -160,7 +160,10 @@ impl EventSource for ClipboardMonitor {
     
     const SOURCE_NAME: &'static str = "clipboard.monitor";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!("Initializing clipboard monitor");
         
         // Check for required tools
@@ -191,7 +194,8 @@ impl EventSource for ClipboardMonitor {
         );
         
         // Initialize git-annex if configured
-        let git_annex = if let Some(ref repo_path) = config.annex_repo_path {
+        let annex_repo_path = ctx.annex_repo_path.clone().or(config.annex_repo_path.clone());
+        let git_annex = if let Some(ref repo_path) = annex_repo_path {
             let path = std::path::PathBuf::from(repo_path);
             
             // Initialize git-annex repository if it doesn't exist

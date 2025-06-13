@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -131,7 +131,10 @@ impl EventSource for AsciinemaRecorder {
     
     const SOURCE_NAME: &'static str = "ingestor.asciinema_recorder";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!("Initializing asciinema recorder");
         
         // Ensure recordings directory exists

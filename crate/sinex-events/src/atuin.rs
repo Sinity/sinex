@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -71,6 +71,7 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_timestamp: Option<i64>,
+    db_pool: Option<sqlx::PgPool>,
 }
 
 #[async_trait]
@@ -79,7 +80,10 @@ impl EventSource for AtuinDbReader {
     
     const SOURCE_NAME: &'static str = "ingestor.atuin_db_reader";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!(
             db_path = ?config.db_path,
             "Initializing Atuin database reader"
@@ -95,13 +99,14 @@ impl EventSource for AtuinDbReader {
         Ok(Self { 
             config,
             last_processed_timestamp: None,
+            db_pool: ctx.db_pool,
         })
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
         // Try to get last processed timestamp and count from database
-        if let Ok(database_url) = std::env::var("DATABASE_URL") {
-            match self.get_startup_info(&database_url).await {
+        if let Some(ref pool) = self.db_pool {
+            match self.get_startup_info_from_pool(pool).await {
                 Ok((last_timestamp, our_count)) => {
                     if let Some(ref ts) = last_timestamp {
                         info!("Resuming from last processed Atuin timestamp: {}", ts);
@@ -124,7 +129,7 @@ impl EventSource for AtuinDbReader {
                 }
             }
         } else {
-            warn!("DATABASE_URL not set, cannot resume from last position");
+            warn!("No database connection available, cannot resume from last position");
         }
         info!(
             db_path = ?self.config.db_path,
@@ -167,14 +172,8 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info(&self, database_url: &str) -> Result<(Option<i64>, usize)> {
-        use sqlx::{postgres::PgPoolOptions, Row};
-        
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(database_url)
-            .await
-            .map_err(|e| sinex_core::CoreError::Database(e.to_string()))?;
+    async fn get_startup_info_from_pool(&self, pool: &sqlx::PgPool) -> Result<(Option<i64>, usize)> {
+        use sqlx::Row;
         
         // Get both last timestamp and count in one query
         let query = r#"

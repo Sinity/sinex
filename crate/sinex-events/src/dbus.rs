@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -331,7 +331,10 @@ impl EventSource for DbusMonitor {
     
     const SOURCE_NAME: &'static str = "dbus.monitor";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!("Initializing D-Bus monitor");
         Ok(Self { config })
     }

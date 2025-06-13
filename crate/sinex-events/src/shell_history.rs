@@ -11,7 +11,7 @@ use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 use std::collections::HashSet;
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -88,7 +88,10 @@ impl EventSource for ShellHistoryReader {
     
     const SOURCE_NAME: &'static str = "ingestor.shell_history_reader";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!("Initializing shell history reader for {} files", config.history_files.len());
         
         // Check which files exist

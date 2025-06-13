@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::{EventType, EventSource, Result, event_type_constants, sources};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -223,7 +223,10 @@ impl EventSource for HyprlandIPCMonitor {
     
     const SOURCE_NAME: &'static str = sources::WINDOW_MANAGER_HYPRLAND;
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         // Get Hyprland instance signature
         let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE")
             .map_err(|_| sinex_core::CoreError::Other("HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string()))?;

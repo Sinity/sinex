@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, Result};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -153,7 +153,10 @@ impl EventSource for JournalMonitor {
     
     const SOURCE_NAME: &'static str = "journal.monitor";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!("Initializing journal monitor");
         
         // Check journalctl availability
