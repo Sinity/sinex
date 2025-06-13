@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
-use sinex_core::{EventType, EventSource, Result, event_type_constants, sources};
+use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -79,7 +79,10 @@ impl EventSource for KittySocketListener {
     
     const SOURCE_NAME: &'static str = sources::TERMINAL_KITTY;
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!(
             socket_path = ?config.socket_path,
             "Initializing Kitty socket listener"

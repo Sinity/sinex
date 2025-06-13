@@ -566,7 +566,10 @@ impl EventSource for HyprlandStateSnapshotter {
     
     const SOURCE_NAME: &'static str = "window_manager.hyprland_snapshotter";
     
-    async fn initialize(config: Self::Config) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        let config: Self::Config = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        
         info!(
             interval_secs = config.interval_secs,
             "Initializing Hyprland state snapshotter"

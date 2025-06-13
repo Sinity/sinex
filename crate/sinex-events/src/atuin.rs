@@ -12,6 +12,7 @@ use notify::event::{ModifyKind, DataChange};
 
 use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
+use sqlx::PgPool;
 
 // ============================================================================
 // Event Payloads
@@ -71,7 +72,7 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_timestamp: Option<i64>,
-    db_pool: Option<sqlx::PgPool>,
+    db_pool: Option<PgPool>,
 }
 
 #[async_trait]
@@ -172,7 +173,7 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info_from_pool(&self, pool: &sqlx::PgPool) -> Result<(Option<i64>, usize)> {
+    async fn get_startup_info_from_pool(&self, pool: &PgPool) -> Result<(Option<i64>, usize)> {
         use sqlx::Row;
         
         // Get both last timestamp and count in one query

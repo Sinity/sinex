@@ -2570,6 +2570,7 @@ dependencies = [
  "serde_json",
  "sinex-db",
  "sinex-ulid",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "ulid",

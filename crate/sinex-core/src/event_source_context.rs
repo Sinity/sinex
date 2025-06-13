@@ -1,5 +1,4 @@
 use sqlx::PgPool;
-use std::sync::Arc;
 use serde_json::Value;
 
 /// Context provided to event sources containing shared resources
