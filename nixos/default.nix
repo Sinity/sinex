@@ -309,7 +309,7 @@ in {
 
           captureInterval = mkOption {
             type = types.int;
-            default = 300;
+            default = 15;
             description = "Scrollback capture interval in seconds";
           };
 
