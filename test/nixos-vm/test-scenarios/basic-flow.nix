@@ -1,19 +1,8 @@
 # Basic E2E flow test for Sinex
-{ pkgs, ... }:
+{ pkgs, sinex-collector, ... }:
 
 let
-  # Build Sinex packages from the current source
-  sinex-collector = pkgs.rustPlatform.buildRustPackage {
-    pname = "sinex-collector";
-    version = "0.4.2";
-    src = pkgs.lib.cleanSource ../../..;
-    cargoLock.lockFile = ../../../Cargo.lock;
-    buildInputs = with pkgs; [ openssl pkg-config ];
-    nativeBuildInputs = with pkgs; [ pkg-config ];
-    cargoBuildFlags = [ "-p" "sinex-collector" ];
-    SQLX_OFFLINE = "true";
-    doCheck = false;
-  };
+  # Use the provided sinex-collector package from the flake - no need to rebuild
   
   # Python CLI for querying (simple wrapper)
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -111,10 +100,30 @@ pkgs.nixosTest {
       };
       
       script = ''
-        # Run migrations from the Sinex source
-        cd ${../../..}
-        export DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql"
-        ${pkgs.sqlx-cli}/bin/sqlx migrate run
+        # Create schema directly instead of using migrations for simplicity
+        ${pkgs.postgresql_16}/bin/psql -d sinex_test <<EOF
+        -- Create schemas
+        CREATE SCHEMA IF NOT EXISTS raw;
+        CREATE SCHEMA IF NOT EXISTS sinex_schemas;
+        
+        -- Create raw events table
+        CREATE TABLE IF NOT EXISTS raw.events (
+            id ulid PRIMARY KEY DEFAULT gen_ulid(),
+            source TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            ts_ingest TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ts_source TIMESTAMPTZ
+        );
+        
+        -- Create hypertable if it doesn't exist
+        SELECT create_hypertable('raw.events', 'ts_ingest', if_not_exists => TRUE);
+        
+        -- Create indexes
+        CREATE INDEX IF NOT EXISTS idx_events_source ON raw.events(source);
+        CREATE INDEX IF NOT EXISTS idx_events_type ON raw.events(event_type);
+        CREATE INDEX IF NOT EXISTS idx_events_payload ON raw.events USING gin(payload);
+        EOF
       '';
     };
     

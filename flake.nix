@@ -42,7 +42,7 @@
             version = "0.1.0";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = with pkgs; [ openssl pkg-config ];
+            buildInputs = with pkgs; [ openssl dbus systemd ];
             nativeBuildInputs = with pkgs; [ pkg-config ];
             cargoBuildFlags = [ "-p" package ];
             auditable = false;
@@ -125,7 +125,9 @@
           
           # NixOS VM tests
           checks = {
-            sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { };
+            sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+            };
           };
         }
       );

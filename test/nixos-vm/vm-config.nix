@@ -18,6 +18,7 @@
     
     extraPlugins = with pkgs.postgresql16Packages; [
       timescaledb
+      pgx_ulid
     ];
   };
   
@@ -51,5 +52,6 @@
   systemd.services.postgresql.postStart = lib.mkAfter ''
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+    ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;"
   '';
 }

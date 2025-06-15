@@ -265,3 +265,24 @@ postgresql:///sinex_dev?host=/run/postgresql
 - Use existing patterns before creating new ones
 - Clean up as you go - don't let cruft accumulate
 - Check the TIMs before implementing features
+
+## 🔧 Technical Learnings
+
+### SQLX Offline Mode
+- SQLX requires `.sqlx/` cache directory for offline builds
+- Update cache with: `cargo sqlx prepare --workspace -- --all-targets --all-features`
+- Some crates may need individual `cargo sqlx prepare` + merge to workspace
+- Cache must be updated when adding new `sqlx::query!` macros
+- Missing cache shows as: "SQLX_OFFLINE=true but there is no cached data"
+
+### Nix Build Requirements
+- **Critical**: Nix only sees git-tracked files - commit `.sqlx/` and hidden directories
+- Untracked/unstaged files are invisible to Nix builds
+- "Git tree is dirty" warnings indicate uncommitted changes Nix won't see
+- Build failures in Nix that work locally = check git status first
+
+### Debugging Patterns
+- Use `just` commands - they have correct flags/environment
+- `cargo sqlx prepare` needs `--all-targets --all-features` flags
+- Check workspace members individually if commands miss packages
+- Recent commits (`git log`) reveal when cache updates are needed

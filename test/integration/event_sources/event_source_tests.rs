@@ -2,14 +2,11 @@ use anyhow::Result;
 use sinex_core::{EventSource, EventSourceContext};
 use sinex_events::{
     filesystem::FilesystemMonitor,
+    terminal::KittySocketListener,
+    asciinema::AsciinemaRecorder, 
+    clipboard::ClipboardMonitor,
+    scrollback::ScrollbackCapture,
 };
-// Other event sources disabled until their APIs are updated
-// use sinex_events::{
-//     terminal::KittySocketListener,
-//     asciinema::AsciinemaRecorder, 
-//     clipboard::ClipboardMonitor,
-//     scrollback::ScrollbackCapture,
-// };
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
@@ -123,37 +120,63 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
     Ok(())
 }
 
-// ===== DISABLED TESTS UNTIL EVENT SOURCES ARE UPDATED =====
-// These tests reference event sources that have API changes or don't exist yet
-
-/*
 #[tokio::test]
 async fn test_kitty_socket_listener_initialization() -> Result<()> {
-    // Disabled: KittySocketListener API needs updating
+    let config = json!({
+        "socket_path": "/tmp/test-kitty-socket"
+    });
+    
+    let ctx = create_test_context(config);
+    let _listener = KittySocketListener::initialize(ctx).await?;
+    
+    assert_eq!(KittySocketListener::SOURCE_NAME, "terminal_kitty");
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_asciinema_recorder_initialization() -> Result<()> {
-    // Disabled: AsciinemaRecorder API needs updating
+    let temp_dir = TempDir::new()?;
+    let config = json!({
+        "recordings_dir": temp_dir.path().to_str().unwrap(),
+        "watch_interval_secs": 5
+    });
+    
+    let ctx = create_test_context(config);
+    let _recorder = AsciinemaRecorder::initialize(ctx).await?;
+    
+    assert_eq!(AsciinemaRecorder::SOURCE_NAME, "asciinema");
+    
     Ok(())
 }
 
 #[tokio::test] 
 async fn test_clipboard_monitor_initialization() -> Result<()> {
-    // Disabled: ClipboardMonitor API needs updating
+    let config = json!({
+        "monitor_selection": true,
+        "monitor_clipboard": true,
+        "poll_interval_ms": 500
+    });
+    
+    let ctx = create_test_context(config);
+    let _monitor = ClipboardMonitor::initialize(ctx).await?;
+    
+    assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard");
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_scrollback_capture_initialization() -> Result<()> {
-    // Disabled: ScrollbackCapture API needs updating
+    let config = json!({
+        "capture_interval_secs": 15,
+        "max_lines": 5000
+    });
+    
+    let ctx = create_test_context(config);
+    let _capture = ScrollbackCapture::initialize(ctx).await?;
+    
+    assert_eq!(ScrollbackCapture::SOURCE_NAME, "scrollback");
+    
     Ok(())
 }
-
-#[tokio::test]
-async fn test_mixed_event_sources() -> Result<()> {
-    // Disabled: Requires multiple working event sources
-    Ok(())
-}
-*/
