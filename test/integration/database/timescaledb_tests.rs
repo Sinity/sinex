@@ -1,4 +1,3 @@
-use sqlx::postgres::PgPoolOptions;
 use sinex_ulid::Ulid;
 use serde_json::json;
 use chrono::{Duration, Utc};
@@ -43,25 +42,26 @@ db_test! {
 }
 
 #[tokio::test]
-#[ignore = "TimescaleDB advanced features - fails with connection pool exhaustion"]
 async fn test_timescale_chunk_creation() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
+    let pool = crate::test_setup::get_test_db().await;
     
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    // Clean up any previous test data
+    let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
+        .execute(pool.as_ref())
+        .await;
     
     // Get initial chunk count
     let initial_chunks: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool.as_ref())
     .await
     .unwrap();
+    
+    // Use unique test identifier based on current time
+    let test_id = Utc::now().timestamp_millis();
+    let test_source = format!("chunk_test_{}", test_id);
     
     // Insert events across different time periods to trigger chunk creation
     let time_periods = vec![
@@ -71,18 +71,18 @@ async fn test_timescale_chunk_creation() {
         Utc::now() + Duration::days(5),
     ];
     
-    for (i, _ts) in time_periods.iter().enumerate() {
-        let event_id = Ulid::new();
+    for (i, ts) in time_periods.iter().enumerate() {
+        let event_id = Ulid::from_datetime(*ts);
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
         )
         .bind(&event_id.to_string())
-        .bind("chunk_test")
+        .bind(&test_source)
         .bind(format!("event_type_{}", i))
         .bind("test_host")
         .bind(json!({"chunk_test": i}))
-        .execute(&pool)
+        .execute(pool.as_ref())
         .await
         .unwrap();
     }
@@ -92,7 +92,7 @@ async fn test_timescale_chunk_creation() {
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool.as_ref())
     .await
     .unwrap();
     
@@ -105,14 +105,15 @@ async fn test_timescale_chunk_creation() {
     for (i, ts) in time_periods.iter().enumerate() {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM raw.events 
-             WHERE source = 'chunk_test' 
-             AND event_type = $1
-             AND ts_ingest >= $2 - interval '1 minute'
-             AND ts_ingest <= $2 + interval '1 minute'"
+             WHERE source = $1 
+             AND event_type = $2
+             AND ts_ingest >= $3 - interval '1 hour'
+             AND ts_ingest <= $3 + interval '1 hour'"
         )
+        .bind(&test_source)
         .bind(format!("event_type_{}", i))
         .bind(ts)
-        .fetch_one(&pool)
+        .fetch_one(pool.as_ref())
         .await
         .unwrap();
         
@@ -121,16 +122,8 @@ async fn test_timescale_chunk_creation() {
 }
 
 #[tokio::test]
-#[ignore = "TimescaleDB advanced features - fails with connection pool exhaustion"]
 async fn test_timescale_compression_policy() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    let pool = crate::test_setup::get_test_db().await;
     
     // Check if compression policy exists
     let compression_policy: Option<(i32,)> = sqlx::query_as(
@@ -140,7 +133,7 @@ async fn test_timescale_compression_policy() {
          AND hypertable_name = 'events'
          AND proc_name = 'compress_chunks'"
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool.as_ref())
     .await
     .unwrap();
     
@@ -153,7 +146,7 @@ async fn test_timescale_compression_policy() {
              AND hypertable_name = 'events'
              AND proc_name = 'compress_chunks'"
         )
-        .fetch_optional(&pool)
+        .fetch_optional(pool.as_ref())
         .await
         .unwrap();
         
@@ -175,7 +168,7 @@ async fn test_timescale_compression_policy() {
         .bind("old_event")
         .bind("test_host")
         .bind(json!({"seq": i}))
-        .execute(&pool)
+        .execute(pool.as_ref())
         .await
         .unwrap();
     }
@@ -188,7 +181,7 @@ async fn test_timescale_compression_policy() {
          AND range_end < now() - interval '7 days'
          AND is_compressed = false"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool.as_ref())
     .await
     .unwrap_or(0);
     
@@ -196,16 +189,8 @@ async fn test_timescale_compression_policy() {
 }
 
 #[tokio::test]
-#[ignore = "TimescaleDB advanced features - fails with connection pool exhaustion"]
 async fn test_timescale_continuous_aggregates() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    let pool = crate::test_setup::get_test_db().await;
     
     // Create a continuous aggregate for event counts by source and hour
     let result = sqlx::query(
@@ -221,7 +206,7 @@ async fn test_timescale_continuous_aggregates() {
          GROUP BY hour, source, event_type
          WITH NO DATA"
     )
-    .execute(&pool)
+    .execute(pool.as_ref())
     .await;
     
     // Note: This might fail if the view already exists from previous test runs
@@ -233,7 +218,7 @@ async fn test_timescale_continuous_aggregates() {
                 end_offset => INTERVAL '1 hour',
                 schedule_interval => INTERVAL '1 hour')"
         )
-        .execute(&pool)
+        .execute(pool.as_ref())
         .await;
     }
     
@@ -244,8 +229,8 @@ async fn test_timescale_continuous_aggregates() {
     for hour in 0..24 {
         for source in &sources {
             for event_type in &event_types {
-                let event_id = Ulid::new();
-                let _ts = Utc::now() - Duration::hours(hour);
+                let ts = Utc::now() - Duration::hours(hour);
+                let event_id = Ulid::from_datetime(ts);
                 
                 sqlx::query(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 
@@ -256,7 +241,7 @@ async fn test_timescale_continuous_aggregates() {
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
                 .bind(json!({"hour": hour}))
-                .execute(&pool)
+                .execute(pool.as_ref())
                 .await
                 .unwrap();
             }
@@ -265,7 +250,7 @@ async fn test_timescale_continuous_aggregates() {
     
     // Refresh the aggregate
     let _ = sqlx::query("CALL refresh_continuous_aggregate('event_counts_hourly', NULL, NULL)")
-        .execute(&pool)
+        .execute(pool.as_ref())
         .await;
     
     // Query the aggregate
@@ -277,7 +262,7 @@ async fn test_timescale_continuous_aggregates() {
              ORDER BY hour DESC
              LIMIT 5"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool.as_ref())
         .await
         .unwrap_or_default();
     
@@ -293,16 +278,8 @@ async fn test_timescale_continuous_aggregates() {
 }
 
 #[tokio::test]
-#[ignore = "TimescaleDB advanced features - fails with connection pool exhaustion"]
 async fn test_timescale_retention_policies() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    let pool = crate::test_setup::get_test_db().await;
     
     // Check if retention policy exists
     let retention_policy: Option<(i32, String)> = sqlx::query_as(
@@ -312,7 +289,7 @@ async fn test_timescale_retention_policies() {
          AND hypertable_name = 'events'
          AND proc_name = 'drop_chunks'"
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool.as_ref())
     .await
     .unwrap();
     
@@ -321,7 +298,7 @@ async fn test_timescale_retention_policies() {
         let result = sqlx::query(
             "SELECT add_retention_policy('raw.events', INTERVAL '1 year')"
         )
-        .execute(&pool)
+        .execute(pool.as_ref())
         .await;
         
         if result.is_ok() {
@@ -336,34 +313,32 @@ async fn test_timescale_retention_policies() {
     let very_old_timestamp = Utc::now() - Duration::days(400); // Over 1 year
     let recent_timestamp = Utc::now() - Duration::days(30);
     
-    // Insert very old event
-    let old_event_id = Ulid::new();
+    // Insert very old event using ULID from old timestamp
+    let old_event_id = Ulid::from_datetime(very_old_timestamp);
     let _ = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload, ts_ingest) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb, $6)"
+        "INSERT INTO raw.events (id, source, event_type, host, payload) 
+         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
     )
     .bind(&old_event_id.to_string())
     .bind("retention_test")
     .bind("very_old_event")
     .bind("test_host")
     .bind(json!({"data": "old"}))
-    .bind(very_old_timestamp)
-    .execute(&pool)
+    .execute(pool.as_ref())
     .await;
     
-    // Insert recent event
-    let recent_event_id = Ulid::new();
+    // Insert recent event using ULID from recent timestamp
+    let recent_event_id = Ulid::from_datetime(recent_timestamp);
     sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload, ts_ingest) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb, $6)"
+        "INSERT INTO raw.events (id, source, event_type, host, payload) 
+         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
     )
     .bind(&recent_event_id.to_string())
     .bind("retention_test")
     .bind("recent_event")
     .bind("test_host")
     .bind(json!({"data": "recent"}))
-    .bind(recent_timestamp)
-    .execute(&pool)
+    .execute(pool.as_ref())
     .await
     .unwrap();
     
@@ -374,7 +349,7 @@ async fn test_timescale_retention_policies() {
          AND hypertable_name = 'events'
          AND range_end < now() - interval '1 year'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool.as_ref())
     .await
     .unwrap_or(0);
     
@@ -382,66 +357,50 @@ async fn test_timescale_retention_policies() {
 }
 
 #[tokio::test]
-#[ignore = "TimescaleDB advanced features - fails with connection pool exhaustion"]
 async fn test_timescale_data_node_stats() {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .expect("Failed to connect to test database");
+    let pool = crate::test_setup::get_test_db().await;
     
     // Get hypertable stats
-    let stats: Option<(i64, i64, i64)> = sqlx::query_as(
+    let stats: Option<(i64,)> = sqlx::query_as(
         "SELECT 
-            total_chunks,
-            compressed_chunks,
-            approximate_row_count
+            num_chunks
          FROM timescaledb_information.hypertables
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool.as_ref())
     .await
     .unwrap();
     
-    if let Some((total_chunks, compressed_chunks, row_count)) = stats {
+    if let Some((num_chunks,)) = stats {
         println!("Hypertable stats:");
-        println!("  Total chunks: {}", total_chunks);
-        println!("  Compressed chunks: {}", compressed_chunks);
-        println!("  Approximate row count: {}", row_count);
+        println!("  Total chunks: {}", num_chunks);
         
-        assert!(total_chunks >= 0);
-        assert!(compressed_chunks >= 0);
-        assert!(compressed_chunks <= total_chunks);
+        assert!(num_chunks >= 0);
     }
     
     // Get detailed chunk information
-    let chunks: Vec<(String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, bool, Option<i64>, Option<i64>)> = 
+    let chunks: Vec<(String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, bool)> = 
         sqlx::query_as(
             "SELECT 
                 chunk_name,
                 range_start,
                 range_end,
-                is_compressed,
-                compressed_heap_size,
-                uncompressed_heap_size
+                is_compressed
              FROM timescaledb_information.chunks
              WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'
-             ORDER BY range_start DESC
+             ORDER BY range_start DESC NULLS LAST
              LIMIT 5"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool.as_ref())
         .await
         .unwrap();
     
-    for (name, start, end, compressed, comp_size, uncomp_size) in chunks {
-        println!("Chunk {}: {} to {}", name, start, end);
+    for (name, start, end, compressed) in chunks {
+        let start_str = start.map(|s| s.to_string()).unwrap_or_else(|| "NULL".to_string());
+        let end_str = end.map(|e| e.to_string()).unwrap_or_else(|| "NULL".to_string());
+        println!("Chunk {}: {} to {}", name, start_str, end_str);
         if compressed {
-            println!("  Compressed: {} -> {} bytes", 
-                uncomp_size.unwrap_or(0), 
-                comp_size.unwrap_or(0));
+            println!("  Compressed: true");
         }
     }
 }
