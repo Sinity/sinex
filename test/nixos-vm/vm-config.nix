@@ -10,6 +10,12 @@
     enable = true;
     package = pkgs.postgresql_16;
     ensureDatabases = [ "sinex_test" ];
+    ensureUsers = [
+      {
+        name = "test";
+        ensureDBOwnership = true;
+      }
+    ];
     
     settings = {
       shared_preload_libraries = "timescaledb";
@@ -53,5 +59,7 @@
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid;"
+    ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "GRANT ALL PRIVILEGES ON DATABASE sinex_test TO test;"
+    ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "GRANT ALL ON SCHEMA public TO test;"
   '';
 }
