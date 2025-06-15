@@ -2,9 +2,6 @@
 { config, pkgs, lib, ... }:
 
 {
-  # Allow unfree packages for TimescaleDB
-  nixpkgs.config.allowUnfree = true;
-  
   # Basic system configuration
   networking.hostName = "sinex-test";
   
@@ -15,14 +12,17 @@
     ensureDatabases = [ "sinex_test" ];
     
     settings = {
+      shared_preload_libraries = "timescaledb";
       max_connections = 100;
     };
+    
+    extraPlugins = with pkgs.postgresql16Packages; [
+      timescaledb
+    ];
   };
   
   # Environment setup
   environment.systemPackages = with pkgs; [
-    # Sinex binaries (will be built from flake)
-    # For now, we'll use placeholders
     postgresql_16
     jq
     ripgrep
@@ -49,6 +49,7 @@
   
   # Ensure PostgreSQL is ready before tests
   systemd.services.postgresql.postStart = lib.mkAfter ''
+    ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
     ${pkgs.postgresql_16}/bin/psql -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
   '';
 }

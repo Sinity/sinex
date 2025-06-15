@@ -25,6 +25,7 @@
           overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs {
             inherit system overlays;
+            config.allowUnfree = true;  # For TimescaleDB in VM tests
           };
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
