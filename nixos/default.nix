@@ -6,8 +6,10 @@ with lib;
 let
   cfg = config.services.sinex;
   
-  # Helper to generate collector configuration
+  # Helper to generate collector configuration  
   mkCollectorConfig = cfg: let
+    # Get the full config to access blobStorage
+    fullCfg = config.services.sinex;
     enabledEvents = lib.flatten [
       (lib.optional cfg.sources.atuin.enable "shell.command.executed_atuin")
       (lib.optional cfg.sources.shellHistory.enable "shell.history.command")
@@ -63,7 +65,7 @@ let
         recordings_dir = cfg.sources.asciinema.recordingsPath;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
         polling_interval_secs = 5;
-        git_annex_repo = cfg.blobStorage.repositoryPath;
+        git_annex_repo = fullCfg.blobStorage.repositoryPath;
         auto_annex = cfg.sources.asciinema.autoAnnex;
       };
     } // lib.optionalAttrs cfg.sources.kittyScrollback.enable {

@@ -71,6 +71,9 @@ pkgs.nixosTest {
       # Use Sinex the way a real user would!
       services.sinex = {
         enable = true;
+        
+        # Provide package directly to avoid flake import
+        package = sinex-collector;
 
         # Disable promo worker for simplicity in test
         promoWorker.enable = false;
