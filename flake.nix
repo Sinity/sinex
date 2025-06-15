@@ -55,12 +55,42 @@
               fi
             '';
           };
+          # Build pg_jsonschema from pre-built deb
+          pg_jsonschema = pkgs.stdenv.mkDerivation rec {
+            pname = "pg_jsonschema";
+            version = "0.3.3";
+
+            src = pkgs.fetchurl {
+              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
+              hash = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+            };
+
+            nativeBuildInputs = [ pkgs.dpkg ];
+
+            dontBuild = true;
+            dontStrip = true;
+            dontFixup = true;
+
+            unpackPhase = ''
+              dpkg-deb -x $src .
+            '';
+
+            installPhase = ''
+              mkdir -p $out/lib $out/share/postgresql/extension
+              
+              # Find and copy the actual files (not symlinks)
+              find . -name "*.so" -type f -exec cp {} $out/lib/ \;
+              find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
+              find . -name "*.control" -type f -exec cp {} $out/share/postgresql/extension/ \;
+            '';
+          };
         in
         {
           packages = {
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
             unifiedCollector = buildRustPackage "sinex-collector";
             default = buildRustPackage "sinex-collector";
+            inherit pg_jsonschema;
           };
 
           devShells.default = pkgs.mkShell {
@@ -139,6 +169,13 @@
       nixosModules = {
         default = ./nixos;
         sinex = ./nixos;
+      };
+      
+      # Overlay providing pg_jsonschema
+      overlays.default = final: prev: {
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = self.packages.${final.system}.pg_jsonschema;
+        };
       };
     };
 }

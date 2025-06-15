@@ -65,7 +65,7 @@ pkgs.nixosTest {
     {
       imports = [
         # Import the actual Sinex NixOS module
-        ../../../nixos/default.nix
+        ../../../nixos
       ];
 
       # Use Sinex the way a real user would!
@@ -117,8 +117,8 @@ pkgs.nixosTest {
     # Verify PostgreSQL is running
     machine.succeed("systemctl is-active postgresql")
 
-    # Wait for Sinex services (the module creates these)
-    machine.wait_for_unit("sinex-init.service")
+    # Wait for Sinex services to initialize
+    machine.wait_for_unit("sinex-migrate.service")
     machine.wait_for_unit("sinex-unified-collector.service")
     machine.succeed("systemctl is-active sinex-unified-collector")
 
