@@ -99,7 +99,7 @@ async fn test_worker_double_processing() {
         sqlx::query!(
             "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb 
              WHERE id::uuid = $1::uuid",
-            event_id.as_uuid()
+            event_id.to_uuid()
         )
         .execute(&pool1)
         .await
@@ -111,7 +111,7 @@ async fn test_worker_double_processing() {
         sqlx::query!(
             "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb 
              WHERE id::uuid = $1::uuid",
-            event_id.as_uuid()
+            event_id.to_uuid()
         )
         .execute(&pool2)
         .await
@@ -126,7 +126,7 @@ async fn test_worker_double_processing() {
     // Check final state
     let final_event = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-        event_id.as_uuid()
+        event_id.to_uuid()
     )
     .fetch_one(&pool)
     .await

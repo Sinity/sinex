@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_core::{RawEvent, EventSource, EventSourceContext};
+use sinex_core::{RawEvent, RawEventBuilder, EventSource, EventSourceContext};
 use sinex_db::{create_test_pool, models::PromotionQueueItem};
 use sinex_worker::{EventProcessor, worker::Worker};
 use sinex_ulid::Ulid;
@@ -80,7 +80,7 @@ impl EventSource for PipelineTestSource {
                 }),
             };
             
-            event_tx.send(event).await?;
+            event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);
             
             tokio::time::sleep(self.generation_rate).await;
@@ -110,7 +110,7 @@ impl EventProcessor for PipelineTestProcessor {
         // Fetch the raw event
         let event = sqlx::query!(
             r#"
-            SELECT id, source, event_type, ts_ingest, payload, host
+            SELECT id::uuid as "id!", source, event_type, ts_ingest, payload, host
             FROM raw.events
             WHERE id = $1::uuid::ulid
             "#,
@@ -128,25 +128,25 @@ impl EventProcessor for PipelineTestProcessor {
             .unwrap_or(0) as u32;
         
         // Create a derived event
-        let derived_event = RawEvent::new(
+        let derived_event = RawEventBuilder::new(
             "pipeline_test_derived",
             "processed_event",
             json!({
                 "original_sequence": sequence,
                 "processed_at": chrono::Utc::now().to_rfc3339(),
                 "processor": self.agent_name(),
-            }),
-        );
+            })
+        ).build();
         
         // Store derived event
         sqlx::query(
             "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
              VALUES ($1, $2, $3, $4, $5, $6)"
         )
-        .bind(derived_event.id.as_uuid())
+        .bind(derived_event.id.to_uuid())
         .bind(&derived_event.event_type)
         .bind(&derived_event.source)
-        .bind(derived_event.timestamp)
+        .bind(derived_event.ts_ingest)
         .bind(&derived_event.payload)
         .bind(event.host)
         .execute(pool)
@@ -193,10 +193,10 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
                 "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
                  VALUES ($1, $2, $3, $4, $5, $6)"
             )
-            .bind(event.id.as_uuid())
+            .bind(event.id.to_uuid())
             .bind(&event.event_type)
             .bind(&event.source)
-            .bind(event.timestamp)
+            .bind(event.ts_ingest)
             .bind(&event.payload)
             .bind("test-host")
             .execute(&pool_clone)
@@ -209,8 +209,8 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
                  (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
                  VALUES ($1, $2, $3, 0, 3, NOW())"
             )
-            .bind(Ulid::new().as_uuid())
-            .bind(event.id.as_uuid())
+            .bind(Ulid::new().to_uuid())
+            .bind(event.id.to_uuid())
             .bind("pipeline_test_worker")
             .execute(&pool_clone)
             .await
@@ -320,23 +320,23 @@ async fn test_pipeline_with_multiple_workers() -> Result<()> {
     
     // Pre-insert events into database
     for i in 0..events_to_generate {
-        let event = RawEvent::new(
+        let event = RawEventBuilder::new(
             "pipeline_test",
             "test_event",
             json!({
                 "sequence": i,
                 "data": format!("Test event {}", i),
-            }),
-        );
+            })
+        ).build();
         
         sqlx::query(
             "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
              VALUES ($1, $2, $3, $4, $5, $6)"
         )
-        .bind(event.id.as_uuid())
+        .bind(event.id.to_uuid())
         .bind(&event.event_type)
         .bind(&event.source)
-        .bind(event.timestamp)
+        .bind(event.ts_ingest)
         .bind(&event.payload)
         .bind("test-host")
         .execute(&pool)
@@ -347,8 +347,8 @@ async fn test_pipeline_with_multiple_workers() -> Result<()> {
              (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
              VALUES ($1, $2, $3, 0, 3, NOW())"
         )
-        .bind(Ulid::new().as_uuid())
-        .bind(event.id.as_uuid())
+        .bind(Ulid::new().to_uuid())
+        .bind(event.id.to_uuid())
         .bind("test_worker")
         .execute(&pool)
         .await?;
@@ -425,20 +425,20 @@ async fn test_pipeline_error_recovery() -> Result<()> {
     
     // Insert some events that will cause errors
     for i in 0..5 {
-        let event = RawEvent::new(
+        let event = RawEventBuilder::new(
             "error_test",
             if i % 2 == 0 { "good_event" } else { "bad_event" },
-            json!({"sequence": i}),
-        );
+            json!({"sequence": i})
+        ).build();
         
         sqlx::query(
             "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
              VALUES ($1, $2, $3, $4, $5, $6)"
         )
-        .bind(event.id.as_uuid())
+        .bind(event.id.to_uuid())
         .bind(&event.event_type)
         .bind(&event.source)
-        .bind(event.timestamp)
+        .bind(event.ts_ingest)
         .bind(&event.payload)
         .bind("test-host")
         .execute(&pool)
@@ -450,8 +450,8 @@ async fn test_pipeline_error_recovery() -> Result<()> {
              (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
              VALUES ($1, $2, $3, 0, 3, NOW())"
         )
-        .bind(Ulid::new().as_uuid())
-        .bind(event.id.as_uuid())
+        .bind(Ulid::new().to_uuid())
+        .bind(event.id.to_uuid())
         .bind("error_test_worker")
         .execute(&pool)
         .await?;

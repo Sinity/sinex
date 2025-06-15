@@ -31,8 +31,8 @@ async fn insert_test_items(pool: &PgPool, count: i32) -> Result<Vec<Ulid>> {
             "INSERT INTO sinex_schemas.promotion_queue (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
              VALUES ($1, $2, $3, 0, 3, NOW())"
         )
-        .bind(id.as_uuid())
-        .bind(Ulid::new().as_uuid())
+        .bind(id.to_uuid())
+        .bind(Ulid::new().to_uuid())
         .bind("test_worker")
         .execute(pool)
         .await?;
@@ -88,7 +88,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> R
                             "DELETE FROM sinex_schemas.promotion_queue 
                              WHERE queue_id = $1"
                         )
-                        .bind(item.queue_id.as_uuid())
+                        .bind(item.queue_id.to_uuid())
                         .execute(&*pool)
                         .await?;
                         
@@ -191,7 +191,7 @@ async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
                             "DELETE FROM sinex_schemas.promotion_queue 
                              WHERE queue_id = $1"
                         )
-                        .bind(item.queue_id.as_uuid())
+                        .bind(item.queue_id.to_uuid())
                         .execute(&mut *tx)
                         .await?;
                         
@@ -255,7 +255,7 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
          WHERE queue_id = $1
          FOR UPDATE"
     )
-    .bind(item_id.as_uuid())
+    .bind(item_id.to_uuid())
     .fetch_one(&mut *tx1)
     .await?;
     
@@ -275,7 +275,7 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
              WHERE queue_id = $1
              FOR UPDATE NOWAIT"  // Use NOWAIT to detect if locked
         )
-        .bind(item_id.as_uuid())
+        .bind(item_id.to_uuid())
         .fetch_optional(&pool2)
         .await;
         
@@ -317,7 +317,7 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
          WHERE queue_id = $1
          FOR UPDATE NOWAIT"
     )
-    .bind(item_id.as_uuid())
+    .bind(item_id.to_uuid())
     .fetch_optional(&pool)
     .await?;
     
@@ -337,8 +337,8 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
              (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
              VALUES ($1, $2, $3, 0, 3, NOW() + interval '1 second' * $4)"
         )
-        .bind(Ulid::new().as_uuid())
-        .bind(Ulid::new().as_uuid())
+        .bind(Ulid::new().to_uuid())
+        .bind(Ulid::new().to_uuid())
         .bind("test_worker")
         .bind(i as i32)
         .execute(&pool)
@@ -384,7 +384,7 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
                             "DELETE FROM sinex_schemas.promotion_queue 
                              WHERE queue_id = $1"
                         )
-                        .bind(item.queue_id.as_uuid())
+                        .bind(item.queue_id.to_uuid())
                         .execute(&mut *tx)
                         .await?;
                         

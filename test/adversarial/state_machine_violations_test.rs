@@ -335,7 +335,7 @@ async fn test_worker_state_machine_corruption() {
                 WHERE id::uuid = $1::uuid 
                 AND NOT (payload ? 'status')
                 "#,
-                event_id.as_uuid(),
+                event_id.to_uuid(),
                 worker_id.to_string()
             ).execute(&pool_clone).await;
             
@@ -355,7 +355,7 @@ async fn test_worker_state_machine_corruption() {
                     AND payload->>'status' = 'processing'
                     AND payload->>'worker_id' = $2::text
                     "#,
-                    event_id.as_uuid(),
+                    event_id.to_uuid(),
                     worker_id.to_string()
                 ).execute(&pool_clone).await;
                 
@@ -385,7 +385,7 @@ async fn test_worker_state_machine_corruption() {
     // Check final state
     let final_event = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-        test_event.id.as_uuid()
+        test_event.id.to_uuid()
     ).fetch_one(&pool).await.unwrap();
     
     println!("\nWorker state machine test results:");

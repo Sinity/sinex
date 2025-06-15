@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use sinex_core::{EventSource, EventSourceContext, RawEvent};
+use sinex_core::{EventSource, EventSourceContext, RawEvent, RawEventBuilder};
 use sinex_db::{create_test_pool, models::RawEvent as DbRawEvent};
 use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
@@ -101,7 +101,7 @@ impl EventSource for TestEventSource {
         }
     }
     
-    async fn shutdown(&mut self) -> Result<()> {
+    async fn shutdown(&mut self) -> sinex_core::Result<()> {
         Ok(())
     }
 }
@@ -298,21 +298,22 @@ impl EventSource for SlowEventSource {
     type Config = TestSourceConfig;
     const SOURCE_NAME: &'static str = "slow_source";
     
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let _config: TestSourceConfig = ctx.get_config()?;
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
+        let _config: TestSourceConfig = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
         
         Ok(Self {
             delay: Duration::from_millis(200),
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         loop {
-            let event = RawEvent::new(
+            let event = RawEventBuilder::new(
                 Self::SOURCE_NAME,
                 "slow_event",
-                json!({"timestamp": chrono::Utc::now().to_rfc3339()}),
-            )?;
+                json!({"timestamp": chrono::Utc::now().to_rfc3339()})
+            ).build();
             
             if tx.send(event).await.is_err() {
                 break;
@@ -387,7 +388,7 @@ async fn test_event_source_database_integration() -> Result<()> {
                 "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
                  VALUES ($1, $2, $3, $4, $5, $6)"
             )
-            .bind(event.id.as_uuid())
+            .bind(event.id.to_uuid())
             .bind(&event.source)
             .bind(&event.event_type)
             .bind(event.ts_ingest)

@@ -32,7 +32,7 @@ async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<U
         "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
          VALUES ($1, $2, $3, NOW(), $4, $5)"
     )
-    .bind(raw_event_id.as_uuid())
+    .bind(raw_event_id.to_uuid())
     .bind("test_source")
     .bind("test_event")
     .bind("test_host")
@@ -46,8 +46,8 @@ async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<U
          (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at) 
          VALUES ($1, $2, $3, 'pending', 0, 3, NOW())"
     )
-    .bind(queue_id.as_uuid())
-    .bind(raw_event_id.as_uuid())
+    .bind(queue_id.to_uuid())
+    .bind(raw_event_id.to_uuid())
     .bind(agent_name)
     .execute(pool)
     .await?;

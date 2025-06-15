@@ -871,7 +871,7 @@ async fn test_atuin_performance_with_many_entries() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(event) = rx.recv().await {
             events.push(event);
-            if events.len() >= num_entries {
+            if events.len() >= num_entries as usize {
                 break;
             }
         }
@@ -880,7 +880,7 @@ async fn test_atuin_performance_with_many_entries() {
     let processing_time = processing_start.elapsed();
     handle.abort();
     
-    assert_eq!(events.len(), num_entries, "Should process all {} entries", num_entries);
+    assert_eq!(events.len(), num_entries as usize, "Should process all {} entries", num_entries);
     
     // Performance assertions (adjust thresholds as needed)
     assert!(db_creation_time.as_millis() < 1000, "Database creation should be fast ({}ms)", db_creation_time.as_millis());
@@ -895,7 +895,7 @@ async fn test_atuin_performance_with_many_entries() {
         .filter(|cmd| cmd.starts_with("echo 'Command number"))
         .count();
     
-    assert_eq!(command_count, num_entries, "All commands should be captured correctly");
+    assert_eq!(command_count, num_entries as usize, "All commands should be captured correctly");
     
     println!("Performance test: {} entries processed in {}ms (DB creation: {}ms)", 
              num_entries, processing_time.as_millis(), db_creation_time.as_millis());
