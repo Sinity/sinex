@@ -6,7 +6,7 @@ test:
     cargo test
 
 test-unit:
-    cargo test --lib
+    cargo test --test integration unit::
 
 test-integration:
     cargo test --test integration integration::

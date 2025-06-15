@@ -1,308 +1,377 @@
-# Sinex Test Infrastructure
+# Sinex Test Suite
 
-> **📋 Implementation Plan**: See [PLAN.md](PLAN.md) for the comprehensive reorganization and improvement plan.
+Comprehensive testing infrastructure for the Sinex event-driven data capture system.
 
-## Current Test Status
+## Overview
 
-### ✅ Working Tests (7 passing)
-- **Unit Tests**: 
-  - `test::unit::core::basic_functionality_test` - Event creation, sources, types, ULID generation
-  - `test::unit::db::basic_db_test` - Database connectivity, event insertion, validation infrastructure
-- **Code Coverage**: Infrastructure in place with cargo-llvm-cov
-
-### 🔄 Temporarily Disabled (API Compatibility Issues)
-Due to API changes between test implementation and current codebase, the following test categories are temporarily disabled:
-- **Database Integration Tests**: ULID SQL type mapping issues  
-- **Worker Tests**: EventProcessor API changes
-- **Event Source Tests**: Interface method changes (name(), capture_events())
-- **Pipeline Tests**: RawEvent::new() API changes
-- **All other integration tests**: Various API compatibility issues
-
-## Quick Start
-
-```bash
-# Working unit tests only (current state)
-cargo test unit
-
-# Previous commands (temporarily not working due to API changes):
-# cargo test                        # All tests - many compilation errors
-# cargo test --test integration     # Integration tests - compilation errors
-# cargo test --lib                  # Unit tests - no lib target in workspace
-# cargo test --test database/       # Database tests - API compatibility issues
-
-# Development environment with automatic database setup
-nix develop
-```
-
-## What "Sinex Works" Means
-
-For tests to validate that Sinex actually functions, they must verify the complete system flow:
-
-1. **Event Capture**: Event sources successfully capture and stream events
-2. **Event Storage**: Events are stored immutably in PostgreSQL with proper validation  
-3. **Event Processing**: Workers process events from the promotion queue
-4. **Event Query**: CLI can retrieve and display captured events
-5. **End-to-End Flow**: Complete pipeline from capture → storage → processing → query
+This test suite validates that Sinex functions correctly as a complete system for capturing, storing, processing, and querying events. The tests are organized by scope and purpose to ensure thorough coverage of all functionality.
 
 ## Test Organization
 
-### Current Structure
 ```
 test/
-├── README.md                    # This file - comprehensive test documentation
-├── PLAN.md                      # Implementation plan for test improvements
-├── common/                      # Shared test utilities and helpers
-├── database/                    # Database layer tests (schema, migrations, ULID)
-├── events/                      # Event source and capture tests
-├── worker/                      # Worker processing and lifecycle tests
-├── collector/                   # Collector coordination and management tests  
-├── pipeline/                    # End-to-end pipeline integration tests
-├── adversarial/                 # Security, edge cases, and robustness tests
-├── bugs/                        # Regression prevention tests
-├── agent/                       # Agent manifest and heartbeat tests
-├── annex/                       # Git Annex large file management tests
-├── ingestor/                    # Data ingestion tests
-├── model/                       # Data model and serialization tests
-├── validation/                  # Event validation tests
-├── ulid/                        # ULID functionality tests
+├── unit/                        # Unit tests by crate
+│   ├── core/                    # sinex-core components
+│   └── db/                      # sinex-db operations
+├── integration/                 # Integration tests
+│   ├── database/                # Database integration
+│   ├── collector/               # Collector integration  
+│   ├── worker/                  # Worker integration
+│   └── event_sources/           # Event source integration
+├── system/                      # System-level tests
+│   ├── end_to_end/              # Full pipeline tests
+│   ├── external/                # External dependency tests
+│   ├── performance/             # Load and performance tests
+│   └── regression/              # Bug regression tests
+├── adversarial/                 # Security and edge cases
+├── common/                      # Shared test utilities
 ├── cli/                         # Python CLI tests
-├── property_tests.rs            # Property-based tests
-├── test_setup.rs               # Test infrastructure utilities
-└── mod.rs                      # Root test module
+└── property_tests.rs            # Property-based tests
+```
+
+## Running Tests
+
+### Quick Commands
+
+```bash
+# Run all tests
+just test-all
+
+# Test categories
+just test-unit          # Unit tests only
+just test-integration   # Integration tests
+just test-system        # System-level tests
+just test-e2e           # End-to-end tests
+just test-core          # Core library tests
+just test-database      # Database tests
+just test-worker        # Worker tests
+just test-adversarial   # Security/edge case tests
+just test-regression    # Regression tests
+
+# CLI tests
+just test-cli           # Python CLI unit tests
+just test-cli-all       # All CLI tests
+
+# Coverage
+just coverage           # Run with coverage
+just coverage-html      # Generate HTML report
+just coverage-report    # Open coverage in browser
+```
+
+### Detailed Commands
+
+```bash
+# Run specific test files
+cargo test --test integration unit::core::basic_functionality_test
+cargo test --test integration integration::database::schema_validation_tests
+cargo test --test integration system::end_to_end::full_pipeline_tests
+
+# Run with output
+cargo test --test integration system::end_to_end:: -- --nocapture
+
+# Run ignored tests (long-running)
+cargo test --test integration -- --ignored
+
+# Run property tests
+cargo test property_tests
+
+# Run adversarial tests
+cargo test --test integration adversarial::
 ```
 
 ## Test Categories
 
-### Unit Tests
-Fast, isolated tests with no external dependencies:
-- **sinex-core**: Event builders, registry, context, validation
-- **sinex-ulid**: ULID generation, conversion, monotonic properties
-- **sinex-db**: Models, serialization, validation logic  
-- **sinex-worker**: Backoff calculations, processing logic
-- **sinex-events**: Event type definitions and builders
+### Unit Tests (`unit/`)
 
-**Run with**: `cargo test --lib`
+Test individual components in isolation:
 
-### Integration Tests  
-Tests that verify component interaction with controlled environments:
-- **Database Integration**: PostgreSQL operations with isolated test databases
-- **Event Source Integration**: Event capture with real but controlled inputs
-- **Worker Integration**: Queue processing with test promotion items
-- **Collector Integration**: Event source coordination and output routing
+- **core/**: EventSource trait, RawEventBuilder, registry, context
+- **db/**: Database models, queries, validation, connections
 
-**Run with**: `cargo test --test integration`
+**Coverage Goal**: ≥90% line coverage
 
-### System Tests
-Full system validation with real components:
-- **End-to-End Tests**: Complete pipeline from capture to query
-- **External System Tests**: PostgreSQL extensions, Git Annex integration
-- **Performance Tests**: Load testing and scalability validation
+### Integration Tests (`integration/`)
 
-**Run with**: Custom commands (see justfile)
+Test component interactions:
 
-### Adversarial Tests
-Security, edge cases, and robustness validation (16 test files, 100+ tests):
-- **Time & ULID Attacks**: Clock manipulation, collision testing, timezone issues
-- **Database Boundaries**: 1GB payloads, connection exhaustion, chunk boundaries
-- **Security Vulnerabilities**: Injection attacks, unicode bypasses, DoS attempts
-- **Race Conditions**: Worker conflicts, causality violations, thundering herds
-- **Resource Exhaustion**: Memory, disk, connection limits
-- **JSON Attacks**: Circular references, billion laughs, hash collisions
-- **State Machine Violations**: Invalid transitions, corruption scenarios
-- **Network Issues**: DNS timeouts, connection failures, distributed coordination
-- **Query Exploits**: SQL injection, parameter manipulation
+- **database/**: Database operations, TimescaleDB, schema validation
+- **collector/**: Event source lifecycle, configuration, coordination
+- **worker/**: Queue processing, concurrency, error handling
+- **event_sources/**: Individual event sources with real events
 
-**Run with**: `cargo test --test adversarial/`
+**Coverage Goal**: ≥80% line coverage
 
-## Test Quality Standards
+### System Tests (`system/`)
 
-### Database Tests
-Use `#[sqlx::test]` for automatic database isolation:
+Test complete system behavior:
+
+- **end_to_end/**: Full pipeline from capture → storage → processing → query
+- **external/**: Git Annex, PostgreSQL extensions, external dependencies
+- **performance/**: High-volume ingestion, concurrent processing, latency
+- **regression/**: Previously fixed bugs, edge cases
+
+**Coverage Goal**: ≥70% functional coverage
+
+### Adversarial Tests (`adversarial/`)
+
+Test security, edge cases, and failure scenarios:
+
+- Time-based attacks (clock skew, timezone confusion)
+- Filesystem edge cases (symlinks, permissions, special files)
+- Network issues (DNS timeouts, connection failures)
+- Resource exhaustion (memory, disk, connections)
+- Configuration attacks (file replacement, hot reload races)
+
+### Property Tests (`property_tests.rs`)
+
+Property-based testing using `proptest`:
+
+- ULID generation properties
+- Event validation properties
+- Database consistency properties
+
+## Test Guidelines
+
+### Writing Tests
+
+1. **Naming**: Use descriptive test names that explain what's being tested
+   ```rust
+   #[test]
+   fn test_filesystem_event_capture_creates_valid_event() { ... }
+   ```
+
+2. **Structure**: Follow Arrange-Act-Assert pattern
+   ```rust
+   // Arrange
+   let pool = create_test_pool().await?;
+   let event = events::filesystem_event("file.created", "/test/file.txt");
+   
+   // Act
+   let inserted_id = queries::insert_event(&pool, &event).await?;
+   
+   // Assert
+   assert!(!inserted_id.to_string().is_empty());
+   ```
+
+3. **Cleanup**: Tests must clean up after themselves
+   ```rust
+   #[sqlx::test]  // Automatic transaction rollback
+   async fn test_event_insertion(pool: PgPool) -> Result<(), BoxError> {
+       // Test automatically rolls back
+   }
+   ```
+
+4. **Error Messages**: Provide clear failure messages
+   ```rust
+   assert!(result.is_ok(), "Expected event insertion to succeed, got: {:?}", result);
+   ```
+
+### Test Data
+
+Use the `common/` module utilities:
+
 ```rust
-#[sqlx::test]
-async fn test_event_storage(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Test with isolated database - automatic cleanup
-    let event = create_test_event();
-    let stored_id = insert_event(&pool, &event).await?;
-    assert_eq!(retrieve_event(&pool, stored_id).await?, event);
-    Ok(())
-}
-```
+use crate::common::{events, assertions, generators};
 
-### Unit Tests  
-Standard `#[test]` or `#[tokio::test]`:
-```rust
-#[test]
-fn test_ulid_generation() {
-    let ulid1 = Ulid::new();
-    let ulid2 = Ulid::new();
-    assert_ne!(ulid1, ulid2);
-    assert!(ulid1.timestamp() <= ulid2.timestamp());
-}
-```
+// Create test events
+let event = events::filesystem_event("file.created", "/test/file.txt");
+let events = generators::test_events(10);
 
-### Test Naming
-- Descriptive names explaining what's being tested
-- Use `test_` prefix for unit tests
-- Use domain-specific prefixes for integration tests
-- Group related tests in modules
-
-### Error Messages
-- Clear assertions that explain what went wrong
-- Include relevant context in failure messages
-- Use `assert_eq!` with meaningful descriptions
-
-## Shared Test Utilities
-
-The `test/common/` module provides:
-
-### Event Builders
-```rust
-use crate::common::events;
-
-// Pre-built test events
-let fs_event = events::filesystem_event("file.created", "/test/file.txt");
-let terminal_event = events::kitty_event("ls -la");
-let wm_event = events::hyprland_event("window.focus", data);
-```
-
-### Assertions
-```rust
-use crate::common::assertions;
-
-// Database operation assertions
+// Assert outcomes
 assertions::assert_event_inserted(&pool, &event).await?;
 assertions::assert_events_equivalent(&actual, &expected);
 ```
 
-### Test Data Generation
+### Database Tests
+
+Use `#[sqlx::test]` for automatic isolation:
+
 ```rust
-use crate::common::generators;
-
-// Generate test data sets
-let events = generators::test_events(100);
-let ulids = generators::sequential_ulids(50);
+#[sqlx::test]
+async fn test_event_validation(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Each test gets a fresh transaction that rolls back
+    let event = events::filesystem_event("file.created", "/test");
+    let result = queries::insert_event(&pool, &event).await;
+    assert!(result.is_ok());
+    Ok(())
+}
 ```
 
-## Coverage Analysis
+## Coverage Requirements
 
-### Well-Tested Components
-- **sinex-ulid**: Excellent (unit + integration + adversarial)
-- **sinex-db**: Good (models, database ops, validation)  
-- **Adversarial Security**: Excellent (16 comprehensive test files)
-- **Database Layer**: Excellent (schema, TimescaleDB, validation)
+| Component | Line Coverage | Branch Coverage |
+|-----------|---------------|-----------------|
+| sinex-core | ≥90% | ≥85% |
+| sinex-db | ≥90% | ≥85% |
+| sinex-worker | ≥85% | ≥80% |
+| sinex-collector | ≥80% | ≥75% |
+| sinex-events | ≥75% | ≥70% |
+| Overall | ≥80% | ≥75% |
 
-### Partially Tested Components  
-- **sinex-collector**: Basic tests, missing core collection logic
-- **sinex-events**: Minimal unit tests, missing event builders
-- **sinex-core**: No dedicated unit tests, tested via integration
+Generate coverage reports:
 
-### Missing Coverage (High Priority)
-1. **Core Functionality Tests**: Event registry, builders, context
-2. **Database Operations**: Insert, query, promotion queue mechanics
-3. **Worker Processing**: Queue processing, error handling, DLQ management
-4. **Collector Coordination**: Event source lifecycle, output routing
-5. **End-to-End Validation**: Complete pipeline functionality
-
-## Test Execution
-
-### Environment Setup
 ```bash
-# Enter development environment (automatic database setup)
-nix develop
-
-# Verify database is ready
-just migrate
+just coverage-html    # HTML report in target/llvm-cov/html/
+just coverage-lcov    # LCOV for CI in target/llvm-cov/coverage.lcov
 ```
 
-### Running Test Suites
+## Performance Benchmarks
+
+Performance tests verify system can handle expected loads:
+
+- **Event Ingestion**: ≥1,000 events/second sustained
+- **Query Response**: ≤100ms for recent events (p95)
+- **Worker Processing**: ≥500 events/second/worker
+- **Database Storage**: ≤10ms insert latency (p95)
+
+Run performance tests:
+
 ```bash
-# Core functionality
-just test-unit          # Unit tests only
-just test-integration   # Integration tests  
-just test-core          # Core crate tests
-
-# System validation
-just test-e2e           # End-to-end tests
-just test-system        # System-level tests
-just test-all           # Complete test suite
-
-# Specific areas
-just test-database      # Database layer
-just test-adversarial   # Security and edge cases
-just test-worker        # Worker processing
-just test-cli           # CLI functionality
-
-# Development
-just watch              # Continuous testing
+cargo test --test integration system::performance:: -- --ignored
 ```
 
-### Coverage Reporting
+## Debugging Tests
+
+### Failed Tests
+
+1. Run with output to see details:
+   ```bash
+   cargo test failing_test_name -- --nocapture
+   ```
+
+2. Check database state:
+   ```bash
+   just psql
+   SELECT * FROM raw.events ORDER BY ts_ingest DESC LIMIT 10;
+   ```
+
+3. Enable debug logging:
+   ```bash
+   RUST_LOG=debug cargo test failing_test_name
+   ```
+
+### Test Environment
+
+The test suite uses isolated test databases and temporary files:
+
+- **Database**: Each `#[sqlx::test]` gets a transaction that rolls back
+- **Files**: Tests use temporary directories that auto-cleanup
+- **Network**: Mock external services where possible
+
+## CI/CD Integration
+
+The test suite is designed for CI/CD environments:
+
 ```bash
-# Generate coverage report (when implemented)
-just coverage           # Run tests with coverage
-just coverage-html      # HTML coverage report
-just coverage-lcov      # LCOV format for CI
+# Fast feedback (< 30 seconds)
+just test-unit
+
+# Integration verification (< 2 minutes)  
+just test-integration
+
+# Full validation (< 10 minutes)
+just test-all
+
+# Coverage reporting
+just coverage-lcov
 ```
 
-## Test Infrastructure Rules
+## Test Index
 
-1. **Database Isolation**: Use `#[sqlx::test]` - never manual pools
-2. **Test Independence**: No shared state between tests
-3. **Self-Contained**: Tests clean up after themselves
-4. **No External Dependencies**: Mock external services
-5. **Deterministic**: Tests must be reproducible
-6. **Fast Feedback**: Unit tests complete in milliseconds
-7. **Clear Failures**: Meaningful error messages when tests fail
+### Unit Tests
 
-## Test File Index
+| File | Purpose | Coverage |
+|------|---------|----------|
+| `unit/core/basic_functionality_test.rs` | Core constants and builders | Event creation, validation |
+| `unit/core/event_registry_tests.rs` | Event type registry | Source registration, lookup |
+| `unit/core/event_source_context_tests.rs` | Configuration context | Config loading, sharing |
+| `unit/core/raw_event_builder_tests.rs` | Event builder patterns | Field validation, JSON payloads |
+| `unit/db/basic_db_test.rs` | Database connections | Pool management, migrations |
+| `unit/db/database_operations_tests.rs` | CRUD operations | Insert, query, update events |
+| `unit/db/event_validator_tests.rs` | Event validation | Schema validation, constraints |
 
-### Core Functionality (To Be Improved)
-- `database/database_integration_tests.rs` - Basic DB operations (needs work)
-- `events/event_source_tests.rs` - Event source trait tests (incomplete)
-- `worker/worker_lifecycle_tests.rs` - Worker management (partial)
-- `collector/basic_collector_test.rs` - Collector tests (placeholder)
+### Integration Tests
 
-### Well-Implemented Tests  
-- `adversarial/*` - 16 comprehensive security/edge case test files
-- `database/ulid_integration_tests.rs` - ULID database integration
-- `ulid/ulid_unit_tests.rs` - ULID functionality
-- `pipeline/full_pipeline_tests.rs` - End-to-end pipeline validation
-- `property_tests.rs` - Property-based ULID testing
+| File | Purpose | Coverage |
+|------|---------|----------|
+| `integration/database/database_integration_tests.rs` | Database integration | Full database workflow |
+| `integration/database/timescaledb_tests.rs` | TimescaleDB features | Hypertables, compression |
+| `integration/database/ulid_integration_tests.rs` | ULID database integration | ULID storage, queries |
+| `integration/database/jsonschema_validation_tests.rs` | JSON schema validation | PostgreSQL validation |
+| `integration/database/schema_validation_tests.rs` | Schema enforcement | Constraint validation |
+| `integration/collector/basic_collector_test.rs` | Collector functionality | Event source coordination |
+| `integration/collector/config_tests.rs` | Configuration management | Config loading, validation |
+| `integration/worker/backoff_tests.rs` | Retry logic | Exponential backoff, limits |
+| `integration/worker/concurrent_processing_tests.rs` | Worker concurrency | Multiple workers, locking |
+| `integration/worker/worker_lifecycle_tests.rs` | Worker management | Start, stop, error handling |
+| `integration/event_sources/atuin_tests.rs` | Atuin history integration | Command history parsing |
+| `integration/event_sources/event_source_tests.rs` | Event source lifecycle | Initialize, stream, shutdown |
+| `integration/event_sources/terminal_tests.rs` | Terminal event capture | Command execution events |
 
-### Python CLI Tests
-- `cli/test_exo_cli.py` - CLI functionality
-- `cli/test_exo_cli_integration.py` - CLI integration
+### System Tests
 
-### Crate-Specific Tests
-- `crate/sinex-promo-worker/tests/promotion_tests.rs` - Promotion worker
+| File | Purpose | Coverage |
+|------|---------|----------|
+| `system/end_to_end/complete_system_test.rs` | Complete system validation | Full pipeline testing |
+| `system/end_to_end/comprehensive_flow_test.rs` | Complex flow scenarios | Multi-source event flows |
+| `system/end_to_end/full_pipeline_tests.rs` | Pipeline integrity | Capture → process → query |
+| `system/external/git_annex_integration_tests.rs` | Git Annex integration | Large file handling |
+| `system/regression/concurrent_database_test.rs` | Concurrency regression | Database race conditions |
+| `system/regression/config_reload_test.rs` | Config reload bugs | Hot reload issues |
+| `system/regression/json_payload_test.rs` | JSON handling bugs | Payload validation edge cases |
+| `system/regression/ulid_overflow_test.rs` | ULID edge cases | Overflow, collision handling |
+| `system/regression/validation_edge_cases_test.rs` | Validation bugs | Edge case validation |
 
-## Current Test Statistics
+### Adversarial Tests
 
-- **Total Test Files**: 60 (44 Rust + 3 Python + 2 Shell + 11 docs)
-- **Test Categories**: 13 major categories
-- **Adversarial Tests**: 16 files with 100+ security/edge case tests
-- **Database Tests**: 5 files covering data layer
-- **Integration Tests**: Good coverage of cross-component interaction
-- **Unit Tests**: Gaps in core crate functionality
+| File | Purpose | Coverage |
+|------|---------|----------|
+| `adversarial/advanced_time_attacks_test.rs` | Time-based attacks | Clock manipulation, skew |
+| `adversarial/config_reload_attacks_test.rs` | Configuration attacks | File replacement, races |
+| `adversarial/database_boundary_test.rs` | Database boundaries | Connection limits, timeouts |
+| `adversarial/event_type_specific_test.rs` | Event-specific attacks | Malformed events, injection |
+| `adversarial/filesystem_edge_cases_test.rs` | Filesystem edge cases | Permissions, special files |
+| `adversarial/network_distributed_issues_test.rs` | Network failures | DNS, connection issues |
+| `adversarial/race_conditions_test.rs` | Race conditions | Concurrent access patterns |
+| `adversarial/resource_exhaustion_test.rs` | Resource exhaustion | Memory, disk, connections |
+| `adversarial/security_attacks_test.rs` | Security attacks | Injection, privilege escalation |
+| `adversarial/state_machine_violations_test.rs` | State violations | Invalid state transitions |
+| `adversarial/worker_coordination_test.rs` | Worker coordination | Coordination failures |
+
+## Maintenance
+
+### Adding New Tests
+
+1. Determine appropriate category (unit/integration/system)
+2. Place in correct directory following naming conventions
+3. Update relevant `mod.rs` file
+4. Add entry to this README index
+5. Ensure tests follow guidelines above
+
+### Updating Tests
+
+1. Maintain backward compatibility where possible
+2. Update test data generation if schemas change
+3. Keep coverage metrics above thresholds
+4. Update documentation when behavior changes
+
+### Performance
+
+Keep tests fast:
+- Unit tests: <100ms each
+- Integration tests: <5s each  
+- System tests: <30s each
+- Use `#[ignore]` for slow tests, run with `--ignored`
 
 ## Success Criteria
 
-Tests pass → Sinex works as a complete system:
+The test suite succeeds when:
 
-1. **Core Functionality Validated**: All critical paths tested
-2. **No False Positives**: Tests don't pass when functionality is broken
-3. **Coverage Metrics**: ≥80% for core crates, ≥70% overall
-4. **End-to-End Verification**: Complete pipeline validated
-5. **Security Assurance**: Adversarial tests prevent vulnerabilities
+✅ **Functional**: All critical paths validated end-to-end  
+✅ **Coverage**: Meets minimum coverage thresholds  
+✅ **Performance**: System handles expected loads  
+✅ **Reliability**: Tests are deterministic and stable  
+✅ **Security**: Adversarial scenarios are covered  
+✅ **Maintainable**: Tests are clear and easy to update  
 
-## Implementation Roadmap
-
-See [PLAN.md](PLAN.md) for detailed implementation plan including:
-- Code coverage setup
-- Test reorganization  
-- Core functionality implementation
-- System-level test development
-- Performance and external system testing
-
-The goal is comprehensive test coverage that ensures when tests pass, Sinex actually works as intended for capturing, storing, processing, and querying events.
+When tests pass, Sinex works correctly as a complete event capture and processing system.

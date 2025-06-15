@@ -68,14 +68,14 @@ async fn test_complete_system_event_capture_to_query() -> Result<()> {
     
     // Step 2: Verify events are stored correctly
     for (i, id) in inserted_ids.iter().enumerate() {
-        let retrieved = queries::get_event_by_id(&pool, *id).await?;
+        let retrieved = crate::common::get_event_by_id(&pool, *id).await?;
         assert_eq!(retrieved.source, events[i].source);
         assert_eq!(retrieved.event_type, events[i].event_type);
         assert_eq!(retrieved.payload, events[i].payload);
     }
     
     // Step 3: Test querying recent events
-    let recent_events = queries::get_recent_events(&pool, 10).await?;
+    let recent_events = crate::common::get_recent_events(&pool, 10).await?;
     assert!(recent_events.len() >= 3);
     
     // Verify we can find our test events
@@ -88,11 +88,11 @@ async fn test_complete_system_event_capture_to_query() -> Result<()> {
     assert!(wm_found, "Window manager event should be queryable");
     
     // Step 4: Test filtered queries
-    let fs_events = queries::get_events_by_source(&pool, "filesystem", 10).await?;
+    let fs_events = crate::common::get_events_by_source(&pool, "filesystem", 10).await?;
     assert!(!fs_events.is_empty());
     assert!(fs_events.iter().all(|e| e.source == "filesystem"));
     
-    let file_created_events = queries::get_events_by_type(&pool, "file.created", 10).await?;
+    let file_created_events = crate::common::get_events_by_type(&pool, "file.created", 10).await?;
     assert!(!file_created_events.is_empty());
     assert!(file_created_events.iter().all(|e| e.event_type == "file.created"));
     
@@ -199,7 +199,7 @@ async fn test_system_real_filesystem_simulation() -> Result<()> {
     }
     
     // Verify events can be queried by path pattern
-    let all_events = queries::get_recent_events(&pool, 10).await?;
+    let all_events = crate::common::get_recent_events(&pool, 10).await?;
     let temp_events: Vec<_> = all_events.iter()
         .filter(|e| e.payload.get("path")
             .and_then(|p| p.as_str())
@@ -288,7 +288,7 @@ async fn test_system_multi_source_correlation() -> Result<()> {
     let start_time = base_time - chrono::Duration::seconds(1);
     let end_time = base_time + chrono::Duration::seconds(30);
     
-    let window_events = queries::get_events_in_time_range(&pool, start_time, end_time).await?;
+    let window_events = crate::common::get_events_in_time_range(&pool, start_time, end_time).await?;
     
     // Verify we can find correlated events
     let terminal_events: Vec<_> = window_events.iter()
@@ -362,7 +362,7 @@ async fn test_system_error_recovery() -> Result<()> {
         match result {
             Ok(_) => {
                 // If insertion succeeds, verify we can retrieve the event
-                let retrieved = queries::get_event_by_id(&pool, event.id).await?;
+                let retrieved = crate::common::get_event_by_id(&pool, event.id).await?;
                 assert_eq!(retrieved.id, event.id);
             }
             Err(_) => {
@@ -414,7 +414,7 @@ async fn test_system_performance_baseline() -> Result<()> {
     
     // Query events
     let query_start = std::time::Instant::now();
-    let retrieved_events = queries::get_recent_events(&pool, event_count as i64).await?;
+    let retrieved_events = crate::common::get_recent_events(&pool, event_count as i64).await?;
     let query_duration = query_start.elapsed();
     
     // Verify performance is reasonable

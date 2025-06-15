@@ -226,6 +226,26 @@ pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<sinex_db::
     queries::get_event_by_id(pool, event_id).await
 }
 
+/// Helper for getting recent events
+pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_recent_events(pool, limit).await
+}
+
+/// Helper for getting events by source
+pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_by_source(pool, source, limit).await
+}
+
+/// Helper for getting events by type
+pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_by_type(pool, event_type, limit).await
+}
+
+/// Helper for getting events in time range
+pub async fn get_events_in_time_range(pool: &PgPool, start_time: chrono::DateTime<chrono::Utc>, end_time: chrono::DateTime<chrono::Utc>) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_in_time_range(pool, start_time, end_time).await
+}
+
 /// Helper for getting event count from database
 pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
     let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
