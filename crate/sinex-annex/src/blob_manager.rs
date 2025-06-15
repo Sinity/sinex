@@ -280,7 +280,6 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     
     #[test]
     fn test_mime_type_detection() {

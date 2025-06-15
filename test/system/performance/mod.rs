@@ -1,13 +1,12 @@
 //! Performance and load tests
 
 use anyhow::Result;
-use sinex_core::RawEvent;
-use sinex_db::{queries, DbPool};
+use sinex_db::queries;
+use sqlx::PgPool;
 use std::time::{Duration, Instant};
-use tokio::time::timeout;
 
 #[sqlx::test]
-async fn test_high_volume_ingestion(pool: DbPool) -> Result<()> {
+async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
     let start = Instant::now();
     let mut handles = vec![];
     
@@ -16,17 +15,20 @@ async fn test_high_volume_ingestion(pool: DbPool) -> Result<()> {
         let pool = pool.clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
-                let event = RawEvent::new(
-                    format!("perf_test_{}", i),
-                    format!("test_event_{}", j),
+                queries::insert_raw_event(
+                    &pool,
+                    &format!("perf_test_{}", i),
+                    &format!("test_event_{}", j),
+                    "test-host",
                     serde_json::json!({
                         "task": i,
                         "event": j,
                         "data": "performance test payload"
-                    })
-                );
-                
-                queries::insert_raw_event(&pool, &event).await?;
+                    }),
+                    None,
+                    None,
+                    None
+                ).await?;
             }
             Ok::<_, anyhow::Error>(())
         });
@@ -53,15 +55,19 @@ async fn test_high_volume_ingestion(pool: DbPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_concurrent_processing_performance(pool: DbPool) -> Result<()> {
+async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
     // Insert test events
     for i in 0..100 {
-        let event = RawEvent::new(
+        queries::insert_raw_event(
+            &pool,
             "concurrent_test",
             "process_me",
-            serde_json::json!({ "id": i })
-        );
-        queries::insert_raw_event(&pool, &event).await?;
+            "test-host",
+            serde_json::json!({ "id": i }),
+            None,
+            None,
+            None
+        ).await?;
     }
     
     let start = Instant::now();
@@ -75,8 +81,6 @@ async fn test_concurrent_processing_performance(pool: DbPool) -> Result<()> {
             
             // Process events until none left
             loop {
-                let tx = pool.begin().await?;
-                
                 // Try to claim an event for processing
                 let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                     r#"
@@ -102,15 +106,19 @@ async fn test_concurrent_processing_performance(pool: DbPool) -> Result<()> {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     
                     // Mark as processed
-                    let processed_event = RawEvent::new(
+                    queries::insert_raw_event(
+                        &pool,
                         "concurrent_test",
                         "processed",
+                        "test-host",
                         serde_json::json!({
                             "worker_id": worker_id,
                             "original_id": event_id.to_string()
-                        })
-                    );
-                    queries::insert_raw_event(&pool, &processed_event).await?;
+                        }),
+                        None,
+                        None,
+                        None
+                    ).await?;
                     
                     processed += 1;
                 } else {
@@ -140,18 +148,22 @@ async fn test_concurrent_processing_performance(pool: DbPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_query_latency(pool: DbPool) -> Result<()> {
+async fn test_query_latency(pool: PgPool) -> Result<()> {
     // Insert test data
     for i in 0..1000 {
-        let event = RawEvent::new(
+        queries::insert_raw_event(
+            &pool,
             "latency_test",
             if i % 2 == 0 { "type_a" } else { "type_b" },
+            "test-host",
             serde_json::json!({
                 "value": i,
                 "category": if i % 10 == 0 { "special" } else { "normal" }
-            })
-        );
-        queries::insert_raw_event(&pool, &event).await?;
+            }),
+            None,
+            None,
+            None
+        ).await?;
     }
     
     // Test various query patterns

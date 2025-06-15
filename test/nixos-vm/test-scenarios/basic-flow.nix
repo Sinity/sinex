@@ -74,16 +74,16 @@ pkgs.nixosTest {
     
     # Sinex configuration
     environment.etc."sinex/collector.toml".text = ''
-      [database]
-      url = "postgresql:///sinex_test?host=/run/postgresql"
+      enabled_events = [
+        "file.created",
+        "file.modified",
+        "file.deleted"
+      ]
       
-      [sources]
-      [sources.filesystem]
-      enabled = true
-      watch_paths = ["/home/test/watched"]
-      
-      [output]
-      database = true
+      [event.filesystem]
+      watch_patterns = ["/home/test/watched/**/*"]
+      ignore_patterns = []
+      debounce_ms = 100
     '';
     
     # Initialize database with Sinex schema
@@ -145,6 +145,18 @@ pkgs.nixosTest {
         RestartSec = 2;
       };
     };
+    
+    # Create test user and directory
+    users.users.test = {
+      isNormalUser = true;
+      home = "/home/test";
+      createHome = true;
+    };
+    
+    # Create watched directory
+    systemd.tmpfiles.rules = [
+      "d /home/test/watched 0755 test users -"
+    ];
   };
   
   testScript = ''
