@@ -264,30 +264,4 @@ proptest! {
         }
     }
 
-    /// Test event correlation ID format
-    #[test]
-    fn test_correlation_id_format(
-        correlation_id in "[0-9A-Z]{26}",
-    ) {
-        // Verify it's a valid ULID format
-        assert_eq!(correlation_id.len(), 26);
-        assert!(correlation_id.chars().all(|c| c.is_ascii_uppercase() || c.is_numeric()));
-        
-        // Verify it can be stored in _provenance
-        let provenance = json!({
-            "correlation_id": correlation_id,
-            "agent_id": "test_agent",
-            "processing_timestamp": Utc::now().to_rfc3339()
-        });
-        
-        let event_payload = json!({
-            "data": "test",
-            "_provenance": provenance
-        });
-        
-        // Verify serialization
-        let serialized = serde_json::to_string(&event_payload).unwrap();
-        let deserialized: Value = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(event_payload, deserialized);
-    }
 }

@@ -6,24 +6,30 @@ This file is my persistent memory for working with the Sinex project.
 
 Sinex is an event-driven data capture system that records everything happening on a computer for later analysis.
 
-**Core Flow**: Ingestors → Event Substrate → Workers → Query Interface
+**Core Flow**: EventSources → UnifiedCollector → Event Substrate → Workers → Query Interface
 
-- **Ingestors**: Capture events from sources (filesystem, terminals, window managers)
+- **EventSources**: Individual event capturing components (filesystem, terminals, window managers)
+- **UnifiedCollector**: Central coordinator that manages all event sources
 - **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
 - **Workers**: Process events concurrently using `SELECT FOR UPDATE SKIP LOCKED`
 - **Query Interface**: Python CLI for exploring captured events
 
 ## 🏗️ Key Patterns & Conventions
 
-### SimpleIngestor Pattern
-All ingestors implement this trait and let IngestorRuntime handle lifecycle:
+### EventSource Pattern
+All event sources implement this trait for the unified collector:
 ```rust
 #[async_trait]
-impl SimpleIngestor for MyIngestor {
-    fn name() -> &'static str { "my-ingestor" }
-    fn version() -> &'static str { env!("CARGO_PKG_VERSION") }
-    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
-        // Just capture events - runtime handles heartbeats, retries, DLQ, shutdown
+impl EventSource for MyEventSource {
+    type Config = MyConfig;
+    const SOURCE_NAME: &'static str = "my_source";
+    
+    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        // Initialize with config from context
+    }
+    
+    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        // Stream events continuously until shutdown
     }
 }
 ```
@@ -44,28 +50,33 @@ impl SimpleIngestor for MyIngestor {
 ## 🌟 Memory Bank
 
 - After you finish with your task which involved modifying source code, ensure there is no mess left behind, git commit your changes and only then your job is considered done.
+- Always examine actual source code, not just documentation which may be outdated
 
 ## 📁 Project Map
 
 ```
 sinex/
 ├── crate/                    # Core Rust libraries
-│   ├── sinex-core/           # RawEvent, errors, constants
+│   ├── sinex-core/           # EventSource trait, registry, common types
 │   ├── sinex-db/             # Database models and pooling
 │   ├── sinex-ulid/           # ULID ↔ UUID conversion
+│   ├── sinex-collector/      # UnifiedCollector binary
+│   ├── sinex-events/         # All event source implementations
 │   ├── sinex-worker/         # Worker implementations
 │   ├── sinex-promo-worker/   # Promotion queue worker
-│   └── sinex-events/         # Event type definitions
-├── ingestor/
-│   ├── shared/               # Shared utilities (gradually migrating to crate)
-│   └── unified-collector/    # Unified multi-source collector
+│   └── sinex-annex/          # Git Annex integration
 ├── config/                   # Example configurations
 ├── test/                    # Categorized test suites
 │   ├── database/            # Schema, migrations, ULID
 │   ├── pipeline/            # Event processing, workers
-│   ├── agent/              # Manifests, heartbeats
-│   └── reliability/         # Error handling, failures
-├── migration/              # SQL schema migrations (sqlx)
+│   ├── events/              # Event source tests
+│   ├── collector/           # Collector tests
+│   ├── worker/              # Worker tests
+│   ├── agent/               # Manifests, heartbeats
+│   ├── validation/          # Event validation tests
+│   ├── adversarial/         # Stress and security tests
+│   └── bugs/                # Regression tests
+├── migrations/              # SQL schema migrations (sqlx)
 ├── spec/                    # Documentation
 │   ├── SADI.md             # Start here - doc index
 │   ├── docs/tims/          # Implementation specs
@@ -116,27 +127,28 @@ services.postgresql = {
 # Follow installation instructions for your PostgreSQL version
 ```
 
-### Running Ingestors
+### Running the Collector
 ```bash
 # Run the unified collector (config logged at startup)
-just unified                   # Run unified collector
-just worker                    # Run promotion worker
+cargo run --bin sinex-collector                    # Run with default config
+cargo run --bin sinex-collector -- --dry-run       # Test mode without database
+cargo run --bin sinex-collector -- --event-log events.json  # Log to file
+cargo run --bin sinex-collector -- --config my-config.toml  # Custom config
+cargo run --bin sinex-collector -- --no-db         # Skip database entirely
 
-# With options
-just unified --dry-run         # Test mode without database
-just unified --output-file events.json
-just unified --config my-config.toml
-
-# All at once
-just ingestors-start           # Start all in background
-just ingestors-start --dry-run # All in dry-run mode
-just ingestors-stop            # Stop all
+# Just commands for convenience
+just unified                   # Run unified collector (via nix)
+just worker                    # Run promotion worker (via nix)
+just ingestors-start           # Start both in background
+just ingestors-stop            # Stop all running
 ```
 
 Config loading priority:
-1. `INGESTOR-NAME.toml` in current directory
-2. `~/.config/INGESTOR-NAME.toml`
-3. Built-in defaults (uses DATABASE_URL automatically)
+1. `--config` command line argument
+2. `SINEX_CONFIG` environment variable
+3. `unified-collector.toml` in current directory
+4. `~/.config/sinex/collector.toml`
+5. Built-in defaults (uses DATABASE_URL automatically)
 
 ### Database Work
 ```bash
@@ -152,9 +164,19 @@ just sqlx-check               # Check if cache is up to date
 ### Testing
 ```bash
 just test                       # All tests
-just test -- --package sinex-db # Specific crate
-just test -- --test database/   # Test category
+just test-unit                  # Unit tests only (--lib)
+just test-integration           # Integration tests
+just test-cli                   # Python CLI tests
+just test-all                   # Comprehensive test suite
 just watch                      # Continuous testing
+
+# Test specific areas
+cargo test --test database/     # Database tests
+cargo test --test events/       # Event source tests  
+cargo test --test worker/       # Worker tests
+cargo test --test collector/    # Collector tests
+cargo test --test adversarial/  # Stress/security tests
+cargo test --test bugs/         # Regression tests
 ```
 
 
@@ -176,8 +198,9 @@ cargo test -- --nocapture      # See test output
 
 **Key Types**:
 - `RawEvent` - Universal event structure
-- `EventSink` - Output abstraction (Database/Log/File/Memory)
-- `IngestorRuntime` - Manages ingestor lifecycle
+- `EventSource` - Trait for event capturing components
+- `UnifiedCollector` - Central coordinator managing all sources
+- `EventRegistry` - Registry of all known event types and their sources
 
 ## ⚡ Quick References
 
@@ -196,9 +219,13 @@ postgresql:///sinex_dev?host=/run/postgresql
 - Event types defined in `crate/sinex-events/`
 
 ### Key Crates
-- `sinex-core` - Common types all crates use
-- `sinex-db` - Database layer
-- `sinex-shared` - Ingestor utilities (being split up)
+- `sinex-core` - Common types, EventSource trait, registry
+- `sinex-db` - Database layer and models
+- `sinex-collector` - UnifiedCollector binary and coordination
+- `sinex-events` - All specific event source implementations
+- `sinex-worker` - Event processing workers
+- `sinex-promo-worker` - Promotion queue worker
+- `sinex-annex` - Git Annex integration for large files
 
 ## 📚 Where to Look
 

@@ -6,10 +6,46 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use chrono::{Utc, TimeZone};
 
-/// Create a test Atuin database with sample data
-fn create_test_atuin_db(path: &PathBuf, _entries: Vec<TestAtuinEntry>) -> anyhow::Result<()> {
-    // Mock database creation for testing
-    std::fs::write(path, "mock atuin database")?;
+/// Create a test Atuin database with sample data using real SQLite schema
+fn create_test_atuin_db(path: &PathBuf, entries: Vec<TestAtuinEntry>) -> anyhow::Result<()> {
+    use rusqlite::Connection;
+    
+    // Create real SQLite database with Atuin schema
+    let conn = Connection::open(path)?;
+    
+    // Create the history table with the actual Atuin schema
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history (
+            id TEXT PRIMARY KEY,
+            timestamp INTEGER NOT NULL,
+            duration INTEGER NOT NULL,
+            exit INTEGER,
+            command TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            session TEXT NOT NULL,
+            hostname TEXT NOT NULL
+        )",
+        []
+    )?;
+    
+    // Insert test entries
+    for entry in entries {
+        conn.execute(
+            "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                entry.id,
+                entry.timestamp_ns,
+                entry.duration_ns,
+                entry.exit_code,
+                entry.command,
+                entry.cwd,
+                entry.session,
+                entry.hostname
+            ]
+        )?;
+    }
+    
     Ok(())
 }
 

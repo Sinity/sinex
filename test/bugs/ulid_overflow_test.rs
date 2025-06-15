@@ -14,7 +14,6 @@ fn test_monotonic_ulid_overflow() {
     let next_ulid = Ulid::new_monotonic(Some(&max_ulid));
     
     // The next ULID should be greater than max_ulid
-    // This will likely FAIL because the code doesn't handle overflow!
     assert!(next_ulid > max_ulid, "Monotonic ULID should handle overflow");
 }
 

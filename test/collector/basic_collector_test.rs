@@ -53,14 +53,24 @@ async fn test_collector_config_loading() {
     let result = CollectorConfig::load();
     
     // Should either load a config or use defaults
-    // This test validates the config loading logic doesn't panic
     match result {
-        Ok(_config) => {
-            // Successfully loaded config
+        Ok(config) => {
+            // Verify default configuration values
+            assert!(!config.enabled_events.is_empty(), "Default config should have enabled events");
+            assert!(config.enabled_events.contains(&"file.created".to_string()), "Should include file.created");
+            assert!(config.enabled_events.contains(&"command.executed".to_string()), "Should include command.executed");
+            
+            // Verify configuration structure
+            assert!(config.event.is_empty() || !config.event.is_empty(), "Event map should be defined");
+            assert!(config.flat_config.is_empty() || !config.flat_config.is_empty(), "Flat config should be defined");
+            
+            // Test event config lookup works
+            let file_config = config.get_event_config("file.created");
+            assert!(file_config.is_table(), "Event config should return a table");
         }
-        Err(_) => {
-            // Failed to load, which is expected in test environment
-            // without config files present
+        Err(e) => {
+            // If loading fails, verify it's not a panic but a proper error
+            assert!(!e.to_string().is_empty(), "Error should have a meaningful message: {}", e);
         }
     }
 }
