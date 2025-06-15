@@ -126,6 +126,7 @@ pub struct ScrollbackCapture {
 #[derive(Debug, Clone)]
 struct CommandExecutedEvent {
     window_id: u32,
+    #[allow(dead_code)]
     timestamp: DateTime<Utc>,
 }
 

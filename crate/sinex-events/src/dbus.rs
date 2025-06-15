@@ -739,6 +739,8 @@ async fn process_extracted_message(
     Ok(())
 }
 
+// TODO: These functions are placeholder implementations for future D-Bus event extraction features
+#[allow(dead_code)]
 fn extract_notification_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("Notify").unwrap() {
@@ -765,6 +767,7 @@ fn extract_notification_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
@@ -807,6 +810,7 @@ fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_power_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         let event_type = match member.as_ref() {
@@ -833,6 +837,7 @@ fn extract_power_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
@@ -868,6 +873,7 @@ fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_session_event(msg: &dbus::Message, interface: &str) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         let event_type = match (interface, member.as_ref()) {
@@ -896,6 +902,7 @@ fn extract_session_event(msg: &dbus::Message, interface: &str) -> Result<Option<
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
@@ -924,6 +931,7 @@ fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_network_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         let event_type = match member.as_ref() {
@@ -956,6 +964,7 @@ fn extract_network_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_screensaver_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("ActiveChanged").unwrap() {
@@ -976,6 +985,7 @@ fn extract_screensaver_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_mount_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         let event_type = match member.as_ref() {
@@ -1008,6 +1018,7 @@ fn extract_mount_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     Ok(None)
 }
 
+#[allow(dead_code)]
 fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("CheckAuthorization").unwrap() {

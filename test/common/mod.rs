@@ -83,11 +83,18 @@ pub mod events {
 
     /// Create an invalid event for error testing
     pub fn invalid_event() -> sinex_db::models::RawEvent {
-        RawEventBuilder::new(
-            "", // Invalid empty source
-            "",
-            json!(null)
-        ).build()
+        use chrono::Utc;
+        sinex_db::models::RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: "".to_string(), // Invalid empty source
+            event_type: "".to_string(), // Invalid empty event_type
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "".to_string(), // Invalid empty host
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!(null),
+        }
     }
 
     /// Create a test file created event

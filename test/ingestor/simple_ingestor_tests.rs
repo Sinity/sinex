@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, RawEventBuilder};
-use sinex_db::{create_test_pool, models::RawEvent as DbRawEvent};
+use sinex_db::create_test_pool;
 use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::Duration;
@@ -203,7 +203,7 @@ async fn test_event_source_runtime_error() -> Result<()> {
     let should_error = source.should_error.clone();
     let events_sent = source.events_sent.clone();
     
-    let (tx, mut rx) = mpsc::channel(10);
+    let (tx, _rx) = mpsc::channel(10);
     
     let stream_handle = tokio::spawn(async move {
         source.stream_events(tx).await
@@ -256,7 +256,7 @@ async fn test_event_source_receiver_drop() -> Result<()> {
     
     let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
-    let events_sent = source.events_sent.clone();
+    let _events_sent = source.events_sent.clone();
     
     let (tx, mut rx) = mpsc::channel(5);
     

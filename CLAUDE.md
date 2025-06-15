@@ -66,16 +66,26 @@ sinex/
 │   ├── sinex-promo-worker/   # Promotion queue worker
 │   └── sinex-annex/          # Git Annex integration
 ├── config/                   # Example configurations
-├── test/                    # Categorized test suites
-│   ├── database/            # Schema, migrations, ULID
-│   ├── pipeline/            # Event processing, workers
-│   ├── events/              # Event source tests
-│   ├── collector/           # Collector tests
-│   ├── worker/              # Worker tests
-│   ├── agent/               # Manifests, heartbeats
+├── test/                    # Hierarchically organized test suites
+│   ├── unit/                # Unit tests (component isolation)
+│   │   ├── core/            # Core library tests
+│   │   └── db/              # Database model tests
+│   ├── integration/         # Integration tests (component interaction)
+│   │   ├── database/        # Database integration tests
+│   │   ├── collector/       # Collector integration tests
+│   │   ├── worker/          # Worker integration tests
+│   │   └── event_sources/   # Event source integration tests
+│   ├── system/              # System-level tests (full system validation)
+│   │   ├── end_to_end/      # Complete pipeline tests
+│   │   ├── external/        # External service integration
+│   │   ├── performance/     # Performance and benchmarking
+│   │   └── regression/      # Regression tests for specific bugs
+│   ├── common/              # Shared test utilities and helpers
+│   ├── model/               # Data model tests
+│   ├── ulid/                # ULID-specific tests
+│   ├── ingestor/            # Event ingestor tests  
 │   ├── validation/          # Event validation tests
-│   ├── adversarial/         # Stress and security tests
-│   └── bugs/                # Regression tests
+│   └── adversarial/         # Stress and security tests
 ├── migrations/              # SQL schema migrations (sqlx)
 ├── spec/                    # Documentation
 │   ├── SADI.md             # Start here - doc index
@@ -164,19 +174,26 @@ just sqlx-check               # Check if cache is up to date
 ### Testing
 ```bash
 just test                       # All tests
-just test-unit                  # Unit tests only (--lib)
-just test-integration           # Integration tests
-just test-cli                   # Python CLI tests
+just test-unit                  # Unit tests (component isolation)
+just test-integration           # Integration tests (component interaction)
+just test-system                # System tests (full pipeline validation)
+just test-database              # Database-specific tests
+just test-collector             # Collector tests
+just test-worker                # Worker tests
+just test-event-sources         # Event source tests
 just test-all                   # Comprehensive test suite
 just watch                      # Continuous testing
 
+# Coverage reporting
+just coverage                   # Run tests with coverage
+just coverage-html              # Generate HTML coverage report
+just coverage-lcov              # Generate LCOV format for CI
+just coverage-report            # Open coverage report in browser
+
 # Test specific areas
-cargo test --test database/     # Database tests
-cargo test --test events/       # Event source tests  
-cargo test --test worker/       # Worker tests
-cargo test --test collector/    # Collector tests
-cargo test --test adversarial/  # Stress/security tests
-cargo test --test bugs/         # Regression tests
+cargo test --test integration   # All integration tests
+cargo test --test unit          # All unit tests
+cargo test --test system        # All system tests
 ```
 
 

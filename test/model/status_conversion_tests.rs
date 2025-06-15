@@ -1,4 +1,4 @@
-use sinex_db::models::{QueueStatus, AgentStatus, AgentHeartbeat};
+use sinex_db::models::{QueueStatus, AgentStatus};
 
 // Note: Basic serde serialization/deserialization is guaranteed by derive macros
 // and doesn't need explicit testing. Keeping only tests that verify business logic.

@@ -17,11 +17,11 @@ COMMENT ON FUNCTION core.set_updated_at_trigger_func_generic() IS 'Generic trigg
 -- Create raw.events table
 CREATE TABLE IF NOT EXISTS raw.events (
     id                      ULID PRIMARY KEY DEFAULT gen_ulid(),
-    source                  TEXT NOT NULL,
-    event_type              TEXT NOT NULL,
+    source                  TEXT NOT NULL CHECK (LENGTH(TRIM(source)) > 0),
+    event_type              TEXT NOT NULL CHECK (LENGTH(TRIM(event_type)) > 0),
     ts_ingest               TIMESTAMPTZ GENERATED ALWAYS AS (id::timestamp) STORED,
     ts_orig                 TIMESTAMPTZ, -- Can be NULL if truly unknown, but highly encouraged
-    host                    TEXT NOT NULL,
+    host                    TEXT NOT NULL CHECK (LENGTH(TRIM(host)) > 0),
     ingestor_version        TEXT,
     payload_schema_id       ULID REFERENCES sinex_schemas.event_payload_schemas(id) ON DELETE SET NULL ON UPDATE CASCADE,
     payload                 JSONB NOT NULL

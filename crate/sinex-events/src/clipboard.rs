@@ -150,8 +150,10 @@ pub struct ClipboardMonitor {
 #[derive(Clone)]
 struct ClipboardHistoryEntry {
     content_hash: String,
+    #[allow(dead_code)]
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
+    #[allow(dead_code)]
     content_type: String,
     copy_count: u32,
 }

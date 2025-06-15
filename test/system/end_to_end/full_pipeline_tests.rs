@@ -168,7 +168,7 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
     let pool = setup_test_environment().await?;
     
     let events_to_generate = 10;
-    let events_generated = Arc::new(AtomicU32::new(0));
+    let _events_generated = Arc::new(AtomicU32::new(0));
     let events_processed = Arc::new(AtomicU32::new(0));
     let derived_events_created = Arc::new(AtomicU32::new(0));
     

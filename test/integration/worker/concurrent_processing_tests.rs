@@ -159,7 +159,7 @@ async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
     let mut tasks = JoinSet::new();
     
     // Spawn 4 workers
-    for worker_id in 0..4 {
+    for _worker_id in 0..4 {
         let pool = pool.clone();
         let barrier = barrier.clone();
         

@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use chrono::{DateTime, Utc};
 
 #[test]
 fn test_ulid_uuid_roundtrip_preserves_data() {
@@ -23,7 +22,6 @@ fn test_ulid_uuid_roundtrip_preserves_data() {
 #[test]
 fn test_ulid_boundary_timestamps() {
     // Test minimum timestamp (Unix epoch)
-    let min_time = UNIX_EPOCH;
     let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
     let min_ulid = Ulid::from_datetime(min_datetime);
     assert_eq!(min_ulid.timestamp().timestamp_millis(), 0);

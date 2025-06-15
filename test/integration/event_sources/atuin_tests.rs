@@ -1046,6 +1046,7 @@ mod test_helpers {
     use super::*;
     
     /// Helper to verify event payload structure
+    #[allow(dead_code)]
     pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
         assert_eq!(event.event_type, "shell.command.executed_atuin");
         assert_eq!(event.source, "ingestor.atuin_db_reader");
