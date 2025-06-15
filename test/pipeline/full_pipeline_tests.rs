@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sinex_core::{RawEvent, EventSource, EventSourceContext};
-use sinex_db::{create_pool_from_env, models::PromotionQueueItem};
+use sinex_db::{create_test_pool, models::PromotionQueueItem};
 use sinex_worker::{EventProcessor, worker::Worker};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
@@ -10,9 +10,12 @@ use tokio::sync::mpsc;
 use serde_json::json;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use gethostname;
 
 async fn setup_test_environment() -> Result<PgPool> {
-    let pool = create_pool_from_env(None).await?;
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+    let pool = create_test_pool(&database_url).await?;
     
     // Clean all tables
     sqlx::query("TRUNCATE TABLE raw.events CASCADE")
@@ -49,8 +52,9 @@ impl EventSource for PipelineTestSource {
     
     const SOURCE_NAME: &'static str = "pipeline_test";
     
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: PipelineTestConfig = serde_json::from_value(ctx.config().clone())?;
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
+        let config: PipelineTestConfig = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
         Ok(Self {
             events_to_generate: config.events_to_generate,
             events_generated: Arc::new(AtomicU32::new(0)),
@@ -58,17 +62,23 @@ impl EventSource for PipelineTestSource {
         })
     }
     
-    async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for i in 0..self.events_to_generate {
-            let event = RawEvent::new(
-                "pipeline_test",
-                "test_event",
-                json!({
+            let event = RawEvent {
+                id: sinex_ulid::Ulid::new(),
+                source: "pipeline_test".to_string(),
+                event_type: "test_event".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: gethostname::gethostname().to_string_lossy().to_string(),
+                ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                payload_schema_id: None,
+                payload: json!({
                     "sequence": i,
                     "data": format!("Test event {}", i),
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }),
-            );
+            };
             
             event_tx.send(event).await?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);

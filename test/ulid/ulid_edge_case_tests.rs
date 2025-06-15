@@ -1,9 +1,10 @@
-use sinex_ulid::{Ulid, MonotonicGenerator};
+use sinex_ulid::{Ulid, monotonic::MonotonicUlidGenerator};
 use uuid::Uuid;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use chrono::{DateTime, Utc};
 
 #[test]
 fn test_ulid_uuid_roundtrip_preserves_data() {
@@ -180,17 +181,17 @@ fn test_ulid_uuid_nil_handling() {
 #[test]
 fn test_ulid_time_precision_edge_cases() {
     // Test sub-millisecond precision handling
-    let base_ms = 1234567890123u64;
+    let base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
     
     // Generate multiple ULIDs within the same millisecond
-    let gen = MonotonicGenerator::new();
+    let gen = MonotonicUlidGenerator::new();
     let ulids: Vec<_> = (0..10)
-        .map(|_| gen.generate_with_timestamp(base_ms))
+        .map(|_| gen.generate_from_datetime(base_time))
         .collect();
     
     // All should have the same timestamp
     for ulid in &ulids {
-        assert_eq!(ulid.timestamp_ms(), base_ms);
+        assert_eq!(ulid.timestamp().timestamp_millis(), base_time.timestamp_millis());
     }
     
     // But all should be unique and ordered
@@ -203,12 +204,12 @@ fn test_ulid_time_precision_edge_cases() {
 #[test]
 fn test_ulid_lexicographic_ordering_matches_temporal() {
     // Generate ULIDs at different times
-    let gen = MonotonicGenerator::new();
+    let gen = MonotonicUlidGenerator::new();
     let mut ulids = Vec::new();
     
     for i in 0..10 {
-        let timestamp = 1000 + i * 100;
-        ulids.push(gen.generate_with_timestamp(timestamp));
+        let timestamp = chrono::DateTime::from_timestamp_millis(1000 + i * 100).unwrap();
+        ulids.push(gen.generate_from_datetime(timestamp));
         thread::sleep(Duration::from_millis(1));
     }
     

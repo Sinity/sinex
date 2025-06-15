@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use serde_json::json;
+use gethostname;
 
 async fn setup_test_db() -> Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL")
@@ -49,8 +50,9 @@ impl EventSource for TestEventSource {
     type Config = TestSourceConfig;
     const SOURCE_NAME: &'static str = "test_source";
     
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: TestSourceConfig = ctx.get_config()?;
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
+        let config: TestSourceConfig = serde_json::from_value(ctx.config)
+            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
         
         Ok(Self {
             config,
@@ -59,24 +61,30 @@ impl EventSource for TestEventSource {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         if self.config.should_fail {
-            return Err(sinex_core::CoreError::Other("Test failure".to_string()).into());
+            return Err(sinex_core::CoreError::Other("Test failure".to_string()));
         }
         
         for i in 0..self.config.events_to_generate {
             if self.should_error.load(Ordering::SeqCst) {
-                return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()).into());
+                return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()));
             }
             
-            let event = RawEvent::new(
-                Self::SOURCE_NAME,
-                "test_event",
-                json!({
+            let event = RawEvent {
+                id: sinex_ulid::Ulid::new(),
+                source: Self::SOURCE_NAME.to_string(),
+                event_type: "test_event".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: gethostname::gethostname().to_string_lossy().to_string(),
+                ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                payload_schema_id: None,
+                payload: json!({
                     "sequence": i,
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }),
-            )?;
+            };
             
             if tx.send(event).await.is_err() {
                 break; // Receiver dropped
@@ -340,14 +348,8 @@ async fn test_multiple_event_sources() -> Result<()> {
     });
     
     // Receive events from both
-    let event1 = tokio::time::timeout(Duration::from_secs(1), rx1.recv()).await??;
-    let event2 = tokio::time::timeout(Duration::from_secs(1), rx2.recv()).await??;
-    
-    assert!(event1.is_some());
-    assert!(event2.is_some());
-    
-    let event1 = event1.unwrap();
-    let event2 = event2.unwrap();
+    let event1 = tokio::time::timeout(Duration::from_secs(1), rx1.recv()).await?.ok_or_else(|| anyhow::anyhow!("No event received"))?;
+    let event2 = tokio::time::timeout(Duration::from_secs(1), rx2.recv()).await?.ok_or_else(|| anyhow::anyhow!("No event received"))?;
     
     assert_eq!(event1.source, "test_source");
     assert_eq!(event2.source, "slow_source");
@@ -388,7 +390,7 @@ async fn test_event_source_database_integration() -> Result<()> {
             .bind(event.id.as_uuid())
             .bind(&event.source)
             .bind(&event.event_type)
-            .bind(event.timestamp)
+            .bind(event.ts_ingest)
             .bind("test_host")
             .bind(&event.payload)
             .execute(&pool)
