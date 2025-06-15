@@ -11,7 +11,6 @@ use std::collections::HashMap;
 
 use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
-use sqlx::{PgPool, Row};
 
 // ============================================================================
 // Event Payloads
@@ -105,7 +104,6 @@ impl Default for ScrollbackConfig {
             scrollback_dir: PathBuf::from(&home).join(".local/share/sinex/scrollback"),
             capture_on_command: true,
             command_capture_delay_ms: default_command_capture_delay(),
-            process_urgent_requests: true,
         }
     }
 }
@@ -155,7 +153,6 @@ impl EventSource for ScrollbackCapture {
             last_capture_times: HashMap::new(),
             last_scrollback_hashes: HashMap::new(),
             command_event_rx: None,
-            db_pool: ctx.db_pool.clone(),
         })
     }
     
@@ -183,20 +180,6 @@ impl EventSource for ScrollbackCapture {
             });
         }
         
-        // Set up urgent request monitoring if enabled
-        let (urgent_tx, mut urgent_rx) = if self.config.process_urgent_requests && self.db_pool.is_some() {
-            let (tx, rx) = mpsc::channel::<u32>(100);
-            let pool = self.db_pool.clone().unwrap();
-            let urgent_tx = tx.clone();
-            
-            tokio::spawn(async move {
-                monitor_urgent_requests(pool, urgent_tx).await;
-            });
-            
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
         
         loop {
             tokio::select! {
@@ -217,18 +200,6 @@ impl EventSource for ScrollbackCapture {
                     
                     if let Err(e) = self.capture_window_scrollback(&tx, cmd_event.window_id, true).await {
                         error!("Error capturing scrollback after command: {}", e);
-                    }
-                }
-                Some(window_id) = async {
-                    if let Some(rx) = &mut urgent_rx {
-                        rx.recv().await
-                    } else {
-                        None
-                    }
-                } => {
-                    info!("Processing urgent capture request for window {}", window_id);
-                    if let Err(e) = self.capture_window_scrollback(&tx, window_id, false).await {
-                        error!("Failed urgent capture for window {}: {}", window_id, e);
                     }
                 }
             }
@@ -598,42 +569,3 @@ fn extract_window_id(line: &str) -> Option<u32> {
     }
 }
 
-/// Monitor for urgent capture requests in the database
-async fn monitor_urgent_requests(pool: PgPool, tx: mpsc::Sender<u32>) {
-    info!("Starting urgent capture request monitor");
-    
-    loop {
-        // Query for recent urgent capture requests
-        let query = r#"
-            SELECT payload->>'window_id' as window_id
-            FROM raw.events
-            WHERE event_type = 'terminal.capture.urgent'
-              AND ts_ingest > NOW() - INTERVAL '5 seconds'
-              AND payload->>'window_id' IS NOT NULL
-            ORDER BY ts_ingest DESC
-            LIMIT 10
-        "#;
-        
-        match sqlx::query_as::<_, (Option<String>,)>(query)
-            .fetch_all(&pool)
-            .await 
-        {
-            Ok(requests) => {
-                for (window_id_str,) in requests {
-                    if let Some(window_id_str) = window_id_str {
-                        if let Ok(window_id) = window_id_str.parse::<u32>() {
-                            info!("Found urgent capture request for window {}", window_id);
-                            let _ = tx.send(window_id).await;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                debug!("Error querying urgent requests: {}", e);
-            }
-        }
-        
-        // Check every second for urgent requests
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}

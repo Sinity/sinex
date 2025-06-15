@@ -55,15 +55,27 @@ impl MonotonicUlidGenerator {
             // Same millisecond - increment counter
             let counter = self.counter.fetch_add(1, Ordering::SeqCst);
             
-            // Check for counter overflow (extremely unlikely)
+            // Check for counter overflow (extremely unlikely but handle gracefully)
             if counter == u32::MAX {
-                panic!("ULID counter overflow - too many IDs generated in one millisecond");
+                // Wait for next millisecond to avoid overflow
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                
+                // Now we're in a new millisecond, reset and generate
+                let now = Utc::now();
+                let new_timestamp_ms = now.timestamp_millis() as u64;
+                self.last_timestamp.store(new_timestamp_ms, Ordering::SeqCst);
+                self.counter.store(0, Ordering::SeqCst);
+                
+                let mut ulid = InnerUlid::from_datetime(now.into());
+                self.embed_process_id(&mut ulid);
+                
+                Ulid::from(ulid)
+            } else {
+                // Create ULID with embedded counter and process ID
+                let ulid = self.create_with_counter(timestamp_ms, counter);
+                
+                Ulid::from(ulid)
             }
-            
-            // Create ULID with embedded counter and process ID
-            let ulid = self.create_with_counter(timestamp_ms, counter);
-            
-            Ulid::from(ulid)
         }
     }
     

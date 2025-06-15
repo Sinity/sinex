@@ -122,10 +122,10 @@ impl BlobManager {
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
         let row = sqlx::query(
             "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
-                    checksum_sha256, checksum_md5, storage_backend, verification_status,
+                    checksum_sha256, checksum_blake3, storage_backend, verification_status,
                     created_at, last_verified_at
              FROM core.blobs 
-             WHERE checksum_md5 = $1 LIMIT 1" // Note: using md5 column for blake3
+             WHERE checksum_blake3 = $1 LIMIT 1"
         )
         .bind(blake3_hash)
         .fetch_optional(&self.db_pool)
@@ -150,11 +150,11 @@ impl BlobManager {
     }
 
     /// Insert new blob metadata into database
-    async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
+    pub async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO core.blobs 
                (id, annex_key, original_filename, size_bytes, mime_type, 
-                checksum_sha256, checksum_md5, storage_backend, verification_status)
+                checksum_sha256, checksum_blake3, storage_backend, verification_status)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#
         )
         .bind(blob.blob_id.to_string())
@@ -163,7 +163,7 @@ impl BlobManager {
         .bind(blob.size_bytes)
         .bind(&blob.mime_type)
         .bind(&blob.checksum_sha256)
-        .bind(&blob.checksum_blake3) // Store BLAKE3 in md5 field for now
+        .bind(&blob.checksum_blake3)
         .bind(&blob.storage_backend)
         .bind(&blob.verification_status)
         .execute(&self.db_pool)
@@ -177,7 +177,7 @@ impl BlobManager {
     async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
         let row = sqlx::query(
             "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
-                    checksum_sha256, checksum_md5, storage_backend, verification_status
+                    checksum_sha256, checksum_blake3, storage_backend, verification_status
              FROM core.blobs 
              WHERE id = $1"
         )
@@ -193,7 +193,7 @@ impl BlobManager {
             size_bytes: row.get("size_bytes"),
             mime_type: row.get("mime_type"),
             checksum_sha256: row.get("checksum_sha256"),
-            checksum_blake3: row.get("checksum_md5"), // BLAKE3 stored in md5 field
+            checksum_blake3: row.get("checksum_blake3"),
             storage_backend: row.get("storage_backend"),
             verification_status: row.get("verification_status"),
         })

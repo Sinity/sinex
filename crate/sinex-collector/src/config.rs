@@ -102,6 +102,7 @@ impl Default for CollectorConfig {
             ],
             event: HashMap::new(),
             flat_config: HashMap::new(),
+            annex_repo_path: None,
         }
     }
 }

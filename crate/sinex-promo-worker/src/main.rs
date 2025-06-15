@@ -9,6 +9,7 @@ use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tokio::{signal, task};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -157,13 +158,14 @@ async fn emit_heartbeat(
     pool: PgPool, 
     agent_name: String,
     events_processed: Arc<AtomicU64>,
+    start_time: Instant,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     
     loop {
         interval.tick().await;
         
-        let uptime = 0u64; // TODO: Track uptime properly
+        let uptime = start_time.elapsed().as_secs();
         let events_count = events_processed.load(Ordering::Relaxed);
         
         let heartbeat = AgentHeartbeat {
@@ -220,6 +222,7 @@ async fn main() -> Result<()> {
 
     // Create shared state for tracking
     let events_processed = Arc::new(AtomicU64::new(0));
+    let start_time = Instant::now();
 
     // Start heartbeat task
     let heartbeat_pool = pool.clone();
@@ -230,6 +233,7 @@ async fn main() -> Result<()> {
             heartbeat_pool, 
             heartbeat_agent_name,
             heartbeat_events,
+            start_time,
         ).await {
             error!(error = %e, "Heartbeat task failed");
         }
