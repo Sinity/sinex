@@ -1,5 +1,5 @@
 # Basic E2E flow test for Sinex
-{ pkgs, sinex-collector, ... }:
+{ pkgs, sinex-collector, sinex-promo-worker, ... }:
 
 let
   # Python CLI for querying (simple wrapper)
@@ -68,50 +68,27 @@ pkgs.nixosTest {
         ../../../nixos/default.nix
       ];
 
-      # Basic system configuration
-      networking.hostName = "sinex-test";
-      
-      # The Sinex module will handle PostgreSQL setup
-      # We just need to ensure required extensions are available
-      services.postgresql = {
-        extraPlugins = with pkgs.postgresql16Packages; [
-          timescaledb
-          pgx_ulid
-          # pg_jsonschema when available
-        ];
-      };
-
       # Use Sinex the way a real user would!
       services.sinex = {
         enable = true;
-
-        database = {
-          name = "sinex_test";
-          user = "sinex_test";  # Match the database name to avoid NixOS assertion
-        };
+        
+        database.name = "sinex_test";  # Just for test clarity
 
         unifiedCollector = {
           enable = true;
-
-          # Just enable filesystem monitoring for the test
-          sources = {
-            filesystem = {
-              enable = true;
-              watchPaths = [ "/home/test/watched" ];
-              excludePatterns = [ ];
-            };
+          sources.filesystem = {
+            enable = true;
+            watchPaths = [ "/home/test/watched" ];
           };
         };
       };
 
-      # Create test user and directory
+      # Create test user and watched directory
       users.users.test = {
         isNormalUser = true;
-        home = "/home/test";
         createHome = true;
       };
-
-      # Create watched directory
+      
       systemd.tmpfiles.rules = [
         "d /home/test/watched 0755 test users -"
       ];
@@ -119,7 +96,7 @@ pkgs.nixosTest {
       # Provide our built packages
       nixpkgs.overlays = [(final: prev: {
         sinex-unified-collector = sinex-collector;
-        sqlx-cli = prev.sqlx-cli or pkgs.sqlx-cli;
+        sinex-promo-worker = sinex-promo-worker;
       })];
       
       # Make the sinex query tool available

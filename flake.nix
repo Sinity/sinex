@@ -127,6 +127,7 @@
           checks = {
             sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
               sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
             };
           };
         }
