@@ -9,6 +9,7 @@ async fn test_collector_creation() {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let output_config = OutputConfig {
@@ -29,6 +30,7 @@ async fn test_output_config_database(pool: sqlx::PgPool) -> Result<(), Box<dyn s
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let output_config = OutputConfig {
@@ -70,6 +72,7 @@ async fn test_event_filtering() {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let output_config = OutputConfig {
@@ -93,6 +96,7 @@ async fn test_collector_file_output() {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let output_config = OutputConfig {
@@ -115,6 +119,7 @@ async fn test_collector_with_validator(pool: sqlx::PgPool) -> Result<(), Box<dyn
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let output_config = OutputConfig {

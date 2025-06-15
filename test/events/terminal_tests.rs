@@ -1,8 +1,5 @@
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
-use sinex_core::{EventSource, EventType};
-use sinex_db::models::RawEvent;
-use tokio::sync::mpsc;
-use std::path::PathBuf;
+use sinex_core::{EventSource, EventType, EventSourceContext};
 use tempfile::TempDir;
 use chrono::Utc;
 
@@ -16,7 +13,8 @@ async fn test_kitty_listener_initialization() {
         polling_interval_secs: 1,
     };
     
-    let listener = KittySocketListener::initialize(config.clone()).await;
+    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let listener = KittySocketListener::initialize(ctx).await;
     // Should succeed even if no socket exists (will wait for socket)
     assert!(listener.is_ok(), "Should initialize even without active socket");
 }

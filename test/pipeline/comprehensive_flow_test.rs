@@ -1,6 +1,6 @@
 use crate::common;
 use chrono::{Duration as ChronoDuration, Utc};
-use sinex_collector::config::CollectorConfig;
+use sinex_collector::CollectorConfig;
 use sinex_core::{RawEvent, event_type_constants, sources};
 use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
@@ -32,6 +32,7 @@ async fn test_complete_event_pipeline() {
         ],
         event: HashMap::new(),
         flat_config: HashMap::new(),
+        annex_repo_path: None,
     };
     
     let (event_tx, mut event_rx) = mpsc::channel(1000);
