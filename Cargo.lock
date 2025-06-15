@@ -2491,6 +2491,7 @@ dependencies = [
  "futures",
  "proptest",
  "serde_json",
+ "sinex-annex",
  "sinex-collector",
  "sinex-core",
  "sinex-db",

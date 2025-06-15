@@ -1,1 +1,3 @@
 mod backoff_tests;
+mod concurrent_processing_tests;
+mod worker_lifecycle_tests;

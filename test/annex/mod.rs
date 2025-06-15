@@ -1,0 +1,1 @@
+mod git_annex_integration_tests;

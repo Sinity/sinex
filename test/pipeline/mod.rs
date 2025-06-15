@@ -1,1 +1,2 @@
 mod comprehensive_flow_test;
+mod full_pipeline_tests;

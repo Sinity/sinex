@@ -47,3 +47,9 @@ mod pipeline;
 
 #[cfg(test)]
 mod property_tests;
+
+#[cfg(test)]
+mod ingestor;
+
+#[cfg(test)]
+mod annex;

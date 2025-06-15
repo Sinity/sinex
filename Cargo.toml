@@ -44,6 +44,8 @@ sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
+sinex-annex = { path = "crate/sinex-annex" }
+sinex-events = { path = "crate/sinex-events" }
 
 [dev-dependencies]
 proptest.workspace = true
