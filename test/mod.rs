@@ -4,32 +4,29 @@ mod test_setup;
 
 // Unit tests organized by crate
 #[cfg(test)]
-mod unit {
-    mod core;
-    mod db;
-}
+mod unit;
 
-// System-level tests (temporarily disabled until API is stable)
-// #[cfg(test)]
-// mod system;
+// Integration tests
+#[cfg(test)]
+mod integration;
+
+// System-level tests
+#[cfg(test)]
+mod system;
+
+// Adversarial and property tests
+#[cfg(test)]
+mod adversarial;
 
 #[cfg(test)]
-mod database {
-    mod database_integration_tests;
-    mod timescaledb_tests;
-    mod ulid_integration_tests;
-    mod jsonschema_validation_tests;
-    mod schema_validation_tests;
-}
+mod property_tests;
 
+// Legacy organization (being migrated)
 #[cfg(test)]
 mod agent {
     mod agent_manifest_tests;
     mod heartbeat_tests;
 }
-
-#[cfg(test)]
-mod collector;
 
 #[cfg(test)]
 mod ulid;
@@ -41,25 +38,4 @@ mod model;
 mod validation;
 
 #[cfg(test)]
-mod worker;
-
-#[cfg(test)]
-mod events;
-
-#[cfg(test)]
-mod regression;
-
-#[cfg(test)]
-mod adversarial;
-
-#[cfg(test)]
-mod pipeline;
-
-#[cfg(test)]
-mod property_tests;
-
-#[cfg(test)]
 mod ingestor;
-
-#[cfg(test)]
-mod annex;

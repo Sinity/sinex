@@ -31,6 +31,7 @@
             extensions = [
               "rust-src"
               "rust-analyzer"
+              "llvm-tools-preview"
             ];
           };
 

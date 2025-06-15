@@ -244,9 +244,9 @@ async fn test_promotion_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<
     assert!(!dlq_items.is_empty());
     
     let dlq_item = &dlq_items[0];
-    assert_eq!(dlq_item.raw_event_id, inserted_event.id);
+    assert_eq!(dlq_item.failed_event_id, inserted_event.id);
     assert_eq!(dlq_item.agent_name, "retry_agent");
-    assert!(!dlq_item.error_message.is_empty());
+    assert!(!dlq_item.failure_reason.is_empty());
     
     Ok(())
 }
