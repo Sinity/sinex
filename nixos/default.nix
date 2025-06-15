@@ -625,6 +625,7 @@ in {
 
     # Database setup
     services.postgresql = mkIf cfg.database.autoSetup {
+      enable = true;
       ensureDatabases = [ cfg.database.name ];
       ensureUsers = [{
         name = cfg.database.user;

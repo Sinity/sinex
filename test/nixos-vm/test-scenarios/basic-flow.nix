@@ -65,7 +65,7 @@ pkgs.nixosTest {
     {
       imports = [
         # Import the actual Sinex NixOS module
-        ../../../nixos/main.nix
+        ../../../nixos/default.nix
       ];
 
       # Use Sinex the way a real user would!
