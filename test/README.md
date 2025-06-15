@@ -2,25 +2,33 @@
 
 > **📋 Implementation Plan**: See [PLAN.md](PLAN.md) for the comprehensive reorganization and improvement plan.
 
+## Current Test Status
+
+### ✅ Working Tests (7 passing)
+- **Unit Tests**: 
+  - `test::unit::core::basic_functionality_test` - Event creation, sources, types, ULID generation
+  - `test::unit::db::basic_db_test` - Database connectivity, event insertion, validation infrastructure
+- **Code Coverage**: Infrastructure in place with cargo-llvm-cov
+
+### 🔄 Temporarily Disabled (API Compatibility Issues)
+Due to API changes between test implementation and current codebase, the following test categories are temporarily disabled:
+- **Database Integration Tests**: ULID SQL type mapping issues  
+- **Worker Tests**: EventProcessor API changes
+- **Event Source Tests**: Interface method changes (name(), capture_events())
+- **Pipeline Tests**: RawEvent::new() API changes
+- **All other integration tests**: Various API compatibility issues
+
 ## Quick Start
 
 ```bash
-# All tests
-cargo test
+# Working unit tests only (current state)
+cargo test unit
 
-# Integration tests only  
-cargo test --test integration
-
-# Unit tests only
-cargo test --lib
-
-# Specific test categories
-cargo test --test database/
-cargo test --test adversarial/
-cargo test --test worker/
-
-# CLI tests
-python -m pytest test/cli/
+# Previous commands (temporarily not working due to API changes):
+# cargo test                        # All tests - many compilation errors
+# cargo test --test integration     # Integration tests - compilation errors
+# cargo test --lib                  # Unit tests - no lib target in workspace
+# cargo test --test database/       # Database tests - API compatibility issues
 
 # Development environment with automatic database setup
 nix develop

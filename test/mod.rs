@@ -13,15 +13,15 @@ mod unit {
 // #[cfg(test)]
 // mod system;
 
-// Temporarily disabled until compilation issues are fixed
+// Temporarily disabled until API compatibility is restored
 /*
 #[cfg(test)]
 mod database {
-    mod database_integration_tests;
-    mod timescaledb_tests;
-    mod ulid_integration_tests;
-    mod jsonschema_validation_tests;
-    mod schema_validation_tests;
+    // mod database_integration_tests;  // Still has compilation issues
+    // mod timescaledb_tests;  // Still has compilation issues
+    mod ulid_integration_tests;  // Should work - basic ULID/DB integration
+    // mod jsonschema_validation_tests;  // Still has compilation issues
+    // mod schema_validation_tests;  // Still has compilation issues
 }
 
 #[cfg(test)]
@@ -60,9 +60,9 @@ mod pipeline;
 #[cfg(test)]
 mod property_tests;
 
-#[cfg(test)]
-mod ingestor;
+// #[cfg(test)]
+// mod ingestor;
 
-#[cfg(test)]
-mod annex;
+// #[cfg(test)]
+// mod annex;
 */
