@@ -5,12 +5,13 @@ use sinex_db::{
     models::{AgentHeartbeat, PromotionQueueItem, RawEvent},
     queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
 };
+use sinex_promo_worker::{create_promotion_entries, get_active_manifests, EventScanner, PromotionRouter, ScannerConfig};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use tokio::{signal, task};
+use std::time::{Duration, Instant};
+use tokio::{signal, task, time::sleep};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -21,9 +22,9 @@ struct Args {
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
 
-    /// Agent name to process events for
+    /// Agent name to process events for (optional, if not provided runs promotion scanner)
     #[arg(long, env = "AGENT_NAME")]
-    agent_name: String,
+    agent_name: Option<String>,
 
     /// Worker ID (defaults to hostname-pid)
     #[arg(long, env = "WORKER_ID")]
@@ -44,9 +45,24 @@ struct Args {
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     log_level: String,
+    
+    /// Run as promotion scanner instead of worker
+    #[arg(long, default_value = "false")]
+    scanner_mode: bool,
+    
+    /// Scanner batch size
+    #[arg(long, env = "SCANNER_BATCH_SIZE", default_value = "1000")]
+    scanner_batch_size: usize,
 }
 
 /// Example processor that logs events
+/// 
+/// This is a reference implementation showing how to build a processor.
+/// In production, you would:
+/// 1. Parse the event payload according to its schema
+/// 2. Transform/enrich the data as needed  
+/// 3. Insert into domain-specific tables
+/// 4. Generate derived events if needed
 struct ExampleProcessor {
     agent_name: String,
     batch_size: i32,
@@ -202,12 +218,15 @@ async fn emit_heartbeat(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // Extract log level before args is moved
+    let log_level = args.log_level.clone();
 
     // Initialize logging
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| args.log_level.into()),
+                .unwrap_or_else(|_| log_level.into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -215,10 +234,90 @@ async fn main() -> Result<()> {
     info!("Starting sinex-promo-worker");
 
     // Create database pool
-    let pool = sinex_db::create_pool(&args.database_url).await?;
+    let database_url = args.database_url.clone();
+    let pool = sinex_db::create_pool(&database_url).await?;
+    
+    // Run in scanner mode or worker mode
+    if args.scanner_mode || args.agent_name.is_none() {
+        run_scanner_mode(pool, args).await
+    } else {
+        let agent_name = args.agent_name.clone().unwrap();
+        // Register the agent
+        register_agent(&pool, &agent_name).await?;
+        run_worker_mode(pool, agent_name, args).await
+    }
+}
 
-    // Register the agent
-    register_agent(&pool, &args.agent_name).await?;
+/// Run as a scanner that creates promotion queue entries
+async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
+    info!("Running in scanner mode");
+    
+    // Create scanner with configuration
+    let config = ScannerConfig {
+        batch_size: args.scanner_batch_size,
+        initial_lookback: chrono::Duration::hours(24),
+        process_historical: false,
+    };
+    let mut scanner = EventScanner::new(config);
+    
+    // Start metrics server
+    let metrics_handle = task::spawn(async move {
+        if let Err(e) = start_metrics_server(args.metrics_port).await {
+            error!(error = %e, "Metrics server failed");
+        }
+    });
+    
+    // Main scanner loop
+    loop {
+        match scan_and_promote(&pool, &mut scanner).await {
+            Ok(count) => {
+                if count == 0 {
+                    // No new events, sleep before next scan
+                    sleep(Duration::from_secs(args.poll_interval)).await;
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "Scanner error, retrying in 5s");
+                sleep(Duration::from_secs(5)).await;
+            }
+        }
+        
+        // Check for shutdown signal
+        if tokio::select! {
+            _ = signal::ctrl_c() => true,
+            else => false,
+        } {
+            info!("Shutdown signal received");
+            metrics_handle.abort();
+            break;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Scan for new events and create promotion entries
+async fn scan_and_promote(pool: &PgPool, scanner: &mut EventScanner) -> Result<usize> {
+    // Get active agent manifests
+    let manifests = get_active_manifests(pool).await?;
+    let router = PromotionRouter::from_manifests(manifests);
+    
+    // Scan for new events
+    let events = scanner.scan_new_events(pool).await?;
+    
+    if events.is_empty() {
+        return Ok(0);
+    }
+    
+    // Create promotion entries
+    let count = create_promotion_entries(pool, events, &router).await?;
+    
+    Ok(count)
+}
+
+/// Run as a worker processing promotion queue entries
+async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
+    info!(agent = %agent_name, "Running in worker mode");
 
     // Create shared state for tracking
     let events_processed = Arc::new(AtomicU64::new(0));
@@ -226,7 +325,7 @@ async fn main() -> Result<()> {
 
     // Start heartbeat task
     let heartbeat_pool = pool.clone();
-    let heartbeat_agent_name = args.agent_name.clone();
+    let heartbeat_agent_name = agent_name.clone();
     let heartbeat_events = events_processed.clone();
     task::spawn(async move {
         if let Err(e) = emit_heartbeat(
@@ -248,7 +347,7 @@ async fn main() -> Result<()> {
 
     // Create processor
     let processor = Arc::new(ExampleProcessor {
-        agent_name: args.agent_name.clone(),
+        agent_name: agent_name.clone(),
         batch_size: args.batch_size,
         poll_interval: args.poll_interval,
         events_processed: events_processed.clone(),

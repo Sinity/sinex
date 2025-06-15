@@ -2638,6 +2638,7 @@ dependencies = [
  "chrono",
  "clap",
  "gethostname",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "sinex-db",
