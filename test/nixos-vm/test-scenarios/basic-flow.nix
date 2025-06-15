@@ -13,7 +13,7 @@ let
     def query_events(limit=10):
         result = subprocess.run([
             "${pkgs.postgresql_16}/bin/psql", 
-            "-d", "sinex_test",
+            "-d", "sinex",
             "-U", "postgres",
             "-t", "-c",
             f"SELECT id, source, event_type, ts_ingest, payload FROM raw.events ORDER BY ts_ingest DESC LIMIT {limit};"
@@ -33,7 +33,7 @@ let
     def stats():
         result = subprocess.run([
             "${pkgs.postgresql_16}/bin/psql", 
-            "-d", "sinex_test",
+            "-d", "sinex",
             "-U", "postgres", 
             "-t", "-c",
             "SELECT COUNT(*) FROM raw.events;"
@@ -68,12 +68,14 @@ pkgs.nixosTest {
         ../../../nixos/default.nix
       ];
 
+      # PostgreSQL is required by Sinex
+      services.postgresql.enable = true;
+
       # Use Sinex the way a real user would!
       services.sinex = {
         enable = true;
-        
-        database.name = "sinex_test";  # Just for test clarity
 
+        # Use all defaults - no need to override database name
         unifiedCollector = {
           enable = true;
           sources.filesystem = {
@@ -121,11 +123,11 @@ pkgs.nixosTest {
     # Test 1: Database schema validation
     with subtest("Database schema validation"):
         # Check that Sinex tables exist
-        tables = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"\\dt raw.*\"'")
+        tables = machine.succeed("su - postgres -c 'psql -d sinex -c \"\\dt raw.*\"'")
         assert "raw.events" in tables, "raw.events table not created"
         
         # Check extensions
-        extensions = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"\\dx\"'")
+        extensions = machine.succeed("su - postgres -c 'psql -d sinex -c \"\\dx\"'")
         assert "timescaledb" in extensions, "TimescaleDB not installed"
         print(f"Extensions: {extensions}")
 
@@ -191,11 +193,11 @@ pkgs.nixosTest {
     # Test 5: Real database integration
     with subtest("Database integration"):
         # Directly verify events in database
-        result = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"SELECT COUNT(*) FROM raw.events;\"'")
+        result = machine.succeed("su - postgres -c 'psql -d sinex -c \"SELECT COUNT(*) FROM raw.events;\"'")
         print(f"Direct DB count: {result}")
         
         # Verify hypertable (TimescaleDB feature)
-        hypertables = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"SELECT * FROM timescaledb_information.hypertables;\"'")
+        hypertables = machine.succeed("su - postgres -c 'psql -d sinex -c \"SELECT * FROM timescaledb_information.hypertables;\"'")
         print(f"Hypertables: {hypertables}")
   '';
 }
