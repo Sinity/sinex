@@ -65,17 +65,16 @@ pkgs.nixosTest {
     {
       imports = [
         # Import the actual Sinex NixOS module
-        ../../../nixos/default.nix
+        ../../../nixos/main.nix
       ];
-
-      # PostgreSQL is required by Sinex
-      services.postgresql.enable = true;
 
       # Use Sinex the way a real user would!
       services.sinex = {
         enable = true;
 
-        # Use all defaults - no need to override database name
+        # Disable promo worker for simplicity in test
+        promoWorker.enable = false;
+
         unifiedCollector = {
           enable = true;
           sources.filesystem = {
