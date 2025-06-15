@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sinex_core::{RawEvent, RawEventBuilder, EventSource, EventSourceContext};
-use sinex_db::{create_test_pool, models::PromotionQueueItem};
+use sinex_db::models::PromotionQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
@@ -12,26 +12,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use gethostname;
 
-async fn setup_test_environment() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
-    
-    // Clean all tables
-    sqlx::query("TRUNCATE TABLE raw.events CASCADE")
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("TRUNCATE TABLE sinex_schemas.promotion_queue CASCADE")
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("TRUNCATE TABLE sinex_schemas.agent_manifests CASCADE")
-        .execute(&pool)
-        .await?;
-    
-    Ok(pool)
-}
+// Import test setup macros
+use crate::db_test;
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -163,32 +145,169 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_full_pipeline_end_to_end() -> Result<()> {
-    let pool = setup_test_environment().await?;
-    
-    let events_to_generate = 10;
-    let _events_generated = Arc::new(AtomicU32::new(0));
-    let events_processed = Arc::new(AtomicU32::new(0));
-    let derived_events_created = Arc::new(AtomicU32::new(0));
-    
-    // Create source
-    let config = PipelineTestConfig {
-        events_to_generate,
-        generation_rate: 50,
-    };
-    let ctx = EventSourceContext::new(serde_json::to_value(config)?);
-    let mut source = PipelineTestSource::initialize(ctx).await?;
-    let source_events_generated = source.events_generated.clone();
-    
-    // Create event channel and storage task
-    let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(100);
-    
-    // Storage task that saves events to database
-    let pool_clone = pool.clone();
-    let storage_handle = tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            // Store in database
+db_test! {
+    async fn test_full_pipeline_end_to_end(pool: PgPool) -> Result<()> {
+        let events_to_generate = 10;
+        let _events_generated = Arc::new(AtomicU32::new(0));
+        let events_processed = Arc::new(AtomicU32::new(0));
+        let derived_events_created = Arc::new(AtomicU32::new(0));
+        
+        // Create source
+        let config = PipelineTestConfig {
+            events_to_generate,
+            generation_rate: 50,
+        };
+        let ctx = EventSourceContext::new(serde_json::to_value(config)?);
+        let mut source = PipelineTestSource::initialize(ctx).await?;
+        let source_events_generated = source.events_generated.clone();
+        
+        // Create event channel and storage task
+        let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(100);
+        
+        // Storage task that saves events to database
+        let pool_clone = pool.clone();
+        let storage_handle = tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                // Store in database
+                sqlx::query(
+                    "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
+                     VALUES ($1, $2, $3, $4, $5, $6)"
+                )
+                .bind(event.id.to_uuid())
+                .bind(&event.event_type)
+                .bind(&event.source)
+                .bind(event.ts_ingest)
+                .bind(&event.payload)
+                .bind("test-host")
+                .execute(&pool_clone)
+                .await
+                .unwrap();
+                
+                // Insert into promotion queue
+                sqlx::query(
+                    "INSERT INTO sinex_schemas.promotion_queue 
+                     (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
+                     VALUES ($1, $2, $3, 0, 3, NOW())"
+                )
+                .bind(Ulid::new().to_uuid())
+                .bind(event.id.to_uuid())
+                .bind("pipeline_test_worker")
+                .execute(&pool_clone)
+                .await
+                .unwrap();
+            }
+        });
+        
+        // Start source
+        let source_handle = tokio::spawn(async move {
+            source.stream_events(event_tx).await
+        });
+        
+        // Create processor
+        let processor = Arc::new(PipelineTestProcessor {
+            events_processed: events_processed.clone(),
+            processing_delay: Duration::from_millis(20),
+            derived_events_created: derived_events_created.clone(),
+        });
+        
+        // Create worker
+        let worker = Worker::new(pool.clone(), processor, "test-worker-1".to_string());
+        
+        let worker_handle = tokio::spawn(async move {
+            worker.run().await
+        });
+        
+        // Wait for pipeline to process all events
+        let start = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(10);
+        
+        loop {
+            let generated = source_events_generated.load(Ordering::SeqCst);
+            let processed = events_processed.load(Ordering::SeqCst);
+            
+            if generated >= events_to_generate && processed >= events_to_generate {
+                break;
+            }
+            
+            if start.elapsed() > timeout_duration {
+                panic!(
+                    "Pipeline timeout: generated={}, processed={}", 
+                    generated, processed
+                );
+            }
+            
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        
+        // Stop all components
+        source_handle.abort();
+        worker_handle.abort();
+        storage_handle.abort();
+        
+        // Verify results
+        assert_eq!(
+            source_events_generated.load(Ordering::SeqCst), 
+            events_to_generate,
+            "All events should be generated"
+        );
+        
+        assert_eq!(
+            events_processed.load(Ordering::SeqCst), 
+            events_to_generate,
+            "All events should be processed"
+        );
+        
+        assert_eq!(
+            derived_events_created.load(Ordering::SeqCst), 
+            events_to_generate,
+            "Derived events should be created for each processed event"
+        );
+        
+        // Verify database state
+        let raw_event_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        assert_eq!(raw_event_count, events_to_generate as i64);
+        
+        let derived_event_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test_derived'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        assert_eq!(derived_event_count, events_to_generate as i64);
+        
+        let remaining_queue: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        assert_eq!(remaining_queue, 0);
+        
+        Ok(())
+    }
+}
+
+db_test! {
+    async fn test_pipeline_with_multiple_workers(pool: PgPool) -> Result<()> {
+        let events_to_generate = 20;
+        let total_processed = Arc::new(AtomicU32::new(0));
+        
+        // Pre-insert events into database
+        for i in 0..events_to_generate {
+            let event = RawEventBuilder::new(
+                "pipeline_test",
+                "test_event",
+                json!({
+                    "sequence": i,
+                    "data": format!("Test event {}", i),
+                })
+            ).build();
+            
             sqlx::query(
                 "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
                  VALUES ($1, $2, $3, $4, $5, $6)"
@@ -199,11 +318,9 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
             .bind(event.ts_ingest)
             .bind(&event.payload)
             .bind("test-host")
-            .execute(&pool_clone)
-            .await
-            .unwrap();
+            .execute(&pool)
+            .await?;
             
-            // Insert into promotion queue
             sqlx::query(
                 "INSERT INTO sinex_schemas.promotion_queue 
                  (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
@@ -211,335 +328,197 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
             )
             .bind(Ulid::new().to_uuid())
             .bind(event.id.to_uuid())
-            .bind("pipeline_test_worker")
-            .execute(&pool_clone)
-            .await
-            .unwrap();
-        }
-    });
-    
-    // Start source
-    let source_handle = tokio::spawn(async move {
-        source.stream_events(event_tx).await
-    });
-    
-    // Create processor
-    let processor = Arc::new(PipelineTestProcessor {
-        events_processed: events_processed.clone(),
-        processing_delay: Duration::from_millis(20),
-        derived_events_created: derived_events_created.clone(),
-    });
-    
-    // Create worker
-    let worker = Worker::new(pool.clone(), processor, "test-worker-1".to_string());
-    
-    let worker_handle = tokio::spawn(async move {
-        worker.run().await
-    });
-    
-    // Wait for pipeline to process all events
-    let start = std::time::Instant::now();
-    let timeout_duration = Duration::from_secs(10);
-    
-    loop {
-        let generated = source_events_generated.load(Ordering::SeqCst);
-        let processed = events_processed.load(Ordering::SeqCst);
-        
-        if generated >= events_to_generate && processed >= events_to_generate {
-            break;
+            .bind("test_worker")
+            .execute(&pool)
+            .await?;
         }
         
-        if start.elapsed() > timeout_duration {
-            panic!(
-                "Pipeline timeout: generated={}, processed={}", 
-                generated, processed
-            );
-        }
+        // Start multiple workers
+        let num_workers = 3;
+        let mut worker_handles = Vec::new();
         
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    
-    // Stop all components
-    source_handle.abort();
-    worker_handle.abort();
-    storage_handle.abort();
-    
-    // Verify results
-    assert_eq!(
-        source_events_generated.load(Ordering::SeqCst), 
-        events_to_generate,
-        "All events should be generated"
-    );
-    
-    assert_eq!(
-        events_processed.load(Ordering::SeqCst), 
-        events_to_generate,
-        "All events should be processed"
-    );
-    
-    assert_eq!(
-        derived_events_created.load(Ordering::SeqCst), 
-        events_to_generate,
-        "Derived events should be created for each processed event"
-    );
-    
-    // Verify database state
-    let raw_event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(raw_event_count, events_to_generate as i64);
-    
-    let derived_event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test_derived'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(derived_event_count, events_to_generate as i64);
-    
-    let remaining_queue: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(remaining_queue, 0);
-    
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_pipeline_with_multiple_workers() -> Result<()> {
-    let pool = setup_test_environment().await?;
-    
-    let events_to_generate = 20;
-    let total_processed = Arc::new(AtomicU32::new(0));
-    
-    // Pre-insert events into database
-    for i in 0..events_to_generate {
-        let event = RawEventBuilder::new(
-            "pipeline_test",
-            "test_event",
-            json!({
-                "sequence": i,
-                "data": format!("Test event {}", i),
-            })
-        ).build();
-        
-        sqlx::query(
-            "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
-             VALUES ($1, $2, $3, $4, $5, $6)"
-        )
-        .bind(event.id.to_uuid())
-        .bind(&event.event_type)
-        .bind(&event.source)
-        .bind(event.ts_ingest)
-        .bind(&event.payload)
-        .bind("test-host")
-        .execute(&pool)
-        .await?;
-        
-        sqlx::query(
-            "INSERT INTO sinex_schemas.promotion_queue 
-             (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
-             VALUES ($1, $2, $3, 0, 3, NOW())"
-        )
-        .bind(Ulid::new().to_uuid())
-        .bind(event.id.to_uuid())
-        .bind("test_worker")
-        .execute(&pool)
-        .await?;
-    }
-    
-    // Start multiple workers
-    let num_workers = 3;
-    let mut worker_handles = Vec::new();
-    
-    for worker_id in 0..num_workers {
-        let pool_clone = pool.clone();
-        let total_processed = total_processed.clone();
-        
-        let worker_handle = tokio::spawn(async move {
-            let processor = Arc::new(PipelineTestProcessor {
-                events_processed: Arc::new(AtomicU32::new(0)),
-                processing_delay: Duration::from_millis(50),
-                derived_events_created: Arc::new(AtomicU32::new(0)),
+        for worker_id in 0..num_workers {
+            let pool_clone = pool.clone();
+            let total_processed = total_processed.clone();
+            
+            let worker_handle = tokio::spawn(async move {
+                let processor = Arc::new(PipelineTestProcessor {
+                    events_processed: Arc::new(AtomicU32::new(0)),
+                    processing_delay: Duration::from_millis(50),
+                    derived_events_created: Arc::new(AtomicU32::new(0)),
+                });
+                
+                let events_processed = processor.events_processed.clone();
+                
+                let worker = Worker::new(pool_clone, processor, format!("test-worker-{}", worker_id));
+                
+                let result = worker.run().await;
+                
+                let processed = events_processed.load(Ordering::SeqCst);
+                total_processed.fetch_add(processed, Ordering::SeqCst);
+                
+                (worker_id, processed, result)
             });
             
-            let events_processed = processor.events_processed.clone();
-            
-            let worker = Worker::new(pool_clone, processor, format!("test-worker-{}", worker_id));
-            
-            let result = worker.run().await;
-            
-            let processed = events_processed.load(Ordering::SeqCst);
-            total_processed.fetch_add(processed, Ordering::SeqCst);
-            
-            (worker_id, processed, result)
-        });
-        
-        worker_handles.push(worker_handle);
-    }
-    
-    // Wait for completion
-    let start = std::time::Instant::now();
-    loop {
-        let processed = total_processed.load(Ordering::SeqCst);
-        
-        if processed >= events_to_generate {
-            break;
+            worker_handles.push(worker_handle);
         }
         
-        if start.elapsed() > Duration::from_secs(15) {
-            panic!("Pipeline timeout: processed={}/{}", processed, events_to_generate);
+        // Wait for completion
+        let start = std::time::Instant::now();
+        loop {
+            let processed = total_processed.load(Ordering::SeqCst);
+            
+            if processed >= events_to_generate {
+                break;
+            }
+            
+            if start.elapsed() > Duration::from_secs(15) {
+                panic!("Pipeline timeout: processed={}/{}", processed, events_to_generate);
+            }
+            
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Stop workers
+        for handle in worker_handles {
+            handle.abort();
+        }
+        
+        // Verify work was distributed among workers
+        println!("Total events processed: {}", total_processed.load(Ordering::SeqCst));
+        
+        let remaining_queue: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        assert_eq!(remaining_queue, 0);
+        
+        Ok(())
     }
-    
-    // Stop workers
-    for handle in worker_handles {
-        handle.abort();
-    }
-    
-    // Verify work was distributed among workers
-    println!("Total events processed: {}", total_processed.load(Ordering::SeqCst));
-    
-    let remaining_queue: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(remaining_queue, 0);
-    
-    Ok(())
 }
 
-#[tokio::test]
-async fn test_pipeline_error_recovery() -> Result<()> {
-    let pool = setup_test_environment().await?;
-    
-    // Insert some events that will cause errors
-    for i in 0..5 {
-        let event = RawEventBuilder::new(
-            "error_test",
-            if i % 2 == 0 { "good_event" } else { "bad_event" },
-            json!({"sequence": i})
-        ).build();
-        
-        sqlx::query(
-            "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
-             VALUES ($1, $2, $3, $4, $5, $6)"
-        )
-        .bind(event.id.to_uuid())
-        .bind(&event.event_type)
-        .bind(&event.source)
-        .bind(event.ts_ingest)
-        .bind(&event.payload)
-        .bind("test-host")
-        .execute(&pool)
-        .await?;
-        
-        // Add to promotion queue
-        sqlx::query(
-            "INSERT INTO sinex_schemas.promotion_queue 
-             (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
-             VALUES ($1, $2, $3, 0, 3, NOW())"
-        )
-        .bind(Ulid::new().to_uuid())
-        .bind(event.id.to_uuid())
-        .bind("error_test_worker")
-        .execute(&pool)
-        .await?;
-    }
-    
-    // Processor that fails on bad events
-    struct ErrorTestProcessor {
-        processed_good: Arc<AtomicU32>,
-        processed_bad: Arc<AtomicU32>,
-    }
-    
-    #[async_trait]
-    impl EventProcessor for ErrorTestProcessor {
-        async fn process_event(
-            &self,
-            pool: &PgPool,
-            item: &PromotionQueueItem,
-        ) -> Result<()> {
-            // Fetch the raw event
-            let event = sqlx::query!(
-                r#"
-                SELECT event_type
-                FROM raw.events
-                WHERE id = $1::uuid::ulid
-                "#,
-                item.raw_event_id.to_uuid()
+db_test! {
+    async fn test_pipeline_error_recovery(pool: PgPool) -> Result<()> {
+        // Insert some events that will cause errors
+        for i in 0..5 {
+            let event = RawEventBuilder::new(
+                "error_test",
+                if i % 2 == 0 { "good_event" } else { "bad_event" },
+                json!({"sequence": i})
+            ).build();
+            
+            sqlx::query(
+                "INSERT INTO raw.events (id, event_type, source, ts_ingest, payload, host) 
+                 VALUES ($1, $2, $3, $4, $5, $6)"
             )
-            .fetch_one(pool)
+            .bind(event.id.to_uuid())
+            .bind(&event.event_type)
+            .bind(&event.source)
+            .bind(event.ts_ingest)
+            .bind(&event.payload)
+            .bind("test-host")
+            .execute(&pool)
             .await?;
             
-            if event.event_type == "bad_event" {
-                self.processed_bad.fetch_add(1, Ordering::SeqCst);
-                return Err(anyhow::anyhow!("Bad event type"));
-            } else {
-                self.processed_good.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+            // Add to promotion queue
+            sqlx::query(
+                "INSERT INTO sinex_schemas.promotion_queue 
+                 (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
+                 VALUES ($1, $2, $3, 0, 3, NOW())"
+            )
+            .bind(Ulid::new().to_uuid())
+            .bind(event.id.to_uuid())
+            .bind("error_test_worker")
+            .execute(&pool)
+            .await?;
+        }
+        
+        // Processor that fails on bad events
+        struct ErrorTestProcessor {
+            processed_good: Arc<AtomicU32>,
+            processed_bad: Arc<AtomicU32>,
+        }
+        
+        #[async_trait]
+        impl EventProcessor for ErrorTestProcessor {
+            async fn process_event(
+                &self,
+                pool: &PgPool,
+                item: &PromotionQueueItem,
+            ) -> Result<()> {
+                // Fetch the raw event
+                let event = sqlx::query!(
+                    r#"
+                    SELECT event_type
+                    FROM raw.events
+                    WHERE id = $1::uuid::ulid
+                    "#,
+                    item.raw_event_id.to_uuid()
+                )
+                .fetch_one(pool)
+                .await?;
+                
+                if event.event_type == "bad_event" {
+                    self.processed_bad.fetch_add(1, Ordering::SeqCst);
+                    return Err(anyhow::anyhow!("Bad event type"));
+                } else {
+                    self.processed_good.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+            
+            fn agent_name(&self) -> &str {
+                "error_test_worker"
             }
         }
         
-        fn agent_name(&self) -> &str {
-            "error_test_worker"
-        }
+        let processor = Arc::new(ErrorTestProcessor {
+            processed_good: Arc::new(AtomicU32::new(0)),
+            processed_bad: Arc::new(AtomicU32::new(0)),
+        });
+        
+        let processed_good = processor.processed_good.clone();
+        let processed_bad = processor.processed_bad.clone();
+        
+        let worker = Worker::new(pool.clone(), processor, "test-worker-1".to_string());
+        
+        let worker_handle = tokio::spawn(async move {
+            worker.run().await
+        });
+        
+        // Wait for processing
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        
+        worker_handle.abort();
+        
+        // Good events should be completed
+        assert_eq!(processed_good.load(Ordering::SeqCst), 3);
+        
+        // Bad events should have been retried
+        assert!(processed_bad.load(Ordering::SeqCst) >= 2); // At least initial + 1 retry
+        
+        // Check database state
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'error_test_worker'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        // Should have no good events left (3 were processed)
+        // Bad events might be in DLQ or still retrying
+        assert!(remaining <= 2);
+        
+        let dlq: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sinex_schemas.dlq_events WHERE agent_name = 'error_test_worker'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        // Should have some bad events in DLQ after max retries
+        assert!(dlq >= 0);
+        
+        Ok(())
     }
-    
-    let processor = Arc::new(ErrorTestProcessor {
-        processed_good: Arc::new(AtomicU32::new(0)),
-        processed_bad: Arc::new(AtomicU32::new(0)),
-    });
-    
-    let processed_good = processor.processed_good.clone();
-    let processed_bad = processor.processed_bad.clone();
-    
-    let worker = Worker::new(pool.clone(), processor, "test-worker-1".to_string());
-    
-    let worker_handle = tokio::spawn(async move {
-        worker.run().await
-    });
-    
-    // Wait for processing
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    
-    worker_handle.abort();
-    
-    // Good events should be completed
-    assert_eq!(processed_good.load(Ordering::SeqCst), 3);
-    
-    // Bad events should have been retried
-    assert!(processed_bad.load(Ordering::SeqCst) >= 2); // At least initial + 1 retry
-    
-    // Check database state
-    let remaining: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'error_test_worker'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    // Should have no good events left (3 were processed)
-    // Bad events might be in DLQ or still retrying
-    assert!(remaining <= 2);
-    
-    let dlq: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.dlq_events WHERE agent_name = 'error_test_worker'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    // Should have some bad events in DLQ after max retries
-    assert!(dlq >= 0);
-    
-    Ok(())
 }

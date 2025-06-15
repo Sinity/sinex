@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::{create_test_pool, models::PromotionQueueItem};
+use sinex_db::models::PromotionQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
 use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
@@ -7,21 +7,8 @@ use std::time::Duration;
 use sinex_ulid::Ulid;
 use async_trait::async_trait;
 
-async fn setup_test_db() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
-    
-    sqlx::query("TRUNCATE TABLE sinex_schemas.promotion_queue")
-        .execute(&pool)
-        .await?;
-    
-    sqlx::query("TRUNCATE TABLE raw.events CASCADE")
-        .execute(&pool)
-        .await?;
-    
-    Ok(pool)
-}
+// Import test setup macros
+use crate::db_test;
 
 async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<Ulid> {
     let queue_id = Ulid::new();
@@ -104,56 +91,56 @@ impl EventProcessor for TestEventProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_event_processor_basic_processing() -> Result<()> {
-    let pool = setup_test_db().await?;
-    let processor = TestEventProcessor::new("test_agent".to_string());
-    let process_count = processor.process_count.clone();
-    
-    // Insert a test item
-    let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
-    
-    // Process the item
-    let item = sqlx::query_as::<_, PromotionQueueItem>(
-        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-         FROM sinex_schemas.promotion_queue 
-         WHERE target_agent_name = $1 AND status = 'pending'"
-    )
-    .bind("test_agent")
-    .fetch_one(&pool)
-    .await?;
-    
-    processor.process_event(&pool, &item).await?;
-    
-    assert_eq!(process_count.load(Ordering::SeqCst), 1);
-    
-    Ok(())
+db_test! {
+    async fn test_event_processor_basic_processing(pool: PgPool) -> Result<()> {
+        let processor = TestEventProcessor::new("test_agent".to_string());
+        let process_count = processor.process_count.clone();
+        
+        // Insert a test item
+        let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
+        
+        // Process the item
+        let item = sqlx::query_as::<_, PromotionQueueItem>(
+            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+             FROM sinex_schemas.promotion_queue 
+             WHERE target_agent_name = $1 AND status = 'pending'"
+        )
+        .bind("test_agent")
+        .fetch_one(&pool)
+        .await?;
+        
+        processor.process_event(&pool, &item).await?;
+        
+        assert_eq!(process_count.load(Ordering::SeqCst), 1);
+        
+        Ok(())
+    }
 }
 
-#[tokio::test]
-async fn test_event_processor_failure_handling() -> Result<()> {
-    let pool = setup_test_db().await?;
-    let processor = TestEventProcessor::new("test_agent".to_string());
-    
-    processor.should_fail.store(true, Ordering::SeqCst);
-    
-    let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
-    
-    let item = sqlx::query_as::<_, PromotionQueueItem>(
-        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-         FROM sinex_schemas.promotion_queue 
-         WHERE target_agent_name = $1 AND status = 'pending'"
-    )
-    .bind("test_agent")
-    .fetch_one(&pool)
-    .await?;
-    
-    let result = processor.process_event(&pool, &item).await;
-    assert!(result.is_err());
-    
-    Ok(())
+db_test! {
+    async fn test_event_processor_failure_handling(pool: PgPool) -> Result<()> {
+        let processor = TestEventProcessor::new("test_agent".to_string());
+        
+        processor.should_fail.store(true, Ordering::SeqCst);
+        
+        let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
+        
+        let item = sqlx::query_as::<_, PromotionQueueItem>(
+            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+             FROM sinex_schemas.promotion_queue 
+             WHERE target_agent_name = $1 AND status = 'pending'"
+        )
+        .bind("test_agent")
+        .fetch_one(&pool)
+        .await?;
+        
+        let result = processor.process_event(&pool, &item).await;
+        assert!(result.is_err());
+        
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -193,46 +180,45 @@ async fn test_worker_metrics_creation() {
     assert_eq!(metrics.items_failed.get(), 1.0);
 }
 
-#[tokio::test]
-async fn test_multiple_processors_different_agents() -> Result<()> {
-    let pool = setup_test_db().await?;
-    
-    let processor_a = TestEventProcessor::new("agent_a".to_string());
-    let processor_b = TestEventProcessor::new("agent_b".to_string());
-    
-    let count_a = processor_a.process_count.clone();
-    let count_b = processor_b.process_count.clone();
-    
-    // Insert items for each agent
-    let _queue_id_a = insert_test_promotion_item(&pool, "agent_a").await?;
-    let _queue_id_b = insert_test_promotion_item(&pool, "agent_b").await?;
-    
-    // Get and process items for each agent
-    let item_a = sqlx::query_as::<_, PromotionQueueItem>(
-        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-         FROM sinex_schemas.promotion_queue 
-         WHERE target_agent_name = 'agent_a'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    let item_b = sqlx::query_as::<_, PromotionQueueItem>(
-        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-         FROM sinex_schemas.promotion_queue 
-         WHERE target_agent_name = 'agent_b'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    processor_a.process_event(&pool, &item_a).await?;
-    processor_b.process_event(&pool, &item_b).await?;
-    
-    assert_eq!(count_a.load(Ordering::SeqCst), 1);
-    assert_eq!(count_b.load(Ordering::SeqCst), 1);
-    
-    Ok(())
+db_test! {
+    async fn test_multiple_processors_different_agents(pool: PgPool) -> Result<()> {
+        let processor_a = TestEventProcessor::new("agent_a".to_string());
+        let processor_b = TestEventProcessor::new("agent_b".to_string());
+        
+        let count_a = processor_a.process_count.clone();
+        let count_b = processor_b.process_count.clone();
+        
+        // Insert items for each agent
+        let _queue_id_a = insert_test_promotion_item(&pool, "agent_a").await?;
+        let _queue_id_b = insert_test_promotion_item(&pool, "agent_b").await?;
+        
+        // Get and process items for each agent
+        let item_a = sqlx::query_as::<_, PromotionQueueItem>(
+            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+             FROM sinex_schemas.promotion_queue 
+             WHERE target_agent_name = 'agent_a'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        let item_b = sqlx::query_as::<_, PromotionQueueItem>(
+            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+             FROM sinex_schemas.promotion_queue 
+             WHERE target_agent_name = 'agent_b'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        processor_a.process_event(&pool, &item_a).await?;
+        processor_b.process_event(&pool, &item_b).await?;
+        
+        assert_eq!(count_a.load(Ordering::SeqCst), 1);
+        assert_eq!(count_b.load(Ordering::SeqCst), 1);
+        
+        Ok(())
+    }
 }
 
 #[tokio::test]

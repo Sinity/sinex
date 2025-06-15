@@ -69,28 +69,60 @@ macro_rules! db_test {
     };
 }
 
+/// Macro for tests that need transaction isolation
+#[macro_export]
+macro_rules! db_test_tx {
+    (async fn $name:ident($tx:ident: sqlx::Transaction<'_, sqlx::Postgres>) -> $ret:ty $body:block) => {
+        #[tokio::test]
+        async fn $name() -> $ret {
+            let pool_arc = crate::test_setup::get_test_db().await;
+            let pool = pool_arc.as_ref().clone();
+            
+            // Clean up before test to ensure clean state
+            let _ = crate::test_setup::cleanup_test_data(&pool).await;
+            
+            // Start a transaction that will be rolled back
+            let mut $tx = pool.begin().await.expect("Failed to start transaction");
+            
+            // Run the test body
+            let result = async move $body.await;
+            
+            // Always rollback to ensure test isolation
+            let _ = $tx.rollback().await;
+            
+            result
+        }
+    };
+}
+
 /// Clean up test data (if needed between test runs)
 #[allow(dead_code)]
 pub async fn cleanup_test_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     // Clean up in dependency order (foreign keys)
     
-    // Clean promotion queue entries first
-    sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE target_agent_name LIKE 'test-%' OR target_agent_name = 'concurrency_test_agent'")
+    // First clean tables that reference other tables
+    // Clean DLQ entries that reference promotion queue
+    sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
+        .execute(pool)
+        .await?;
+    
+    // Clean promotion queue entries (references raw.events)
+    sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker'")
         .execute(pool)
         .await?;
     
     // Clean test events
-    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source = 'concurrency_test' OR source = 'filesystem' AND payload->>'path' LIKE '/test/%'")
+    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source LIKE 'pipeline_test%' OR source LIKE 'error_test%' OR source = 'concurrency_test' OR source = 'slow_source' OR (source = 'filesystem' AND payload->>'path' LIKE '/test/%')")
         .execute(pool)
         .await?;
     
     // Clean test agent manifests
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test-%' OR agent_name = 'concurrency_test_agent'")
+    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
         .execute(pool)
         .await?;
     
     // Clean test schemas
-    sqlx::query!("DELETE FROM sinex_schemas.event_payload_schemas WHERE event_source = 'test'")
+    sqlx::query!("DELETE FROM sinex_schemas.event_payload_schemas WHERE event_source LIKE 'test%' OR event_source = 'test'")
         .execute(pool)
         .await?;
     

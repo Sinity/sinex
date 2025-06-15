@@ -1,26 +1,17 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, RawEventBuilder};
-use sinex_db::create_test_pool;
-use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 use gethostname;
+#[allow(unused_imports)]
+use sqlx::PgPool;
 
-async fn setup_test_db() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
-    
-    sqlx::query("TRUNCATE TABLE raw.events CASCADE")
-        .execute(&pool)
-        .await?;
-    
-    Ok(pool)
-}
+// Import test setup macros
+use crate::db_test;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct TestSourceConfig {
@@ -361,54 +352,53 @@ async fn test_multiple_event_sources() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_database_integration() -> Result<()> {
-    let pool = setup_test_db().await?;
-    
-    let config = TestSourceConfig {
-        events_to_generate: 2,
-        generation_delay_ms: 10,
-        should_fail: false,
-    };
-    
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
-    
-    let (tx, mut rx) = mpsc::channel(10);
-    
-    let stream_handle = tokio::spawn(async move {
-        source.stream_events(tx).await
-    });
-    
-    // Receive and store events
-    for _ in 0..2 {
-        if let Some(event) = rx.recv().await {
-            // Store in database
-            sqlx::query(
-                "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
-                 VALUES ($1, $2, $3, $4, $5, $6)"
-            )
-            .bind(event.id.to_uuid())
-            .bind(&event.source)
-            .bind(&event.event_type)
-            .bind(event.ts_ingest)
-            .bind("test_host")
-            .bind(&event.payload)
-            .execute(&pool)
-            .await?;
+db_test! {
+    async fn test_event_source_database_integration(pool: PgPool) -> Result<()> {
+        let config = TestSourceConfig {
+            events_to_generate: 2,
+            generation_delay_ms: 10,
+            should_fail: false,
+        };
+        
+        let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+        let mut source = TestEventSource::initialize(ctx).await?;
+        
+        let (tx, mut rx) = mpsc::channel(10);
+        
+        let stream_handle = tokio::spawn(async move {
+            source.stream_events(tx).await
+        });
+        
+        // Receive and store events
+        for _ in 0..2 {
+            if let Some(event) = rx.recv().await {
+                // Store in database
+                sqlx::query(
+                    "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
+                     VALUES ($1, $2, $3, $4, $5, $6)"
+                )
+                .bind(event.id.to_uuid())
+                .bind(&event.source)
+                .bind(&event.event_type)
+                .bind(event.ts_ingest)
+                .bind("test_host")
+                .bind(&event.payload)
+                .execute(&pool)
+                .await?;
+            }
         }
+        
+        stream_handle.abort();
+        
+        // Verify events were stored
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'"
+        )
+        .fetch_one(&pool)
+        .await?;
+        
+        assert_eq!(count, 2);
+        
+        Ok(())
     }
-    
-    stream_handle.abort();
-    
-    // Verify events were stored
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(count, 2);
-    
-    Ok(())
 }
