@@ -13,7 +13,7 @@
     ensureUsers = [
       {
         name = "test";
-        ensureDBOwnership = true;
+        ensureDBOwnership = false;  # Don't require ownership of a database named "test"
       }
     ];
     

@@ -64,85 +64,31 @@ pkgs.nixosTest {
   name = "sinex-basic-flow";
   
   nodes.machine = { config, pkgs, ... }: {
-    imports = [ ../vm-config.nix ];
-    
-    # Real Sinex packages
-    environment.systemPackages = with pkgs; [
-      sinex-collector
-      sinex-query
+    imports = [ 
+      ../vm-config.nix
+      # Import the actual Sinex NixOS module
+      ../../../nixos/default.nix
     ];
     
-    # Sinex configuration
-    environment.etc."sinex/collector.toml".text = ''
-      enabled_events = [
-        "file.created",
-        "file.modified",
-        "file.deleted"
-      ]
+    # Use Sinex the way a real user would!
+    services.sinex = {
+      enable = true;
       
-      [event.filesystem]
-      watch_patterns = ["/home/test/watched/**/*"]
-      ignore_patterns = []
-      debounce_ms = 100
-    '';
-    
-    # Initialize database with Sinex schema
-    systemd.services.sinex-init = {
-      description = "Initialize Sinex Database";
-      after = [ "postgresql.service" ];
-      before = [ "sinex-collector.service" ];
-      wantedBy = [ "multi-user.target" ];
-      
-      serviceConfig = {
-        Type = "oneshot";
-        User = "postgres";
-        RemainAfterExit = true;
+      database = {
+        name = "sinex_test";
       };
       
-      script = ''
-        # Create schema directly instead of using migrations for simplicity
-        ${pkgs.postgresql_16}/bin/psql -d sinex_test <<EOF
-        -- Create schemas
-        CREATE SCHEMA IF NOT EXISTS raw;
-        CREATE SCHEMA IF NOT EXISTS sinex_schemas;
+      unifiedCollector = {
+        enable = true;
         
-        -- Create raw events table
-        CREATE TABLE IF NOT EXISTS raw.events (
-            id ulid PRIMARY KEY DEFAULT gen_ulid(),
-            source TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            payload JSONB NOT NULL,
-            ts_ingest TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            ts_source TIMESTAMPTZ
-        );
-        
-        -- Create hypertable if it doesn't exist
-        SELECT create_hypertable('raw.events', 'ts_ingest', if_not_exists => TRUE);
-        
-        -- Create indexes
-        CREATE INDEX IF NOT EXISTS idx_events_source ON raw.events(source);
-        CREATE INDEX IF NOT EXISTS idx_events_type ON raw.events(event_type);
-        CREATE INDEX IF NOT EXISTS idx_events_payload ON raw.events USING gin(payload);
-        EOF
-      '';
-    };
-    
-    # Systemd service for the collector
-    systemd.services.sinex-collector = {
-      description = "Sinex Event Collector";
-      after = [ "postgresql.service" "sinex-init.service" ];
-      wantedBy = [ "multi-user.target" ];
-      
-      serviceConfig = {
-        Type = "simple";
-        User = "test";
-        Environment = [
-          "DATABASE_URL=postgresql:///sinex_test?host=/run/postgresql"
-          "RUST_LOG=info"
-        ];
-        ExecStart = "${sinex-collector}/bin/sinex-collector --config /etc/sinex/collector.toml";
-        Restart = "on-failure";
-        RestartSec = 2;
+        # Just enable filesystem monitoring for the test
+        sources = {
+          filesystem = {
+            enable = true;
+            watchPaths = [ "/home/test/watched" ];
+            excludePatterns = [];
+          };
+        };
       };
     };
     
@@ -157,6 +103,13 @@ pkgs.nixosTest {
     systemd.tmpfiles.rules = [
       "d /home/test/watched 0755 test users -"
     ];
+    
+    # Provide our built collector package
+    nixpkgs.overlays = [(final: prev: {
+      sinex-unified-collector = sinex-collector;
+      # The module also uses sqlx-cli
+      sqlx-cli = prev.sqlx-cli or pkgs.sqlx-cli;
+    })];
   };
   
   testScript = ''
@@ -169,12 +122,10 @@ pkgs.nixosTest {
     # Verify PostgreSQL is running
     machine.succeed("systemctl is-active postgresql")
     
-    # Wait for database initialization
-    machine.wait_for_unit("sinex-init.service")
-    
-    # Start the collector
-    machine.wait_for_unit("sinex-collector.service")
-    machine.succeed("systemctl is-active sinex-collector")
+    # Wait for Sinex services (the module creates these)
+    machine.wait_for_unit("sinex-db-init.service")
+    machine.wait_for_unit("sinex-unified-collector.service")
+    machine.succeed("systemctl is-active sinex-unified-collector")
     
     # Test 1: Database schema validation
     with subtest("Database schema validation"):

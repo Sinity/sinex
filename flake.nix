@@ -109,9 +109,9 @@
                 fi
                 
                 # Run migrations
-                if [ -d "migration" ]; then
+                if [ -d "migrations" ]; then
                   echo "🗄️  Running migrations..."
-                  sqlx migrate run --source migration >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
+                  sqlx migrate run --source migrations >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
                 fi
                 
                 echo "✅ Database $DATABASE_NAME ready at $DATABASE_URL"
