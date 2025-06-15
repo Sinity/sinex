@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::{create_pool_from_env, models::promotion_queue::PromotionQueue};
+use sinex_db::{create_test_pool, models::PromotionQueueItem};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Barrier;
@@ -8,7 +8,9 @@ use sinex_ulid::Ulid;
 use std::time::Duration;
 
 async fn setup_test_db() -> Result<PgPool> {
-    let pool = create_pool_from_env(None).await?;
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+    let pool = create_test_pool(&database_url).await?;
     
     // Clean up any existing test data
     sqlx::query("TRUNCATE TABLE sinex_schemas.promotion_queue")
@@ -21,18 +23,17 @@ async fn setup_test_db() -> Result<PgPool> {
 async fn insert_test_items(pool: &PgPool, count: i32) -> Result<Vec<Ulid>> {
     let mut ids = Vec::new();
     
-    for i in 0..count {
+    for _ in 0..count {
         let id = Ulid::new();
         ids.push(id);
         
         sqlx::query(
-            "INSERT INTO sinex_schemas.promotion_queue (id, event_id, event_type, priority, retry_count, created_at) 
-             VALUES ($1, $2, $3, $4, 0, NOW())"
+            "INSERT INTO sinex_schemas.promotion_queue (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
+             VALUES ($1, $2, $3, 0, 3, NOW())"
         )
         .bind(id.as_uuid())
         .bind(Ulid::new().as_uuid())
-        .bind(format!("test_event_{}", i))
-        .bind(1)
+        .bind("test_worker")
         .execute(pool)
         .await?;
     }
@@ -43,7 +44,7 @@ async fn insert_test_items(pool: &PgPool, count: i32) -> Result<Vec<Ulid>> {
 #[tokio::test]
 async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> Result<()> {
     let pool = setup_test_db().await?;
-    let items = insert_test_items(&pool, 10).await?;
+    let _items = insert_test_items(&pool, 10).await?;
     
     let pool = Arc::new(pool);
     let barrier = Arc::new(Barrier::new(3));
@@ -65,10 +66,12 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> R
             
             loop {
                 // Try to claim an item using SELECT FOR UPDATE SKIP LOCKED
-                let item = sqlx::query_as::<_, PromotionQueue>(
-                    "SELECT * FROM sinex_schemas.promotion_queue 
+                let item = sqlx::query_as::<_, PromotionQueueItem>(
+                    "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                            last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+                     FROM sinex_schemas.promotion_queue 
                      WHERE status = 'pending'
-                     ORDER BY priority DESC, created_at ASC
+                     ORDER BY created_at ASC
                      FOR UPDATE SKIP LOCKED
                      LIMIT 1"
                 )
@@ -80,13 +83,12 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> R
                         // Simulate processing
                         tokio::time::sleep(Duration::from_millis(50)).await;
                         
-                        // Mark as processed
+                        // Mark as processed by deleting
                         sqlx::query(
-                            "UPDATE sinex_schemas.promotion_queue 
-                             SET status = 'completed', processed_at = NOW()
-                             WHERE id = $1"
+                            "DELETE FROM sinex_schemas.promotion_queue 
+                             WHERE queue_id = $1"
                         )
-                        .bind(item.id)
+                        .bind(item.queue_id.as_uuid())
                         .execute(&*pool)
                         .await?;
                         
@@ -116,14 +118,14 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> R
     let total_processed = *processed_count.lock().await;
     assert_eq!(total_processed, 10, "All items should be processed exactly once");
     
-    // Verify no item was processed twice
-    let completed_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'completed'"
+    // Verify no items remain
+    let remaining_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
     )
     .fetch_one(&*pool)
     .await?;
     
-    assert_eq!(completed_count, 10, "All items should be marked as completed");
+    assert_eq!(remaining_count, 0, "All items should be processed and deleted");
     
     // Print worker distribution for visibility
     for (worker_id, count) in worker_results {
@@ -157,8 +159,10 @@ async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
             loop {
                 let mut tx = pool.begin().await?;
                 
-                let item = sqlx::query_as::<_, PromotionQueue>(
-                    "SELECT * FROM sinex_schemas.promotion_queue 
+                let item = sqlx::query_as::<_, PromotionQueueItem>(
+                    "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                            last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+                     FROM sinex_schemas.promotion_queue 
                      WHERE status = 'pending'
                      FOR UPDATE SKIP LOCKED
                      LIMIT 1"
@@ -172,11 +176,10 @@ async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         
                         sqlx::query(
-                            "UPDATE sinex_schemas.promotion_queue 
-                             SET status = 'completed'
-                             WHERE id = $1"
+                            "DELETE FROM sinex_schemas.promotion_queue 
+                             WHERE queue_id = $1"
                         )
-                        .bind(item.id)
+                        .bind(item.queue_id.as_uuid())
                         .execute(&mut *tx)
                         .await?;
                         
@@ -226,9 +229,11 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
     // Worker 1: Start transaction and acquire lock, then rollback
     let mut tx1 = pool.begin().await?;
     
-    let _item = sqlx::query_as::<_, PromotionQueue>(
-        "SELECT * FROM sinex_schemas.promotion_queue 
-         WHERE id = $1
+    let _item = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE queue_id = $1
          FOR UPDATE"
     )
     .bind(item_id.as_uuid())
@@ -244,9 +249,11 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
         let start = std::time::Instant::now();
         
         // This should block until worker 1 releases the lock
-        let item = sqlx::query_as::<_, PromotionQueue>(
-            "SELECT * FROM sinex_schemas.promotion_queue 
-             WHERE id = $1
+        let item = sqlx::query_as::<_, PromotionQueueItem>(
+            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+             FROM sinex_schemas.promotion_queue 
+             WHERE queue_id = $1
              FOR UPDATE NOWAIT"  // Use NOWAIT to detect if locked
         )
         .bind(item_id.as_uuid())
@@ -284,9 +291,11 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
     assert!(elapsed.as_millis() < 200, "Lock detection should be quick");
     
     // Now verify the lock is released by acquiring it again
-    let item = sqlx::query_as::<_, PromotionQueue>(
-        "SELECT * FROM sinex_schemas.promotion_queue 
-         WHERE id = $1
+    let item = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE queue_id = $1
          FOR UPDATE NOWAIT"
     )
     .bind(item_id.as_uuid())
@@ -302,25 +311,23 @@ async fn test_transaction_rollback_releases_lock() -> Result<()> {
 async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
     let pool = setup_test_db().await?;
     
-    // Insert items with different priorities
+    // Insert items (we'll track order by insertion order)
     for i in 0..10 {
-        let priority = if i < 3 { 10 } else if i < 7 { 5 } else { 1 };
-        
         sqlx::query(
             "INSERT INTO sinex_schemas.promotion_queue 
-             (id, event_id, event_type, priority, retry_count, created_at) 
-             VALUES ($1, $2, $3, $4, 0, NOW())"
+             (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
+             VALUES ($1, $2, $3, 0, 3, NOW() + interval '1 second' * $4)"
         )
         .bind(Ulid::new().as_uuid())
         .bind(Ulid::new().as_uuid())
-        .bind(format!("test_event_{}", i))
-        .bind(priority)
+        .bind("test_worker")
+        .bind(i as i32)
         .execute(&pool)
         .await?;
     }
     
     let pool = Arc::new(pool);
-    let processed_priorities = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let processed_order = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let barrier = Arc::new(Barrier::new(2));
     
     let mut tasks = JoinSet::new();
@@ -329,7 +336,7 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
     for _ in 0..2 {
         let pool = pool.clone();
         let barrier = barrier.clone();
-        let processed_priorities = processed_priorities.clone();
+        let processed_order = processed_order.clone();
         
         tasks.spawn(async move {
             barrier.wait().await;
@@ -337,10 +344,12 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
             loop {
                 let mut tx = pool.begin().await?;
                 
-                let item = sqlx::query_as::<_, PromotionQueue>(
-                    "SELECT * FROM sinex_schemas.promotion_queue 
+                let item = sqlx::query_as::<_, PromotionQueueItem>(
+                    "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                            last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+                     FROM sinex_schemas.promotion_queue 
                      WHERE status = 'pending'
-                     ORDER BY priority DESC, created_at ASC
+                     ORDER BY created_at ASC
                      FOR UPDATE SKIP LOCKED
                      LIMIT 1"
                 )
@@ -349,15 +358,14 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
                 
                 match item {
                     Some(item) => {
-                        let mut priorities = processed_priorities.lock().await;
-                        priorities.push(item.priority);
+                        let mut order = processed_order.lock().await;
+                        order.push(item.created_at);
                         
                         sqlx::query(
-                            "UPDATE sinex_schemas.promotion_queue 
-                             SET status = 'completed'
-                             WHERE id = $1"
+                            "DELETE FROM sinex_schemas.promotion_queue 
+                             WHERE queue_id = $1"
                         )
-                        .bind(item.id)
+                        .bind(item.queue_id.as_uuid())
                         .execute(&mut *tx)
                         .await?;
                         
@@ -379,16 +387,21 @@ async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
         result??;
     }
     
-    let priorities = processed_priorities.lock().await;
+    let order = processed_order.lock().await;
     
-    // Verify high priority items were processed first
-    let high_priority_count = priorities.iter().take(3).filter(|&&p| p == 10).count();
+    // Verify items were processed in order
     assert_eq!(
-        high_priority_count, 3,
-        "All high priority items should be processed first"
+        order.len(), 10,
+        "All items should be processed"
     );
     
-    println!("Processing order by priority: {:?}", *priorities);
+    // Check that timestamps are in ascending order
+    for i in 1..order.len() {
+        assert!(
+            order[i] >= order[i-1],
+            "Items should be processed in timestamp order"
+        );
+    }
     
     Ok(())
 }

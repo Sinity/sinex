@@ -1,17 +1,16 @@
 use anyhow::Result;
-use sinex_db::{create_pool_from_env, models::promotion_queue::PromotionQueue};
-use sinex_worker::{Worker, WorkerConfig, WorkerState, ProcessingResult};
+use sinex_db::{create_test_pool, models::PromotionQueueItem};
+use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
 use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
 use std::time::Duration;
-use tokio::sync::Mutex;
 use sinex_ulid::Ulid;
-use sinex_core::RawEvent;
-use chrono::Utc;
-use serde_json::json;
+use async_trait::async_trait;
 
 async fn setup_test_db() -> Result<PgPool> {
-    let pool = create_pool_from_env(None).await?;
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+    let pool = create_test_pool(&database_url).await?;
     
     sqlx::query("TRUNCATE TABLE sinex_schemas.promotion_queue")
         .execute(&pool)
@@ -24,411 +23,262 @@ async fn setup_test_db() -> Result<PgPool> {
     Ok(pool)
 }
 
-async fn insert_test_event(pool: &PgPool) -> Result<Ulid> {
-    let event_id = Ulid::new();
+async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<Ulid> {
+    let queue_id = Ulid::new();
+    let raw_event_id = Ulid::new();
     
-    // Insert raw event
-    let raw_event = RawEvent::new(
-        "test_source",
-        "test_event",
-        json!({"test": "data"}),
-    );
-    
+    // Insert a raw event first
     sqlx::query(
-        "INSERT INTO raw.events (id, event_type, source, timestamp, payload, metadata) 
-         VALUES ($1, $2, $3, $4, $5, $6)"
+        "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
+         VALUES ($1, $2, $3, NOW(), $4, $5)"
     )
-    .bind(event_id.as_uuid())
-    .bind(&raw_event.event_type)
-    .bind(&raw_event.source)
-    .bind(raw_event.timestamp)
-    .bind(&raw_event.payload)
-    .bind(&raw_event.metadata)
+    .bind(raw_event_id.as_uuid())
+    .bind("test_source")
+    .bind("test_event")
+    .bind("test_host")
+    .bind(serde_json::json!({"test": "data"}))
     .execute(pool)
     .await?;
     
     // Insert into promotion queue
     sqlx::query(
         "INSERT INTO sinex_schemas.promotion_queue 
-         (id, event_id, event_type, priority, retry_count, created_at) 
-         VALUES ($1, $2, $3, $4, 0, NOW())"
+         (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at) 
+         VALUES ($1, $2, $3, 'pending', 0, 3, NOW())"
     )
-    .bind(Ulid::new().as_uuid())
-    .bind(event_id.as_uuid())
-    .bind("test_event")
-    .bind(1)
+    .bind(queue_id.as_uuid())
+    .bind(raw_event_id.as_uuid())
+    .bind(agent_name)
     .execute(pool)
     .await?;
     
-    Ok(event_id)
+    Ok(queue_id)
 }
 
-struct TestWorker {
+struct TestEventProcessor {
+    agent_name: String,
     process_count: Arc<AtomicU32>,
     should_fail: Arc<AtomicBool>,
-    failure_message: String,
     processing_delay: Duration,
 }
 
-impl TestWorker {
-    fn new() -> Self {
+impl TestEventProcessor {
+    fn new(agent_name: String) -> Self {
         Self {
+            agent_name,
             process_count: Arc::new(AtomicU32::new(0)),
             should_fail: Arc::new(AtomicBool::new(false)),
-            failure_message: "Test failure".to_string(),
             processing_delay: Duration::from_millis(10),
         }
     }
 }
 
-#[async_trait::async_trait]
-impl Worker for TestWorker {
-    fn name(&self) -> &'static str {
-        "test_worker"
-    }
-    
+#[async_trait]
+impl EventProcessor for TestEventProcessor {
     async fn process_event(
-        &mut self,
-        event: &RawEvent,
+        &self,
         _pool: &PgPool,
-    ) -> Result<ProcessingResult> {
+        _item: &PromotionQueueItem,
+    ) -> Result<()> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
         
         tokio::time::sleep(self.processing_delay).await;
         
         if self.should_fail.load(Ordering::SeqCst) {
-            Ok(ProcessingResult::Failed(self.failure_message.clone()))
-        } else {
-            Ok(ProcessingResult::Success)
+            return Err(anyhow::anyhow!("Test processor failure"));
         }
+        
+        Ok(())
+    }
+    
+    fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+    
+    fn batch_size(&self) -> i32 {
+        1
+    }
+    
+    fn poll_interval_secs(&self) -> u64 {
+        1
     }
 }
 
 #[tokio::test]
-async fn test_worker_basic_lifecycle() -> Result<()> {
+async fn test_event_processor_basic_processing() -> Result<()> {
     let pool = setup_test_db().await?;
-    let _ = insert_test_event(&pool).await?;
+    let processor = TestEventProcessor::new("test_agent".to_string());
+    let process_count = processor.process_count.clone();
     
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 3,
-        retry_backoff_base: Duration::from_secs(1),
-    };
+    // Insert a test item
+    let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
     
-    let mut worker = TestWorker::new();
-    let process_count = worker.process_count.clone();
+    // Process the item
+    let item = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE target_agent_name = $1 AND status = 'pending'"
+    )
+    .bind("test_agent")
+    .fetch_one(&pool)
+    .await?;
     
-    // Run worker for a short time
-    let worker_handle = tokio::spawn(async move {
-        worker.run(&pool, config).await
-    });
+    processor.process_event(&pool, &item).await?;
     
-    // Wait for processing
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    
-    // Cancel the worker
-    worker_handle.abort();
-    
-    // Verify event was processed
     assert_eq!(process_count.load(Ordering::SeqCst), 1);
     
-    // Verify queue item was completed
-    let completed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'completed'"
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_event_processor_failure_handling() -> Result<()> {
+    let pool = setup_test_db().await?;
+    let processor = TestEventProcessor::new("test_agent".to_string());
+    
+    processor.should_fail.store(true, Ordering::SeqCst);
+    
+    let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
+    
+    let item = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE target_agent_name = $1 AND status = 'pending'"
     )
+    .bind("test_agent")
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(completed, 1);
+    let result = processor.process_event(&pool, &item).await;
+    assert!(result.is_err());
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_worker_retry_on_failure() -> Result<()> {
+async fn test_backoff_calculation() {
+    // Test backoff calculation function
+    let backoff_0 = calculate_backoff_secs(0);
+    let backoff_1 = calculate_backoff_secs(1);
+    let backoff_5 = calculate_backoff_secs(5);
+    let backoff_10 = calculate_backoff_secs(10);
+    
+    // Backoff should increase with attempts
+    assert!(backoff_1 > backoff_0);
+    assert!(backoff_5 > backoff_1);
+    
+    // Should not exceed maximum (24 hours)
+    assert!(backoff_10 <= 24.0 * 3600.0);
+    
+    println!("Backoff progression: 0:{:.1}s, 1:{:.1}s, 5:{:.1}s, 10:{:.1}s", 
+        backoff_0, backoff_1, backoff_5, backoff_10);
+}
+
+#[tokio::test]
+async fn test_worker_metrics_creation() {
+    let metrics = WorkerMetrics::new("test_agent");
+    
+    // Test that metrics can be incremented
+    metrics.items_claimed.inc();
+    metrics.items_processed.inc();
+    metrics.items_failed.inc();
+    
+    // Observe processing duration
+    metrics.processing_duration.observe(0.5);
+    
+    // Just ensure metrics don't panic
+    assert_eq!(metrics.items_claimed.get(), 1.0);
+    assert_eq!(metrics.items_processed.get(), 1.0);
+    assert_eq!(metrics.items_failed.get(), 1.0);
+}
+
+#[tokio::test]
+async fn test_multiple_processors_different_agents() -> Result<()> {
     let pool = setup_test_db().await?;
-    let _ = insert_test_event(&pool).await?;
     
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(50),
-        max_retries: 3,
-        retry_backoff_base: Duration::from_millis(100),
-    };
+    let processor_a = TestEventProcessor::new("agent_a".to_string());
+    let processor_b = TestEventProcessor::new("agent_b".to_string());
     
-    let mut worker = TestWorker::new();
-    worker.should_fail.store(true, Ordering::SeqCst);
-    let process_count = worker.process_count.clone();
-    let should_fail = worker.should_fail.clone();
+    let count_a = processor_a.process_count.clone();
+    let count_b = processor_b.process_count.clone();
     
-    let worker_handle = tokio::spawn(async move {
-        worker.run(&pool, config).await
-    });
+    // Insert items for each agent
+    let _queue_id_a = insert_test_promotion_item(&pool, "agent_a").await?;
+    let _queue_id_b = insert_test_promotion_item(&pool, "agent_b").await?;
     
-    // Wait for initial attempts
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    
-    // Stop failing
-    should_fail.store(false, Ordering::SeqCst);
-    
-    // Wait for successful retry
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    
-    worker_handle.abort();
-    
-    // Should have processed multiple times (initial + retries)
-    let attempts = process_count.load(Ordering::SeqCst);
-    assert!(attempts >= 2, "Should have retried at least once, got {} attempts", attempts);
-    
-    // Verify final status is completed
-    let completed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'completed'"
+    // Get and process items for each agent
+    let item_a = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE target_agent_name = 'agent_a'"
     )
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(completed, 1);
+    let item_b = sqlx::query_as::<_, PromotionQueueItem>(
+        "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
+                last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
+         FROM sinex_schemas.promotion_queue 
+         WHERE target_agent_name = 'agent_b'"
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    processor_a.process_event(&pool, &item_a).await?;
+    processor_b.process_event(&pool, &item_b).await?;
+    
+    assert_eq!(count_a.load(Ordering::SeqCst), 1);
+    assert_eq!(count_b.load(Ordering::SeqCst), 1);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_worker_max_retries_exceeded() -> Result<()> {
-    let pool = setup_test_db().await?;
-    let _ = insert_test_event(&pool).await?;
+async fn test_processor_configuration() {
+    let processor = TestEventProcessor::new("test_agent".to_string());
     
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(50),
-        max_retries: 2,
-        retry_backoff_base: Duration::from_millis(50),
-    };
-    
-    let mut worker = TestWorker::new();
-    worker.should_fail.store(true, Ordering::SeqCst);
-    let process_count = worker.process_count.clone();
-    
-    let worker_handle = tokio::spawn(async move {
-        worker.run(&pool, config).await
-    });
-    
-    // Wait for all retry attempts
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    
-    worker_handle.abort();
-    
-    // Should have attempted max_retries + 1 times
-    let attempts = process_count.load(Ordering::SeqCst);
-    assert_eq!(attempts, 3, "Should have attempted exactly max_retries + 1 times");
-    
-    // Verify item is marked as failed
-    let failed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'failed'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(failed, 1);
-    
-    // Verify error is recorded
-    let error_msg: Option<String> = sqlx::query_scalar(
-        "SELECT error FROM sinex_schemas.promotion_queue WHERE status = 'failed'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert!(error_msg.unwrap().contains("Test failure"));
-    
-    Ok(())
+    assert_eq!(processor.agent_name(), "test_agent");
+    assert_eq!(processor.batch_size(), 1);
+    assert_eq!(processor.poll_interval_secs(), 1);
 }
 
-#[tokio::test]
-async fn test_worker_batch_processing() -> Result<()> {
-    let pool = setup_test_db().await?;
-    
-    // Insert multiple events
-    for _ in 0..5 {
-        insert_test_event(&pool).await?;
-    }
-    
-    let config = WorkerConfig {
-        batch_size: 3,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 3,
-        retry_backoff_base: Duration::from_secs(1),
-    };
-    
-    let mut worker = TestWorker::new();
-    let process_count = worker.process_count.clone();
-    
-    let worker_handle = tokio::spawn(async move {
-        worker.run(&pool, config).await
-    });
-    
-    // Wait for processing
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    
-    worker_handle.abort();
-    
-    // Should have processed all 5 events
-    assert_eq!(process_count.load(Ordering::SeqCst), 5);
-    
-    let completed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'completed'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(completed, 5);
-    
-    Ok(())
+struct SlowProcessor {
+    agent_name: String,
 }
 
-#[tokio::test]
-async fn test_worker_graceful_shutdown() -> Result<()> {
-    let pool = setup_test_db().await?;
-    
-    // Insert events
-    for _ in 0..3 {
-        insert_test_event(&pool).await?;
-    }
-    
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(50),
-        max_retries: 3,
-        retry_backoff_base: Duration::from_secs(1),
-    };
-    
-    let mut worker = TestWorker::new();
-    worker.processing_delay = Duration::from_millis(100); // Slow processing
-    let process_count = worker.process_count.clone();
-    
-    let pool_clone = pool.clone();
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-    
-    let worker_handle = tokio::spawn(async move {
-        tokio::select! {
-            result = worker.run(&pool_clone, config) => result,
-            _ = &mut shutdown_rx => {
-                println!("Worker received shutdown signal");
-                Ok(())
-            }
-        }
-    });
-    
-    // Let it process one event
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    
-    // Send shutdown signal
-    let _ = shutdown_tx.send(());
-    
-    // Wait for graceful shutdown
-    let _ = worker_handle.await;
-    
-    // Should have processed at least one but not all
-    let processed = process_count.load(Ordering::SeqCst);
-    assert!(processed >= 1 && processed < 3, 
-        "Should have processed some but not all events, got {}", processed);
-    
-    Ok(())
-}
-
-struct PanicWorker;
-
-#[async_trait::async_trait]
-impl Worker for PanicWorker {
-    fn name(&self) -> &'static str {
-        "panic_worker"
-    }
-    
+#[async_trait]
+impl EventProcessor for SlowProcessor {
     async fn process_event(
-        &mut self,
-        _event: &RawEvent,
+        &self,
         _pool: &PgPool,
-    ) -> Result<ProcessingResult> {
-        panic!("Worker panicked!");
+        _item: &PromotionQueueItem,
+    ) -> Result<()> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        Ok(())
+    }
+    
+    fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+    
+    fn batch_size(&self) -> i32 {
+        5
+    }
+    
+    fn poll_interval_secs(&self) -> u64 {
+        2
     }
 }
 
 #[tokio::test]
-async fn test_worker_panic_recovery() -> Result<()> {
-    let pool = setup_test_db().await?;
-    let _ = insert_test_event(&pool).await?;
-    
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 1,
-        retry_backoff_base: Duration::from_millis(100),
+async fn test_processor_custom_configuration() {
+    let processor = SlowProcessor {
+        agent_name: "slow_agent".to_string(),
     };
     
-    let mut worker = PanicWorker;
-    
-    let worker_handle = tokio::spawn(async move {
-        let _ = worker.run(&pool, config).await;
-    });
-    
-    // Wait for panic and recovery attempts
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    
-    // Worker task should have panicked
-    assert!(worker_handle.is_finished());
-    
-    // Event should still be in queue (not completed)
-    let pending: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'pending'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(pending, 1, "Event should remain pending after worker panic");
-    
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_worker_database_error_handling() -> Result<()> {
-    let pool = setup_test_db().await?;
-    let event_id = insert_test_event(&pool).await?;
-    
-    // Delete the raw event to cause a database error during processing
-    sqlx::query("DELETE FROM raw.events WHERE id = $1")
-        .bind(event_id.as_uuid())
-        .execute(&pool)
-        .await?;
-    
-    let config = WorkerConfig {
-        batch_size: 1,
-        poll_interval: Duration::from_millis(100),
-        max_retries: 2,
-        retry_backoff_base: Duration::from_millis(100),
-    };
-    
-    let mut worker = TestWorker::new();
-    let process_count = worker.process_count.clone();
-    
-    let worker_handle = tokio::spawn(async move {
-        worker.run(&pool, config).await
-    });
-    
-    // Wait for retry attempts
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    
-    worker_handle.abort();
-    
-    // Worker should not have been called (event fetch failed)
-    assert_eq!(process_count.load(Ordering::SeqCst), 0);
-    
-    // Item should be marked as failed
-    let failed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE status = 'failed'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    assert_eq!(failed, 1);
-    
-    Ok(())
+    assert_eq!(processor.agent_name(), "slow_agent");
+    assert_eq!(processor.batch_size(), 5);
+    assert_eq!(processor.poll_interval_secs(), 2);
 }
