@@ -121,6 +121,13 @@
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."
             '';
           };
+          
+          # NixOS VM tests
+          checks = {
+            sinex-vm-basic = import ./test/nixos-vm/test-scenarios/basic-flow.nix {
+              inherit pkgs;
+            };
+          };
         }
       );
     in

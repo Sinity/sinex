@@ -17,6 +17,13 @@ test-system:
 test-dlq:
     cargo test --test integration ingestor::dlq_tests
 
+# NixOS VM tests
+test-vm:
+    nix build .#checks.x86_64-linux.sinex-vm-basic -L
+
+test-vm-interactive:
+    nix build .#checks.x86_64-linux.sinex-vm-basic -L --keep-failed
+
 test-e2e:
     cargo test --test integration system::end_to_end:: -- --nocapture
 
