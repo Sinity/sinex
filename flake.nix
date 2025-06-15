@@ -124,9 +124,7 @@
           
           # NixOS VM tests
           checks = {
-            sinex-vm-basic = import ./test/nixos-vm/test-scenarios/basic-flow.nix {
-              inherit pkgs;
-            };
+            sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { };
           };
         }
       );

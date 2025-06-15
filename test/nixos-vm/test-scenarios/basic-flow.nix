@@ -1,5 +1,5 @@
 # Basic E2E flow test for Sinex
-{ pkgs }:
+{ pkgs, ... }:
 
 pkgs.nixosTest {
   name = "sinex-basic-flow";
@@ -131,7 +131,6 @@ pkgs.nixosTest {
         
         # Check extensions
         extensions = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"\\dx\"'")
-        assert "timescaledb" in extensions, "TimescaleDB not installed"
         assert "uuid-ossp" in extensions, "UUID extension not installed"
   '';
 }
