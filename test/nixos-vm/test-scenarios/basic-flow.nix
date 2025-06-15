@@ -2,15 +2,13 @@
 { pkgs, sinex-collector, ... }:
 
 let
-  # Use the provided sinex-collector package from the flake - no need to rebuild
-  
   # Python CLI for querying (simple wrapper)
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
     import subprocess
     import sys
     import json
-    
+
     # Simple query interface to PostgreSQL
     def query_events(limit=10):
         result = subprocess.run([
@@ -31,7 +29,7 @@ let
                 print("No events found")
         else:
             print(f"Query failed: {result.stderr}")
-    
+
     def stats():
         result = subprocess.run([
             "${pkgs.postgresql_16}/bin/psql", 
@@ -46,7 +44,7 @@ let
             print(f"Total events captured: {count}")
         else:
             print(f"Stats failed: {result.stderr}")
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "stats":
         stats()
     else:
@@ -58,75 +56,91 @@ let
                 pass
         query_events(limit)
   '';
-
 in
 pkgs.nixosTest {
   name = "sinex-basic-flow";
-  
-  nodes.machine = { config, pkgs, ... }: {
-    imports = [ 
-      ../vm-config.nix
-      # Import the actual Sinex NixOS module
-      ../../../nixos/default.nix
-    ];
-    
-    # Use Sinex the way a real user would!
-    services.sinex = {
-      enable = true;
+
+  nodes.machine =
+    { config, pkgs, ... }:
+    {
+      imports = [
+        # Import the actual Sinex NixOS module
+        ../../../nixos/default.nix
+      ];
+
+      # Basic system configuration
+      networking.hostName = "sinex-test";
       
-      database = {
-        name = "sinex_test";
+      # The Sinex module will handle PostgreSQL setup
+      # We just need to ensure required extensions are available
+      services.postgresql = {
+        extraPlugins = with pkgs.postgresql16Packages; [
+          timescaledb
+          pgx_ulid
+          # pg_jsonschema when available
+        ];
       };
-      
-      unifiedCollector = {
+
+      # Use Sinex the way a real user would!
+      services.sinex = {
         enable = true;
-        
-        # Just enable filesystem monitoring for the test
-        sources = {
-          filesystem = {
-            enable = true;
-            watchPaths = [ "/home/test/watched" ];
-            excludePatterns = [];
+
+        database = {
+          name = "sinex_test";
+          user = "sinex_test";  # Match the database name to avoid NixOS assertion
+        };
+
+        unifiedCollector = {
+          enable = true;
+
+          # Just enable filesystem monitoring for the test
+          sources = {
+            filesystem = {
+              enable = true;
+              watchPaths = [ "/home/test/watched" ];
+              excludePatterns = [ ];
+            };
           };
         };
       };
+
+      # Create test user and directory
+      users.users.test = {
+        isNormalUser = true;
+        home = "/home/test";
+        createHome = true;
+      };
+
+      # Create watched directory
+      systemd.tmpfiles.rules = [
+        "d /home/test/watched 0755 test users -"
+      ];
+      
+      # Provide our built packages
+      nixpkgs.overlays = [(final: prev: {
+        sinex-unified-collector = sinex-collector;
+        sqlx-cli = prev.sqlx-cli or pkgs.sqlx-cli;
+      })];
+      
+      # Make the sinex query tool available
+      environment.systemPackages = [ sinex-query ];
     };
-    
-    # Create test user and directory
-    users.users.test = {
-      isNormalUser = true;
-      home = "/home/test";
-      createHome = true;
-    };
-    
-    # Create watched directory
-    systemd.tmpfiles.rules = [
-      "d /home/test/watched 0755 test users -"
-    ];
-    
-    # Provide our built collector package
-    nixpkgs.overlays = [(final: prev: {
-      sinex-unified-collector = sinex-collector;
-      # The module also uses sqlx-cli
-      sqlx-cli = prev.sqlx-cli or pkgs.sqlx-cli;
-    })];
-  };
-  
+
   testScript = ''
     start_all()
-    
+
     # Wait for system to be ready
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service")
-    
+
     # Verify PostgreSQL is running
     machine.succeed("systemctl is-active postgresql")
-    
+
     # Wait for Sinex services (the module creates these)
-    machine.wait_for_unit("sinex-db-init.service")
+    machine.wait_for_unit("sinex-init.service")
     machine.wait_for_unit("sinex-unified-collector.service")
     machine.succeed("systemctl is-active sinex-unified-collector")
-    
+
     # Test 1: Database schema validation
     with subtest("Database schema validation"):
         # Check that Sinex tables exist
@@ -137,7 +151,7 @@ pkgs.nixosTest {
         extensions = machine.succeed("su - postgres -c 'psql -d sinex_test -c \"\\dx\"'")
         assert "timescaledb" in extensions, "TimescaleDB not installed"
         print(f"Extensions: {extensions}")
-    
+
     # Test 2: Basic file creation event
     with subtest("File creation event capture"):
         # Create a test file
@@ -156,7 +170,7 @@ pkgs.nixosTest {
         
         # Basic verification that the system is working
         assert "Total events captured:" in stats, "Stats command not working"
-    
+
     # Test 3: Multiple file events
     with subtest("Multiple event capture"):
         # Create multiple files
@@ -180,23 +194,23 @@ pkgs.nixosTest {
             assert count > 0, f"Expected some events, got {count}"
         else:
             print("Could not parse event count, but stats command worked")
-    
+
     # Test 4: Service resilience
     with subtest("Service restart resilience"):
         # Restart the collector
-        machine.systemctl("restart sinex-collector")
-        machine.wait_for_unit("sinex-collector.service")
+        machine.systemctl("restart sinex-unified-collector")
+        machine.wait_for_unit("sinex-unified-collector.service")
         
         # Generate new event
         machine.succeed("su - test -c 'echo \"After restart\" > /home/test/watched/restart-test.txt'")
         machine.sleep(2)
         
         # Verify service is still active
-        machine.succeed("systemctl is-active sinex-collector")
+        machine.succeed("systemctl is-active sinex-unified-collector")
         
         # Check that we can still query (system still responsive)
         machine.succeed("sinex stats")
-    
+
     # Test 5: Real database integration
     with subtest("Database integration"):
         # Directly verify events in database
@@ -208,3 +222,4 @@ pkgs.nixosTest {
         print(f"Hypertables: {hypertables}")
   '';
 }
+
