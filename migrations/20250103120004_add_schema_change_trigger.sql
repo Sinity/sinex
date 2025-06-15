@@ -31,8 +31,9 @@ BEGIN
         'change_type', v_change_type,
         'description', NEW.description,
         '_provenance', jsonb_build_object(
-            'correlation_id', coalesce(current_setting('sinex.correlation_id', true), gen_random_uuid()::text),
-            'trigger_op', TG_OP
+            'event_source', 'schema_registry_trigger',
+            'trigger_op', TG_OP,
+            'schema_change_id', gen_random_uuid()::text
         )
     );
 

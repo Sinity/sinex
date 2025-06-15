@@ -27,7 +27,7 @@ This glossary provides definitions for key terms used throughout the Sinnix Exoc
 *   **CDP (Chrome DevTools Protocol):** A protocol allowing programmatic interaction with Chromium-based browsers, used for advanced web archiving and page interaction.
 *   **Cognitive Habitat:** (Original Vision term, now generally "empowering digital environment for thought") The Exocortex conceptualized as an active, adaptive digital environment supporting and extending user cognition.
 *   **Content-Addressing:** Storing data based on a cryptographic hash of its content, providing inherent integrity checking and deduplication (e.g., `git-annex`).
-*   **Correlation ID (`payload._provenance.workflow_correlation_id_custom`):** (Revised usage) An identifier *optionally* propagated by specific agent workflows across a series of related `raw.events` to trace a single logical operation. Not universally mandated in all events.
+*   **Event Relations (`core.event_relations`):** The current approach for linking related events. Creates explicit relationships between events with typed relations ('caused_by', 'followed_by', 'related_to', etc.) and confidence scores. Discovered by temporal analysis, causal inference agents, or user annotation rather than requiring upfront correlation ID propagation.
 *   **CRDT (Conflict-Free Replicated Data Type):** Data structures designed to allow concurrent modifications from multiple sources to eventually converge to the same state without requiring complex conflict resolution logic. Yjs is used for PKM note and Living Document textual content.
 
 ## D
