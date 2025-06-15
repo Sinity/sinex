@@ -119,6 +119,50 @@ update:
 psql:
     psql "$DATABASE_URL"
 
+# Coverage
+coverage:
+    #!/usr/bin/env bash
+    echo "🧪 Running tests with coverage..."
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*"
+
+coverage-html:
+    #!/usr/bin/env bash
+    echo "🧪 Generating HTML coverage report..."
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*" --html
+    echo "📊 Coverage report generated in target/llvm-cov/html/index.html"
+
+coverage-lcov:
+    #!/usr/bin/env bash
+    echo "🧪 Generating LCOV coverage report..."
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*" --lcov --output-path target/llvm-cov/coverage.lcov
+    echo "📊 LCOV report generated in target/llvm-cov/coverage.lcov"
+
+coverage-report: coverage-html
+    @echo "📊 Opening coverage report..."
+    xdg-open target/llvm-cov/html/index.html 2>/dev/null || echo "💡 Open target/llvm-cov/html/index.html in your browser"
+
+# Test categories
+test-unit:
+    cargo test --lib
+
+test-core:
+    cargo test --lib --workspace
+
+test-database:
+    cargo test --test database
+
+test-adversarial:
+    cargo test --test adversarial
+
+test-worker:
+    cargo test --test worker
+
+test-system:
+    cargo test --test pipeline --test integration
+
+test-e2e: test-system
+
 # Aliases
 alias c := check
 alias t := test
+alias cov := coverage

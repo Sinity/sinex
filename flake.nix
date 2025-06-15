@@ -67,6 +67,7 @@
               rustToolchain
               cargo-watch
               cargo-nextest
+              cargo-llvm-cov
 
               # Development tools
               just
