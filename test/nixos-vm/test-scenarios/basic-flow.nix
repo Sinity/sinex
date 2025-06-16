@@ -1,5 +1,5 @@
 # Basic E2E flow test for Sinex
-{ pkgs, sinex-collector, sinex-promo-worker, ... }:
+{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
 
 let
   # Python CLI for querying (simple wrapper)
@@ -101,6 +101,9 @@ pkgs.nixosTest {
       nixpkgs.overlays = [(final: prev: {
         sinex-unified-collector = sinex-collector;
         sinex-promo-worker = sinex-promo-worker;
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = pg_jsonschema;
+        };
       })];
       
       # Make the sinex query tool available

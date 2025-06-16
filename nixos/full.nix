@@ -1,38 +1,44 @@
 # Sinex NixOS Module - First-class system integration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 with lib;
 
 let
   cfg = config.services.sinex;
   configGen = import ./config-gen.nix { inherit lib pkgs; };
-  
+
   # Use config generation from separate module
   collectorConfigFile = configGen.mkCollectorConfigFile cfg.unifiedCollector cfg;
 
   # Database migration script
   migrateDbScript = pkgs.writeShellScript "migrate-sinex-db" ''
     set -e
-    
+
     # Wait for PostgreSQL to be available
     until ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql; do
       echo "Waiting for PostgreSQL to be ready..."
       sleep 2
     done
-    
+
     # Run migrations (they create extensions and schema)
     export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
     cd ${./.}
     ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migrations
   '';
 
-in {
+in
+{
   options.services.sinex = {
     enable = mkEnableOption "Sinex Exocortex event capture system";
 
     package = mkOption {
       type = types.package;
-      default = pkgs.sinex or (import ./. {}).packages.${pkgs.system}.default;
+      default = pkgs.sinex or (import ./. { }).packages.${pkgs.system}.default;
       defaultText = literalExpression "pkgs.sinex";
       description = "The Sinex package to use";
     };
@@ -96,7 +102,13 @@ in {
       };
 
       logLevel = mkOption {
-        type = types.enum [ "trace" "debug" "info" "warn" "error" ];
+        type = types.enum [
+          "trace"
+          "debug"
+          "info"
+          "warn"
+          "error"
+        ];
         default = "info";
         description = "Log level for the collector";
       };
@@ -172,7 +184,7 @@ in {
             default = false;
             description = "Automatically start recording all terminal sessions";
           };
-          
+
           autoAnnex = mkOption {
             type = types.bool;
             default = true;
@@ -204,13 +216,13 @@ in {
             default = 10000;
             description = "Maximum scrollback lines to capture";
           };
-          
+
           captureOnCommand = mkOption {
             type = types.bool;
             default = true;
             description = "Capture scrollback when commands are executed";
           };
-          
+
           commandCaptureDelay = mkOption {
             type = types.int;
             default = 500;
@@ -227,152 +239,159 @@ in {
 
           watchPaths = mkOption {
             type = types.listOf types.str;
-            default = [ "~/Documents" "~/Projects" ];
+            default = [
+              "~/Documents"
+              "~/Projects"
+            ];
             description = "Paths to monitor for filesystem events";
           };
 
           excludePatterns = mkOption {
             type = types.listOf types.str;
-            default = [ "*.tmp" "*.cache" ".git/*" ];
+            default = [
+              "*.tmp"
+              "*.cache"
+              ".git/*"
+            ];
             description = "Patterns to exclude from monitoring";
           };
         };
-        
+
         dbus = {
           enable = mkOption {
             type = types.bool;
             default = true;
             description = "Enable D-Bus event monitoring";
           };
-          
+
           monitorSession = mkOption {
             type = types.bool;
             default = true;
             description = "Monitor session bus";
           };
-          
+
           monitorSystem = mkOption {
             type = types.bool;
             default = true;
             description = "Monitor system bus";
           };
-          
+
           logAllSignals = mkOption {
             type = types.bool;
             default = false;
             description = "Log all D-Bus signals (verbose)";
           };
-          
+
           extractNotifications = mkOption {
             type = types.bool;
             default = true;
             description = "Extract notification events";
           };
-          
+
           extractMedia = mkOption {
             type = types.bool;
             default = true;
             description = "Extract media playback events";
           };
-          
+
           extractPower = mkOption {
             type = types.bool;
             default = true;
             description = "Extract power management events";
           };
-          
+
           extractHardware = mkOption {
             type = types.bool;
             default = true;
             description = "Extract hardware device events";
           };
-          
+
           extractSession = mkOption {
             type = types.bool;
             default = true;
             description = "Extract session/idle events";
           };
-          
+
           extractPolicykit = mkOption {
             type = types.bool;
             default = true;
             description = "Extract PolicyKit authorization events";
           };
-          
+
           extractBluetooth = mkOption {
             type = types.bool;
             default = true;
             description = "Extract Bluetooth device events";
           };
-          
+
           extractNetwork = mkOption {
             type = types.bool;
             default = true;
             description = "Extract network connection events";
           };
-          
+
           extractScreensaver = mkOption {
             type = types.bool;
             default = true;
             description = "Extract screen saver/lock events";
           };
-          
+
           extractMounts = mkOption {
             type = types.bool;
             default = true;
             description = "Extract storage mount/unmount events";
           };
         };
-        
+
         clipboard = {
           enable = mkOption {
             type = types.bool;
             default = true;
             description = "Enable clipboard monitoring";
           };
-          
+
           monitorClipboard = mkOption {
             type = types.bool;
             default = true;
             description = "Monitor standard clipboard";
           };
-          
+
           monitorPrimary = mkOption {
             type = types.bool;
             default = true;
             description = "Monitor primary selection (Linux)";
           };
-          
+
           monitorSecondary = mkOption {
             type = types.bool;
             default = false;
             description = "Monitor secondary selection (rarely used)";
           };
-          
+
           pollInterval = mkOption {
             type = types.int;
             default = 500;
             description = "Polling interval in milliseconds";
           };
-          
+
           hashFileContent = mkOption {
             type = types.bool;
             default = false;
             description = "Include file content hashes";
           };
-          
+
           maxPreviewLength = mkOption {
             type = types.int;
             default = 100;
             description = "Maximum preview length for text content";
           };
-          
+
           enableHistory = mkOption {
             type = types.bool;
             default = true;
             description = "Store clipboard history";
           };
-          
+
           maxHistoryEntries = mkOption {
             type = types.int;
             default = 1000;
@@ -506,18 +525,20 @@ in {
     # Database setup
     services.postgresql = mkIf cfg.database.autoSetup {
       enable = true;
-      package = mkDefault pkgs.postgresql_16;
+      package = mkForce pkgs.postgresql_16;
       extraPlugins = with pkgs.postgresql16Packages; [
         timescaledb
-        pgvector  
+        pgvector
         pgx_ulid
-        pg_jsonschema  # From our overlay
+        pg_jsonschema # From our overlay
       ];
       ensureDatabases = [ cfg.database.name ];
-      ensureUsers = [{
-        name = cfg.database.user;
-        ensureDBOwnership = true;
-      }];
+      ensureUsers = [
+        {
+          name = cfg.database.user;
+          ensureDBOwnership = true;
+        }
+      ];
     };
 
     # Database migrations
@@ -526,7 +547,7 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "postgresql.service" ];
       requires = [ "postgresql.service" ];
-      
+
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -539,7 +560,10 @@ in {
     # Unified Collector service
     systemd.services.sinex-unified-collector = mkIf cfg.unifiedCollector.enable {
       description = "Sinex Unified Event Collector";
-      after = [ "network.target" "postgresql.service" ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
+      after = [
+        "network.target"
+        "postgresql.service"
+      ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
       wants = [ "postgresql.service" ];
       wantedBy = [ "multi-user.target" ];
 
@@ -554,7 +578,7 @@ in {
         ExecStart = "${cfg.package}/bin/sinex-collector --config ${collectorConfigFile}";
         Restart = "always";
         RestartSec = "10s";
-        
+
         # Security hardening
         DynamicUser = true;
         StateDirectory = "sinex";
@@ -563,10 +587,10 @@ in {
         ProtectSystem = "strict";
         ProtectHome = "read-only";
         NoNewPrivileges = true;
-        
+
         # Allow access to user files for ingestion
         SupplementaryGroups = [ "users" ];
-        
+
         # Capability for monitoring
         AmbientCapabilities = "CAP_DAC_READ_SEARCH";
       };
@@ -575,7 +599,10 @@ in {
     # Promotion Worker service
     systemd.services.sinex-promo-worker = mkIf cfg.promoWorker.enable {
       description = "Sinex Event Promotion Worker";
-      after = [ "network.target" "postgresql.service" ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
+      after = [
+        "network.target"
+        "postgresql.service"
+      ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
       wants = [ "postgresql.service" ];
       wantedBy = [ "multi-user.target" ];
 
@@ -589,7 +616,7 @@ in {
         ExecStart = "${cfg.package}/bin/sinex-promo-worker";
         Restart = "always";
         RestartSec = "10s";
-        
+
         # Security hardening
         DynamicUser = true;
         PrivateTmp = true;
@@ -604,7 +631,7 @@ in {
       description = "Initialize Sinex git-annex repository";
       wantedBy = [ "multi-user.target" ];
       before = [ "sinex-unified-collector.service" ];
-      
+
       script = ''
         if [ ! -d "${cfg.blobStorage.repositoryPath}/.git" ]; then
           mkdir -p "$(dirname ${cfg.blobStorage.repositoryPath})"
@@ -617,7 +644,7 @@ in {
           git config annex.backend "SHA256E"
         fi
       '';
-      
+
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -629,15 +656,19 @@ in {
     services.prometheus.scrapeConfigs = mkIf cfg.observability.enablePrometheus [
       {
         job_name = "sinex_unified_collector";
-        static_configs = [{
-          targets = [ "localhost:${toString cfg.unifiedCollector.metricsPort}" ];
-        }];
+        static_configs = [
+          {
+            targets = [ "localhost:${toString cfg.unifiedCollector.metricsPort}" ];
+          }
+        ];
       }
       {
         job_name = "sinex_promo_worker";
-        static_configs = [{
-          targets = [ "localhost:${toString cfg.promoWorker.metricsPort}" ];
-        }];
+        static_configs = [
+          {
+            targets = [ "localhost:${toString cfg.promoWorker.metricsPort}" ];
+          }
+        ];
       }
     ];
 
