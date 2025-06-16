@@ -1,184 +1,97 @@
-# Sinex - Universal Data Capture and Query System
+# Sinex - Event-Driven Data Capture System
 
-A personal data substrate that captures digital events across devices and modalities, providing a unified query interface for your digital memory.
+Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. It provides a unified collection framework for various event sources with immutable storage and concurrent processing capabilities.
 
-## 🚀 Quick Start
+## Architecture
 
-```bash
-# Enter development environment (database setup is automatic)
-nix develop
+**Core Flow**: EventSources → UnifiedCollector → Event Substrate → Workers → Query Interface
 
-# Run a simple test
-cargo run --bin unified-collector -- --dry-run
+- **EventSources**: Individual event capturing components (filesystem, terminals, window managers)
+- **UnifiedCollector**: Central coordinator that manages all event sources
+- **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
+- **Workers**: Process events concurrently using `SELECT FOR UPDATE SKIP LOCKED`
+- **Query Interface**: Python CLI for exploring captured events
 
-# Query captured events
-./cli/exo.py query --limit 10
-```
+## Test Coverage
 
-## 🏗️ Architecture
+Sinex has comprehensive test coverage across multiple categories:
 
-Sinex follows an event-driven architecture with three layers:
+### Test Summary
+- **Total test files**: 73
+- **Total tests**: 239
 
-1. **Ingestors** - Capture events from various sources (filesystem, terminals, window managers)
-2. **Event Substrate** - PostgreSQL + TimescaleDB stores immutable events with ULID keys
-3. **Query Interface** - Python CLI for exploring and analyzing captured data
+### Test Categories
+- **Unit tests**: 52 tests
+  - Core functionality (event registry, raw event builder, context)
+  - Database operations and validation
+  - ULID edge cases and conversions
+  
+- **Integration tests**: 40 tests
+  - Database integration (TimescaleDB, schema validation)
+  - Collector configuration and lifecycle
+  - Worker processing and backoff strategies
+  - Event source integration (Atuin, terminal)
 
-### Project Structure
+- **Adversarial tests**: 83 tests
+  - Time-based attacks and ULID edge cases
+  - Resource exhaustion scenarios
+  - Security vulnerability testing
+  - JSON payload attacks
+  - Race conditions and state violations
+  - Database boundary conditions
 
-```
-sinex/
-├── crate/                  # Core Rust libraries
-│   ├── sinex-core/         # Common types (RawEvent, errors)
-│   ├── sinex-db/           # Database models and pooling
-│   ├── sinex-ulid/         # ULID implementation
-│   ├── sinex-worker/       # Event processing workers
-│   └── sinex-events/       # Event type definitions
-├── ingestor/              # Event capture implementations
-│   ├── shared/             # Shared utilities
-│   └── unified-collector/  # Unified multi-source collector
-├── config/                 # Example configurations
-├── test/                  # Organized test suites
-└── cli/                    # Python query tools
-```
+- **System tests**: 22 tests
+  - End-to-end pipeline testing
+  - Git Annex integration
+  - Regression tests for known issues
+  - Performance benchmarks
 
-## 📊 Event Format
+- **VM tests**: 1 comprehensive test
+  - Full NixOS module integration
+  - Database setup and permissions
+  - Event capture verification
+  - Service resilience testing
 
-All events follow a universal structure:
-
-```json
-{
-  "id": "01HKJM2Q3R4S5T6U7V8W9X0Y1Z",
-  "source": "filesystem",
-  "event_type": "file.created",
-  "ts_ingest": "2024-01-15T10:30:00Z",
-  "ts_orig": "2024-01-15T10:29:59Z",
-  "host": "workstation-01",
-  "payload": { /* event-specific data */ }
-}
-```
-
-## 🛠️ Development
-
-### Building & Testing
+### Running Tests
 
 ```bash
-just check    # Fast compile check
-just test     # Run all tests
-just build    # Build everything
-just watch    # Continuous testing
+# Run all tests
+just test
+
+# Run specific test categories
+cargo test --test unit/
+cargo test --test integration/
+cargo test --test adversarial/
+
+# Run VM tests
+nix build .#checks.x86_64-linux.sinex-vm-basic -L
+
+# Run with coverage
+just test-coverage
 ```
 
-### Running Ingestors
+## Quick Start
 
+### Development Setup
 ```bash
-# Run the unified collector
-just unified                # Run unified collector
-just worker                 # Run promotion worker
-
-# Run with options
-just unified --dry-run      # Test without database writes
-just unified --output-file events.json  # Output to file
-just unified --config config/unified-collector.toml
-
-# Manage all ingestors
-just ingestors-start        # Start all in background
-just ingestors-start --dry-run  # Start all in dry-run mode
-just ingestors-stop         # Stop all running ingestors
+nix develop                    # Enter development shell
+just                          # See available commands
 ```
 
-### Database Operations
-
-The database (`sinex_dev`) is automatically created and migrations applied when entering the nix shell.
-
+### Running the Collector
 ```bash
-# Apply migrations manually if needed
-just migrate
-
-# Create new migration
-just migrate-create feature_name
-
-# Direct database connection
-just psql
-
-# Update SQLX cache after query changes
-just sqlx-prepare
+just unified                  # Run unified collector
+just worker                   # Run promotion worker
+just query                    # Query recent events
 ```
 
-## 🔧 Configuration
+## Documentation
 
-The unified collector automatically loads configuration from (in priority order):
-1. `unified-collector.toml` in current directory
-2. `~/.config/unified-collector.toml`
-3. Built-in defaults (uses DATABASE_URL from environment)
+- **Architecture**: `spec/STAD.md`
+- **Getting Started**: `spec/SADI.md` 
+- **Implementation Details**: `spec/docs/tims/`
+- **Design Decisions**: `spec/docs/adr/`
 
-```bash
-# Use custom config file
-just unified --config my-config.toml
+## License
 
-# Configuration is logged at startup
-just unified
-# [INFO] Configuration loaded:
-# [INFO]   Database URL: postgresql:///sinex_dev?host=/run/postgresql
-# [INFO]   Enabled sources: [filesystem, terminal, window_manager]
-# ...
-```
-
-## 🧪 Testing Strategy
-
-Tests are organized by category in `test/`:
-
-- `database/` - Schema, migration, ULID tests
-- `pipeline/` - Event processing and worker tests
-- `agent/` - Agent manifest and heartbeat tests
-- `reliability/` - Error handling and failure scenarios
-
-```bash
-just test                    # Run all tests
-just test -- --test database/  # Run specific test category  
-just test -- --nocapture     # See test output
-```
-
-## 🏗️ Key Patterns
-
-### SimpleIngestor Pattern
-All ingestors implement a simple trait that focuses only on event capture:
-
-```rust
-impl SimpleIngestor for MyIngestor {
-    fn name() -> &'static str { "my-ingestor" }
-    fn version() -> &'static str { env!("CARGO_PKG_VERSION") }
-    async fn capture_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
-        // Capture logic only - runtime handles lifecycle
-    }
-}
-```
-
-### Database Patterns
-- ULID primary keys for time-ordered, distributed-safe IDs
-- Immutable events in `raw.events` hypertable
-- Concurrent processing with `SELECT FOR UPDATE SKIP LOCKED`
-- JSON Schema validation for event payloads
-
-## 📚 Documentation
-
-- `CLAUDE.md` - Development practices and project memory
-- `spec/SADI.md` - Documentation index
-- `spec/STAD.md` - System architecture
-- `spec/docs/tims/` - Implementation details
-
-## 🏗️ NixOS Integration
-
-```nix
-{
-  services.sinex = {
-    enable = true;
-    systemUser = "username";
-    database = { name = "sinex"; user = "sinex"; };
-    ingestors.hyprland.enable = true;
-  };
-}
-```
-
-## 📄 License
-
-MIT License - see LICENSE file for details.
+See LICENSE file for details.
