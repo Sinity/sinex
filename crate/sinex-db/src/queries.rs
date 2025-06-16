@@ -1095,6 +1095,40 @@ pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<W
     get_work_item_by_id(pool, queue_id).await
 }
 
+/// Purge old completed work queue items based on TTL policy
+/// Removes items with status 'succeeded' or 'failed' that have processed_at older than 90 days
+pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"
+        DELETE FROM sinex_schemas.work_queue
+        WHERE status IN ('succeeded', 'failed')
+        AND processed_at IS NOT NULL
+        AND processed_at < now() - interval '90 days'
+        "#
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected())
+}
+
+/// Get count of work queue items eligible for purging (for monitoring)
+pub async fn count_purgeable_work_queue_items(pool: &PgPool) -> Result<i64> {
+    let result = sqlx::query!(
+        r#"
+        SELECT COUNT(*) as count
+        FROM sinex_schemas.work_queue
+        WHERE status IN ('succeeded', 'failed')
+        AND processed_at IS NOT NULL
+        AND processed_at < now() - interval '90 days'
+        "#
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(result.count.unwrap_or(0))
+}
+
 /// Get DLQ items for a specific agent
 pub async fn get_dlq_items(
     pool: &PgPool,

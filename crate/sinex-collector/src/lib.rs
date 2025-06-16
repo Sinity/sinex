@@ -114,6 +114,8 @@ pub async fn output_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use sinex_ulid::Ulid;
     use tempfile::NamedTempFile;
     use tokio::io::AsyncReadExt;
 
@@ -137,12 +139,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_event_dry_run() {
-        let event = RawEvent::new(
-            "test_source".to_string(),
-            "test_event".to_string(),
-            serde_json::json!({"test": "data"}),
-            "test_host".to_string(),
-        );
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "test_source".to_string(),
+            event_type: "test_event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test_host".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({"test": "data"}),
+        };
 
         let output_config = OutputConfig {
             to_database: true,
@@ -160,12 +167,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_event_to_stdout() {
-        let event = RawEvent::new(
-            "test_source".to_string(),
-            "test_event".to_string(),
-            serde_json::json!({"test": "data"}),
-            "test_host".to_string(),
-        );
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "test_source".to_string(),
+            event_type: "test_event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test_host".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({"test": "data"}),
+        };
 
         let output_config = OutputConfig {
             to_database: false,
@@ -182,12 +194,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_event_to_file() {
-        let event = RawEvent::new(
-            "test_source".to_string(),
-            "test_event".to_string(),
-            serde_json::json!({"test": "data"}),
-            "test_host".to_string(),
-        );
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "test_source".to_string(),
+            event_type: "test_event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test_host".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({"test": "data"}),
+        };
 
         let temp_file = NamedTempFile::new().unwrap();
         let file_path = temp_file.path().to_str().unwrap().to_string();
@@ -216,12 +233,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_event_validation_failure() {
-        let event = RawEvent::new(
-            "".to_string(), // Invalid empty source
-            "test_event".to_string(),
-            serde_json::json!({"test": "data"}),
-            "test_host".to_string(),
-        );
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "".to_string(), // Invalid empty source
+            event_type: "test_event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test_host".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({"test": "data"}),
+        };
 
         let output_config = OutputConfig {
             to_database: true,
@@ -231,7 +253,7 @@ mod tests {
         };
 
         // Create a mock validator that always fails
-        let validator = EventValidator::new(Default::default());
+        let validator = EventValidator::new();
         
         let mut file_handle = None;
         // Without a real database pool, this should handle the missing pool gracefully
@@ -243,12 +265,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_event_multiple_destinations() {
-        let event = RawEvent::new(
-            "test_source".to_string(),
-            "test_event".to_string(),
-            serde_json::json!({"test": "data"}),
-            "test_host".to_string(),
-        );
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "test_source".to_string(),
+            event_type: "test_event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test_host".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: serde_json::json!({"test": "data"}),
+        };
 
         let temp_file = NamedTempFile::new().unwrap();
         let file_path = temp_file.path().to_str().unwrap().to_string();
