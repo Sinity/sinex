@@ -33,7 +33,7 @@ Tier 0 (Foundation - 90% Done)
 └── Promotion Queue 🚧
 
 Tier 1 (No External Dependencies)
-├── Git Annex Blob Storage [L3]
+├── Git Annex Blob Storage ✅ (sinex-annex crate implemented)
 ├── Rich Hyprland IPC [L3]
 ├── Basic LLM Integration [L2]
 └── pgBackRest Setup [L3]
@@ -133,10 +133,10 @@ Create `spec/PROGRESS.md`:
 ```markdown
 # Sinex Implementation Progress
 
-## Overall: 15% of Vision
+## Overall: 20% of Vision
 
 ### By Domain
-- Core Infrastructure: 70% ████████░░
+- Core Infrastructure: 80% ████████░░
 - Event Capture: 30% ███░░░░░░░
 - AI Integration: 5% ░░░░░░░░░░
 - User Interface: 10% █░░░░░░░░░
@@ -160,13 +160,14 @@ This organization maintains the full vision while making it clear what can be bu
 
 ## Implementation Gap Analysis
 
-### Current Implementation: ~15-20% of Vision
+### Current Implementation: ~20% of Vision
 
 ### What's Built:
 - Core event storage infrastructure
 - Basic event sources (filesystem, terminal, clipboard)
 - Simple promotion worker
 - Database schema (mostly complete)
+- Git-annex blob storage (sinex-annex crate with BlobManager)
 
 ### Major Unimplemented Categories:
 
@@ -179,10 +180,11 @@ This organization maintains the full vision while making it clear what can be bu
 - Advanced terminal capture, accessibility events
 - Full Hyprland IPC implementation
 
-#### 3. Advanced Processing (95% unimplemented)
+#### 3. Advanced Processing (90% unimplemented)
 - Living documents, CRDT integration
 - Semantic search, knowledge graph building
 - Activity segmentation, context synthesis
+- Git-annex blob storage ✅ (sinex-annex crate fully implemented)
 
 #### 4. User Interfaces (90% unimplemented)
 - Neovim plugin, web UI, advanced CLI
