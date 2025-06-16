@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_db::models::{AgentManifest, RawEvent};
-use sinex_promo_worker::{PromotionRouter, EventScanner, ScannerConfig};
+use sinex_promo_worker::{WorkRouter, EventScanner, ScannerConfig};
 use sinex_ulid::Ulid;
 
 /// Helper to create a test event
@@ -48,7 +48,7 @@ fn create_test_manifest(
 }
 
 #[tokio::test]
-async fn test_promotion_router_integration() {
+async fn test_work_router_integration() {
     // Create test manifests
     let manifests = vec![
         create_test_manifest(
@@ -76,7 +76,7 @@ async fn test_promotion_router_integration() {
         ),
     ];
     
-    let router = PromotionRouter::from_manifests(manifests);
+    let router = WorkRouter::from_manifests(manifests);
     
     // Test event routing
     let event1 = create_test_event("test.source", "event1");
@@ -163,7 +163,7 @@ fn test_router_with_complex_subscriptions() {
         ),
     ];
     
-    let router = PromotionRouter::from_manifests(manifests);
+    let router = WorkRouter::from_manifests(manifests);
     
     // Test filesystem events
     let file_event = create_test_event("filesystem.watcher", "file_created");
