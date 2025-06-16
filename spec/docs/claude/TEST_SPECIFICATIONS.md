@@ -212,75 +212,114 @@ mod query_specs {
 }
 ```
 
-## Correlation ID Tests
+## Event Relations Tests
 
 ```rust
 #[cfg(test)]
-mod correlation_specs {
+mod event_relations_specs {
     use super::*;
     
-    #[test]
-    fn correlation_id_propagates_through_environment() {
-        // This test documents correlation propagation mechanism
-        let correlation_id = Ulid::new().to_string();
-        
-        // Parent process sets correlation ID
-        std::env::set_var("SINEX_CORRELATION_ID", &correlation_id);
-        
-        // Child process should inherit it
-        let output = std::process::Command::new("printenv")
-            .arg("SINEX_CORRELATION_ID")
-            .output()
-            .unwrap();
-        
-        let child_correlation = String::from_utf8(output.stdout).unwrap().trim().to_string();
-        assert_eq!(child_correlation, correlation_id);
-    }
-    
     #[tokio::test]
-    async fn correlation_enables_workflow_tracing() {
-        // This test documents the use case for correlation IDs
+    async fn event_relations_enable_workflow_tracing() {
+        // This test documents the current approach for linking related events
         let db = setup_test_db().await;
-        let workflow_id = Ulid::new().to_string();
         
-        // Simulate a multi-step workflow:
+        // Create a multi-step workflow through event relations:
         // 1. User opens terminal
         let terminal_event = Event::builder()
             .source("terminal.kitty")
             .event_type("session_started")
-            .with_correlation(&workflow_id)
             .build();
-        insert_event(&db, terminal_event).await;
+        let terminal_id = insert_event(&db, terminal_event).await;
         
-        // 2. User runs git command
+        // 2. User runs git command  
         let git_event = Event::builder()
             .source("terminal.kitty")
             .event_type("command_executed")
             .payload(json!({"command": "git status"}))
-            .with_correlation(&workflow_id)
             .build();
-        insert_event(&db, git_event).await;
+        let git_id = insert_event(&db, git_event).await;
         
         // 3. User opens editor
         let editor_event = Event::builder()
             .source("hyprland")
             .event_type("window_focused")
             .payload(json!({"app_class": "neovim"}))
-            .with_correlation(&workflow_id)
             .build();
-        insert_event(&db, editor_event).await;
+        let editor_id = insert_event(&db, editor_event).await;
         
-        // Query all events in this workflow
-        let workflow_events = query_by_correlation(&db, &workflow_id).await;
+        // Create explicit relations between events
+        create_event_relation(&db, EventRelation {
+            from_event_id: terminal_id,
+            to_event_id: git_id,
+            relation_type: "followed_by".to_string(),
+            confidence: 0.95,
+            detected_by: "temporal_analysis".to_string(),
+            metadata: json!({"time_gap_ms": 500}),
+        }).await;
+        
+        create_event_relation(&db, EventRelation {
+            from_event_id: git_id,
+            to_event_id: editor_id,
+            relation_type: "caused_by".to_string(),
+            confidence: 0.85,
+            detected_by: "user_annotation".to_string(),
+            metadata: json!({"context": "editing files from git status"}),
+        }).await;
+        
+        // Query workflow through relations
+        let workflow_events = query_related_events(&db, terminal_id, 2).await;
         
         assert_eq!(workflow_events.len(), 3);
-        assert!(workflow_events.iter().all(|e| {
-            e.payload["_provenance"]["correlation_id"] == workflow_id
-        }));
+        assert_eq!(workflow_events[0].id, terminal_id);
+        assert_eq!(workflow_events[1].id, git_id);
+        assert_eq!(workflow_events[2].id, editor_id);
         
-        // Events should be time-ordered
-        assert!(workflow_events[0].id < workflow_events[1].id);
-        assert!(workflow_events[1].id < workflow_events[2].id);
+        // Verify relation metadata
+        let relations = get_event_relations(&db, terminal_id).await;
+        assert!(relations.iter().any(|r| r.relation_type == "followed_by"));
+        assert!(relations.iter().any(|r| r.confidence > 0.8));
+    }
+    
+    #[tokio::test]
+    async fn event_clusters_group_related_activities() {
+        // Test event clustering for higher-level workflow organization
+        let db = setup_test_db().await;
+        
+        // Create several related events
+        let events = create_test_workflow_events(&db).await;
+        
+        // Create a cluster for this development session
+        let cluster = EventCluster {
+            name: "Debug session: fix authentication bug".to_string(),
+            cluster_type: "development_session".to_string(),
+            summary: Some("Identified and fixed JWT token validation issue".to_string()),
+            time_start: events[0].ts_ingest,
+            time_end: events.last().unwrap().ts_ingest,
+            metadata: json!({"project": "auth-service", "bug_id": "AUTH-123"}),
+        };
+        
+        let cluster_id = create_event_cluster(&db, cluster).await;
+        
+        // Add events to cluster with roles
+        for (i, event) in events.iter().enumerate() {
+            let role = match i {
+                0 => "session_start",
+                n if n == events.len() - 1 => "session_end", 
+                _ => "activity",
+            };
+            
+            add_event_to_cluster(&db, cluster_id, event.id, role).await;
+        }
+        
+        // Query by cluster
+        let cluster_events = get_cluster_events(&db, cluster_id).await;
+        assert_eq!(cluster_events.len(), events.len());
+        
+        // Verify cluster metadata provides context
+        let retrieved_cluster = get_event_cluster(&db, cluster_id).await;
+        assert_eq!(retrieved_cluster.cluster_type, "development_session");
+        assert!(retrieved_cluster.summary.is_some());
     }
 }
 ```

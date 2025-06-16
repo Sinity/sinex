@@ -51,7 +51,7 @@ fn test_worker_claim_exact_same_microsecond() {
                 WHERE id::uuid = $1::uuid
                 AND NOT (payload ? 'claimed_by')
                 "#,
-                event_id.as_uuid()
+                event_id.to_uuid()
             )
             .execute(&pool1)
             .await;
@@ -72,7 +72,7 @@ fn test_worker_claim_exact_same_microsecond() {
                 WHERE id::uuid = $1::uuid
                 AND NOT (payload ? 'claimed_by')
                 "#,
-                event_id.as_uuid()
+                event_id.to_uuid()
             )
             .execute(&pool2)
             .await;
@@ -90,7 +90,7 @@ fn test_worker_claim_exact_same_microsecond() {
         // Check final state
         let final_state = sqlx::query!(
             "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-            event_id.as_uuid()
+            event_id.to_uuid()
         )
         .fetch_one(&pool)
         .await
@@ -290,7 +290,7 @@ fn test_concurrent_metadata_lost_update() {
                 // Read current value
                 let current = sqlx::query!(
                     "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-                    id.as_uuid()
+                    id.to_uuid()
                 )
                 .fetch_one(&pool)
                 .await
@@ -306,7 +306,7 @@ fn test_concurrent_metadata_lost_update() {
                 
                 sqlx::query!(
                     "UPDATE raw.events SET payload = $2 WHERE id::uuid = $1::uuid",
-                    id.as_uuid(),
+                    id.to_uuid(),
                     payload
                 )
                 .execute(&pool)
@@ -322,7 +322,7 @@ fn test_concurrent_metadata_lost_update() {
         // Check final state
         let final_state = sqlx::query!(
             "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-            event_id.as_uuid()
+            event_id.to_uuid()
         )
         .fetch_one(&pool)
         .await

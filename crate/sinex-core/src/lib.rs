@@ -59,6 +59,7 @@ pub mod sources {
     pub const HYPRLAND: &str = "hyprland";
     pub const WINDOW_MANAGER_HYPRLAND: &str = "window_manager.hyprland";
     pub const ATUIN_DB_READER: &str = "ingestor.atuin_db_reader";
+    pub const CLIPBOARD: &str = "clipboard";
 }
 
 /// Common event type constants

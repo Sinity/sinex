@@ -63,7 +63,7 @@ async fn test_worker_claim_exact_same_microsecond() {
                     WHERE id::uuid = $1::uuid 
                     AND NOT (payload ? 'claimed_by')
                     "#,
-                    event_id.as_uuid(),
+                    event_id.to_uuid(),
                     worker_id.to_string(),
                     Utc::now().to_rfc3339()
                 ).execute(&pool_clone).await;
@@ -78,7 +78,7 @@ async fn test_worker_claim_exact_same_microsecond() {
                             // Check if another worker also claimed (race condition)
                             let verify_result = sqlx::query!(
                                 "SELECT payload->>'claimed_by' as claimer FROM raw.events WHERE id::uuid = $1::uuid",
-                                event_id.as_uuid()
+                                event_id.to_uuid()
                             ).fetch_one(&pool_clone).await;
                             
                             if let Ok(record) = verify_result {
@@ -163,7 +163,7 @@ async fn test_dead_worker_holding_locks() {
                 FOR UPDATE
                 "#
             )
-            .bind(event_id.as_uuid())
+            .bind(event_id.to_uuid())
             .fetch_one(&mut *tx).await;
             
             if claim_result.is_ok() {
@@ -176,7 +176,7 @@ async fn test_dead_worker_holding_locks() {
                     SET payload = payload || jsonb_build_object('status', 'processing', 'worker', 'zombie')
                     WHERE id::uuid = $1::uuid
                     "#,
-                    event_id.as_uuid()
+                    event_id.to_uuid()
                 ).execute(&mut *tx).await.unwrap();
                 
                 // Simulate SIGSTOP - hold transaction open without committing
@@ -210,7 +210,7 @@ async fn test_dead_worker_holding_locks() {
                     WHERE id::uuid = $1::uuid
                     AND (payload->>'status' IS NULL OR payload->>'status' != 'processing')
                     "#,
-                    event_id.as_uuid(),
+                    event_id.to_uuid(),
                     format!("healthy_{}", worker_id)
                 ).execute(&pool_clone)
             ).await;
@@ -257,7 +257,7 @@ async fn test_dead_worker_holding_locks() {
         SET payload = payload || jsonb_build_object('status', 'recovered', 'worker', 'recovery')
         WHERE id::uuid = $1::uuid
         "#,
-        work_event.id.as_uuid()
+        work_event.id.to_uuid()
     ).execute(&pool).await;
     
     match recovery_result {

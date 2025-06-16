@@ -83,11 +83,18 @@ pub mod events {
 
     /// Create an invalid event for error testing
     pub fn invalid_event() -> sinex_db::models::RawEvent {
-        RawEventBuilder::new(
-            "", // Invalid empty source
-            "",
-            json!(null)
-        ).build()
+        use chrono::Utc;
+        sinex_db::models::RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: "".to_string(), // Invalid empty source
+            event_type: "".to_string(), // Invalid empty event_type
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "".to_string(), // Invalid empty host
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!(null),
+        }
     }
 
     /// Create a test file created event
@@ -221,39 +228,29 @@ pub mod generators {
     }
 }
 
-/// Helper for querying events by ULID
+/// Helper for querying events by ULID (delegates to sinex_db::queries)
 pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<sinex_db::models::RawEvent> {
-    let record = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!", 
-            source, 
-            event_type, 
-            ts_ingest,
-            ts_orig, 
-            host, 
-            ingestor_version, 
-            payload_schema_id::uuid as payload_schema_id, 
-            payload
-        FROM raw.events
-        WHERE id = $1::uuid::ulid
-        "#,
-        event_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await?;
-    
-    Ok(sinex_db::models::RawEvent {
-        id: record.id.into(),
-        source: record.source,
-        event_type: record.event_type,
-        ts_ingest: record.ts_ingest.unwrap_or_else(|| chrono::Utc::now()),
-        ts_orig: record.ts_orig,
-        host: record.host,
-        ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(Into::into),
-        payload: record.payload,
-    })
+    queries::get_event_by_id(pool, event_id).await
+}
+
+/// Helper for getting recent events
+pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_recent_events(pool, limit).await
+}
+
+/// Helper for getting events by source
+pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_by_source(pool, source, limit).await
+}
+
+/// Helper for getting events by type
+pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_by_type(pool, event_type, limit).await
+}
+
+/// Helper for getting events in time range
+pub async fn get_events_in_time_range(pool: &PgPool, start_time: chrono::DateTime<chrono::Utc>, end_time: chrono::DateTime<chrono::Utc>) -> Result<Vec<sinex_db::models::RawEvent>> {
+    queries::get_events_in_time_range(pool, start_time, end_time).await
 }
 
 /// Helper for getting event count from database

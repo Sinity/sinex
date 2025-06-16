@@ -70,6 +70,11 @@ impl GitAnnex {
 
         Ok(GitAnnex { config })
     }
+    
+    /// Get the repository path
+    pub fn repo_path(&self) -> &Path {
+        &self.config.repo_path
+    }
 
     /// Initialize a new git-annex repository
     pub async fn init(repo_path: &Path, description: Option<&str>) -> Result<()> {

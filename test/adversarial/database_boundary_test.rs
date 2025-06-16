@@ -58,7 +58,7 @@ async fn test_event_payload_approaching_1gb_limit() {
                     SET payload = payload || jsonb_build_object('extra_data', $2::text)
                     WHERE id::uuid = $1::uuid
                     "#,
-                    event.id.as_uuid(),
+                    event.id.to_uuid(),
                     extra_data
                 ).execute(&pool).await;
                 

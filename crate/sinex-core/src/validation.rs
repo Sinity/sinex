@@ -230,8 +230,11 @@ mod tests {
     #[test]
     fn test_shell_metacharacters() {
         assert!(!contains_shell_metacharacters("normal command"));
-        assert!(contains_shell_metacharacters("rm -rf /"));
+        assert!(!contains_shell_metacharacters("rm -rf /"));  // This is dangerous but has no metacharacters
         assert!(contains_shell_metacharacters("echo $(whoami)"));
         assert!(contains_shell_metacharacters("cat /etc/passwd | grep root"));
+        assert!(contains_shell_metacharacters("ls; rm file"));
+        assert!(contains_shell_metacharacters("echo 'test'"));
+        assert!(contains_shell_metacharacters("file*"));
     }
 }

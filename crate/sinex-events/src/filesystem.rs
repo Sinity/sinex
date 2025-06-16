@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use notify::Watcher;
 use tokio::sync::mpsc;
 use tracing::{debug, info, error};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
@@ -151,7 +153,16 @@ impl FilesystemMonitor {
                     path: path.to_path_buf(),
                     size: metadata.len(),
                     created_at: Utc::now(),
-                    permissions: None, // TODO: Add Unix permissions
+                    permissions: {
+                        #[cfg(unix)]
+                        {
+                            Some(metadata.permissions().mode())
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            None
+                        }
+                    },
                 };
                 (event_type_constants::filesystem::FILE_CREATED, serde_json::to_value(payload).ok()?)
             }

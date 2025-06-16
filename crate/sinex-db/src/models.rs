@@ -83,7 +83,9 @@ pub struct PromotionQueueItem {
 pub enum QueueStatus {
     Pending,
     Processing,
+    Completed,
     FailedRetryable,
+    Failed,
 }
 
 impl QueueStatus {
@@ -91,7 +93,9 @@ impl QueueStatus {
         match self {
             Self::Pending => "pending",
             Self::Processing => "processing",
+            Self::Completed => "completed",
             Self::FailedRetryable => "failed_retryable",
+            Self::Failed => "failed",
         }
     }
 }
@@ -101,7 +105,9 @@ impl From<String> for QueueStatus {
         match s.as_str() {
             "pending" => Self::Pending,
             "processing" => Self::Processing,
+            "completed" => Self::Completed,
             "failed_retryable" => Self::FailedRetryable,
+            "failed" => Self::Failed,
             _ => Self::Pending,
         }
     }
@@ -112,7 +118,9 @@ impl From<&str> for QueueStatus {
         match s {
             "pending" => Self::Pending,
             "processing" => Self::Processing,
+            "completed" => Self::Completed,
             "failed_retryable" => Self::FailedRetryable,
+            "failed" => Self::Failed,
             _ => Self::Pending,
         }
     }
