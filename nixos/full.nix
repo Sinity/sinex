@@ -552,6 +552,7 @@ in
       description = "Sinex service user";
       home = "/var/lib/sinex";
       createHome = true;
+      shell = pkgs.bash;  # Allow shell access for testing and maintenance
     };
     
     users.groups.${cfg.database.user} = mkIf cfg.database.autoSetup {};
@@ -594,14 +595,37 @@ in
       };
     };
 
+    # Atuin database initialization service
+    systemd.services.sinex-atuin-init = mkIf cfg.unifiedCollector.sources.atuin.enable {
+      description = "Initialize Atuin database for Sinex";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "sinex-unified-collector.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "init-atuin" ''
+          set -e
+          cd /var/lib/sinex
+          if [ ! -f ${cfg.unifiedCollector.sources.atuin.databasePath} ]; then
+            ${pkgs.atuin}/bin/atuin init zsh
+            ${pkgs.atuin}/bin/atuin import auto
+          fi
+        '';
+      };
+    };
+
     # Unified Collector service
     systemd.services.sinex-unified-collector = mkIf cfg.unifiedCollector.enable {
       description = "Sinex Unified Event Collector";
       after = [
         "network.target"
         "postgresql.service"
-      ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
-      wants = [ "postgresql.service" ];
+      ] ++ optional cfg.database.autoSetup "sinex-migrate.service"
+        ++ optional cfg.unifiedCollector.sources.atuin.enable "sinex-atuin-init.service";
+      wants = [ "postgresql.service" ] 
+        ++ optional cfg.unifiedCollector.sources.atuin.enable "sinex-atuin-init.service";
       wantedBy = [ "multi-user.target" ];
 
       environment = {
