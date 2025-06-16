@@ -66,6 +66,8 @@ sinex/
 │   ├── sinex-promo-worker/   # Promotion queue worker
 │   └── sinex-annex/          # Git Annex integration
 ├── config/                   # Example configurations
+│   ├── unified-collector/    # Collector config examples
+│   └── clipboard-with-annex.toml
 ├── test/                    # Hierarchically organized test suites
 │   ├── unit/                # Unit tests (component isolation)
 │   │   ├── core/            # Core library tests
@@ -80,6 +82,9 @@ sinex/
 │   │   ├── external/        # External service integration
 │   │   ├── performance/     # Performance and benchmarking
 │   │   └── regression/      # Regression tests for specific bugs
+│   ├── nixos-vm/            # NixOS VM integration tests
+│   ├── cli/                 # Python CLI tests
+│   ├── agent/               # Agent lifecycle tests
 │   ├── common/              # Shared test utilities and helpers
 │   ├── model/               # Data model tests
 │   ├── ulid/                # ULID-specific tests
@@ -87,11 +92,23 @@ sinex/
 │   ├── validation/          # Event validation tests
 │   └── adversarial/         # Stress and security tests
 ├── migrations/              # SQL schema migrations (sqlx)
+├── script/                  # Utility scripts
+│   └── init_git_annex.sh    # Git annex repository setup
 ├── spec/                    # Documentation
 │   ├── SADI.md             # Start here - doc index
-│   ├── docs/tims/          # Implementation specs
-│   └── docs/claude/        # My working area
+│   ├── STAD.md             # Architecture document
+│   ├── VISION.md           # Project vision
+│   ├── combo/              # Combined docs for easy reading
+│   ├── diagram/            # Architecture diagrams
+│   │   └── render.sh       # Diagram rendering script
+│   └── docs/               # Detailed documentation
+│       ├── adr/            # Architecture decision records
+│       ├── arch_modules/   # Architecture module docs
+│       ├── claude/         # My working area
+│       ├── security/       # Security documentation
+│       └── tims/           # Implementation specs
 └── cli/                     # Python query tools
+    └── exo.py              # Main CLI interface
 ```
 
 ## 🛠️ Common Tasks
@@ -113,6 +130,12 @@ just migrate-create feature_name # Create new migration
 
 # If you need to reset the database:
 dropdb sinex_dev && createdb sinex_dev && just migrate
+```
+
+### Git Annex Setup (for blob storage)
+```bash
+./script/init_git_annex.sh      # Initialize git-annex repository
+# Follow the script output to set SINEX_ANNEX_PATH
 ```
 
 ### PostgreSQL Extension Setup
@@ -160,6 +183,12 @@ Config loading priority:
 4. `~/.config/sinex/collector.toml`
 5. Built-in defaults (uses DATABASE_URL automatically)
 
+Example configs available in `config/`:
+- `unified-collector/minimal.toml` - Basic filesystem monitoring
+- `unified-collector/development.toml` - Common dev sources
+- `unified-collector/with-annex.toml` - With git-annex blob storage
+- `clipboard-with-annex.toml` - Clipboard capture example
+
 ### Database Work
 ```bash
 just migrate                    # Apply migrations
@@ -197,12 +226,33 @@ cargo test --test system        # All system tests
 ```
 
 
-### Debugging
+### Query Interface (exo.py)
 ```bash
+# Basic queries
 just query                      # View recent 10 events
 just query 50                  # View recent 50 events
 ./cli/exo.py query --source filesystem --after "1 hour ago"
+
+# Schema management
+./cli/exo.py schema list        # List registered schemas
+./cli/exo.py schema get <id>    # View specific schema
+
+# Agent monitoring
+./cli/exo.py agent list         # List all agents
+./cli/exo.py agent status <name> # Check agent status
+
+# Event sources
+./cli/exo.py sources            # List available event sources
+
+# Blob management (requires git-annex)
+./cli/exo.py blob list          # List stored blobs
+./cli/exo.py blob get <key>     # Retrieve blob content
+```
+
+### Debugging
+```bash
 cargo test -- --nocapture      # See test output
+RUST_LOG=debug cargo run       # Debug logging
 ```
 
 ## 🗄️ Database Schema
@@ -247,9 +297,12 @@ postgresql:///sinex_dev?host=/run/postgresql
 ## 📚 Where to Look
 
 - **Architecture Overview**: `spec/STAD.md`
+- **Getting Started**: `spec/SADI.md`
+- **Project Vision**: `spec/VISION.md` 
 - **Implementation Details**: `spec/docs/tims/`
 - **Design Decisions**: `spec/docs/adr/`
 - **My Working Notes**: `spec/docs/claude/`
+- **Diagrams**: `spec/diagram/` (run `./render.sh` to regenerate)
 
 ## 🚦 Environment Checks
 
