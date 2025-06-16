@@ -1,6 +1,7 @@
 # Refined Sinex Spec Organization Plan
 
 ## Core Principles
+
 - Make the ambitious vision navigable without reducing it
 - Create multiple entry points for different contributors
 - Clearly show what can be built now vs what needs prerequisites
@@ -8,6 +9,7 @@
 ## 1. Specification Maturity Model
 
 Create `spec/MATURITY.md` defining levels:
+
 - **L0 - Vision**: Aspirational goals, no technical details
 - **L1 - Concept**: Architecture and data flow defined
 - **L2 - Technical**: APIs, schemas, algorithms specified
@@ -15,6 +17,7 @@ Create `spec/MATURITY.md` defining levels:
 - **L4 - Implemented**: Built with coverage percentage
 
 Tag each TIM with:
+
 ```markdown
 **Maturity**: L2 - Technical Specification
 **Blocks**: Browser extension native messaging
@@ -25,8 +28,9 @@ Tag each TIM with:
 ## 2. Dependency Graph System
 
 Create `spec/DEPENDENCIES.md`:
+
 ```
-Tier 0 (Foundation - 90% Done)
+Tier 0 (Foundation)
 ├── Event Storage (PostgreSQL) ✅
 ├── ULID Keys ✅
 ├── Basic Event Sources ✅
@@ -53,16 +57,19 @@ Tier 3 (Complex Dependencies)
 Create `spec/PATHWAYS.md` with role-based guides:
 
 **"I want to add a new event source"**
+
 - Start here: `ready/event-sources/`
 - Prerequisites: Understand EventSource trait
 - First project: Extend Hyprland IPC (builds on existing)
 
 **"I want to work on AI features"**
+
 - Start here: `ready/ai/basic-ollama-integration.md`
 - Prerequisites: Tier 0 complete
 - First project: Local embedding generation
 
 **"I want to improve existing features"**
+
 - Start here: `implemented/` for current coverage
 - Look for "Enhancement Opportunities" sections
 
@@ -76,8 +83,8 @@ spec/
 ├── STATUS.md           # Current implementation status
 │
 ├── implemented/        # What's built (with coverage)
-│   ├── event-storage.md (90% coverage)
-│   └── basic-sources.md (100% coverage)
+│   ├── event-storage.md
+│   └── basic-sources.md
 │
 ├── ready/             # Can implement now (L3)
 │   ├── event-sources/
@@ -104,6 +111,7 @@ spec/
 ## 5. TIM Enhancement Format
 
 Update each TIM with:
+
 ```markdown
 # TIM-Name
 
@@ -130,6 +138,7 @@ Update each TIM with:
 ## 6. Progress Tracking
 
 Create `spec/PROGRESS.md`:
+
 ```markdown
 # Sinex Implementation Progress
 
@@ -160,52 +169,62 @@ This organization maintains the full vision while making it clear what can be bu
 
 ## Implementation Gap Analysis
 
-### Current Implementation: ~20% of Vision
+### Current Implementation: ~22% of Vision
 
-### What's Built:
+### What's Built
+
 - Core event storage infrastructure
-- Basic event sources (filesystem, terminal, clipboard)
+- Basic event sources (filesystem, terminal, clipboard, Hyprland IPC)
 - Simple promotion worker
 - Database schema (mostly complete)
 - Git-annex blob storage (sinex-annex crate with BlobManager)
+- Generic terminal logging system
 
-### Major Unimplemented Categories:
+### Major Unimplemented Categories
 
 #### 1. AI/LLM Integration (95% unimplemented)
+
 - LLM router, embedding generation, entity resolution
 - Tables exist but no actual AI code
 
-#### 2. Rich Event Sources (70% unimplemented)
+#### 2. Rich Event Sources (60% unimplemented)
+
 - Browser extension, audio/video capture, email
 - Advanced terminal capture, accessibility events
-- Full Hyprland IPC implementation
+- Enhanced Hyprland context extraction
 
-#### 3. Advanced Processing (90% unimplemented)
+#### 3. Advanced Processing
+
 - Living documents, CRDT integration
 - Semantic search, knowledge graph building
 - Activity segmentation, context synthesis
-- Git-annex blob storage ✅ (sinex-annex crate fully implemented)
+- Git-annex blob storage ✅
 
-#### 4. User Interfaces (90% unimplemented)
+#### 4. User Interfaces
+
 - Neovim plugin, web UI, advanced CLI
 - Query language, visualization
 
-#### 5. System Operations (80% unimplemented)
+#### 5. System Operations
+
 - Monitoring, advanced backup, multi-device sync
 - Security hardening, CI/CD
 
 ### Ready for Implementation (Clear Specs Exist)
-1. Hyprland IPC rich context extraction
+
+1. Audio capture via PipeWire
 2. Browser extension with native messaging
 3. Basic LLM integration with Ollama
 4. Embedding generation with local models
 5. pgBackRest backup configuration
 6. Basic Neovim plugin for PKM
-7. Audio capture via PipeWire
+7. Enhanced Hyprland context extraction
 
 ### Requires More Design Work
+
 1. Living Document full implementation
 2. Multi-device sync architecture
 3. Advanced agent coordination
 4. Semantic Desktop Stream
 5. Privacy-preserving federation
+

@@ -1,5 +1,33 @@
 # TIM-TaggingSystemSchema: DDL for Universal Tagging System (`core.tags`, `artifact_tags`)
 
+## Status Dashboard
+**Maturity Level**: L3 - Ready for Implementation
+**Implementation**: 15% (DDL complete, needs migration and tag management utilities)
+**Dependencies**: `pgx_ulid` extension, `core.set_updated_at_trigger_func_generic()` trigger function
+**Blocks**: Artifact organization, content discovery, automated tagging agents, user-facing tag interfaces
+
+## MVP Specification
+- Core tagging tables (`core.tags`, `artifact_tags`) with hierarchical support
+- Tag assignment to artifacts, events, blobs, and entities
+- Basic tag search and filtering via GIN indexes
+- Manual tag assignment and management
+
+## Enhanced Features
+- Automated tagging agents with confidence scoring
+- Tag hierarchy navigation and visualization
+- Tag alias resolution and normalization
+- Full-text search integration with tagging
+- Tag usage analytics and suggestions
+
+## Implementation Checklist
+- [ ] Database migration to create `core.tags` and `artifact_tags` tables
+- [ ] Seed data with initial core tags (status, project, topic hierarchies)
+- [ ] Tag management CLI utilities (create, rename, merge, hierarchy management)
+- [ ] Basic tag assignment/removal functions
+- [ ] Tag search and filtering queries
+- [ ] Tests for tag operations and polymorphic relationships
+- [ ] Documentation for tag naming conventions and best practices
+
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for the Exocortex universal tagging system, comprising `core.tags` for tag definitions and `artifact_tags` for linking tags to various Exocortex objects.
 *   **Source:** Derived from original Vision Document Appendix A and conceptual descriptions in Vision Part II.2.4.
 *   **Dependencies:** `pgx_ulid` extension. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.

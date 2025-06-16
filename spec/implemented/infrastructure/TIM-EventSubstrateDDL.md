@@ -1,5 +1,37 @@
 # TIM-EventSubstrateDDL: Core DDL for `raw.events` and Foundational Schema Objects
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 95% (Core schema fully deployed, TimescaleDB integration operational)
+**Dependencies**: PostgreSQL, pgx_ulid extension, TimescaleDB
+**Blocks**: All event ingestion, promotion pipelines, AI processing
+
+## MVP Specification
+- Complete raw.events table with ULID primary keys
+- Core schema organization (raw, core, sinex_schemas)
+- Essential indexes for performance
+- JSONB payload storage with GIN indexing
+- Updated_at trigger function
+
+## Enhanced Features
+- Advanced TimescaleDB chunk management
+- Automated retention policies
+- Cross-partition query optimization
+- Schema evolution support
+- Advanced JSONB query patterns
+
+## Implementation Checklist
+- [x] Database migrations
+- [x] Core table structure (raw.events)
+- [x] Schema organization
+- [x] Primary and performance indexes
+- [x] ULID integration
+- [x] TimescaleDB hypertable setup
+- [x] Trigger functions
+- [x] Documentation
+- [ ] Retention policy automation
+- [ ] Query optimization analysis
+
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for the `raw.events` table and closely related foundational schema objects necessary for the event substrate.
 *   **Source:** Derived from original Vision Document Appendix A and refined based on decisions in ADRs and other TIMs.
 *   **Dependencies:** `pgx_ulid` extension (see `TIM-PrimaryKeyImplementation.md`). Assumes TimescaleDB is available for hypertable conversion (see `TIM-TimescaleDBConfiguration.md`).

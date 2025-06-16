@@ -1,5 +1,30 @@
 # TIM-CanonicalEventSchemas: Core Event Payload JSON Schema Examples
 
+## Status Dashboard
+**Maturity Level**: L3 - Ready for Implementation
+**Implementation**: 0% (Schema definitions complete, registration system needed)
+**Dependencies**: Event schema registry system (`sinex_schemas.event_payload_schemas` table), ULID support, JSON Schema validation
+**Blocks**: Event ingestion validation, schema evolution tracking, payload parsing in workers
+
+## MVP Specification
+- JSON Schema definitions for 6 core event types (window focus, shell commands, terminal sessions, PKM notes, friction logs, LLM API calls)
+- Common provenance sub-schema for event lineage
+- Schema validation ready for PostgreSQL `pg_jsonschema` extension
+
+## Enhanced Features
+- Schema registry management system with versioning
+- Automatic schema migration and validation
+- Event payload validation in ingestion pipeline
+- Schema-aware event querying and analysis
+
+## Implementation Checklist
+- [ ] Database schema registry table (`sinex_schemas.event_payload_schemas`)
+- [ ] Schema registration scripts for all 6 core event types
+- [ ] JSON Schema validation integration with event ingestion
+- [ ] Schema version management and migration system
+- [ ] Tests for schema validation against sample payloads
+- [ ] Documentation for adding new event schema types
+
 *   **Purpose:** Provides JSON Schema definitions for the `payload` of key canonical `raw.events` types used throughout the Exocortex. These schemas are registered in `sinex_schemas.event_payload_schemas`. This TIM expands on original Vision Document Appendix B.
 *   **Source:** Derived from original Vision Document Appendix B and payload descriptions across various Vision/UG sections.
 *   **Reference:** For schema registry DDL and management, see `TIM-EventSchemaRegistry.md`. For `_provenance` sub-schema, see Section 1 of this TIM.

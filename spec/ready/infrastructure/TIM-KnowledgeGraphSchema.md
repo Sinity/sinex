@@ -1,5 +1,36 @@
 # TIM-KnowledgeGraphSchema: DDL for Core Knowledge Graph Tables (`core_entities`, `core_entity_relations`)
 
+## Status Dashboard
+**Maturity Level**: L3 - Ready for Implementation
+**Implementation**: 10% (DDL complete, needs entity management and graph algorithms)
+**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `core.artifacts`, `core.tags`, `raw.events` tables
+**Blocks**: Entity resolution, relationship discovery, knowledge graph queries, semantic search, AI-assisted knowledge extraction
+
+## MVP Specification
+- Core knowledge graph tables (`core.entities`, `core.entity_relations`) with embeddings support
+- Entity types: people, projects, artifacts, topics, tasks, locations
+- Relationship types: mentions, works_on, depends_on, links_to, authored_by
+- Basic entity and relationship CRUD operations
+- Graph traversal queries for connected entities
+
+## Enhanced Features
+- Automated entity extraction from artifacts and events
+- Entity resolution and deduplication using embeddings
+- Semantic similarity search across entities
+- Graph-based recommendation systems
+- Entity relationship confidence scoring and validation
+- Temporal relationship tracking with validity periods
+
+## Implementation Checklist
+- [ ] Database migration to create `core.entities` and `core.entity_relations` tables
+- [ ] Entity embedding setup with pgvector (768-dimensional vectors)
+- [ ] Foreign key constraints to `core.artifacts`, `core.tags`, `raw.events`
+- [ ] Entity management API (create, merge, link, resolve duplicates)
+- [ ] Basic graph traversal and path-finding queries
+- [ ] Entity extraction agents for automatic knowledge graph population
+- [ ] Tests for entity operations and graph queries
+- [ ] Performance optimization for large-scale graph operations
+
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for the core tables constituting the Exocortex Knowledge Graph: `core.entities` (nodes) and `core.entity_relations` (edges).
 *   **Source:** Derived from original Vision Document Appendix A and conceptual descriptions in Vision Part III.3.5.
 *   **Dependencies:** `pgx_ulid` extension (see `TIM-PrimaryKeyImplementation.md`). `pgvector` for optional entity embeddings (see `TIM-EmbeddingGenerationModels.md`). The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed. `core.artifacts` and `core.tags` for optional FKs.

@@ -1,5 +1,37 @@
 # TIM-FilesystemIngestionLogic: Content Hashing, Dedupe, Rename/Move Detection
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 80% (BLAKE3 hashing and git-annex integration working, rename detection partial)
+**Dependencies**: git-annex, BLAKE3 library, filesystem watchers, core.blobs schema
+**Blocks**: Advanced file tracking, PKM document versioning, content-addressable search
+
+## MVP Specification
+- BLAKE3 content hashing for all file changes
+- Git-annex integration for blob storage
+- Basic deduplication via content addressing
+- File metadata tracking (mtime, size, hash)
+- Core event generation for file operations
+
+## Enhanced Features
+- Advanced rename/move detection with inotify cookies
+- Cross-filesystem move handling
+- Intelligent content change detection heuristics
+- Path normalization and case-folding
+- Performance optimization for large file operations
+
+## Implementation Checklist
+- [x] BLAKE3 streaming hash implementation
+- [x] Git-annex integration
+- [x] Core deduplication logic
+- [x] File metadata tracking
+- [x] Basic event generation
+- [x] Content-addressable storage
+- [ ] Complete rename detection (inotify cookies)
+- [ ] Cross-filesystem move handling
+- [ ] Path normalization system
+- [ ] Performance optimization
+
 *   **Relevant ADR:** (N/A directly, core for filesystem ingestor)
 *   **Original UG Context:** Section 12.2, 12.3
 

@@ -31,7 +31,9 @@
 | `TIM-EventIngestionProcessing` | ✅ **LARGELY COMPLETE** | Promotion queue + workers functional, deduplication missing |
 | `TIM-FilesystemMonitoringWatchers` | ✅ **COMPLETE** | notify crate, file events working |
 | `TIM-HyprlandIPCInterface` | ✅ **COMPLETE** | Socket connection, compositor events captured |
-| `TIM-KittyTerminalIntegration` | ✅ **COMPLETE** | Terminal commands captured via socket |
+| `TIM-GenericTerminalLogging` | ✅ **COMPLETE** | Terminal activity capture implemented |
+| `TIM-ClipboardMonitoring` | ✅ **COMPLETE** | Clipboard events captured |
+| `TIM-CorrelationIDPropagation` | ✅ **COMPLETE** | Event correlation system operational |
 
 **Assessment**: Basic event capture and processing pipeline is **operational**.
 
@@ -93,9 +95,9 @@
 
 | Category | Count | Percentage |
 |----------|-------|------------|
-| **Fully Implemented** | 9 TIMs | ~16% |
+| **Fully Implemented** | 11 TIMs | ~19% |
 | **Partially Implemented** | 3 TIMs | ~5% |
-| **Not Implemented** | ~40 TIMs | ~79% |
+| **Not Implemented** | ~38 TIMs | ~76% |
 
 ### **Key Insights**
 

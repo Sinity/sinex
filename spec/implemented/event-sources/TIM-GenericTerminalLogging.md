@@ -1,7 +1,7 @@
 # TIM-GenericTerminalLogging: Asciinema and Atuin Integration
 
-*   **Relevant ADR:** `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)` (Atuin & Asciinema are core layers)
-*   **Original UG Context:** Section 8.2
+* **Relevant ADR:** `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)` (Atuin & Asciinema are core layers)
+* **Original UG Context:** Section 8.2
 
 This TIM details the setup and integration of Asciinema (for full PTY session replay) and Atuin (for structured command history) as terminal-agnostic logging layers.
 
@@ -13,9 +13,10 @@ As per ADR-008, Asciinema provides complete textual replayability of terminal se
 
 ### 2.1. Mechanism and Setup
 
-*   `asciinema rec [options] [filename]` records all terminal I/O (PTY master output byte stream) with timing.
-*   **Setup for Exocortex (Shell Profile Integration - e.g., `~/.zshrc` or `~/.bashrc`):**
+* `asciinema rec [options] [filename]` records all terminal I/O (PTY master output byte stream) with timing.
+* **Setup for Exocortex (Shell Profile Integration - e.g., `~/.zshrc` or `~/.bashrc`):**
     The goal is to automatically start `asciinema rec` for every interactive shell session.
+
     ```bash
     # In ~/.zshrc or ~/.bashrc
     # Ensure this block is sourced only for interactive shells with a TTY.
@@ -67,13 +68,15 @@ As per ADR-008, Asciinema provides complete textual replayability of terminal se
         fi
     fi
     ```
-    *   **Robustness:** A more robust setup might involve a dedicated `login_shell_wrapper` script that handles ULID generation, logging the `terminal.session.started` event (e.g., via a small utility that directly inserts into DB or calls an ingest API, to avoid complex shell scripting for JSON payloads), and then `exec`s `asciinema rec`. This wrapper would be set as the user's login shell or invoked by the terminal emulator.
-    *   **Alternative Tool:** `script` command with `scriptreplay` can be used if Asciinema is not desired. `script -t 2> timing_file.time -a output_typescript_file.session`. The `timing_file.time` and `output_typescript_file.session` are then stored.
+
+  * **Robustness:** A more robust setup might involve a dedicated `login_shell_wrapper` script that handles ULID generation, logging the `terminal.session.started` event (e.g., via a small utility that directly inserts into DB or calls an ingest API, to avoid complex shell scripting for JSON payloads), and then `exec`s `asciinema rec`. This wrapper would be set as the user's login shell or invoked by the terminal emulator.
+  * **Alternative Tool:** `script` command with `scriptreplay` can be used if Asciinema is not desired. `script -t 2> timing_file.time -a output_typescript_file.session`. The `timing_file.time` and `output_typescript_file.session` are then stored.
 
 ### 2.2. Asciinema `.cast` File Format (Version 2) [SA4]
 
-*   JSONL (JSON Lines) format.
-*   **Header Line (First Line):** JSON object.
+* JSONL (JSON Lines) format.
+* **Header Line (First Line):** JSON object.
+
     ```json
     // {
     //   "version": 2,
@@ -88,43 +91,45 @@ As per ADR-008, Asciinema provides complete textual replayability of terminal se
     //   // "theme": { ... } // Optional color theme
     // }
     ```
-*   **Event Lines (Subsequent Lines):** Arrays `[time_delta_sec, event_type_char, event_data_string]`
-    *   `time_delta_sec`: Float, time since the *previous event line's timestamp* (not since session start).
-    *   `event_type_char`: `"o"` for output to PTY, `"i"` for input to PTY (if `--stdin` recording enabled, rare).
-    *   `event_data_string`: UTF-8 encoded text chunk that was output/input.
-    *   Example: `[0.015678, "o", "hello world\r\n"]`
+
+* **Event Lines (Subsequent Lines):** Arrays `[time_delta_sec, event_type_char, event_data_string]`
+  * `time_delta_sec`: Float, time since the *previous event line's timestamp* (not since session start).
+  * `event_type_char`: `"o"` for output to PTY, `"i"` for input to PTY (if `--stdin` recording enabled, rare).
+  * `event_data_string`: UTF-8 encoded text chunk that was output/input.
+  * Example: `[0.015678, "o", "hello world\r\n"]`
 
 ### 2.3. Eventification and Storage
 
 An Exocortex agent (`agent/terminal_session_logger` or `ingestor/asciinema_log_processor`) monitors the Asciinema log directory (e.g., `~/.local/share/sinex/terminal_logs/asciinema_casts`).
 
-1.  **On New `.cast` File Creation (or Initial Detection):**
-    *   The agent detects a new `.cast` file (e.g., via `inotify` on the directory, or periodic scan). The filename is the `SINEX_TERMINAL_SESSION_ULID`.
-    *   It parses the header line of the `.cast` file.
-    *   Emits `terminal.session.started` event to `raw.events`.
-        *   `source`: `"agent.terminal_session_logger"`
-        *   `event_type`: `"session_started"`
-        *   `payload`: `{ "session_id_ulid": "ULID_from_filename", "recording_tool": "asciinema", "terminal_emulator_name": "kitty" (from header or env), "shell_path": "/bin/zsh" (from header or env), "initial_width": 120, "initial_height": 30, "start_ts_iso": "ISO8601_from_header_timestamp", "pty_device": "/dev/pts/X" (if available from shell wrapper script env) }`
-2.  **On `.cast` File Finalization (Session Ends):**
-    *   The agent detects the session has ended (e.g., `asciinema rec` process exits, or by timeout if file not modified and header indicated active session).
-    *   The complete `.cast` file is added to `git-annex` via `core_blobs`.
-        *   `core_blobs.content_annex_key` stores the annex key.
-        *   `core_blobs.content_blake3_hash` stores BLAKE3 of the `.cast` file.
-        *   `core_blobs.mime_type` set to `application/x-asciicast` or `application/jsonl`.
-    *   Emits `terminal.session.ended` event to `raw.events`.
-        *   `source`: `"agent.terminal_session_logger"`
-        *   `event_type`: `"session_ended"`
-        *   `payload`: `{ "session_id_ulid": "ULID_from_filename", "duration_seconds": N (calculated from event lines or start/end events), "end_ts_iso": "...", "recording_blob_annex_key": "key_for_cast_file_in_annex", "recording_content_hash_blake3": "hash_of_cast_file" }`
-3.  **Downstream Processing:** Other agents can later retrieve the `.cast` blob and parse its event lines to extract full command outputs, correlate with Atuin command entries, or build TUIs interaction models.
+1. **On New `.cast` File Creation (or Initial Detection):**
+    * The agent detects a new `.cast` file (e.g., via `inotify` on the directory, or periodic scan). The filename is the `SINEX_TERMINAL_SESSION_ULID`.
+    * It parses the header line of the `.cast` file.
+    * Emits `terminal.session.started` event to `raw.events`.
+        * `source`: `"agent.terminal_session_logger"`
+        * `event_type`: `"session_started"`
+        * `payload`: `{ "session_id_ulid": "ULID_from_filename", "recording_tool": "asciinema", "terminal_emulator_name": "kitty" (from header or env), "shell_path": "/bin/zsh" (from header or env), "initial_width": 120, "initial_height": 30, "start_ts_iso": "ISO8601_from_header_timestamp", "pty_device": "/dev/pts/X" (if available from shell wrapper script env) }`
+2. **On `.cast` File Finalization (Session Ends):**
+    * The agent detects the session has ended (e.g., `asciinema rec` process exits, or by timeout if file not modified and header indicated active session).
+    * The complete `.cast` file is added to `git-annex` via `core_blobs`.
+        * `core_blobs.content_annex_key` stores the annex key.
+        * `core_blobs.content_blake3_hash` stores BLAKE3 of the `.cast` file.
+        * `core_blobs.mime_type` set to `application/x-asciicast` or `application/jsonl`.
+    * Emits `terminal.session.ended` event to `raw.events`.
+        * `source`: `"agent.terminal_session_logger"`
+        * `event_type`: `"session_ended"`
+        * `payload`: `{ "session_id_ulid": "ULID_from_filename", "duration_seconds": N (calculated from event lines or start/end events), "end_ts_iso": "...", "recording_blob_annex_key": "key_for_cast_file_in_annex", "recording_content_hash_blake3": "hash_of_cast_file" }`
+3. **Downstream Processing:** Other agents can later retrieve the `.cast` blob and parse its event lines to extract full command outputs, correlate with Atuin command entries, or build TUIs interaction models.
 
 ## 3. Atuin: Structured Command History [UG Sec 8.2.2, SA4]
 
 ### 3.1. Mechanism and Setup
 
-*   Atuin replaces default shell history with a local SQLite DB (default: `~/.local/share/atuin/history.db`).
-*   Logs: command string, timestamp, CWD, exit status, duration, host, Atuin session ID.
-*   **Setup (Shell Profile - e.g., `~/.zshrc`, `~/.bashrc`):**
+* Atuin replaces default shell history with a local SQLite DB (default: `~/.local/share/atuin/history.db`).
+* Logs: command string, timestamp, CWD, exit status, duration, host, Atuin session ID.
+* **Setup (Shell Profile - e.g., `~/.zshrc`, `~/.bashrc`):**
     Add to the end of the shell config file:
+
     ```bash
     # Ensure 'atuin' binary is in PATH
     if command -v atuin >/dev/null; then
@@ -148,8 +153,9 @@ An Exocortex agent (`agent/terminal_session_logger` or `ingestor/asciinema_log_p
 
 An agent (`ingestor/atuin_db_reader`, e.g., Rust or Python with SQLite bindings) periodically syncs new command history from Atuin's SQLite DB.
 
-1.  **Watermarking:** The agent maintains a watermark of the last processed `id` (Atuin's auto-incrementing PK in its `history` table) or `timestamp` from the Atuin DB.
-2.  **Query Atuin DB:** Connects to `~/.local/share/atuin/history.db` (read-only).
+1. **Watermarking:** The agent maintains a watermark of the last processed `id` (Atuin's auto-incrementing PK in its `history` table) or `timestamp` from the Atuin DB.
+2. **Query Atuin DB:** Connects to `~/.local/share/atuin/history.db` (read-only).
+
     ```sql
     -- Example query for Atuin DB (schema may vary slightly with Atuin versions)
     SELECT
@@ -166,13 +172,15 @@ An agent (`ingestor/atuin_db_reader`, e.g., Rust or Python with SQLite bindings)
     ORDER BY id ASC
     LIMIT 100; -- Process in batches
     ```
-3.  **Eventification:** For each new Atuin history entry:
-    *   Emit `shell.command.executed_atuin` event to `raw.events`.
-    *   `source`: `"ingestor.atuin_db_reader"`
-    *   `event_type`: `"command_executed"` (or `shell.command.executed_atuin` for clarity)
-    *   `ts_orig`: Convert Atuin's nanosecond `timestamp` to `TIMESTAMPTZ`.
-    *   `host`: Use `hostname` from Atuin DB (should match Exocortex `host`).
-    *   `payload`:
+
+3. **Eventification:** For each new Atuin history entry:
+    * Emit `shell.command.executed_atuin` event to `raw.events`.
+    * `source`: `"ingestor.atuin_db_reader"`
+    * `event_type`: `"command_executed"` (or `shell.command.executed_atuin` for clarity)
+    * `ts_orig`: Convert Atuin's nanosecond `timestamp` to `TIMESTAMPTZ`.
+    * `host`: Use `hostname` from Atuin DB (should match Exocortex `host`).
+    * `payload`:
+
         ```json
         // {
         //   "command_string": "full command text",
@@ -184,15 +192,16 @@ An agent (`ingestor/atuin_db_reader`, e.g., Rust or Python with SQLite bindings)
         //   "terminal_session_ulid": "ULID_from_SINEX_TERMINAL_SESSION_ULID_env_var" // If available and logged by Atuin
         // }
         ```
-        *   **Correlation with Asciinema Session:** If the `SINEX_TERMINAL_SESSION_ULID` environment variable (set by the Asciinema wrapper script) can be captured by Atuin (e.g., Atuin might have features to log specific environment variables or its session ID can be mapped), this ULID should be included in the payload for direct correlation. Otherwise, temporal proximity and `host`/`cwd` matching will be used.
-4.  **Update Watermark:** After successful batch processing, update the agent's `last_processed_atuin_id`.
+
+        * **Correlation with Asciinema Session:** If the `SINEX_TERMINAL_SESSION_ULID` environment variable (set by the Asciinema wrapper script) can be captured by Atuin (e.g., Atuin might have features to log specific environment variables or its session ID can be mapped), this ULID should be included in the payload for direct correlation. Otherwise, temporal proximity and `host`/`cwd` matching will be used.
+4. **Update Watermark:** After successful batch processing, update the agent's `last_processed_atuin_id`.
 
 ## 4. Recommended Combined Approach [UG Sec 8.2.3, SA4, ADR-008]
 
 Layered capture:
-1.  **Atuin:** Primary source for structured command history.
-2.  **Asciinema (or `script`):** Primary source for full session textual I/O and replayability.
-3.  **Kitty RC Ingestor (if Kitty used):** For Kitty-specific semantic events (see `TIM-KittyTerminalIntegration.md`).
+
+1. **Atuin:** Primary source for structured command history.
+2. **Asciinema (or `script`):** Primary source for full session textual I/O and replayability.
+3. **Kitty RC Ingestor (if Kitty used):** For Kitty-specific semantic events (see `TIM-KittyTerminalIntegration.md`).
 
 Data from these sources is correlated in the Exocortex backend using timestamps, `host`, `cwd`, `session_id_ulid` (if linkable), and content analysis to build a comprehensive picture of terminal activity.
-
