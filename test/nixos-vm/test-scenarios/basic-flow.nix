@@ -8,16 +8,15 @@ let
     import subprocess
     import sys
     import json
+    import os
 
     # Simple query interface to PostgreSQL
     def query_events(limit=10):
+        # Use su to run as postgres user
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM raw.events ORDER BY ts_ingest DESC LIMIT {limit};\""
         result = subprocess.run([
-            "${pkgs.postgresql_16}/bin/psql", 
-            "-d", "sinex",
-            "-U", "postgres",
-            "-t", "-c",
-            f"SELECT id, source, event_type, ts_ingest, payload FROM raw.events ORDER BY ts_ingest DESC LIMIT {limit};"
-        ], capture_output=True, text=True, cwd="/tmp")
+            "su", "-", "postgres", "-c", cmd
+        ], capture_output=True, text=True)
         
         if result.returncode == 0:
             lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
@@ -31,13 +30,11 @@ let
             print(f"Query failed: {result.stderr}")
 
     def stats():
+        # Use su to run as postgres user
+        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'"
         result = subprocess.run([
-            "${pkgs.postgresql_16}/bin/psql", 
-            "-d", "sinex",
-            "-U", "postgres", 
-            "-t", "-c",
-            "SELECT COUNT(*) FROM raw.events;"
-        ], capture_output=True, text=True, cwd="/tmp")
+            "su", "-", "postgres", "-c", cmd
+        ], capture_output=True, text=True)
         
         if result.returncode == 0:
             count = result.stdout.strip()
@@ -84,13 +81,15 @@ pkgs.nixosTest {
             enable = true;
             watchPaths = [ "/home/test/watched" ];
           };
-          # Disable sources that require user home directory
-          sources.atuin.enable = false;
-          sources.shellHistory.enable = false;
-          sources.asciinema.enable = false;
-          sources.kittyScrollback.enable = false;
-          sources.clipboard.enable = false;
-          sources.dbus.enable = false;
+          # Disable sources that require packages not installed in minimal VM
+          # This is the correct approach - we're testing with a minimal environment
+          # that only has filesystem monitoring and D-Bus available
+          sources.atuin.enable = false;          # atuin not installed
+          sources.shellHistory.enable = false;   # shell history can work, but let's keep it simple
+          sources.asciinema.enable = false;      # asciinema not installed
+          sources.kittyScrollback.enable = false; # kitty not installed
+          sources.clipboard.enable = false;       # no X11/Wayland in minimal VM
+          # D-Bus is available by default in NixOS, so we can test it
         };
       };
 
@@ -99,6 +98,9 @@ pkgs.nixosTest {
         isNormalUser = true;
         createHome = true;
       };
+      
+      # Enable D-Bus for event monitoring
+      services.dbus.enable = true;
       
       systemd.tmpfiles.rules = [
         "d /home/test/watched 0755 test users -"
@@ -129,14 +131,37 @@ pkgs.nixosTest {
 
     # Wait for Sinex services to initialize
     machine.wait_for_unit("sinex-migrate.service")
+    
+    # Check migration service status
+    migrate_status = machine.succeed("systemctl status sinex-migrate.service || true")
+    print(f"Migration status:\n{migrate_status}")
+    
+    # Check migration script
+    migrate_script = machine.succeed("systemctl cat sinex-migrate.service | grep ExecStart || true")
+    print(f"Migration script: {migrate_script}")
+    
+    # Check if migrations directory exists
+    migrations_check = machine.succeed("ls -la /nix/store/*/share/sinex/migrations/ 2>&1 | head -20 || true")
+    print(f"Migrations directory:\n{migrations_check}")
+    
+    # Check database state after migration
+    db_check = machine.succeed("su - postgres -c 'psql -d sinex -c \"\\\\dn\" || true'")
+    print(f"Database schemas:\n{db_check}")
+    
     machine.wait_for_unit("sinex-unified-collector.service")
     machine.succeed("systemctl is-active sinex-unified-collector")
 
     # Test 1: Database schema validation
     with subtest("Database schema validation"):
-        # Check that Sinex tables exist
-        tables = machine.succeed("su - postgres -c 'psql -d sinex -c \"\\dt raw.*\"'")
-        assert "raw.events" in tables, "raw.events table not created"
+        # Check that Sinex tables exist - use simpler escaping
+        tables = machine.succeed("su - postgres -c \"psql -d sinex -t -c \\\"SELECT tablename FROM pg_tables WHERE schemaname = 'raw';\\\"\"")
+        print(f"Raw schema tables:\n{tables}")
+        
+        # Also check hypertables
+        hypertables = machine.succeed("su - postgres -c \"psql -d sinex -t -c \\\"SELECT hypertable_name FROM timescaledb_information.hypertables;\\\"\"")
+        print(f"Hypertables:\n{hypertables}")
+        
+        assert "events" in tables, "raw.events table not created"
         
         # Check extensions
         extensions = machine.succeed("su - postgres -c 'psql -d sinex -c \"\\dx\"'")

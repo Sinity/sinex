@@ -28,6 +28,30 @@ let
     # Run migrations (they create extensions and schema)
     export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
     ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations
+    
+    # Grant permissions to sinex user on all schemas and tables
+    ${pkgs.postgresql}/bin/psql -d ${cfg.database.name} <<EOF
+      -- Grant usage on all schemas
+      GRANT USAGE ON SCHEMA raw, core, sinex_schemas, sinex_router TO ${cfg.database.user};
+      
+      -- Grant all privileges on all tables in these schemas
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO ${cfg.database.user};
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO ${cfg.database.user};
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO ${cfg.database.user};
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_router TO ${cfg.database.user};
+      
+      -- Grant usage on all sequences
+      GRANT USAGE ON ALL SEQUENCES IN SCHEMA raw TO ${cfg.database.user};
+      GRANT USAGE ON ALL SEQUENCES IN SCHEMA core TO ${cfg.database.user};
+      GRANT USAGE ON ALL SEQUENCES IN SCHEMA sinex_schemas TO ${cfg.database.user};
+      GRANT USAGE ON ALL SEQUENCES IN SCHEMA sinex_router TO ${cfg.database.user};
+      
+      -- Set default privileges for future objects
+      ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON TABLES TO ${cfg.database.user};
+      ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON TABLES TO ${cfg.database.user};
+      ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON TABLES TO ${cfg.database.user};
+      ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_router GRANT ALL ON TABLES TO ${cfg.database.user};
+    EOF
   '';
 
 in

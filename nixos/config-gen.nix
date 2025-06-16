@@ -6,26 +6,23 @@ with lib;
 rec {
   # Helper to generate collector configuration
   mkCollectorConfig = cfg: fullCfg: let
-    # When autoSetup is true, enable all event sources
-    autoEnableAll = fullCfg.database.autoSetup;
-    
     enabledEvents = lib.flatten [
-      (lib.optional (cfg.sources.atuin.enable || autoEnableAll) "shell.command.executed_atuin")
-      (lib.optional (cfg.sources.shellHistory.enable || autoEnableAll) "shell.history.command")
-      (lib.optional (cfg.sources.asciinema.enable || autoEnableAll) [
+      (lib.optional cfg.sources.atuin.enable "shell.command.executed_atuin")
+      (lib.optional cfg.sources.shellHistory.enable "shell.history.command")
+      (lib.optional cfg.sources.asciinema.enable [
         "terminal.asciinema.session_started"
         "terminal.asciinema.session_ended"
       ])
-      (lib.optional (cfg.sources.kittyScrollback.enable || autoEnableAll) [
+      (lib.optional cfg.sources.kittyScrollback.enable [
         "terminal.scrollback.captured"
         "terminal.command_output.captured"
       ])
-      (lib.optional (cfg.sources.filesystem.enable || autoEnableAll) [
+      (lib.optional cfg.sources.filesystem.enable [
         "file.created"
         "file.modified"
         "file.deleted"
       ])
-      (lib.optional (cfg.sources.dbus.enable || autoEnableAll) [
+      (lib.optional cfg.sources.dbus.enable [
         "dbus.signal"
         "dbus.method_call" 
         "system.notification"
@@ -39,27 +36,27 @@ rec {
         "screen.saver.event"
         "storage.mount.event"
       ])
-      (lib.optional (cfg.sources.clipboard.enable || autoEnableAll) [
+      (lib.optional cfg.sources.clipboard.enable [
         "clipboard.content.changed"
         "clipboard.selection.changed"
       ])
     ];
 
     # Build event configuration sections
-    eventConfig = lib.optionalAttrs (cfg.sources.atuin.enable || autoEnableAll) {
+    eventConfig = lib.optionalAttrs cfg.sources.atuin.enable {
       "event.shell_command_executed_atuin" = {
         db_path = cfg.sources.atuin.databasePath;
         polling_interval_secs = cfg.sources.atuin.pollInterval;
         use_file_watch = true;
         batch_size = 100;
       };
-    } // lib.optionalAttrs (cfg.sources.shellHistory.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.shellHistory.enable {
       "event.shell_history_command" = {
         history_files = [cfg.sources.shellHistory.zshPath cfg.sources.shellHistory.bashPath];
         polling_interval_secs = 10;
         use_file_watch = true;
       };
-    } // lib.optionalAttrs (cfg.sources.asciinema.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.asciinema.enable {
       "event.terminal_asciinema" = {
         recordings_dir = cfg.sources.asciinema.recordingsPath;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
@@ -67,7 +64,7 @@ rec {
         git_annex_repo = fullCfg.blobStorage.repositoryPath;
         auto_annex = cfg.sources.asciinema.autoAnnex;
       };
-    } // lib.optionalAttrs (cfg.sources.kittyScrollback.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.kittyScrollback.enable {
       "event.terminal_scrollback" = {
         kitty_socket_path = cfg.sources.kittyScrollback.socketPath;
         capture_interval_secs = cfg.sources.kittyScrollback.captureInterval;
@@ -76,12 +73,12 @@ rec {
         capture_on_command = cfg.sources.kittyScrollback.captureOnCommand;
         command_capture_delay_ms = cfg.sources.kittyScrollback.commandCaptureDelay;
       };
-    } // lib.optionalAttrs (cfg.sources.filesystem.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.filesystem.enable {
       "event.files" = {
         watch_patterns = cfg.sources.filesystem.watchPaths;
         ignore_patterns = cfg.sources.filesystem.excludePatterns;
       };
-    } // lib.optionalAttrs (cfg.sources.dbus.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.dbus.enable {
       "event.dbus" = {
         monitor_session = cfg.sources.dbus.monitorSession;
         monitor_system = cfg.sources.dbus.monitorSystem;
@@ -97,7 +94,7 @@ rec {
         extract_screensaver = cfg.sources.dbus.extractScreensaver;
         extract_mounts = cfg.sources.dbus.extractMounts;
       };
-    } // lib.optionalAttrs (cfg.sources.clipboard.enable || autoEnableAll) {
+    } // lib.optionalAttrs cfg.sources.clipboard.enable {
       "event.clipboard" = {
         monitor_clipboard = cfg.sources.clipboard.monitorClipboard;
         monitor_primary = cfg.sources.clipboard.monitorPrimary;
