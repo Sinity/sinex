@@ -17,7 +17,7 @@ async fn setup_system_test() -> Result<sqlx::PgPool> {
         .execute(&pool)
         .await?;
     
-    sqlx::query("TRUNCATE TABLE sinex_schemas.promotion_queue CASCADE")
+    sqlx::query("TRUNCATE TABLE sinex_schemas.work_queue CASCADE")
         .execute(&pool)
         .await?;
     

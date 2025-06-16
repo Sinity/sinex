@@ -101,13 +101,13 @@ pub async fn cleanup_test_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     // Clean up in dependency order (foreign keys)
     
     // First clean tables that reference other tables
-    // Clean DLQ entries that reference promotion queue
+    // Clean DLQ entries that reference work queue
     sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
         .execute(pool)
         .await?;
     
-    // Clean promotion queue entries (references raw.events)
-    sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker'")
+    // Clean work queue entries (references raw.events)
+    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker'")
         .execute(pool)
         .await?;
     

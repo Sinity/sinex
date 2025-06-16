@@ -17,7 +17,9 @@ Sinex is an event-driven data capture system that records everything happening o
 ## 🏗️ Key Patterns & Conventions
 
 ### EventSource Pattern
+
 All event sources implement this trait for the unified collector:
+
 ```rust
 #[async_trait]
 impl EventSource for MyEventSource {
@@ -35,12 +37,14 @@ impl EventSource for MyEventSource {
 ```
 
 ### Database Patterns
+
 - All primary keys use ULID (time-ordered, distributed-safe)
 - Events are immutable once written to `raw.events`
 - Schema validation via pg_jsonschema
 - Concurrent work distribution via `FOR UPDATE SKIP LOCKED`
 
 ### Code Organization
+
 - Consolidate related code - avoid excessive file atomization
 - Tests go in categorized subdirectories under `test/`
 - Put my working docs in `spec/docs/claude/`
@@ -114,6 +118,7 @@ sinex/
 ## 🛠️ Common Tasks
 
 ### Development Setup
+
 ```bash
 nix develop                      # Always run first - enters dev shell, database setup is automatic
 cargo check --workspace         # Verify build
@@ -121,6 +126,7 @@ just                            # See available commands
 ```
 
 ### Database Management
+
 The database (`sinex_dev`) is automatically created and migrations applied when entering the nix shell. No manual setup needed!
 
 ```bash
@@ -133,15 +139,18 @@ dropdb sinex_dev && createdb sinex_dev && just migrate
 ```
 
 ### Git Annex Setup (for blob storage)
+
 ```bash
 ./script/init_git_annex.sh      # Initialize git-annex repository
 # Follow the script output to set SINEX_ANNEX_PATH
 ```
 
 ### PostgreSQL Extension Setup
+
 The project requires `pg_jsonschema` extension for JSON Schema validation. Since we use the global PostgreSQL system, install it via:
 
 **Option 1: NixOS System Configuration**
+
 ```nix
 services.postgresql = {
   enable = true;
@@ -154,6 +163,7 @@ services.postgresql = {
 ```
 
 **Option 2: Manual Installation**
+
 ```bash
 # Download and install from releases
 # https://github.com/supabase/pg_jsonschema/releases
@@ -161,6 +171,7 @@ services.postgresql = {
 ```
 
 ### Running the Collector
+
 ```bash
 # Run the unified collector (config logged at startup)
 cargo run --bin sinex-collector                    # Run with default config
@@ -177,6 +188,7 @@ just ingestors-stop            # Stop all running
 ```
 
 Config loading priority:
+
 1. `--config` command line argument
 2. `SINEX_CONFIG` environment variable
 3. `unified-collector.toml` in current directory
@@ -184,12 +196,14 @@ Config loading priority:
 5. Built-in defaults (uses DATABASE_URL automatically)
 
 Example configs available in `config/`:
+
 - `unified-collector/minimal.toml` - Basic filesystem monitoring
 - `unified-collector/development.toml` - Common dev sources
 - `unified-collector/with-annex.toml` - With git-annex blob storage
 - `clipboard-with-annex.toml` - Clipboard capture example
 
 ### Database Work
+
 ```bash
 just migrate                    # Apply migrations
 just migrate-create feature_name # New migration
@@ -201,6 +215,7 @@ just sqlx-check               # Check if cache is up to date
 ```
 
 ### Testing
+
 ```bash
 just test                       # All tests
 just test-unit                  # Unit tests (component isolation)
@@ -225,8 +240,8 @@ cargo test --test unit          # All unit tests
 cargo test --test system        # All system tests
 ```
 
-
 ### Query Interface (exo.py)
+
 ```bash
 # Basic queries
 just query                      # View recent 10 events
@@ -250,6 +265,7 @@ just query 50                  # View recent 50 events
 ```
 
 ### Debugging
+
 ```bash
 cargo test -- --nocapture      # See test output
 RUST_LOG=debug cargo run       # Debug logging
@@ -258,12 +274,14 @@ RUST_LOG=debug cargo run       # Debug logging
 ## 🗄️ Database Schema
 
 **Core Tables**:
+
 - `raw.events` - Immutable event storage (hypertable)
 - `sinex_schemas.event_payload_schemas` - JSON schemas
 - `sinex_schemas.agent_manifests` - Registered ingestors
 - `sinex_schemas.promotion_queue` - Event processing queue
 
 **Key Types**:
+
 - `RawEvent` - Universal event structure
 - `EventSource` - Trait for event capturing components
 - `UnifiedCollector` - Central coordinator managing all sources
@@ -272,20 +290,24 @@ RUST_LOG=debug cargo run       # Debug logging
 ## ⚡ Quick References
 
 ### Path Dependencies
+
 ```toml
 sinex-db = { path = "../../crate/sinex-db" }    # Not src/!
 ```
 
 ### Local PostgreSQL
+
 ```
 postgresql:///sinex_dev?host=/run/postgresql
 ```
 
 ### Event Types
+
 - `sources::FILESYSTEM`, `sources::TERMINAL_KITTY`, `sources::HYPRLAND`
 - Event types defined in `crate/sinex-events/`
 
 ### Key Crates
+
 - `sinex-core` - Common types, EventSource trait, registry
 - `sinex-db` - Database layer and models
 - `sinex-collector` - UnifiedCollector binary and coordination
@@ -298,7 +320,7 @@ postgresql:///sinex_dev?host=/run/postgresql
 
 - **Architecture Overview**: `spec/STAD.md`
 - **Getting Started**: `spec/SADI.md`
-- **Project Vision**: `spec/VISION.md` 
+- **Project Vision**: `spec/VISION.md`
 - **Implementation Details**: `spec/docs/tims/`
 - **Design Decisions**: `spec/docs/adr/`
 - **My Working Notes**: `spec/docs/claude/`
@@ -322,6 +344,7 @@ postgresql:///sinex_dev?host=/run/postgresql
 ## 🔧 Technical Learnings
 
 ### SQLX Offline Mode
+
 - SQLX requires `.sqlx/` cache directory for offline builds
 - Update cache with: `cargo sqlx prepare --workspace -- --all-targets --all-features`
 - Some crates may need individual `cargo sqlx prepare` + merge to workspace
@@ -329,13 +352,16 @@ postgresql:///sinex_dev?host=/run/postgresql
 - Missing cache shows as: "SQLX_OFFLINE=true but there is no cached data"
 
 ### Nix Build Requirements
+
 - **Critical**: Nix only sees git-tracked files - commit `.sqlx/` and hidden directories
 - Untracked/unstaged files are invisible to Nix builds
 - "Git tree is dirty" warnings indicate uncommitted changes Nix won't see
 - Build failures in Nix that work locally = check git status first
 
 ### Debugging Patterns
+
 - Use `just` commands - they have correct flags/environment
 - `cargo sqlx prepare` needs `--all-targets --all-features` flags
 - Check workspace members individually if commands miss packages
 - Recent commits (`git log`) reveal when cache updates are needed
+

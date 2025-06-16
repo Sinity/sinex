@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sinex_core::{RawEvent, RawEventBuilder, EventSource, EventSourceContext};
-use sinex_db::models::PromotionQueueItem;
+use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
@@ -87,7 +87,7 @@ impl EventProcessor for PipelineTestProcessor {
     async fn process_event(
         &self,
         pool: &PgPool,
-        item: &PromotionQueueItem,
+        item: &WorkQueueItem,
     ) -> Result<()> {
         // Fetch the raw event
         let event = sqlx::query!(
@@ -183,9 +183,9 @@ db_test! {
                 .await
                 .unwrap();
                 
-                // Insert into promotion queue
+                // Insert into work queue
                 sqlx::query(
-                    "INSERT INTO sinex_schemas.promotion_queue 
+                    "INSERT INTO sinex_schemas.work_queue 
                      (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
                      VALUES ($1, $2, $3, 0, 3, NOW())"
                 )
@@ -281,7 +281,7 @@ db_test! {
         assert_eq!(derived_event_count, events_to_generate as i64);
         
         let remaining_queue: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
+            "SELECT COUNT(*) FROM sinex_schemas.work_queue"
         )
         .fetch_one(&pool)
         .await?;
@@ -322,7 +322,7 @@ db_test! {
             .await?;
             
             sqlx::query(
-                "INSERT INTO sinex_schemas.promotion_queue 
+                "INSERT INTO sinex_schemas.work_queue 
                  (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
                  VALUES ($1, $2, $3, 0, 3, NOW())"
             )
@@ -388,7 +388,7 @@ db_test! {
         println!("Total events processed: {}", total_processed.load(Ordering::SeqCst));
         
         let remaining_queue: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue"
+            "SELECT COUNT(*) FROM sinex_schemas.work_queue"
         )
         .fetch_one(&pool)
         .await?;
@@ -422,9 +422,9 @@ db_test! {
             .execute(&pool)
             .await?;
             
-            // Add to promotion queue
+            // Add to work queue
             sqlx::query(
-                "INSERT INTO sinex_schemas.promotion_queue 
+                "INSERT INTO sinex_schemas.work_queue 
                  (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
                  VALUES ($1, $2, $3, 0, 3, NOW())"
             )
@@ -446,7 +446,7 @@ db_test! {
             async fn process_event(
                 &self,
                 pool: &PgPool,
-                item: &PromotionQueueItem,
+                item: &WorkQueueItem,
             ) -> Result<()> {
                 // Fetch the raw event
                 let event = sqlx::query!(
@@ -501,7 +501,7 @@ db_test! {
         
         // Check database state
         let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'error_test_worker'"
+            "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'error_test_worker'"
         )
         .fetch_one(&pool)
         .await?;

@@ -17,12 +17,12 @@ pub struct EventSubscription {
     pub event_types: Vec<String>,
 }
 
-/// Core promotion logic that determines which agents should process an event
-pub struct PromotionRouter {
+/// Core work logic that determines which agents should process an event
+pub struct WorkRouter {
     subscriptions: HashMap<String, Vec<EventSubscription>>,
 }
 
-impl PromotionRouter {
+impl WorkRouter {
     /// Create a new router from agent manifests
     pub fn from_manifests(manifests: Vec<AgentManifest>) -> Self {
         let mut subscriptions: HashMap<String, Vec<EventSubscription>> = HashMap::new();
@@ -91,11 +91,11 @@ impl PromotionRouter {
     }
 }
 
-/// Create promotion queue entries for new events
-pub async fn create_promotion_entries(
+/// Create work queue entries for new events
+pub async fn create_work_entries(
     pool: &PgPool,
     events: Vec<RawEvent>,
-    router: &PromotionRouter,
+    router: &WorkRouter,
 ) -> Result<usize> {
     let mut total_created = 0;
     
@@ -113,14 +113,14 @@ pub async fn create_promotion_entries(
         }
         
         for agent_name in target_agents {
-            match insert_promotion_queue_entry(pool, event.id, &agent_name).await {
+            match insert_work_queue_entry(pool, event.id, &agent_name).await {
                 Ok(inserted) => {
                     if inserted {
                         total_created += 1;
                         debug!(
                             event_id = %event.id,
                             agent = %agent_name,
-                            "Created promotion queue entry"
+                            "Created work queue entry"
                         );
                     }
                 }
@@ -129,7 +129,7 @@ pub async fn create_promotion_entries(
                         event_id = %event.id,
                         agent = %agent_name,
                         error = %e,
-                        "Failed to create promotion queue entry"
+                        "Failed to create work queue entry"
                     );
                 }
             }
@@ -137,21 +137,21 @@ pub async fn create_promotion_entries(
     }
     
     if total_created > 0 {
-        info!(count = total_created, "Created promotion queue entries");
+        info!(count = total_created, "Created work queue entries");
     }
     
     Ok(total_created)
 }
 
-/// Insert a single promotion queue entry
-async fn insert_promotion_queue_entry(
+/// Insert a single work queue entry
+async fn insert_work_queue_entry(
     pool: &PgPool,
     event_id: Ulid,
     agent_name: &str,
 ) -> Result<bool> {
     let result = sqlx::query!(
         r#"
-        INSERT INTO sinex_schemas.promotion_queue (raw_event_id, target_agent_name)
+        INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
         VALUES ($1::uuid::ulid, $2)
         ON CONFLICT (raw_event_id, target_agent_name) DO NOTHING
         RETURNING queue_id::uuid as "queue_id!"
@@ -250,7 +250,7 @@ mod tests {
             },
         ];
         
-        let router = PromotionRouter::from_manifests(manifests);
+        let router = WorkRouter::from_manifests(manifests);
         
         let event = RawEvent {
             id: Ulid::new(),
@@ -293,7 +293,7 @@ mod tests {
             },
         ];
         
-        let router = PromotionRouter::from_manifests(manifests);
+        let router = WorkRouter::from_manifests(manifests);
         
         let event = RawEvent {
             id: Ulid::new(),
@@ -336,7 +336,7 @@ mod tests {
             },
         ];
         
-        let router = PromotionRouter::from_manifests(manifests);
+        let router = WorkRouter::from_manifests(manifests);
         
         let event = RawEvent {
             id: Ulid::new(),
@@ -379,7 +379,7 @@ mod tests {
             },
         ];
         
-        let router = PromotionRouter::from_manifests(manifests);
+        let router = WorkRouter::from_manifests(manifests);
         
         let event = RawEvent {
             id: Ulid::new(),

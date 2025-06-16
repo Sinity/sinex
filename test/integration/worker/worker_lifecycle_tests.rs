@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::models::PromotionQueueItem;
+use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
 use sqlx::PgPool;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
@@ -10,7 +10,7 @@ use async_trait::async_trait;
 // Import test setup macros
 use crate::db_test;
 
-async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<Ulid> {
+async fn insert_test_work_item(pool: &PgPool, agent_name: &str) -> Result<Ulid> {
     let queue_id = Ulid::new();
     let raw_event_id = Ulid::new();
     
@@ -27,9 +27,9 @@ async fn insert_test_promotion_item(pool: &PgPool, agent_name: &str) -> Result<U
     .execute(pool)
     .await?;
     
-    // Insert into promotion queue
+    // Insert into work queue
     sqlx::query(
-        "INSERT INTO sinex_schemas.promotion_queue 
+        "INSERT INTO sinex_schemas.work_queue 
          (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at) 
          VALUES ($1, $2, $3, 'pending', 0, 3, NOW())"
     )
@@ -65,7 +65,7 @@ impl EventProcessor for TestEventProcessor {
     async fn process_event(
         &self,
         _pool: &PgPool,
-        _item: &PromotionQueueItem,
+        _item: &WorkQueueItem,
     ) -> Result<()> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
         
@@ -97,13 +97,13 @@ db_test! {
         let process_count = processor.process_count.clone();
         
         // Insert a test item
-        let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
+        let _queue_id = insert_test_work_item(&pool, "test_agent").await?;
         
         // Process the item
-        let item = sqlx::query_as::<_, PromotionQueueItem>(
+        let item = sqlx::query_as::<_, WorkQueueItem>(
             "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-             FROM sinex_schemas.promotion_queue 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
+             FROM sinex_schemas.work_queue 
              WHERE target_agent_name = $1 AND status = 'pending'"
         )
         .bind("test_agent")
@@ -124,12 +124,12 @@ db_test! {
         
         processor.should_fail.store(true, Ordering::SeqCst);
         
-        let _queue_id = insert_test_promotion_item(&pool, "test_agent").await?;
+        let _queue_id = insert_test_work_item(&pool, "test_agent").await?;
         
-        let item = sqlx::query_as::<_, PromotionQueueItem>(
+        let item = sqlx::query_as::<_, WorkQueueItem>(
             "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-             FROM sinex_schemas.promotion_queue 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
+             FROM sinex_schemas.work_queue 
              WHERE target_agent_name = $1 AND status = 'pending'"
         )
         .bind("test_agent")
@@ -189,23 +189,23 @@ db_test! {
         let count_b = processor_b.process_count.clone();
         
         // Insert items for each agent
-        let _queue_id_a = insert_test_promotion_item(&pool, "agent_a").await?;
-        let _queue_id_b = insert_test_promotion_item(&pool, "agent_b").await?;
+        let _queue_id_a = insert_test_work_item(&pool, "agent_a").await?;
+        let _queue_id_b = insert_test_work_item(&pool, "agent_b").await?;
         
         // Get and process items for each agent
-        let item_a = sqlx::query_as::<_, PromotionQueueItem>(
+        let item_a = sqlx::query_as::<_, WorkQueueItem>(
             "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-             FROM sinex_schemas.promotion_queue 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
+             FROM sinex_schemas.work_queue 
              WHERE target_agent_name = 'agent_a'"
         )
         .fetch_one(&pool)
         .await?;
         
-        let item_b = sqlx::query_as::<_, PromotionQueueItem>(
+        let item_b = sqlx::query_as::<_, WorkQueueItem>(
             "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id
-             FROM sinex_schemas.promotion_queue 
+                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
+             FROM sinex_schemas.work_queue 
              WHERE target_agent_name = 'agent_b'"
         )
         .fetch_one(&pool)
@@ -239,7 +239,7 @@ impl EventProcessor for SlowProcessor {
     async fn process_event(
         &self,
         _pool: &PgPool,
-        _item: &PromotionQueueItem,
+        _item: &WorkQueueItem,
     ) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(200)).await;
         Ok(())

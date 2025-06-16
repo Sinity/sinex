@@ -2,7 +2,7 @@ pub mod worker;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use sinex_db::models::PromotionQueueItem;
+use sinex_db::models::WorkQueueItem;
 use sqlx::PgPool;
 use prometheus::{register_counter_vec, register_histogram_vec, CounterVec, HistogramVec};
 use once_cell::sync::Lazy;
@@ -10,11 +10,11 @@ use once_cell::sync::Lazy;
 /// Trait for implementing agent-specific processing logic
 #[async_trait]
 pub trait EventProcessor: Send + Sync {
-    /// Process a single event from the promotion queue
+    /// Process a single event from the work queue
     async fn process_event(
         &self,
         pool: &PgPool,
-        item: &PromotionQueueItem,
+        item: &WorkQueueItem,
     ) -> Result<()>;
 
     /// Get the agent name this processor handles

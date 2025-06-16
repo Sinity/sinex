@@ -184,7 +184,7 @@ fn test_event_causality_violation() {
 }
 
 #[test]
-fn test_promotion_queue_thundering_herd() {
+fn test_work_queue_thundering_herd() {
     let rt = Runtime::new().unwrap();
     
     rt.block_on(async {

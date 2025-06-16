@@ -2,10 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use sinex_db::{
-    models::{AgentHeartbeat, PromotionQueueItem, RawEvent},
+    models::{AgentHeartbeat, WorkQueueItem, RawEvent},
     queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
 };
-use sinex_promo_worker::{create_promotion_entries, get_active_manifests, EventScanner, PromotionRouter, ScannerConfig};
+use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -72,7 +72,7 @@ struct ExampleProcessor {
 
 #[async_trait]
 impl EventProcessor for ExampleProcessor {
-    async fn process_event(&self, pool: &PgPool, item: &PromotionQueueItem) -> Result<()> {
+    async fn process_event(&self, pool: &PgPool, item: &WorkQueueItem) -> Result<()> {
         // Fetch the raw event - need to handle ULID conversion manually
         let record = sqlx::query!(
             r#"
@@ -248,7 +248,7 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Run as a scanner that creates promotion queue entries
+/// Run as a scanner that creates work queue entries
 async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
     info!("Running in scanner mode");
     
@@ -296,11 +296,11 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Scan for new events and create promotion entries
+/// Scan for new events and create work entries
 async fn scan_and_promote(pool: &PgPool, scanner: &mut EventScanner) -> Result<usize> {
     // Get active agent manifests
     let manifests = get_active_manifests(pool).await?;
-    let router = PromotionRouter::from_manifests(manifests);
+    let router = WorkRouter::from_manifests(manifests);
     
     // Scan for new events
     let events = scanner.scan_new_events(pool).await?;
@@ -309,13 +309,13 @@ async fn scan_and_promote(pool: &PgPool, scanner: &mut EventScanner) -> Result<u
         return Ok(0);
     }
     
-    // Create promotion entries
-    let count = create_promotion_entries(pool, events, &router).await?;
+    // Create work entries
+    let count = create_work_entries(pool, events, &router).await?;
     
     Ok(count)
 }
 
-/// Run as a worker processing promotion queue entries
+/// Run as a worker processing work queue entries
 async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode");
 
