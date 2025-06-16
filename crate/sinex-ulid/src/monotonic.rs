@@ -46,24 +46,32 @@ impl MonotonicUlidGenerator {
             self.last_timestamp.store(timestamp_ms, Ordering::SeqCst);
             self.counter.store(0, Ordering::SeqCst);
             
-            // Generate with process ID in random component
-            let mut ulid = InnerUlid::from_datetime(now.into());
-            self.embed_process_id(&mut ulid);
-            
+            // Use counter-based generation for consistency
+            let ulid = self.create_with_counter(timestamp_ms, 0);
             Ulid::from(ulid)
         } else {
             // Same millisecond - increment counter
             let counter = self.counter.fetch_add(1, Ordering::SeqCst);
             
-            // Check for counter overflow (extremely unlikely)
+            // Check for counter overflow (extremely unlikely but handle gracefully)
             if counter == u32::MAX {
-                panic!("ULID counter overflow - too many IDs generated in one millisecond");
+                // Wait for next millisecond to avoid overflow
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                
+                // Now we're in a new millisecond, reset and generate
+                let now = Utc::now();
+                let new_timestamp_ms = now.timestamp_millis() as u64;
+                self.last_timestamp.store(new_timestamp_ms, Ordering::SeqCst);
+                self.counter.store(0, Ordering::SeqCst);
+                
+                let ulid = self.create_with_counter(new_timestamp_ms, 0);
+                Ulid::from(ulid)
+            } else {
+                // Create ULID with embedded counter and process ID
+                // Note: fetch_add returns the previous value, so we need to add 1
+                let ulid = self.create_with_counter(timestamp_ms, counter + 1);
+                Ulid::from(ulid)
             }
-            
-            // Create ULID with embedded counter and process ID
-            let ulid = self.create_with_counter(timestamp_ms, counter);
-            
-            Ulid::from(ulid)
         }
     }
     
@@ -103,15 +111,20 @@ impl MonotonicUlidGenerator {
         bytes[4] = (timestamp_ms >> 8) as u8;
         bytes[5] = timestamp_ms as u8;
         
-        // Next 2 bytes: process ID (16 bits)
-        bytes[6] = (self.process_id >> 8) as u8;
-        bytes[7] = self.process_id as u8;
+        // For monotonic ordering within the same millisecond, we need to ensure
+        // that the random part (bytes 6-15) increases with each counter increment.
+        // We'll use the first 4 bytes of the random part for the counter,
+        // ensuring lexicographic ordering.
         
-        // Next 4 bytes: counter (32 bits)
-        bytes[8] = (counter >> 24) as u8;
-        bytes[9] = (counter >> 16) as u8;
-        bytes[10] = (counter >> 8) as u8;
-        bytes[11] = counter as u8;
+        // Bytes 6-9: counter (32 bits) - most significant part of randomness
+        bytes[6] = (counter >> 24) as u8;
+        bytes[7] = (counter >> 16) as u8;
+        bytes[8] = (counter >> 8) as u8;
+        bytes[9] = counter as u8;
+        
+        // Bytes 10-11: process ID (16 bits) - for multi-process uniqueness
+        bytes[10] = (self.process_id >> 8) as u8;
+        bytes[11] = self.process_id as u8;
         
         // Last 4 bytes: random for additional entropy
         use rand::Rng;
@@ -125,9 +138,9 @@ impl MonotonicUlidGenerator {
     fn embed_process_id(&self, ulid: &mut InnerUlid) {
         let mut bytes = ulid.to_bytes();
         
-        // Embed process ID in bytes 6-7 of the random component
-        bytes[6] = (self.process_id >> 8) as u8;
-        bytes[7] = self.process_id as u8;
+        // Embed process ID in bytes 10-11 to maintain ordering
+        bytes[10] = (self.process_id >> 8) as u8;
+        bytes[11] = self.process_id as u8;
         
         *ulid = InnerUlid::from_bytes(bytes);
     }
@@ -215,11 +228,11 @@ mod tests {
         let unique_ulids: HashSet<_> = all_ulids.iter().collect();
         assert_eq!(unique_ulids.len(), all_ulids.len(), "Found duplicate ULIDs");
         
-        // Check that process ID is embedded
+        // Check that process ID is embedded (now in bytes 10-11)
         let stats = generator.stats();
         for ulid in &all_ulids {
             let bytes = ulid.to_bytes();
-            let embedded_pid = ((bytes[6] as u16) << 8) | (bytes[7] as u16);
+            let embedded_pid = ((bytes[10] as u16) << 8) | (bytes[11] as u16);
             assert_eq!(embedded_pid, stats.process_id);
         }
     }
@@ -241,7 +254,7 @@ mod tests {
         
         // All should be unique and ordered
         for i in 1..ulids.len() {
-            assert!(ulids[i] > ulids[i-1]);
+            assert!(ulids[i] > ulids[i-1], "ULID {} not greater than {} at index {}", ulids[i], ulids[i-1], i);
         }
     }
 }

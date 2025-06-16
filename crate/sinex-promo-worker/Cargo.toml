@@ -7,6 +7,10 @@ repository.workspace = true
 license.workspace = true
 description = "Generic promotion worker for Sinex event processing"
 
+[lib]
+name = "sinex_promo_worker"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sinex-promo-worker"
 path = "src/main.rs"
@@ -28,6 +32,7 @@ uuid = { workspace = true }
 sqlx = { workspace = true }
 clap = { workspace = true }
 gethostname = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

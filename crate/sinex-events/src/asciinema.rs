@@ -101,6 +101,7 @@ impl Default for AsciinemaConfig {
 
 struct RecordingSession {
     id: String,
+    #[allow(dead_code)]
     file_path: PathBuf,
     start_time: DateTime<Utc>,
     last_size: u64,

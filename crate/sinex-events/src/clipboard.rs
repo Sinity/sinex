@@ -8,7 +8,8 @@ use tracing::{error, info, debug};
 
 use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
-use sinex_annex::{GitAnnex, AnnexConfig};
+use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
+use sqlx::PgPool;
 
 // ============================================================================
 // Event Payloads
@@ -143,13 +144,16 @@ pub struct ClipboardMonitor {
     last_primary: Option<String>,
     clipboard_history: Vec<ClipboardHistoryEntry>,
     git_annex: Option<GitAnnex>,
+    db_pool: Option<PgPool>,
 }
 
 #[derive(Clone)]
 struct ClipboardHistoryEntry {
     content_hash: String,
+    #[allow(dead_code)]
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
+    #[allow(dead_code)]
     content_type: String,
     copy_count: u32,
 }
@@ -228,6 +232,7 @@ impl EventSource for ClipboardMonitor {
             last_primary: None,
             clipboard_history: Vec::new(),
             git_annex,
+            db_pool: ctx.db_pool,
         })
     }
     
@@ -581,24 +586,42 @@ impl ClipboardMonitor {
         // Clean up temp file (git-annex has moved it)
         let _ = tokio::fs::remove_file(&temp_file).await;
         
-        // Note: We can't use BlobManager without a database connection
-        // In a real implementation, the EventSource would have access to the database pool
-        // For now, we just return the annex key without storing in core_blobs
-        let blob_id = None;
-        
-        // TODO: When database pool is available, use BlobManager to store metadata:
-        // let blob_metadata = BlobMetadata {
-        //     blob_id: Ulid::new(),
-        //     annex_key: annex_key.key.clone(),
-        //     original_filename: "clipboard_content".to_string(),
-        //     size_bytes: content.len() as i64,
-        //     mime_type: Some("text/plain".to_string()),
-        //     checksum_sha256: annex_key.hash.clone(),
-        //     checksum_blake3: Some(content_hash.to_string()),
-        //     storage_backend: "git-annex".to_string(),
-        //     verification_status: Some("verified".to_string()),
-        // };
-        // blob_manager.insert_blob(&blob_metadata).await?;
+        // Store blob metadata if we have database access
+        let blob_id = if let Some(ref db_pool) = self.db_pool {
+            let annex_config = AnnexConfig {
+                repo_path: git_annex.repo_path().to_path_buf(),
+                num_copies: None,
+                large_files: None,
+            };
+            let blob_manager = BlobManager::new(annex_config, db_pool.clone())
+                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create BlobManager: {}", e)))?;
+            
+            let blob_metadata = BlobMetadata {
+                blob_id: sinex_ulid::Ulid::new(),
+                annex_key: annex_key.key.clone(),
+                original_filename: "clipboard_content".to_string(),
+                size_bytes: content.len() as i64,
+                mime_type: Some("text/plain".to_string()),
+                checksum_sha256: annex_key.hash.clone(),
+                checksum_blake3: Some(content_hash.to_string()),
+                storage_backend: "git-annex".to_string(),
+                verification_status: Some("verified".to_string()),
+            };
+            
+            match blob_manager.insert_blob(&blob_metadata).await {
+                Ok(_) => {
+                    debug!("Stored blob metadata for clipboard content: {}", blob_metadata.blob_id);
+                    Some(blob_metadata.blob_id.to_string())
+                }
+                Err(e) => {
+                    error!("Failed to store blob metadata: {}", e);
+                    None
+                }
+            }
+        } else {
+            debug!("No database connection available, skipping blob metadata storage");
+            None
+        };
         
         Ok((annex_key.key, blob_id))
     }

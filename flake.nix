@@ -25,12 +25,14 @@
           overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs {
             inherit system overlays;
+            config.allowUnfree = true;  # For TimescaleDB in VM tests
           };
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [
               "rust-src"
               "rust-analyzer"
+              "llvm-tools-preview"
             ];
           };
 
@@ -40,7 +42,7 @@
             version = "0.1.0";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = with pkgs; [ openssl pkg-config ];
+            buildInputs = with pkgs; [ openssl dbus systemd ];
             nativeBuildInputs = with pkgs; [ pkg-config ];
             cargoBuildFlags = [ "-p" package ];
             auditable = false;
@@ -52,6 +54,40 @@
                 exit 1
               fi
             '';
+            postInstall = ''
+              # Include migrations in the package
+              mkdir -p $out/share/sinex
+              cp -r migrations $out/share/sinex/
+            '';
+          };
+          # Build pg_jsonschema from pre-built deb
+          pg_jsonschema = pkgs.stdenv.mkDerivation rec {
+            pname = "pg_jsonschema";
+            version = "0.3.3";
+
+            src = pkgs.fetchurl {
+              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
+              hash = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+            };
+
+            nativeBuildInputs = [ pkgs.dpkg ];
+
+            dontBuild = true;
+            dontStrip = true;
+            dontFixup = true;
+
+            unpackPhase = ''
+              dpkg-deb -x $src .
+            '';
+
+            installPhase = ''
+              mkdir -p $out/lib $out/share/postgresql/extension
+              
+              # Find and copy the actual files (not symlinks)
+              find . -name "*.so" -type f -exec cp {} $out/lib/ \;
+              find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
+              find . -name "*.control" -type f -exec cp {} $out/share/postgresql/extension/ \;
+            '';
           };
         in
         {
@@ -59,6 +95,7 @@
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
             unifiedCollector = buildRustPackage "sinex-collector";
             default = buildRustPackage "sinex-collector";
+            inherit pg_jsonschema;
           };
 
           devShells.default = pkgs.mkShell {
@@ -67,6 +104,7 @@
               rustToolchain
               cargo-watch
               cargo-nextest
+              cargo-llvm-cov
 
               # Development tools
               just
@@ -106,9 +144,9 @@
                 fi
                 
                 # Run migrations
-                if [ -d "migration" ]; then
+                if [ -d "migrations" ]; then
                   echo "🗄️  Running migrations..."
-                  sqlx migrate run --source migration >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
+                  sqlx migrate run --source migrations >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
                 fi
                 
                 echo "✅ Database $DATABASE_NAME ready at $DATABASE_URL"
@@ -119,6 +157,15 @@
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."
             '';
           };
+          
+          # NixOS VM tests
+          checks = {
+            sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
+              pg_jsonschema = self.packages.${system}.pg_jsonschema;
+            };
+          };
         }
       );
     in
@@ -128,6 +175,13 @@
       nixosModules = {
         default = ./nixos;
         sinex = ./nixos;
+      };
+      
+      # Overlay providing pg_jsonschema
+      overlays.default = final: prev: {
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = self.packages.${final.system}.pg_jsonschema;
+        };
       };
     };
 }

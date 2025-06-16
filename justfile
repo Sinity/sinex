@@ -6,22 +6,32 @@ test:
     cargo test
 
 test-unit:
-    cargo test --lib
+    cargo test --test integration unit::
 
 test-integration:
-    cargo test --test integration
+    cargo test --test integration integration::
+
+test-system:
+    cargo test --test integration system::
 
 test-dlq:
     cargo test --test integration ingestor::dlq_tests
 
+# NixOS VM tests
+test-vm:
+    nix build .#checks.x86_64-linux.sinex-vm-basic -L
+
+test-vm-interactive:
+    nix build .#checks.x86_64-linux.sinex-vm-basic -L --keep-failed
+
 test-e2e:
-    cargo test --test integration e2e:: -- --nocapture
+    cargo test --test integration system::end_to_end:: -- --nocapture
 
 test-e2e-full:
-    cargo test --test integration e2e::full_system_test -- --ignored --nocapture
+    cargo test --test integration system::end_to_end::full_pipeline_tests::test_full_system -- --ignored --nocapture
 
 test-e2e-dry-run:
-    cargo test --test integration e2e::test_full_system_dry_run -- --nocapture
+    cargo test --test integration system::end_to_end::full_pipeline_tests::test_full_system_dry_run -- --nocapture
 
 test-cli:
     python3 -m pytest test/cli/test_exo_cli.py -v
@@ -31,6 +41,22 @@ test-cli-integration:
 
 test-cli-all:
     python3 -m pytest test/cli/ -v
+
+# New test categories from reorganization
+test-core:
+    cargo test --lib --workspace
+
+test-database:
+    cargo test --test integration integration::database::
+
+test-adversarial:
+    cargo test --test integration adversarial::
+
+test-worker:
+    cargo test --test integration integration::worker::
+
+test-regression:
+    cargo test --test integration system::regression::
 
 test-all:
     echo "🧪 Running comprehensive test suite..."
@@ -119,6 +145,38 @@ update:
 psql:
     psql "$DATABASE_URL"
 
+# Coverage
+coverage:
+    #!/usr/bin/env bash
+    echo "🧪 Running tests with coverage..."
+    export PATH="$(find /nix/store -name "cargo-llvm-cov" -type f 2>/dev/null | head -1 | xargs dirname):$PATH"
+    export LLVM_COV="$(find /nix/store -name "llvm-cov" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    export LLVM_PROFDATA="$(find /nix/store -name "llvm-profdata" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*"
+
+coverage-html:
+    #!/usr/bin/env bash
+    echo "🧪 Generating HTML coverage report..."
+    export PATH="$(find /nix/store -name "cargo-llvm-cov" -type f 2>/dev/null | head -1 | xargs dirname):$PATH"
+    export LLVM_COV="$(find /nix/store -name "llvm-cov" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    export LLVM_PROFDATA="$(find /nix/store -name "llvm-profdata" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*" --html
+    echo "📊 Coverage report generated in target/llvm-cov/html/index.html"
+
+coverage-lcov:
+    #!/usr/bin/env bash
+    echo "🧪 Generating LCOV coverage report..."
+    export PATH="$(find /nix/store -name "cargo-llvm-cov" -type f 2>/dev/null | head -1 | xargs dirname):$PATH"
+    export LLVM_COV="$(find /nix/store -name "llvm-cov" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    export LLVM_PROFDATA="$(find /nix/store -name "llvm-profdata" -type f 2>/dev/null | grep llvm-tools | head -1)"
+    cargo llvm-cov --all-features --workspace --exclude-from-report="test/*" --exclude-from-report="**/tests/*" --lcov --output-path target/llvm-cov/coverage.lcov
+    echo "📊 LCOV report generated in target/llvm-cov/coverage.lcov"
+
+coverage-report: coverage-html
+    @echo "📊 Opening coverage report..."
+    xdg-open target/llvm-cov/html/index.html 2>/dev/null || echo "💡 Open target/llvm-cov/html/index.html in your browser"
+
 # Aliases
 alias c := check
 alias t := test
+alias cov := coverage

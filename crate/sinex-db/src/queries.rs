@@ -564,3 +564,489 @@ pub async fn get_dlq_stats(pool: &PgPool) -> Result<serde_json::Value> {
         "avg_resolution_time_seconds": stats.avg_resolution_time_seconds
     }))
 }
+
+/// Get an event by its ULID
+pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent> {
+    let record = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig, 
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
+        FROM raw.events
+        WHERE id = $1::uuid::ulid
+        "#,
+        event_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(RawEvent {
+        id: Ulid::from_uuid(record.id),
+        source: record.source,
+        event_type: record.event_type,
+        ts_ingest: record.ts_ingest,
+        ts_orig: record.ts_orig,
+        host: record.host,
+        ingestor_version: record.ingestor_version,
+        payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+        payload: record.payload,
+    })
+}
+
+/// Get recent events ordered by timestamp (most recent first)
+pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig, 
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
+        FROM raw.events
+        ORDER BY ts_ingest DESC
+        LIMIT $1
+        "#,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let events = records
+        .into_iter()
+        .map(|record| RawEvent {
+            id: Ulid::from_uuid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            host: record.host,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload: record.payload,
+        })
+        .collect();
+    
+    Ok(events)
+}
+
+/// Get events by source
+pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig, 
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
+        FROM raw.events
+        WHERE source = $1
+        ORDER BY ts_ingest DESC
+        LIMIT $2
+        "#,
+        source,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let events = records
+        .into_iter()
+        .map(|record| RawEvent {
+            id: Ulid::from_uuid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            host: record.host,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload: record.payload,
+        })
+        .collect();
+    
+    Ok(events)
+}
+
+/// Get events by event type
+pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig, 
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
+        FROM raw.events
+        WHERE event_type = $1
+        ORDER BY ts_ingest DESC
+        LIMIT $2
+        "#,
+        event_type,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let events = records
+        .into_iter()
+        .map(|record| RawEvent {
+            id: Ulid::from_uuid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            host: record.host,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload: record.payload,
+        })
+        .collect();
+    
+    Ok(events)
+}
+
+/// Get events within a time range
+pub async fn get_events_in_time_range(
+    pool: &PgPool, 
+    start_time: DateTime<Utc>, 
+    end_time: DateTime<Utc>
+) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig, 
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!"
+        FROM raw.events
+        WHERE ts_ingest >= $1 AND ts_ingest <= $2
+        ORDER BY ts_ingest DESC
+        "#,
+        start_time,
+        end_time
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let events = records
+        .into_iter()
+        .map(|record| RawEvent {
+            id: Ulid::from_uuid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            host: record.host,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload: record.payload,
+        })
+        .collect();
+    
+    Ok(events)
+}
+
+/// Add an event to the promotion queue
+pub async fn add_to_promotion_queue(
+    pool: &PgPool,
+    raw_event_id: Ulid,
+    target_agent_name: &str,
+    max_attempts: i32,
+) -> Result<PromotionQueueItem> {
+    let record = sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.promotion_queue 
+            (raw_event_id, target_agent_name, max_attempts)
+        VALUES ($1::uuid::ulid, $2, $3)
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at as "created_at!", 
+            processing_worker_id
+        "#,
+        raw_event_id.to_uuid(),
+        target_agent_name,
+        max_attempts
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(PromotionQueueItem {
+        queue_id: Ulid::from_uuid(record.queue_id),
+        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        target_agent_name: record.target_agent_name,
+        status: record.status,
+        attempts: record.attempts,
+        max_attempts: record.max_attempts,
+        last_attempt_ts: record.last_attempt_ts,
+        next_retry_ts: record.next_retry_ts,
+        error_message_last: record.error_message_last,
+        created_at: record.created_at,
+        processing_worker_id: record.processing_worker_id,
+    })
+}
+
+/// Get the next promotion queue item for processing
+pub async fn get_next_promotion_item(
+    pool: &PgPool,
+    target_agent_name: &str,
+) -> Result<Option<PromotionQueueItem>> {
+    let record = sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.promotion_queue
+        SET status = 'processing', last_attempt_ts = now()
+        WHERE queue_id = (
+            SELECT queue_id
+            FROM sinex_schemas.promotion_queue
+            WHERE
+                status = 'pending'
+                AND target_agent_name = $1
+                AND attempts < max_attempts
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at as "created_at!", 
+            processing_worker_id
+        "#,
+        target_agent_name
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match record {
+        Some(record) => Ok(Some(PromotionQueueItem {
+            queue_id: Ulid::from_uuid(record.queue_id),
+            raw_event_id: Ulid::from_uuid(record.raw_event_id),
+            target_agent_name: record.target_agent_name,
+            status: record.status,
+            attempts: record.attempts,
+            max_attempts: record.max_attempts,
+            last_attempt_ts: record.last_attempt_ts,
+            next_retry_ts: record.next_retry_ts,
+            error_message_last: record.error_message_last,
+            created_at: record.created_at,
+            processing_worker_id: record.processing_worker_id,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// Complete a promotion queue item (mark as completed)
+pub async fn complete_promotion_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.promotion_queue
+        SET status = 'completed'
+        WHERE queue_id = $1::uuid::ulid
+        "#,
+        queue_id.to_uuid()
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Fail a promotion queue item and optionally retry or move to DLQ
+pub async fn fail_promotion_item(
+    pool: &PgPool,
+    queue_id: Ulid,
+    error_message: &str,
+) -> Result<()> {
+    let record = sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.promotion_queue
+        SET 
+            attempts = attempts + 1,
+            error_message_last = $2,
+            last_attempt_ts = now(),
+            status = CASE 
+                WHEN attempts + 1 >= max_attempts THEN 'failed'
+                ELSE 'pending'
+            END
+        WHERE queue_id = $1::uuid::ulid
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!",
+            attempts as "attempts!",
+            max_attempts as "max_attempts!",
+            status as "status!"
+        "#,
+        queue_id.to_uuid(),
+        error_message
+    )
+    .fetch_one(pool)
+    .await?;
+
+    // If max attempts reached, move to DLQ
+    if record.status == "failed" {
+        // Get the original event to add to DLQ
+        let event = get_event_by_id(pool, Ulid::from_uuid(record.raw_event_id)).await?;
+        
+        insert_dlq_event(
+            pool,
+            event.id,
+            &record.target_agent_name,
+            &event.source,
+            &event.event_type,
+            error_message,
+            "retryable",
+            event.payload,
+            None,
+        ).await?;
+
+        // Remove from promotion queue
+        sqlx::query!(
+            "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
+            queue_id.to_uuid()
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Get a promotion queue item by ID
+pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<PromotionQueueItem> {
+    let record = sqlx::query!(
+        r#"
+        SELECT 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at as "created_at!", 
+            processing_worker_id
+        FROM sinex_schemas.promotion_queue
+        WHERE queue_id = $1::uuid::ulid
+        "#,
+        queue_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(PromotionQueueItem {
+        queue_id: Ulid::from_uuid(record.queue_id),
+        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        target_agent_name: record.target_agent_name,
+        status: record.status,
+        attempts: record.attempts,
+        max_attempts: record.max_attempts,
+        last_attempt_ts: record.last_attempt_ts,
+        next_retry_ts: record.next_retry_ts,
+        error_message_last: record.error_message_last,
+        created_at: record.created_at,
+        processing_worker_id: record.processing_worker_id,
+    })
+}
+
+/// Get DLQ items for a specific agent
+pub async fn get_dlq_items(
+    pool: &PgPool,
+    agent_name: &str,
+    limit: i64,
+) -> Result<Vec<DlqEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            dlq_id::uuid as "dlq_id!",
+            failed_event_id::uuid as "failed_event_id!",
+            agent_name as "agent_name!",
+            source as "source!",
+            event_type as "event_type!",
+            failure_reason as "failure_reason!",
+            error_category as "error_category!",
+            retry_count as "retry_count!",
+            failed_at as "failed_at!",
+            last_retry_at,
+            next_retry_at,
+            original_event_payload as "original_event_payload!",
+            additional_metadata,
+            resolved_at,
+            resolved_by
+        FROM sinex_schemas.dlq_events
+        WHERE agent_name = $1
+        ORDER BY failed_at DESC
+        LIMIT $2
+        "#,
+        agent_name,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let events = records
+        .into_iter()
+        .map(|record| DlqEvent {
+            dlq_id: Ulid::from_uuid(record.dlq_id),
+            failed_event_id: Ulid::from_uuid(record.failed_event_id),
+            agent_name: record.agent_name,
+            source: record.source,
+            event_type: record.event_type,
+            failure_reason: record.failure_reason,
+            error_category: record.error_category,
+            retry_count: record.retry_count,
+            failed_at: record.failed_at,
+            last_retry_at: record.last_retry_at,
+            next_retry_at: record.next_retry_at,
+            original_event_payload: record.original_event_payload,
+            additional_metadata: record.additional_metadata,
+            resolved_at: record.resolved_at,
+            resolved_by: record.resolved_by,
+        })
+        .collect();
+
+    Ok(events)
+}

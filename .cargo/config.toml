@@ -1,0 +1,24 @@
+[build]
+# Build configuration for Sinex
+
+[env]
+# Environment variables for coverage and testing
+CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
+
+[target.'cfg(coverage)']
+# Coverage-specific configuration
+rustflags = [
+    "-C", "instrument-coverage",
+    "-C", "llvm-args=--instrprof-atomic-counter-update-all",
+]
+
+# Coverage profile
+[profile.coverage]
+inherits = "test"
+debug = true
+incremental = false
+codegen-units = 1
+overflow-checks = false
+
+# Coverage exclusions are handled via command line flags in justfile
+# to keep them visible and maintainable

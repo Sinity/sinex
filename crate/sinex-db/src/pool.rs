@@ -24,11 +24,3 @@ pub async fn get_pool() -> Result<&'static PgPool> {
     Ok(POOL.get().unwrap())
 }
 
-/// Set correlation ID for the current database session
-pub async fn set_correlation_id(pool: &PgPool, correlation_id: &str) -> Result<()> {
-    sqlx::query("SELECT set_config('sinex.correlation_id', $1, false)")
-        .bind(correlation_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}

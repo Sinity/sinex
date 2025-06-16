@@ -124,7 +124,7 @@ async fn test_network_partition_during_processing() {
                     SET payload = payload || jsonb_build_object('worker_attempt', $2::text, 'worker_id', $3::text)
                     WHERE id::uuid = $1::uuid
                     "#,
-                    event_id.as_uuid(),
+                    event_id.to_uuid(),
                     attempt.to_string(),
                     worker_id.to_string()
                 ).execute(&pool_clone).await;
@@ -157,7 +157,7 @@ async fn test_network_partition_during_processing() {
     // Check final event state
     let final_event = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-        test_event.id.as_uuid()
+        test_event.id.to_uuid()
     ).fetch_one(&pool).await.unwrap();
     
     println!("- Final event payload: {}", final_event.payload);

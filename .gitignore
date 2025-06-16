@@ -3,6 +3,10 @@ target/
 **/*.rs.bk
 *.pdb
 
+# Coverage
+.coverage/
+coverage.lcov
+
 # Python
 __pycache__/
 *.py[cod]
