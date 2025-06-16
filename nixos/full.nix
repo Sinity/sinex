@@ -27,8 +27,7 @@ let
 
     # Run migrations (they create extensions and schema)
     export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
-    cd ${./.}
-    ${pkgs.sqlx-cli}/bin/sqlx migrate run --source migrations
+    ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations
   '';
 
 in
@@ -521,6 +520,15 @@ in
 
     # System packages
     environment.systemPackages = [ cfg.package ];
+    
+    # Create sinex user and group
+    users.users.${cfg.database.user} = mkIf cfg.database.autoSetup {
+      isSystemUser = true;
+      group = cfg.database.user;
+      description = "Sinex service user";
+    };
+    
+    users.groups.${cfg.database.user} = mkIf cfg.database.autoSetup {};
 
     # Database setup
     services.postgresql = mkIf cfg.database.autoSetup {
@@ -579,8 +587,9 @@ in
         Restart = "always";
         RestartSec = "10s";
 
-        # Security hardening
-        DynamicUser = true;
+        # Security hardening - use static user to match database
+        User = cfg.database.user;
+        Group = cfg.database.user;
         StateDirectory = "sinex";
         RuntimeDirectory = "sinex";
         PrivateTmp = true;
@@ -617,8 +626,9 @@ in
         Restart = "always";
         RestartSec = "10s";
 
-        # Security hardening
-        DynamicUser = true;
+        # Security hardening - use static user to match database
+        User = cfg.database.user;
+        Group = cfg.database.user;
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;

@@ -3,7 +3,7 @@
 
 with lib;
 
-{
+rec {
   # Helper to generate collector configuration
   mkCollectorConfig = cfg: fullCfg: let
     # When autoSetup is true, enable all event sources

@@ -54,6 +54,11 @@
                 exit 1
               fi
             '';
+            postInstall = ''
+              # Include migrations in the package
+              mkdir -p $out/share/sinex
+              cp -r migrations $out/share/sinex/
+            '';
           };
           # Build pg_jsonschema from pre-built deb
           pg_jsonschema = pkgs.stdenv.mkDerivation rec {
