@@ -84,6 +84,13 @@ pkgs.nixosTest {
             enable = true;
             watchPaths = [ "/home/test/watched" ];
           };
+          # Disable sources that require user home directory
+          sources.atuin.enable = false;
+          sources.shellHistory.enable = false;
+          sources.asciinema.enable = false;
+          sources.kittyScrollback.enable = false;
+          sources.clipboard.enable = false;
+          sources.dbus.enable = false;
         };
       };
 

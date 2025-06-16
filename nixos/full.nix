@@ -526,6 +526,8 @@ in
       isSystemUser = true;
       group = cfg.database.user;
       description = "Sinex service user";
+      home = "/var/lib/sinex";
+      createHome = true;
     };
     
     users.groups.${cfg.database.user} = mkIf cfg.database.autoSetup {};
@@ -540,6 +542,9 @@ in
         pgx_ulid
         pg_jsonschema # From our overlay
       ];
+      settings = {
+        shared_preload_libraries = "timescaledb";
+      };
       ensureDatabases = [ cfg.database.name ];
       ensureUsers = [
         {
