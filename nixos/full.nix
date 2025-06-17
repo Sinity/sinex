@@ -563,6 +563,212 @@ in
         description = "Write events to file instead of database";
       };
 
+      # Health Check Configuration
+      healthCheck = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable health checks for the unified collector";
+        };
+
+        port = mkOption {
+          type = types.port;
+          default = 8080;
+          description = "HTTP port for health check endpoint";
+        };
+
+        path = mkOption {
+          type = types.str;
+          default = "/health";
+          description = "HTTP path for health check endpoint";
+        };
+
+        readinessPath = mkOption {
+          type = types.str;
+          default = "/ready";
+          description = "HTTP path for readiness probe endpoint";
+        };
+
+        livenessPath = mkOption {
+          type = types.str;
+          default = "/alive";
+          description = "HTTP path for liveness probe endpoint";
+        };
+
+        interval = mkOption {
+          type = types.int;
+          default = 10;
+          description = "Health check interval in seconds";
+        };
+
+        timeout = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Health check timeout in seconds";
+        };
+
+        startupProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable startup health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 30;
+            description = "Initial delay before first startup probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Period between startup probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Timeout for startup probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 12;
+            description = "Number of consecutive startup probe failures before giving up";
+          };
+        };
+
+        readinessProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable readiness health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Initial delay before first readiness probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 10;
+            description = "Period between readiness probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Timeout for readiness probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Number of consecutive readiness probe failures before marking unready";
+          };
+
+          successThreshold = mkOption {
+            type = types.int;
+            default = 1;
+            description = "Number of consecutive readiness probe successes to mark ready";
+          };
+        };
+
+        livenessProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable liveness health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 60;
+            description = "Initial delay before first liveness probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 30;
+            description = "Period between liveness probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Timeout for liveness probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Number of consecutive liveness probe failures before restart";
+          };
+        };
+
+        persistence = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable health state persistence across restarts";
+          };
+
+          stateFile = mkOption {
+            type = types.str;
+            default = "collector_health_state";
+            description = "Filename for persisting health state";
+          };
+
+          retainDuration = mkOption {
+            type = types.str;
+            default = "24h";
+            description = "Duration to retain health history";
+          };
+        };
+      };
+
+      # Restart Policy Configuration
+      restart = {
+        policy = mkOption {
+          type = types.enum [ "always" "on-failure" "unless-stopped" "no" ];
+          default = "always";
+          description = "Restart policy for the collector service";
+        };
+
+        maxRestarts = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum number of restarts within restart window";
+        };
+
+        restartWindow = mkOption {
+          type = types.str;
+          default = "10min";
+          description = "Time window for counting restarts";
+        };
+
+        baseDelay = mkOption {
+          type = types.str;
+          default = "10s";
+          description = "Base delay between restart attempts";
+        };
+
+        maxDelay = mkOption {
+          type = types.str;
+          default = "5min";
+          description = "Maximum delay between restart attempts";
+        };
+
+        backoffMultiplier = mkOption {
+          type = types.float;
+          default = 2.0;
+          description = "Backoff multiplier for exponential restart delay";
+        };
+      };
+
       sources = {
         atuin = {
           enable = mkOption {
@@ -890,6 +1096,238 @@ in
         default = 100;
         description = "Number of events to process per batch";
       };
+
+      # Health Check Configuration
+      healthCheck = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable health checks for the promotion worker";
+        };
+
+        port = mkOption {
+          type = types.port;
+          default = 8081;
+          description = "HTTP port for health check endpoint";
+        };
+
+        path = mkOption {
+          type = types.str;
+          default = "/health";
+          description = "HTTP path for health check endpoint";
+        };
+
+        readinessPath = mkOption {
+          type = types.str;
+          default = "/ready";
+          description = "HTTP path for readiness probe endpoint";
+        };
+
+        livenessPath = mkOption {
+          type = types.str;
+          default = "/alive";
+          description = "HTTP path for liveness probe endpoint";
+        };
+
+        interval = mkOption {
+          type = types.int;
+          default = 15;
+          description = "Health check interval in seconds";
+        };
+
+        timeout = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Health check timeout in seconds";
+        };
+
+        startupProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable startup health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 15;
+            description = "Initial delay before first startup probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Period between startup probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Timeout for startup probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 6;
+            description = "Number of consecutive startup probe failures before giving up";
+          };
+        };
+
+        readinessProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable readiness health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Initial delay before first readiness probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 15;
+            description = "Period between readiness probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Timeout for readiness probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Number of consecutive readiness probe failures before marking unready";
+          };
+
+          successThreshold = mkOption {
+            type = types.int;
+            default = 1;
+            description = "Number of consecutive readiness probe successes to mark ready";
+          };
+        };
+
+        livenessProbe = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable liveness health probe";
+          };
+
+          initialDelay = mkOption {
+            type = types.int;
+            default = 30;
+            description = "Initial delay before first liveness probe in seconds";
+          };
+
+          periodSeconds = mkOption {
+            type = types.int;
+            default = 60;
+            description = "Period between liveness probes in seconds";
+          };
+
+          timeoutSeconds = mkOption {
+            type = types.int;
+            default = 5;
+            description = "Timeout for liveness probes in seconds";
+          };
+
+          failureThreshold = mkOption {
+            type = types.int;
+            default = 3;
+            description = "Number of consecutive liveness probe failures before restart";
+          };
+        };
+
+        queueHealth = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable queue depth health monitoring";
+          };
+
+          maxDepthThreshold = mkOption {
+            type = types.int;
+            default = 1000;
+            description = "Maximum queue depth before marking unhealthy";
+          };
+
+          processingTimeThreshold = mkOption {
+            type = types.str;
+            default = "30s";
+            description = "Maximum processing time per batch before marking unhealthy";
+          };
+
+          stalledJobThreshold = mkOption {
+            type = types.str;
+            default = "5min";
+            description = "Maximum time for jobs to remain unprocessed before marking unhealthy";
+          };
+        };
+
+        persistence = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable health state persistence across restarts";
+          };
+
+          stateFile = mkOption {
+            type = types.str;
+            default = "worker_health_state";
+            description = "Filename for persisting health state";
+          };
+
+          retainDuration = mkOption {
+            type = types.str;
+            default = "24h";
+            description = "Duration to retain health history";
+          };
+        };
+      };
+
+      # Restart Policy Configuration  
+      restart = {
+        policy = mkOption {
+          type = types.enum [ "always" "on-failure" "unless-stopped" "no" ];
+          default = "always";
+          description = "Restart policy for the worker service";
+        };
+
+        maxRestarts = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum number of restarts within restart window";
+        };
+
+        restartWindow = mkOption {
+          type = types.str;
+          default = "10min";
+          description = "Time window for counting restarts";
+        };
+
+        baseDelay = mkOption {
+          type = types.str;
+          default = "15s";
+          description = "Base delay between restart attempts";
+        };
+
+        maxDelay = mkOption {
+          type = types.str;
+          default = "5min";
+          description = "Maximum delay between restart attempts";
+        };
+
+        backoffMultiplier = mkOption {
+          type = types.float;
+          default = 2.0;
+          description = "Backoff multiplier for exponential restart delay";
+        };
+      };
     };
 
     blobStorage = {
@@ -942,6 +1380,207 @@ in
         type = types.bool;
         default = false;
         description = "Store metrics as events in database (in addition to Prometheus)";
+      };
+    };
+
+    # Global Health Check Aggregation Configuration
+    healthMonitoring = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable global health monitoring and aggregation";
+      };
+
+      coordinatorPort = mkOption {
+        type = types.port;
+        default = 8082;
+        description = "Port for health check coordinator service";
+      };
+
+      aggregationInterval = mkOption {
+        type = types.int;
+        default = 30;
+        description = "Interval for aggregating health data from all services in seconds";
+      };
+
+      overallHealthEndpoint = mkOption {
+        type = types.str;
+        default = "/health/overall";
+        description = "HTTP endpoint for overall system health status";
+      };
+
+      detailedHealthEndpoint = mkOption {
+        type = types.str;
+        default = "/health/detailed";
+        description = "HTTP endpoint for detailed health information";
+      };
+
+      metricsEndpoint = mkOption {
+        type = types.str;
+        default = "/health/metrics";
+        description = "HTTP endpoint for health metrics";
+      };
+
+      dependencies = {
+        checkDatabase = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Include database connectivity in overall health";
+        };
+
+        checkDiskSpace = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Include disk space monitoring in overall health";
+        };
+
+        checkQueueDepth = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Include queue depth monitoring in overall health";
+        };
+
+        checkExternalServices = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Include external service dependencies in health checks";
+        };
+
+        criticalServices = mkOption {
+          type = types.listOf types.str;
+          default = [ "sinex-unified-collector" "sinex-promo-worker" ];
+          description = "List of services considered critical for overall system health";
+        };
+
+        optionalServices = mkOption {
+          type = types.listOf types.str;
+          default = [ "sinex-disk-monitor" "sinex-queue-monitor" ];
+          description = "List of services that don't affect overall health but are monitored";
+        };
+      };
+
+      alerting = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable health status alerting";
+        };
+
+        alertThreshold = mkOption {
+          type = types.int;
+          default = 3;
+          description = "Number of consecutive failures before triggering alerts";
+        };
+
+        cooldownPeriod = mkOption {
+          type = types.str;
+          default = "5min";
+          description = "Cooldown period between repeated alerts";
+        };
+
+        logLevel = mkOption {
+          type = types.enum [ "debug" "info" "warn" "error" ];
+          default = "warn";
+          description = "Log level for health alerts";
+        };
+
+        destinations = {
+          journald = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Send alerts to systemd journal";
+          };
+
+          file = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "File path for health alert logs";
+          };
+
+          webhook = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Webhook URL for external alert notifications";
+          };
+        };
+      };
+
+      recovery = {
+        enableAutoRecovery = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable automatic recovery actions for failed services";
+        };
+
+        maxRecoveryAttempts = mkOption {
+          type = types.int;
+          default = 3;
+          description = "Maximum number of automatic recovery attempts";
+        };
+
+        recoveryWindow = mkOption {
+          type = types.str;
+          default = "30min";
+          description = "Time window for counting recovery attempts";
+        };
+
+        actions = {
+          restartServices = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Automatically restart failed services";
+          };
+
+          clearQueues = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Clear stuck queues during recovery";
+          };
+
+          recreateConnections = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Recreate database connections during recovery";
+          };
+
+          escalate = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Escalate to manual intervention if auto-recovery fails";
+          };
+        };
+      };
+
+      stateManagement = {
+        enablePersistence = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Persist health state across system restarts";
+        };
+
+        stateFile = mkOption {
+          type = types.str;
+          default = "health_coordinator_state";
+          description = "Filename for persisting health coordinator state";
+        };
+
+        historyRetention = mkOption {
+          type = types.str;
+          default = "7d";
+          description = "Duration to retain health check history";
+        };
+
+        snapshotInterval = mkOption {
+          type = types.str;
+          default = "1h";
+          description = "Interval for taking health state snapshots";
+        };
+
+        compressionEnabled = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable compression for health state storage";
+        };
       };
     };
 
@@ -1668,6 +2307,76 @@ in
         message = "Database health check success threshold must be between 1 and 20 (got ${toString cfg.database.healthCheck.successThreshold})";
       }
 
+      # Unified Collector health check validations
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.enable || cfg.unifiedCollector.healthCheck.interval > 0 && cfg.unifiedCollector.healthCheck.interval <= 300;
+        message = "Unified collector health check interval must be between 1 and 300 seconds (got ${toString cfg.unifiedCollector.healthCheck.interval})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.enable || cfg.unifiedCollector.healthCheck.timeout > 0 && cfg.unifiedCollector.healthCheck.timeout <= 60;
+        message = "Unified collector health check timeout must be between 1 and 60 seconds (got ${toString cfg.unifiedCollector.healthCheck.timeout})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.enable || cfg.unifiedCollector.healthCheck.port != cfg.database.port && cfg.unifiedCollector.healthCheck.port != cfg.unifiedCollector.metricsPort;
+        message = "Unified collector health check port (${toString cfg.unifiedCollector.healthCheck.port}) must not conflict with database port (${toString cfg.database.port}) or metrics port (${toString cfg.unifiedCollector.metricsPort})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.startupProbe.enable || cfg.unifiedCollector.healthCheck.startupProbe.failureThreshold >= 1 && cfg.unifiedCollector.healthCheck.startupProbe.failureThreshold <= 30;
+        message = "Unified collector startup probe failure threshold must be between 1 and 30 (got ${toString cfg.unifiedCollector.healthCheck.startupProbe.failureThreshold})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.readinessProbe.enable || cfg.unifiedCollector.healthCheck.readinessProbe.failureThreshold >= 1 && cfg.unifiedCollector.healthCheck.readinessProbe.failureThreshold <= 10;
+        message = "Unified collector readiness probe failure threshold must be between 1 and 10 (got ${toString cfg.unifiedCollector.healthCheck.readinessProbe.failureThreshold})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.healthCheck.livenessProbe.enable || cfg.unifiedCollector.healthCheck.livenessProbe.failureThreshold >= 1 && cfg.unifiedCollector.healthCheck.livenessProbe.failureThreshold <= 10;
+        message = "Unified collector liveness probe failure threshold must be between 1 and 10 (got ${toString cfg.unifiedCollector.healthCheck.livenessProbe.failureThreshold})";
+      }
+      {
+        assertion = cfg.unifiedCollector.restart.maxRestarts >= 1 && cfg.unifiedCollector.restart.maxRestarts <= 20;
+        message = "Unified collector max restarts must be between 1 and 20 (got ${toString cfg.unifiedCollector.restart.maxRestarts})";
+      }
+
+      # Promotion Worker health check validations
+      {
+        assertion = !cfg.promoWorker.healthCheck.enable || cfg.promoWorker.healthCheck.interval > 0 && cfg.promoWorker.healthCheck.interval <= 300;
+        message = "Promotion worker health check interval must be between 1 and 300 seconds (got ${toString cfg.promoWorker.healthCheck.interval})";
+      }
+      {
+        assertion = !cfg.promoWorker.healthCheck.enable || cfg.promoWorker.healthCheck.timeout > 0 && cfg.promoWorker.healthCheck.timeout <= 60;
+        message = "Promotion worker health check timeout must be between 1 and 60 seconds (got ${toString cfg.promoWorker.healthCheck.timeout})";
+      }
+      {
+        assertion = !cfg.promoWorker.healthCheck.enable || cfg.promoWorker.healthCheck.port != cfg.database.port && cfg.promoWorker.healthCheck.port != cfg.promoWorker.metricsPort && cfg.promoWorker.healthCheck.port != cfg.unifiedCollector.healthCheck.port;
+        message = "Promotion worker health check port (${toString cfg.promoWorker.healthCheck.port}) must not conflict with database port (${toString cfg.database.port}), metrics port (${toString cfg.promoWorker.metricsPort}), or collector health port (${toString cfg.unifiedCollector.healthCheck.port})";
+      }
+      {
+        assertion = !cfg.promoWorker.healthCheck.queueHealth.enable || cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold >= 10 && cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold <= 100000;
+        message = "Promotion worker queue health max depth threshold must be between 10 and 100000 (got ${toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold})";
+      }
+      {
+        assertion = cfg.promoWorker.restart.maxRestarts >= 1 && cfg.promoWorker.restart.maxRestarts <= 20;
+        message = "Promotion worker max restarts must be between 1 and 20 (got ${toString cfg.promoWorker.restart.maxRestarts})";
+      }
+
+      # Health monitoring validations
+      {
+        assertion = !cfg.healthMonitoring.enable || cfg.healthMonitoring.aggregationInterval >= 10 && cfg.healthMonitoring.aggregationInterval <= 300;
+        message = "Health monitoring aggregation interval must be between 10 and 300 seconds (got ${toString cfg.healthMonitoring.aggregationInterval})";
+      }
+      {
+        assertion = !cfg.healthMonitoring.enable || cfg.healthMonitoring.coordinatorPort != cfg.database.port && cfg.healthMonitoring.coordinatorPort != cfg.unifiedCollector.healthCheck.port && cfg.healthMonitoring.coordinatorPort != cfg.promoWorker.healthCheck.port;
+        message = "Health monitoring coordinator port (${toString cfg.healthMonitoring.coordinatorPort}) must not conflict with other service ports";
+      }
+      {
+        assertion = !cfg.healthMonitoring.alerting.enable || cfg.healthMonitoring.alerting.alertThreshold >= 1 && cfg.healthMonitoring.alerting.alertThreshold <= 10;
+        message = "Health monitoring alert threshold must be between 1 and 10 (got ${toString cfg.healthMonitoring.alerting.alertThreshold})";
+      }
+      {
+        assertion = !cfg.healthMonitoring.recovery.enableAutoRecovery || cfg.healthMonitoring.recovery.maxRecoveryAttempts >= 1 && cfg.healthMonitoring.recovery.maxRecoveryAttempts <= 10;
+        message = "Health monitoring max recovery attempts must be between 1 and 10 (got ${toString cfg.healthMonitoring.recovery.maxRecoveryAttempts})";
+      }
+
       # Migration validations
       {
         assertion = cfg.database.migration.timeout > 0 && cfg.database.migration.timeout <= 3600;
@@ -1917,13 +2626,64 @@ in
         SINEX_CONFIG_DIR = cfg.directories.config;
         SINEX_SOCKETS_DIR = cfg.directories.sockets;
         SINEX_PID_DIR = cfg.directories.pid;
+        
+        # Health check environment variables
+        SINEX_HEALTH_CHECK_ENABLED = if cfg.unifiedCollector.healthCheck.enable then "true" else "false";
+        SINEX_HEALTH_CHECK_PORT = toString cfg.unifiedCollector.healthCheck.port;
+        SINEX_HEALTH_CHECK_PATH = cfg.unifiedCollector.healthCheck.path;
+        SINEX_READINESS_PATH = cfg.unifiedCollector.healthCheck.readinessPath;
+        SINEX_LIVENESS_PATH = cfg.unifiedCollector.healthCheck.livenessPath;
+        SINEX_HEALTH_CHECK_TIMEOUT = toString cfg.unifiedCollector.healthCheck.timeout;
+        SINEX_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}";
       };
 
       serviceConfig = {
         Type = "simple";
         ExecStart = "${cfg.package}/bin/sinex-collector --config ${collectorConfigFile}";
-        Restart = "always";
-        RestartSec = "10s";
+        
+        # Health check post-start command
+        ExecStartPost = mkIf cfg.unifiedCollector.healthCheck.enable (pkgs.writeShellScript "collector-startup-health-check" ''
+          set -euo pipefail
+          
+          echo "Starting health checks for sinex-unified-collector..."
+          
+          # Wait for initial startup delay
+          sleep ${toString cfg.unifiedCollector.healthCheck.startupProbe.initialDelay}
+          
+          # Perform startup health checks
+          max_attempts=${toString cfg.unifiedCollector.healthCheck.startupProbe.failureThreshold}
+          period=${toString cfg.unifiedCollector.healthCheck.startupProbe.periodSeconds}
+          timeout=${toString cfg.unifiedCollector.healthCheck.startupProbe.timeoutSeconds}
+          
+          for attempt in $(seq 1 $max_attempts); do
+            echo "Health check attempt $attempt/$max_attempts..."
+            
+            if ${pkgs.curl}/bin/curl \
+              --max-time $timeout \
+              --fail \
+              --silent \
+              --show-error \
+              "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.path}"; then
+              echo "✓ Collector startup health check passed"
+              
+              # Update health state file
+              echo "startup_healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+              
+              exit 0
+            else
+              echo "⚠️  Health check attempt $attempt failed"
+              if [ $attempt -lt $max_attempts ]; then
+                sleep $period
+              fi
+            fi
+          done
+          
+          echo "✗ Collector startup health check failed after $max_attempts attempts" >&2
+          exit 1
+        '');
+
+        Restart = cfg.unifiedCollector.restart.policy;
+        RestartSec = cfg.unifiedCollector.restart.baseDelay;
 
         # Security hardening - use static user to match database
         User = cfg.database.user;
@@ -1991,10 +2751,18 @@ in
         LimitNPROC = "1024";
         
       }) // (optionalAttrs (cfg.resourceLimits.restart.enableRateLimiting) {
-        # Restart rate limiting
+        # Restart rate limiting  
         StartLimitBurst = cfg.resourceLimits.restart.collectorBurst;
         StartLimitIntervalSec = cfg.resourceLimits.restart.collectorInterval;
-      });
+      }) // {
+        # Enhanced restart policy configuration
+        StartLimitBurst = cfg.unifiedCollector.restart.maxRestarts;
+        StartLimitIntervalSec = cfg.unifiedCollector.restart.restartWindow;
+        RestartPreventExitStatus = "SIGKILL";
+        RestartKillSignal = "SIGTERM";
+        FinalKillSignal = "SIGKILL";
+        TimeoutStopFailureMode = "abort";
+      };
     };
 
     # Promotion Worker service
@@ -2059,13 +2827,68 @@ in
         SINEX_CONFIG_DIR = cfg.directories.config;
         SINEX_SOCKETS_DIR = cfg.directories.sockets;
         SINEX_PID_DIR = cfg.directories.pid;
+        
+        # Health check environment variables
+        SINEX_WORKER_HEALTH_CHECK_ENABLED = if cfg.promoWorker.healthCheck.enable then "true" else "false";
+        SINEX_WORKER_HEALTH_CHECK_PORT = toString cfg.promoWorker.healthCheck.port;
+        SINEX_WORKER_HEALTH_CHECK_PATH = cfg.promoWorker.healthCheck.path;
+        SINEX_WORKER_READINESS_PATH = cfg.promoWorker.healthCheck.readinessPath;
+        SINEX_WORKER_LIVENESS_PATH = cfg.promoWorker.healthCheck.livenessPath;
+        SINEX_WORKER_HEALTH_CHECK_TIMEOUT = toString cfg.promoWorker.healthCheck.timeout;
+        SINEX_WORKER_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}";
+        SINEX_WORKER_QUEUE_HEALTH_ENABLED = if cfg.promoWorker.healthCheck.queueHealth.enable then "true" else "false";
+        SINEX_WORKER_HEALTH_MAX_QUEUE_DEPTH = toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold;
+        SINEX_WORKER_HEALTH_MAX_PROCESSING_TIME = cfg.promoWorker.healthCheck.queueHealth.processingTimeThreshold;
+        SINEX_WORKER_HEALTH_STALLED_JOB_THRESHOLD = cfg.promoWorker.healthCheck.queueHealth.stalledJobThreshold;
       };
 
       serviceConfig = {
         Type = "simple";
         ExecStart = "${cfg.package}/bin/sinex-promo-worker";
-        Restart = "always";
-        RestartSec = "10s";
+        
+        # Health check post-start command
+        ExecStartPost = mkIf cfg.promoWorker.healthCheck.enable (pkgs.writeShellScript "worker-startup-health-check" ''
+          set -euo pipefail
+          
+          echo "Starting health checks for sinex-promo-worker..."
+          
+          # Wait for initial startup delay
+          sleep ${toString cfg.promoWorker.healthCheck.startupProbe.initialDelay}
+          
+          # Perform startup health checks
+          max_attempts=${toString cfg.promoWorker.healthCheck.startupProbe.failureThreshold}
+          period=${toString cfg.promoWorker.healthCheck.startupProbe.periodSeconds}
+          timeout=${toString cfg.promoWorker.healthCheck.startupProbe.timeoutSeconds}
+          
+          for attempt in $(seq 1 $max_attempts); do
+            echo "Health check attempt $attempt/$max_attempts..."
+            
+            if ${pkgs.curl}/bin/curl \
+              --max-time $timeout \
+              --fail \
+              --silent \
+              --show-error \
+              "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.path}"; then
+              echo "✓ Worker startup health check passed"
+              
+              # Update health state file
+              echo "startup_healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+              
+              exit 0
+            else
+              echo "⚠️  Health check attempt $attempt failed"
+              if [ $attempt -lt $max_attempts ]; then
+                sleep $period
+              fi
+            fi
+          done
+          
+          echo "✗ Worker startup health check failed after $max_attempts attempts" >&2
+          exit 1
+        '');
+
+        Restart = cfg.promoWorker.restart.policy;
+        RestartSec = cfg.promoWorker.restart.baseDelay;
 
         # Security hardening - use static user to match database
         User = cfg.database.user;
@@ -2130,7 +2953,15 @@ in
         # Restart rate limiting
         StartLimitBurst = cfg.resourceLimits.restart.workerBurst;
         StartLimitIntervalSec = cfg.resourceLimits.restart.workerInterval;
-      });
+      }) // {
+        # Enhanced restart policy configuration
+        StartLimitBurst = cfg.promoWorker.restart.maxRestarts;
+        StartLimitIntervalSec = cfg.promoWorker.restart.restartWindow;
+        RestartPreventExitStatus = "SIGKILL";
+        RestartKillSignal = "SIGTERM";
+        FinalKillSignal = "SIGKILL";
+        TimeoutStopFailureMode = "abort";
+      };
     };
 
     # Git-annex initialization
@@ -2674,9 +3505,323 @@ in
       };
     };
 
-    # Healthcheck service that aggregates all monitoring
+    # Health Check Coordination Service  
+    systemd.services.sinex-health-coordinator = mkIf cfg.healthMonitoring.enable {
+      description = "Sinex Health Check Coordinator";
+      after = [ "network.target" ];
+      wantedBy = [ "multi-user.target" ];
+
+      environment = {
+        SINEX_HEALTH_COORDINATOR_PORT = toString cfg.healthMonitoring.coordinatorPort;
+        SINEX_HEALTH_AGGREGATION_INTERVAL = toString cfg.healthMonitoring.aggregationInterval;
+        SINEX_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.healthMonitoring.stateManagement.stateFile}";
+        SINEX_HEALTH_HISTORY_RETENTION = cfg.healthMonitoring.stateManagement.historyRetention;
+        SINEX_HEALTH_ENABLE_ALERTING = if cfg.healthMonitoring.alerting.enable then "true" else "false";
+        SINEX_HEALTH_ENABLE_RECOVERY = if cfg.healthMonitoring.recovery.enableAutoRecovery then "true" else "false";
+      };
+
+      serviceConfig = {
+        Type = "simple";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-health-coordinator" ''
+          set -euo pipefail
+          
+          echo "Starting Sinex Health Check Coordinator..."
+          echo "Coordinator Port: $SINEX_HEALTH_COORDINATOR_PORT"
+          echo "Aggregation Interval: $SINEX_HEALTH_AGGREGATION_INTERVAL seconds"
+          
+          # Create health state file if it doesn't exist
+          touch "$SINEX_HEALTH_STATE_FILE"
+          
+          # Function to check individual service health
+          check_service_health() {
+            local service_name="$1"
+            local health_port="$2"
+            local health_path="$3"
+            local timeout="$4"
+            
+            if systemctl is-active "$service_name" >/dev/null 2>&1; then
+              if ${pkgs.curl}/bin/curl \
+                --max-time "$timeout" \
+                --fail \
+                --silent \
+                "http://localhost:$health_port$health_path" >/dev/null 2>&1; then
+                echo "healthy"
+              else
+                echo "unhealthy"
+              fi
+            else
+              echo "inactive"
+            fi
+          }
+          
+          # Function to aggregate health status
+          aggregate_health() {
+            local overall_status="healthy"
+            local critical_failures=0
+            
+            echo "=== Health Aggregation $(date) ===" >> "$SINEX_HEALTH_STATE_FILE"
+            
+            # Check critical services
+            ${lib.concatStringsSep "\n" (map (service: ''
+              status=$(check_service_health "${service}" \
+                "$(if [ "${service}" = "sinex-unified-collector" ]; then echo "${toString cfg.unifiedCollector.healthCheck.port}"; else echo "${toString cfg.promoWorker.healthCheck.port}"; fi)" \
+                "$(if [ "${service}" = "sinex-unified-collector" ]; then echo "${cfg.unifiedCollector.healthCheck.path}"; else echo "${cfg.promoWorker.healthCheck.path}"; fi)" \
+                "5")
+              echo "${service}:$status:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+              
+              if [ "$status" != "healthy" ]; then
+                critical_failures=$((critical_failures + 1))
+                overall_status="degraded"
+              fi
+            '') cfg.healthMonitoring.dependencies.criticalServices)}
+            
+            # Check database if enabled
+            ${lib.optionalString cfg.healthMonitoring.dependencies.checkDatabase ''
+              if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q >/dev/null 2>&1; then
+                if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" >/dev/null 2>&1; then
+                  echo "database:healthy:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                else
+                  echo "database:unhealthy:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  overall_status="degraded"
+                  critical_failures=$((critical_failures + 1))
+                fi
+              else
+                echo "database:disconnected:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                overall_status="critical"
+                critical_failures=$((critical_failures + 1))
+              fi
+            ''}
+            
+            # Check disk space if enabled
+            ${lib.optionalString cfg.healthMonitoring.dependencies.checkDiskSpace ''
+              for path in "${cfg.unifiedCollector.dlq.filePath}" ${optionalString cfg.blobStorage.enable "\"${cfg.blobStorage.repositoryPath}\""}; do
+                if [ -d "$path" ]; then
+                  usage=$(df "$path" | awk 'NR==2 {print $5}' | sed 's/%//')
+                  if [ "$usage" -lt "${toString cfg.diskMonitoring.criticalThreshold}" ]; then
+                    echo "disk:$path:healthy:$usage:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  else
+                    echo "disk:$path:critical:$usage:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                    overall_status="critical"
+                    critical_failures=$((critical_failures + 1))
+                  fi
+                fi
+              done
+            ''}
+            
+            echo "overall:$overall_status:$critical_failures:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+            echo "$overall_status"
+          }
+          
+          # Function to handle recovery actions
+          handle_recovery() {
+            local failed_service="$1"
+            
+            if [ "$SINEX_HEALTH_ENABLE_RECOVERY" = "true" ]; then
+              echo "Initiating recovery for $failed_service..."
+              
+              ${lib.optionalString cfg.healthMonitoring.recovery.actions.restartServices ''
+                echo "Restarting $failed_service..."
+                systemctl restart "$failed_service" || echo "Failed to restart $failed_service"
+              ''}
+              
+              ${lib.optionalString cfg.healthMonitoring.recovery.actions.recreateConnections ''
+                echo "Triggering connection recreation for $failed_service..."
+                systemctl kill -s USR1 "$failed_service" || true
+              ''}
+            fi
+          }
+          
+          # Function to send alerts
+          send_alert() {
+            local alert_message="$1"
+            local alert_level="$2"
+            
+            if [ "$SINEX_HEALTH_ENABLE_ALERTING" = "true" ]; then
+              ${lib.optionalString cfg.healthMonitoring.alerting.destinations.journald ''
+                logger -t sinex-health-coordinator -p "daemon.$alert_level" "$alert_message"
+              ''}
+              
+              ${lib.optionalString (cfg.healthMonitoring.alerting.destinations.file != null) ''
+                echo "$(date -Iseconds) [$alert_level] $alert_message" >> "${cfg.healthMonitoring.alerting.destinations.file}"
+              ''}
+              
+              ${lib.optionalString (cfg.healthMonitoring.alerting.destinations.webhook != null) ''
+                ${pkgs.curl}/bin/curl -X POST \
+                  -H "Content-Type: application/json" \
+                  -d "{\"level\":\"$alert_level\",\"message\":\"$alert_message\",\"timestamp\":\"$(date -Iseconds)\"}" \
+                  "${cfg.healthMonitoring.alerting.destinations.webhook}" || true
+              ''}
+            fi
+          }
+          
+          # Start HTTP server for health endpoints (simple netcat-based server)
+          start_http_server() {
+            while true; do
+              (
+                echo "HTTP/1.1 200 OK"
+                echo "Content-Type: application/json"
+                echo ""
+                
+                # Generate health response based on latest state
+                latest_status=$(tail -1 "$SINEX_HEALTH_STATE_FILE" | grep "^overall:" | cut -d: -f2)
+                if [ "$latest_status" = "healthy" ]; then
+                  echo '{"status":"healthy","timestamp":"'$(date -Iseconds)'"}'
+                else
+                  echo '{"status":"'$latest_status'","timestamp":"'$(date -Iseconds)'"}'
+                fi
+              ) | ${pkgs.netcat}/bin/nc -l -p "$SINEX_HEALTH_COORDINATOR_PORT" -q 1
+              
+              sleep 1  # Brief pause between requests
+            done &
+          }
+          
+          # Start HTTP server
+          start_http_server
+          
+          # Main health check loop
+          while true; do
+            overall_status=$(aggregate_health)
+            
+            if [ "$overall_status" != "healthy" ]; then
+              send_alert "System health degraded: $overall_status" "warning"
+              
+              # Check for specific failed services and attempt recovery
+              ${lib.concatStringsSep "\n" (map (service: ''
+                if ! systemctl is-active "${service}" >/dev/null 2>&1; then
+                  handle_recovery "${service}"
+                fi
+              '') cfg.healthMonitoring.dependencies.criticalServices)}
+            fi
+            
+            sleep "$SINEX_HEALTH_AGGREGATION_INTERVAL"
+          done
+        '';
+        
+        Restart = "always";
+        RestartSec = "30s";
+        
+        # Directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        
+        # Security configuration
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        
+        # Process limits
+        TasksMax = "64";
+        
+        # Timeout settings
+        TimeoutStartSec = "30s";
+        TimeoutStopSec = "15s";
+        TimeoutAbortSec = "5s";
+      };
+    };
+
+    # Individual Service Health Check Services
+    systemd.services.sinex-collector-health-monitor = mkIf (cfg.unifiedCollector.enable && cfg.unifiedCollector.healthCheck.enable) {
+      description = "Sinex Collector Health Monitor";
+      after = [ "sinex-unified-collector.service" ];
+      wants = [ "sinex-unified-collector.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "collector-health-monitor" ''
+          set -euo pipefail
+          
+          echo "Running collector health check..."
+          
+          # Readiness probe
+          if ${pkgs.curl}/bin/curl \
+            --max-time ${toString cfg.unifiedCollector.healthCheck.readinessProbe.timeoutSeconds} \
+            --fail \
+            --silent \
+            "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.readinessPath}"; then
+            echo "readiness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+          else
+            echo "readiness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+          fi
+          
+          # Liveness probe
+          if ${pkgs.curl}/bin/curl \
+            --max-time ${toString cfg.unifiedCollector.healthCheck.livenessProbe.timeoutSeconds} \
+            --fail \
+            --silent \
+            "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.livenessPath}"; then
+            echo "liveness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+          else
+            echo "liveness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+            exit 1  # Trigger restart if liveness fails
+          fi
+        '';
+      };
+    };
+
+    systemd.services.sinex-worker-health-monitor = mkIf (cfg.promoWorker.enable && cfg.promoWorker.healthCheck.enable) {
+      description = "Sinex Worker Health Monitor";
+      after = [ "sinex-promo-worker.service" ];
+      wants = [ "sinex-promo-worker.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "worker-health-monitor" ''
+          set -euo pipefail
+          
+          echo "Running worker health check..."
+          
+          # Readiness probe
+          if ${pkgs.curl}/bin/curl \
+            --max-time ${toString cfg.promoWorker.healthCheck.readinessProbe.timeoutSeconds} \
+            --fail \
+            --silent \
+            "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.readinessPath}"; then
+            echo "readiness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+          else
+            echo "readiness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+          fi
+          
+          # Liveness probe
+          if ${pkgs.curl}/bin/curl \
+            --max-time ${toString cfg.promoWorker.healthCheck.livenessProbe.timeoutSeconds} \
+            --fail \
+            --silent \
+            "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.livenessPath}"; then
+            echo "liveness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+          else
+            echo "liveness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            exit 1  # Trigger restart if liveness fails
+          fi
+          
+          # Queue health check
+          ${lib.optionalString cfg.promoWorker.healthCheck.queueHealth.enable ''
+            queue_depth=$(echo "SELECT COUNT(*) FROM sinex_schemas.promotion_queue;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" -t | tr -d ' ')
+            
+            if [ "$queue_depth" -gt "${toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold}" ]; then
+              echo "queue:unhealthy:depth_exceeded:$queue_depth:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+              exit 1
+            else
+              echo "queue:healthy:depth_ok:$queue_depth:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            fi
+          ''}
+        '';
+      };
+    };
+
+    # Legacy health check service (simplified, for compatibility)
     systemd.services.sinex-healthcheck = {
-      description = "Sinex System Health Check";
+      description = "Sinex System Health Check (Legacy)";
       
       serviceConfig = {
         Type = "oneshot";
@@ -2691,9 +3836,23 @@ in
           
           exit_code=0
           
+          # Check health coordinator if enabled
+          ${lib.optionalString cfg.healthMonitoring.enable ''
+            if ${pkgs.curl}/bin/curl \
+              --max-time 5 \
+              --fail \
+              --silent \
+              "http://localhost:${toString cfg.healthMonitoring.coordinatorPort}${cfg.healthMonitoring.overallHealthEndpoint}" >/dev/null 2>&1; then
+              echo "✓ Health Coordinator: ACCESSIBLE"
+            else
+              echo "⚠️  Health Coordinator: UNREACHABLE" >&2
+              exit_code=1
+            fi
+          ''}
+          
           # Check service status
           echo "--- Service Status ---"
-          for service in sinex-unified-collector sinex-promo-worker; do
+          for service in ${lib.concatStringsSep " " cfg.healthMonitoring.dependencies.criticalServices}; do
             if systemctl is-enabled "$service" >/dev/null 2>&1; then
               if systemctl is-active "$service" >/dev/null 2>&1; then
                 echo "✓ $service: ACTIVE"
@@ -2705,63 +3864,8 @@ in
           done
           echo
           
-          # Check database connectivity
-          echo "--- Database Connectivity ---"
-          if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; then
-            echo "✓ PostgreSQL: CONNECTED"
-            
-            # Test database query
-            if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" >/dev/null 2>&1; then
-              echo "✓ Sinex Database: ACCESSIBLE"
-              
-              # Check database health status if health checks are enabled
-              ${lib.optionalString cfg.database.healthCheck.enable ''
-                if [ -f "${cfg.directories.health}/db_last_status" ]; then
-                  db_health_status=$(cat ${cfg.directories.health}/db_last_status)
-                  if [ "$db_health_status" = "1" ]; then
-                    echo "✓ Database Health: HEALTHY"
-                  else
-                    echo "⚠️  Database Health: UNHEALTHY" >&2
-                    exit_code=1
-                  fi
-                  
-                  # Show failure/success counts
-                  if [ -f "${cfg.directories.health}/db_failure_count" ]; then
-                    failure_count=$(cat ${cfg.directories.health}/db_failure_count)
-                    success_count=$(cat ${cfg.directories.health}/db_success_count 2>/dev/null || echo "0")
-                    echo "  Health Stats: $success_count successes, $failure_count failures"
-                  fi
-                else
-                  echo "⚠️  Database Health: STATUS UNKNOWN (no health data)" >&2
-                fi
-              ''}
-            else
-              echo "✗ Sinex Database: QUERY FAILED" >&2
-              exit_code=1
-            fi
-          else
-            echo "✗ PostgreSQL: DISCONNECTED" >&2
-            exit_code=1
-          fi
-          echo
-          
-          # Check disk space for critical paths
-          echo "--- Disk Space ---"
-          for path in "${cfg.unifiedCollector.dlq.filePath}" ${optionalString cfg.blobStorage.enable "\"${cfg.blobStorage.repositoryPath}\""}; do
-            if [ -d "$path" ]; then
-              local usage=$(df "$path" | awk 'NR==2 {print $5}' | sed 's/%//')
-              if [ "$usage" -lt "${toString cfg.diskMonitoring.criticalThreshold}" ]; then
-                echo "✓ $path: $usage% used"
-              else
-                echo "✗ $path: $usage% used (CRITICAL)" >&2
-                exit_code=1
-              fi
-            fi
-          done
-          echo
-          
           if [ $exit_code -eq 0 ]; then
-            echo "🎉 Overall Status: HEALTHY"
+            echo "✓ Overall Status: HEALTHY"
           else
             echo "⚠️  Overall Status: DEGRADED" >&2
           fi
@@ -2778,6 +3882,28 @@ in
       timerConfig = {
         OnBootSec = "1min";
         OnUnitActiveSec = "5min";
+        Persistent = true;
+      };
+    };
+
+    # Timer for collector health monitoring
+    systemd.timers.sinex-collector-health-monitor = mkIf (cfg.unifiedCollector.enable && cfg.unifiedCollector.healthCheck.enable) {
+      description = "Timer for Sinex Collector Health Monitor";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "${toString cfg.unifiedCollector.healthCheck.readinessProbe.initialDelay}s";
+        OnUnitActiveSec = "${toString cfg.unifiedCollector.healthCheck.readinessProbe.periodSeconds}s";
+        Persistent = true;
+      };
+    };
+
+    # Timer for worker health monitoring
+    systemd.timers.sinex-worker-health-monitor = mkIf (cfg.promoWorker.enable && cfg.promoWorker.healthCheck.enable) {
+      description = "Timer for Sinex Worker Health Monitor";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "${toString cfg.promoWorker.healthCheck.readinessProbe.initialDelay}s";
+        OnUnitActiveSec = "${toString cfg.promoWorker.healthCheck.readinessProbe.periodSeconds}s";
         Persistent = true;
       };
     };
