@@ -110,6 +110,11 @@ struct TestAtuinEntryBuilder {
 }
 
 impl TestAtuinEntryBuilder {
+    fn with_id(mut self, id: &str) -> Self {
+        self.id = Some(id.to_string());
+        self
+    }
+    
     fn with_command(mut self, command: &str) -> Self {
         self.command = Some(command.to_string());
         self
@@ -188,12 +193,14 @@ async fn test_atuin_event_capture() {
     let now = Utc::now();
     let entries = vec![
         TestAtuinEntry::builder()
+            .with_id("test-id-1")
             .with_command("ls -la")
             .with_cwd("/home/test")
             .with_duration_ms(1000)
             .with_timestamp_seconds(now.timestamp())
             .build(),
         TestAtuinEntry::builder()
+            .with_id("test-id-2")
             .with_command("git status")
             .with_exit_code(1)
             .with_cwd("/home/test/project")
@@ -252,6 +259,7 @@ async fn test_atuin_event_capture() {
     let payload2: CommandExecutedAtuinPayload = serde_json::from_value(event2.payload.clone()).unwrap();
     assert_eq!(payload2.command_string, "git status");
     assert_eq!(payload2.exit_code, 1);
+    assert_eq!(payload2.atuin_history_id, "test-id-2");
 }
 
 #[tokio::test]
