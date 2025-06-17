@@ -1,4 +1,4 @@
-use sinex_db::{DbPool, models::RawEvent};
+use sinex_db::models::RawEvent;
 use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -134,12 +134,6 @@ async fn test_connection_pool_timeout_resilience() {
     const POOL_SIZE: usize = 5;
     const NUM_WORKERS: usize = 10;
     
-    #[derive(Debug)]
-    struct MockConnection {
-        id: usize,
-        acquired_at: Instant,
-    }
-    
     // Track connection usage
     let connections_in_use = Arc::new(AtomicU64::new(0));
     let max_connections_used = Arc::new(AtomicU64::new(0));
@@ -155,31 +149,31 @@ async fn test_connection_pool_timeout_resilience() {
         
         let handle = tokio::spawn(async move {
             for iteration in 0..5 {
-                // Try to acquire connection with timeout
-                let acquire_result = timeout(
-                    Duration::from_millis(100),
-                    acquire_connection(worker_id, &in_use, &max_used, POOL_SIZE)
-                ).await;
-                
-                match acquire_result {
-                    Ok(Some(conn)) => {
-                        // Simulate work with connection
-                        let work_time = if iteration % 2 == 0 { 150 } else { 50 };
-                        tokio::time::sleep(Duration::from_millis(work_time)).await;
-                        
-                        // Release connection
-                        release_connection(conn, &in_use);
+                // Simulate connection acquisition attempt
+                let current = in_use.load(Ordering::Relaxed);
+                if current < POOL_SIZE as u64 {
+                    // Can acquire
+                    let new_count = in_use.fetch_add(1, Ordering::Relaxed) + 1;
+                    
+                    // Update max if needed
+                    let mut max = max_used.load(Ordering::Relaxed);
+                    while new_count > max {
+                        match max_used.compare_exchange(max, new_count, Ordering::Relaxed, Ordering::Relaxed) {
+                            Ok(_) => break,
+                            Err(current) => max = current,
+                        }
                     }
-                    Ok(None) => {
-                        // Pool exhausted
-                        timeouts.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("Worker {} couldn't acquire connection (pool exhausted)", worker_id);
-                    }
-                    Err(_) => {
-                        // Acquisition timed out
-                        timeouts.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("Worker {} timed out acquiring connection", worker_id);
-                    }
+                    
+                    // Simulate work
+                    let work_time = if iteration % 2 == 0 { 150 } else { 50 };
+                    tokio::time::sleep(Duration::from_millis(work_time)).await;
+                    
+                    // Release
+                    in_use.fetch_sub(1, Ordering::Relaxed);
+                } else {
+                    // Pool exhausted
+                    timeouts.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("Worker {} couldn't acquire connection (pool exhausted)", worker_id);
                 }
                 
                 // Brief pause between attempts
@@ -214,45 +208,6 @@ async fn test_connection_pool_timeout_resilience() {
         "Expected some timeouts with more workers than connections");
 }
 
-/// Helper to simulate connection acquisition
-async fn acquire_connection(
-    worker_id: usize,
-    in_use: &Arc<AtomicU64>,
-    max_used: &Arc<AtomicU64>,
-    pool_size: usize,
-) -> Option<MockConnection> {
-    // Check if pool has capacity
-    let current = in_use.load(Ordering::Relaxed);
-    if current >= pool_size as u64 {
-        return None;
-    }
-    
-    // Try to acquire
-    let new_count = in_use.fetch_add(1, Ordering::Relaxed) + 1;
-    
-    // Update max if needed
-    let mut max = max_used.load(Ordering::Relaxed);
-    while new_count > max {
-        match max_used.compare_exchange(max, new_count, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(current) => max = current,
-        }
-    }
-    
-    Some(MockConnection {
-        id: worker_id,
-        acquired_at: Instant::now(),
-    })
-}
-
-/// Helper to release connection
-fn release_connection(conn: MockConnection, in_use: &Arc<AtomicU64>) {
-    let duration = conn.acquired_at.elapsed();
-    if duration > Duration::from_millis(100) {
-        eprintln!("Connection {} held for {:?} (long!)", conn.id, duration);
-    }
-    in_use.fetch_sub(1, Ordering::Relaxed);
-}
 
 /// Test retry logic with exponential backoff
 #[tokio::test]

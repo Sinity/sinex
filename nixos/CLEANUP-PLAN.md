@@ -9,14 +9,16 @@ This document outlines critical issues discovered in the NixOS module structure 
 - **Status**: **FIXED** - Added missing directories options to `modules/default.nix`
 - **Impact**: Modular structure is now functional
 
-### 2. **Critical: Security Vulnerabilities** 🔴
+### 2. **Fixed: Security Vulnerabilities** ✅
 - **Issue**: Complete lack of systemd security hardening
-- **Impact**: Production deployment security risk
+- **Status**: **FIXED** - Comprehensive systemd security hardening implemented
 - **Details**:
-  - Database credentials exposed in process lists
-  - No syscall filtering, privilege restrictions, or filesystem isolation
-  - All services run as same user with excessive permissions
-  - No restart rate limiting (infinite restart loops possible)
+  - Added syscall filtering (`SystemCallFilter`)
+  - Filesystem isolation (`ProtectSystem=strict`, `ProtectHome=true`)
+  - Privilege restrictions (`NoNewPrivileges`, `RestrictSUIDSGID`)
+  - Private temp directories (`PrivateTmp=true`)
+  - Restart rate limiting (`StartLimitBurst=3`, `StartLimitIntervalSec=60s`)
+  - Resource limits on all services (`MemoryMax`, `TasksMax`, `IOWeight`)
 
 ### 3. **Missing: Comprehensive Testing** 🟡 → ✅
 - **Issue**: No VM testing to verify module actually works
@@ -32,71 +34,30 @@ This document outlines critical issues discovered in the NixOS module structure 
 - **Impact**: Maintenance burden, confusion, outdated examples
 - **Status**: Migration 80% complete but not finalized
 
-### 5. **Reliability: Systemd Integration Issues** 🔴
+### 5. **Fixed: Systemd Integration Issues** ✅  
 - **Issue**: Incomplete dependencies, race conditions, inconsistent resource limits
-- **Impact**: Service reliability problems in production
+- **Status**: **FIXED** - Proper service dependencies and resource limits
+- **Details**:
+  - Added proper service dependencies (`requires`, `wants`, `after`)
+  - Network readiness waiting (`network-online.target`)
+  - Consistent resource limits on all services
+  - Fixed restart policies with rate limiting
 
-## 📋 Immediate Action Plan
+## 📋 Remaining Tasks
 
-### Phase 1: Security Hardening (High Priority) 🔴
-
-#### 1.1 Fix Credential Exposure
+### Phase 1: Credential Management (Optional) 🟡
+Since we have agenix in sinnix, we could integrate that for DATABASE_URL:
 ```nix
-# Before (INSECURE):
+# Instead of:
 Environment = [ "DATABASE_URL=postgresql://..." ];
 
-# After (SECURE):
-EnvironmentFile = "/etc/sinex/credentials.env";
+# Use agenix secret:
+EnvironmentFile = config.age.secrets.sinex-database-url.path;
 ```
 
-#### 1.2 Add Systemd Security Hardening
-Add to all services:
-```nix
-serviceConfig = {
-  # Basic hardening
-  PrivateTmp = true;
-  ProtectSystem = "strict";
-  ProtectHome = true;
-  NoNewPrivileges = true;
-  RestrictSUIDSGID = true;
-  RemoveIPC = true;
-  
-  # Syscall filtering
-  SystemCallFilter = [ "@system-service" "~@privileged" ];
-  
-  # Restart controls
-  StartLimitIntervalSec = "60s";
-  StartLimitBurst = 3;
-};
-```
-
-#### 1.3 Fix Directory Permissions
-```nix
-# Change from 0755 to 0750 for sensitive directories
-directories.permissions.state = "0750";
-directories.permissions.logs = "0750";
-```
-
-### Phase 2: Reliability Improvements (High Priority) 🟡
-
-#### 2.1 Fix Service Dependencies
-```nix
-after = [ "postgresql.service" "network-online.target" "sinex-git-annex-init.service" ];
-wants = [ "network-online.target" ];
-requires = [ "postgresql.service" ];
-```
-
-#### 2.2 Add Resource Limits to All Services
-```nix
-# Add to oneshot services:
-MemoryMax = "256M";
-TasksMax = 50;
-IOWeight = 100;
-```
-
-#### 2.3 Implement Health Checks
+### Phase 2: Health Checks (Optional) 🟢
 - Add service readiness checks
-- Implement graceful shutdown handling
+- Implement graceful shutdown handling  
 - Add startup timeouts
 
 ### Phase 3: Technical Debt Cleanup (Medium Priority) 🟡

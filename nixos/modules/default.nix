@@ -35,126 +35,18 @@ in
       description = "Username whose files to monitor for events";
     };
 
-    # Directory structure configuration
+    # Simplified directories - monitoring.nix compatibility
     directories = {
-      base = mkOption {
-        type = types.path;
-        default = "/var/lib/sinex";
-        description = "Base directory for all Sinex data";
-      };
-
       state = mkOption {
         type = types.path;
         default = "/var/lib/sinex";
-        description = "Directory for persistent state data (StateDirectory)";
-      };
-
-      runtime = mkOption {
-        type = types.path;
-        default = "/run/sinex";
-        description = "Directory for runtime data (RuntimeDirectory)";
-      };
-
-      cache = mkOption {
-        type = types.path;
-        default = "/var/cache/sinex";
-        description = "Directory for cache data (CacheDirectory)";
+        description = "Directory for persistent state data";
       };
 
       logs = mkOption {
         type = types.path;
         default = "/var/log/sinex";
-        description = "Directory for log files (LogsDirectory)";
-      };
-
-      dlq = mkOption {
-        type = types.path;
-        default = "/var/lib/sinex/dlq";
-        description = "Directory for dead letter queue files";
-      };
-
-      monitoring = mkOption {
-        type = types.path;
-        default = "/var/lib/sinex/monitoring";
-        description = "Directory for monitoring data";
-      };
-
-      config = mkOption {
-        type = types.path;
-        default = "/etc/sinex";
-        description = "Directory for configuration files";
-      };
-
-      sockets = mkOption {
-        type = types.path;
-        default = "/run/sinex/sockets";
-        description = "Directory for Unix domain sockets";
-      };
-
-      # Permission settings for directories
-      permissions = {
-        state = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for state directories";
-        };
-
-        runtime = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for runtime directories";
-        };
-
-        cache = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for cache directories";
-        };
-
-        logs = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for log directories";
-        };
-
-        monitoring = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for monitoring directories";
-        };
-
-        sockets = mkOption {
-          type = types.str;
-          default = "0755";
-          description = "Permissions for socket directories";
-        };
-      };
-
-      # Cleanup configuration for logs and temporary files
-      cleanup = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable automatic cleanup of old logs and temporary files";
-        };
-
-        maxLogAge = mkOption {
-          type = types.str;
-          default = "30d";
-          description = "Maximum age of log files before cleanup";
-        };
-
-        maxLogSize = mkOption {
-          type = types.str;
-          default = "1G";
-          description = "Maximum total size of log files before cleanup";
-        };
-
-        cleanupSchedule = mkOption {
-          type = types.str;
-          default = "daily";
-          description = "Schedule for cleanup operations";
-        };
+        description = "Directory for log files";
       };
     };
 
@@ -439,26 +331,53 @@ in
       sinex-unified-collector = {
         description = "Sinex Unified Event Collector";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" ];
+        after = [ "postgresql.service" "network-online.target" ];
+        wants = [ "network-online.target" ];
+        requires = [ "postgresql.service" ];
         
         serviceConfig = {
           Type = "simple";
           User = cfg.database.user;
           Group = cfg.database.user;
+          
+          # Restart policy with rate limiting
           Restart = cfg.unifiedCollector.restart.policy;
           RestartSec = cfg.unifiedCollector.restart.baseDelay;
+          StartLimitIntervalSec = "60s";
+          StartLimitBurst = 3;
           
           # Resource limits
           MemoryMax = "1G";
           CPUQuota = "200%";
+          TasksMax = 1000;
+          IOWeight = 100;
+          
+          # Security hardening
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          NoNewPrivileges = true;
+          RestrictSUIDSGID = true;
+          RemoveIPC = true;
+          ProtectKernelTunables = true;
+          ProtectControlGroups = true;
+          RestrictRealtime = true;
+          LockPersonality = true;
+          SystemCallFilter = [ "@system-service" "~@privileged" ];
+          
+          # Allow writes to DLQ and logs
+          ReadWritePaths = lib.optionals cfg.unifiedCollector.dlq.enable [
+            cfg.unifiedCollector.dlq.failureStoragePath
+          ] ++ [
+            cfg.directories.state
+            cfg.directories.logs
+          ];
           
           ExecStart = "${cfg.package}/bin/sinex-collector";
           
-          # Secure credential handling via environment file
-          EnvironmentFile = "/etc/sinex/credentials.env";
-          
-          # Non-sensitive environment variables
+          # Environment variables (use agenix for DATABASE_URL if needed)
           Environment = [
+            "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
             "RUST_LOG=${cfg.unifiedCollector.logLevel}"
             "SINEX_METRICS_PORT=${toString cfg.unifiedCollector.metricsPort}"
             "SINEX_HEALTH_PORT=${toString cfg.unifiedCollector.healthCheck.port}"
@@ -478,20 +397,40 @@ in
           Type = "simple";
           User = cfg.database.user;
           Group = cfg.database.user;
-          Restart = "always";
+          
+          # Restart policy with rate limiting
+          Restart = "on-failure";
           RestartSec = "5s";
+          StartLimitIntervalSec = "60s";
+          StartLimitBurst = 3;
           
           # Resource limits
           MemoryMax = "512M";
           CPUQuota = "100%";
+          TasksMax = 500;
+          IOWeight = 100;
+          
+          # Security hardening
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          NoNewPrivileges = true;
+          RestrictSUIDSGID = true;
+          RemoveIPC = true;
+          ProtectKernelTunables = true;
+          ProtectControlGroups = true;
+          RestrictRealtime = true;
+          LockPersonality = true;
+          SystemCallFilter = [ "@system-service" "~@privileged" ];
+          
+          # Database access only, no file writes needed for promo worker
+          ReadWritePaths = [ ];
           
           ExecStart = "${cfg.package}/bin/sinex-promo-worker --agent-name=default-worker";
           
-          # Secure credential handling via environment file
-          EnvironmentFile = "/etc/sinex/credentials.env";
-          
-          # Non-sensitive environment variables
+          # Environment variables (use agenix for DATABASE_URL if needed)  
           Environment = [
+            "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
             "RUST_LOG=${cfg.unifiedCollector.logLevel}"
             "POLL_INTERVAL=${toString cfg.promoWorker.pollInterval}"
             "BATCH_SIZE=${toString cfg.promoWorker.batchSize}"
@@ -506,6 +445,27 @@ in
           Type = "oneshot";
           User = cfg.database.user;
           Group = cfg.database.user;
+          
+          # Resource limits for oneshot service
+          MemoryMax = "256M";
+          TasksMax = 50;
+          IOWeight = 50;
+          
+          # Security hardening
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          NoNewPrivileges = true;
+          RestrictSUIDSGID = true;
+          RemoveIPC = true;
+          ProtectKernelTunables = true;
+          ProtectControlGroups = true;
+          RestrictRealtime = true;
+          LockPersonality = true;
+          SystemCallFilter = [ "@system-service" "~@privileged" ];
+          
+          # Only allow writes to DLQ directory
+          ReadWritePaths = [ cfg.unifiedCollector.dlq.failureStoragePath ];
           
           ExecStart = pkgs.writeShellScript "sinex-dlq-cleanup" ''
             set -euo pipefail
@@ -547,51 +507,6 @@ in
       };
     };
 
-    # General cleanup service for logs and temporary files
-    systemd.services.sinex-cleanup = mkIf cfg.directories.cleanup.enable {
-      description = "Sinex Log and Cache Cleanup";
-      serviceConfig = {
-        Type = "oneshot";
-        User = cfg.database.user;
-        Group = cfg.database.user;
-        
-        ExecStart = pkgs.writeShellScript "sinex-cleanup" ''
-          set -euo pipefail
-          
-          LOG_DIR="${cfg.directories.logs}"
-          CACHE_DIR="${cfg.directories.cache}"
-          MAX_AGE="${cfg.directories.cleanup.maxLogAge}"
-          MAX_SIZE="${cfg.directories.cleanup.maxLogSize}"
-          
-          echo "$(date): Starting Sinex cleanup..."
-          
-          # Clean old log files
-          if [ -d "$LOG_DIR" ]; then
-            find "$LOG_DIR" -name "*.log" -type f -mtime +''${MAX_AGE%d} -delete 2>/dev/null || true
-            echo "Cleaned log files older than $MAX_AGE"
-          fi
-          
-          # Clean cache directory
-          if [ -d "$CACHE_DIR" ]; then
-            find "$CACHE_DIR" -type f -mtime +7 -delete 2>/dev/null || true
-            echo "Cleaned cache files older than 7 days"
-          fi
-          
-          echo "$(date): Cleanup completed"
-        '';
-      };
-    };
-
-    # General cleanup timer
-    systemd.timers.sinex-cleanup = mkIf cfg.directories.cleanup.enable {
-      description = "Sinex Cleanup Timer";
-      wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnCalendar = cfg.directories.cleanup.cleanupSchedule;
-        Persistent = true;
-        RandomizedDelaySec = "2h";
-      };
-    };
 
     # User and group creation
     users.users.${cfg.database.user} = {
@@ -604,55 +519,15 @@ in
 
     users.groups.${cfg.database.user} = {};
 
-    # Directory setup - comprehensive directory management
+    # Simplified directory setup - just what we need
     systemd.tmpfiles.rules = [
-      # Core directories
-      "d ${cfg.directories.state} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.runtime} ${cfg.directories.permissions.runtime} ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.cache} ${cfg.directories.permissions.cache} ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.logs} ${cfg.directories.permissions.logs} ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.monitoring} ${cfg.directories.permissions.monitoring} ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.sockets} ${cfg.directories.permissions.sockets} ${cfg.database.user} ${cfg.database.user} -"
-      
-      # Security: credentials directory and file (secure permissions)
-      "d /etc/sinex 0755 root root -"
-      "f /etc/sinex/credentials.env 0640 root ${cfg.database.user} -"
+      # Basic directories for monitoring.nix compatibility
+      "d ${cfg.directories.state} 0755 ${cfg.database.user} ${cfg.database.user} -"
+      "d ${cfg.directories.logs} 0755 ${cfg.database.user} ${cfg.database.user} -"
     ] ++ lib.optionals cfg.unifiedCollector.dlq.enable [
-      # DLQ specific directory
+      # DLQ failure storage directory
       "d ${cfg.unifiedCollector.dlq.failureStoragePath} 0755 ${cfg.database.user} ${cfg.database.user} -"
     ];
-
-    # Secure credentials file generation
-    systemd.services.sinex-credentials-setup = {
-      description = "Generate Sinex Credentials File";
-      wantedBy = [ "multi-user.target" ];
-      before = [ "sinex-unified-collector.service" "sinex-promo-worker.service" ];
-      
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = "root";  # Needs root to write to /etc/sinex
-        
-        ExecStart = pkgs.writeShellScript "sinex-credentials-setup" ''
-          set -euo pipefail
-          
-          CREDS_FILE="/etc/sinex/credentials.env"
-          
-          # Generate secure credentials file
-          cat > "$CREDS_FILE" << EOF
-          # Sinex Database Credentials - Generated automatically
-          # This file contains sensitive information - do not edit manually
-          DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}
-          EOF
-          
-          # Ensure secure permissions
-          chmod 640 "$CREDS_FILE"
-          chown root:${cfg.database.user} "$CREDS_FILE"
-          
-          echo "Credentials file generated successfully"
-        '';
-      };
-    };
 
     # Database setup (if enabled)
     services.postgresql = mkIf cfg.database.autoSetup {

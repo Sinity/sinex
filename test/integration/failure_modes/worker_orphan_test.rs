@@ -1,5 +1,4 @@
-use sinex_worker::{Worker, WorkerConfig};
-use sinex_db::models::{QueueEntry, QueueStatus};
+use sinex_db::models::QueueStatus;
 use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
