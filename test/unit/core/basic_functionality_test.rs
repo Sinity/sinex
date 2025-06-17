@@ -16,26 +16,7 @@ fn test_raw_event_builder_basic() {
     assert!(event.id.to_string().len() == 26); // ULID length
 }
 
-#[test]
-fn test_sources_constants() {
-    assert_eq!(sources::FILESYSTEM, "filesystem");
-    assert_eq!(sources::TERMINAL_KITTY, "terminal.kitty");
-    assert_eq!(sources::HYPRLAND, "hyprland");
-    assert_eq!(sources::CLIPBOARD, "clipboard");
-    assert_eq!(sources::SINEX, "sinex");
-}
-
-#[test]
-fn test_event_type_constants() {
-    assert_eq!(event_type_constants::filesystem::FILE_CREATED, "file.created");
-    assert_eq!(event_type_constants::filesystem::FILE_MODIFIED, "file.modified");
-    assert_eq!(event_type_constants::filesystem::FILE_DELETED, "file.deleted");
-    
-    assert_eq!(event_type_constants::terminal::COMMAND_EXECUTED, "command.executed");
-    
-    assert_eq!(event_type_constants::sinex::AGENT_STARTUP, "agent.startup");
-    assert_eq!(event_type_constants::sinex::AGENT_HEARTBEAT, "agent.heartbeat");
-}
+// Removed trivial constant assertion tests - they just verified that "filesystem" == "filesystem"
 
 #[test]
 fn test_multiple_event_creation() {

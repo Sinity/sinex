@@ -2,12 +2,7 @@ use sinex_db::validation::EventValidator;
 use sinex_core::RawEventBuilder;
 use serde_json::json;
 
-#[test]
-fn test_event_validator_creation() {
-    let validator = EventValidator::new();
-    // Validator should be created successfully
-    // This test ensures the constructor doesn't panic
-}
+// Removed trivial constructor test - just verified that new() doesn't panic
 
 #[test]
 fn test_event_validator_valid_filesystem_event() {

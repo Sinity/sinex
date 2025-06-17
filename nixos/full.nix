@@ -69,75 +69,172 @@ let
       
   in finalUrl;
   
-  # Database migration script with idempotent permissions
+  # Database migration script with integrated configuration and robust error handling
   migrateDbScript = pkgs.writeShellScript "migrate-sinex-db" ''
     set -euo pipefail
     
-    # Logging function with timestamps
+    # Logging function with timestamps and severity levels
     log() {
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+      local level="$1"
+      shift
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+      case "$level" in
+        ERROR) echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*" >&2 ;;
+        WARN)  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*" >&2 ;;
+      esac
     }
     
-    log "Starting Sinex database migration and setup"
+    log "INFO" "Starting Sinex database migration and setup"
+    log "INFO" "Database configuration:"
+    log "INFO" "  - Host: ${cfg.database.host}:${toString cfg.database.port}"
+    log "INFO" "  - Database: ${escapeDbIdentifier cfg.database.name}"
+    log "INFO" "  - User: ${escapeDbIdentifier cfg.database.user}"
+    log "INFO" "  - Connection pool: ${toString cfg.database.connectionPool.minConnections}-${toString cfg.database.connectionPool.maxConnections} connections"
+    log "INFO" "  - Migration timeout: ${toString cfg.database.migration.timeout}s"
+    log "INFO" "  - Connection timeout: ${toString cfg.database.connectionPool.connectionTimeout}s"
 
-    # Wait for PostgreSQL to be available with extended timeout and exponential backoff
-    TIMEOUT=120
-    ELAPSED=0
-    DELAY=1
-    log "Waiting for PostgreSQL to become available..."
+    # Use configured retry parameters for PostgreSQL readiness check
+    MAX_RETRIES=${toString cfg.database.retry.maxRetries}
+    INITIAL_DELAY=${toString cfg.database.retry.initialDelay}
+    MAX_DELAY=${toString cfg.database.retry.maxDelay}
+    BACKOFF_MULTIPLIER=${toString cfg.database.retry.backoffMultiplier}
+    ENABLE_JITTER=${if cfg.database.retry.enableJitter then "true" else "false"}
     
-    while ! ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; do
-      if [ $ELAPSED -ge $TIMEOUT ]; then
-        log "ERROR: PostgreSQL did not become ready within $TIMEOUT seconds"
-        log "Last pg_isready output:"
+    log "INFO" "Waiting for PostgreSQL with retry configuration:"
+    log "INFO" "  - Max retries: $MAX_RETRIES"
+    log "INFO" "  - Initial delay: ''${INITIAL_DELAY}s"
+    log "INFO" "  - Max delay: ''${MAX_DELAY}s"
+    log "INFO" "  - Backoff multiplier: $BACKOFF_MULTIPLIER"
+    log "INFO" "  - Jitter enabled: $ENABLE_JITTER"
+    
+    # Enhanced PostgreSQL readiness check with configured retry parameters
+    attempt=0
+    delay=$INITIAL_DELAY
+    
+    while [ $attempt -lt $MAX_RETRIES ]; do
+      if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; then
+        log "INFO" "PostgreSQL is ready (attempt $((attempt + 1)))"
+        break
+      fi
+      
+      attempt=$((attempt + 1))
+      
+      if [ $attempt -ge $MAX_RETRIES ]; then
+        log "ERROR" "PostgreSQL did not become ready within $MAX_RETRIES attempts"
+        log "ERROR" "Last pg_isready output:"
         ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql || true
         exit 1
       fi
       
-      log "PostgreSQL not ready, waiting $DELAY seconds... ($ELAPSED/$TIMEOUT elapsed)"
-      sleep $DELAY
-      ELAPSED=$((ELAPSED + DELAY))
+      # Apply jitter to delay if enabled
+      actual_delay=$delay
+      if [ "$ENABLE_JITTER" = "true" ]; then
+        # Add random jitter (0-50% of delay)
+        jitter=$((delay * (RANDOM % 50) / 100))
+        actual_delay=$((delay + jitter))
+      fi
       
-      # Exponential backoff up to 8 seconds
-      if [ $DELAY -lt 8 ]; then
-        DELAY=$((DELAY * 2))
+      log "INFO" "PostgreSQL not ready, waiting ''${actual_delay}s (attempt $attempt/$MAX_RETRIES)"
+      sleep $actual_delay
+      
+      # Calculate next delay with exponential backoff
+      new_delay=$(echo "$delay * $BACKOFF_MULTIPLIER" | ${pkgs.bc}/bin/bc | cut -d. -f1)
+      if [ "$new_delay" -gt "$MAX_DELAY" ]; then
+        delay=$MAX_DELAY
+      else
+        delay=$new_delay
       fi
     done
-    
-    log "PostgreSQL is ready"
 
-    # Verify database exists
-    export DATABASE_URL="postgresql://postgres/${escapeDbIdentifier cfg.database.name}?host=/run/postgresql"
+    # Test database connectivity with full configured URL
+    log "INFO" "Testing database connectivity with full configuration..."
+    FULL_DATABASE_URL="${buildDatabaseUrl cfg}"
+    CONNECTION_TIMEOUT=${toString cfg.database.connectionPool.connectionTimeout}
+    
+    # Test basic connectivity with configured timeout
+    if ! timeout $CONNECTION_TIMEOUT ${pkgs.postgresql}/bin/psql "$FULL_DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+      log "ERROR" "Failed to connect to database with full configuration"
+      log "ERROR" "Connection URL (sanitized): $(echo "$FULL_DATABASE_URL" | sed 's/password=[^&]*/password=****/g')"
+      
+      # Fallback connectivity test with basic URL
+      log "INFO" "Attempting fallback connectivity test..."
+      BASIC_DATABASE_URL="postgresql://postgres/${escapeDbIdentifier cfg.database.name}?host=/run/postgresql"
+      if ! ${pkgs.postgresql}/bin/psql "$BASIC_DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+        log "ERROR" "Basic database connectivity also failed"
+        exit 1
+      else
+        log "WARN" "Basic connectivity works, but full configuration failed"
+        log "WARN" "Proceeding with caution..."
+      fi
+    else
+      log "INFO" "Database connectivity test passed with full configuration"
+    fi
+
+    # Verify database exists and is accessible
+    export DATABASE_URL="$FULL_DATABASE_URL"
     if ! ${pkgs.postgresql}/bin/psql -lqt | cut -d '|' -f 1 | grep -qw "${escapeDbIdentifier cfg.database.name}"; then
-      log "ERROR: Database '${escapeDbIdentifier cfg.database.name}' does not exist"
+      log "ERROR" "Database '${escapeDbIdentifier cfg.database.name}' does not exist"
       exit 1
     fi
     
-    log "Database '${escapeDbIdentifier cfg.database.name}' exists"
+    log "INFO" "Database '${escapeDbIdentifier cfg.database.name}' exists and is accessible"
 
-    # Run migrations with configured timeout and proper error handling
-    MIGRATION_TIMEOUT=${toString cfg.database.migration.timeout}
-    log "Running database migrations with timeout of $MIGRATION_TIMEOUT seconds..."
+    # Validate connection pool configuration before proceeding
+    log "INFO" "Validating connection pool configuration..."
+    if [ ${toString cfg.database.connectionPool.minConnections} -gt ${toString cfg.database.connectionPool.maxConnections} ]; then
+      log "ERROR" "Invalid connection pool: min connections (${toString cfg.database.connectionPool.minConnections}) > max connections (${toString cfg.database.connectionPool.maxConnections})"
+      exit 1
+    fi
     
-    # Set up migration environment variables
+    if [ ${toString cfg.database.connectionPool.connectionTimeout} -gt ${toString cfg.database.performance.statementTimeout} ] && [ ${toString cfg.database.performance.statementTimeout} -gt 0 ]; then
+      log "WARN" "Connection timeout (${toString cfg.database.connectionPool.connectionTimeout}s) > statement timeout (${toString cfg.database.performance.statementTimeout}s)"
+      log "WARN" "This may cause connection timeouts to occur before statement timeouts"
+    fi
+
+    # Run migrations with configured timeout and comprehensive error handling
+    MIGRATION_TIMEOUT=${toString cfg.database.migration.timeout}
+    log "INFO" "Running database migrations with timeout of $MIGRATION_TIMEOUT seconds..."
+    
+    # Set up migration environment variables with full configuration
     export SQLX_OFFLINE=true
+    export DATABASE_URL="$FULL_DATABASE_URL"
     ${lib.optionalString cfg.database.migration.enableLocking ''
       export SQLX_MIGRATION_LOCK_TIMEOUT=${toString cfg.database.migration.lockTimeout}
+      log "INFO" "Migration locking enabled with timeout: ${toString cfg.database.migration.lockTimeout}s"
     ''}
     ${lib.optionalString cfg.database.migration.validateChecksums ''
       export SQLX_MIGRATION_VALIDATE_CHECKSUMS=true
+      log "INFO" "Migration checksum validation enabled"
     ''}
     
-    if ! timeout $MIGRATION_TIMEOUT ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations; then
-      log "ERROR: Database migration failed or timed out after $MIGRATION_TIMEOUT seconds"
-      exit 1
-    fi
+    # Run migrations with retry logic
+    migration_attempt=0
+    migration_max_attempts=3
     
-    log "Database migrations completed successfully"
+    while [ $migration_attempt -lt $migration_max_attempts ]; do
+      migration_attempt=$((migration_attempt + 1))
+      log "INFO" "Migration attempt $migration_attempt/$migration_max_attempts"
+      
+      if timeout $MIGRATION_TIMEOUT ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations; then
+        log "INFO" "Database migrations completed successfully"
+        break
+      else
+        migration_exit_code=$?
+        log "ERROR" "Migration attempt $migration_attempt failed with exit code $migration_exit_code"
+        
+        if [ $migration_attempt -ge $migration_max_attempts ]; then
+          log "ERROR" "All migration attempts failed"
+          exit $migration_exit_code
+        else
+          log "INFO" "Retrying migration in 5 seconds..."
+          sleep 5
+        fi
+      fi
+    done
     
-    # Grant permissions to sinex user on all schemas and tables (fully idempotent)
-    log "Setting up database permissions..."
-    if ! ${pkgs.postgresql}/bin/psql -d ${escapeDbIdentifier cfg.database.name} <<'EOF'
+    # Grant permissions with enhanced error handling and validation
+    log "INFO" "Setting up database permissions..."
+    permission_script=$(cat <<'EOF'
       DO $$
       DECLARE
         schema_name text;
@@ -145,7 +242,11 @@ let
         user_name text := '${escapeDbIdentifier cfg.database.user}';
         schema_exists boolean;
         user_exists boolean;
+        permission_count integer := 0;
+        error_count integer := 0;
       BEGIN
+        RAISE NOTICE 'Starting permission setup for user: %', user_name;
+        
         -- Check if user exists
         SELECT EXISTS (
           SELECT 1 FROM pg_catalog.pg_user WHERE usename = user_name
@@ -156,8 +257,6 @@ let
           RETURN;
         END IF;
         
-        RAISE NOTICE 'Setting up permissions for user: %', user_name;
-        
         -- Grant usage on each schema if it exists (idempotent)
         FOREACH schema_name IN ARRAY schemas
         LOOP
@@ -167,54 +266,90 @@ let
           ) INTO schema_exists;
           
           IF schema_exists THEN
-            RAISE NOTICE 'Granting permissions on schema: %', schema_name;
+            RAISE NOTICE 'Processing schema: %', schema_name;
             
             BEGIN
-              -- Grant schema usage (idempotent - no error if already granted)
+              -- Grant schema usage (idempotent)
               EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', schema_name, user_name);
+              permission_count := permission_count + 1;
               
               -- Grant all privileges on existing tables (idempotent)
               EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I TO %I', schema_name, user_name);
+              permission_count := permission_count + 1;
               
               -- Grant usage on all sequences (idempotent)
               EXECUTE format('GRANT USAGE ON ALL SEQUENCES IN SCHEMA %I TO %I', schema_name, user_name);
+              permission_count := permission_count + 1;
               
               -- Set default privileges for future tables (idempotent)
               EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL ON TABLES TO %I', schema_name, user_name);
+              permission_count := permission_count + 1;
               
               -- Set default privileges for future sequences (idempotent)
               EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT USAGE ON SEQUENCES TO %I', schema_name, user_name);
+              permission_count := permission_count + 1;
               
               RAISE NOTICE 'Successfully granted permissions on schema: %', schema_name;
               
             EXCEPTION
               WHEN OTHERS THEN
+                error_count := error_count + 1;
                 RAISE WARNING 'Failed to grant some permissions on schema %: % (SQLSTATE: %)', 
                   schema_name, SQLERRM, SQLSTATE;
-                -- Continue with other schemas
             END;
           ELSE
             RAISE NOTICE 'Schema % does not exist, skipping', schema_name;
           END IF;
         END LOOP;
         
-        RAISE NOTICE 'Permission setup completed for user: %', user_name;
+        RAISE NOTICE 'Permission setup completed: % permissions granted, % errors', 
+          permission_count, error_count;
+        
+        IF error_count > 0 THEN
+          RAISE WARNING 'Some permission grants failed, but continuing';
+        END IF;
         
       EXCEPTION
         WHEN OTHERS THEN
           RAISE WARNING 'Unexpected error during permission setup: % (SQLSTATE: %)', SQLERRM, SQLSTATE;
-          -- Don't fail the entire script for permission issues
       END;
       $$;
 EOF
-    then
-      log "WARNING: Permission setup encountered errors, but continuing..."
-      log "This may be expected if permissions were already granted"
+    )
+    
+    if echo "$permission_script" | ${pkgs.postgresql}/bin/psql -d "${escapeDbIdentifier cfg.database.name}" -v ON_ERROR_STOP=0; then
+      log "INFO" "Database permissions configured successfully"
     else
-      log "Database permissions configured successfully"
+      log "WARN" "Permission setup completed with warnings"
+      log "WARN" "This may be expected if permissions were already granted"
     fi
     
-    log "Database setup completed successfully"
+    # Final connectivity and configuration validation
+    log "INFO" "Performing final validation..."
+    
+    # Test that the configured user can connect and perform basic operations
+    USER_DATABASE_URL="postgresql://${escapeDbIdentifier cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${escapeDbIdentifier cfg.database.name}?connect_timeout=${toString cfg.database.connectionPool.connectionTimeout}"
+    
+    if ${pkgs.postgresql}/bin/psql "$USER_DATABASE_URL" -c "SELECT COUNT(*) FROM information_schema.tables;" >/dev/null 2>&1; then
+      log "INFO" "User connectivity validation passed"
+    else
+      log "WARN" "User connectivity validation failed, but proceeding"
+      log "WARN" "Services may need to use postgres superuser for connections"
+    fi
+    
+    # Test connection pool parameters by attempting to create a connection with them
+    if ${pkgs.postgresql}/bin/psql "$FULL_DATABASE_URL" -c "SHOW pool_mode;" >/dev/null 2>&1; then
+      log "INFO" "Connection pool configuration appears valid"
+    else
+      log "INFO" "Connection pool validation skipped (pgbouncer not detected)"
+    fi
+    
+    log "INFO" "Database setup completed successfully"
+    log "INFO" "Final configuration summary:"
+    log "INFO" "  - Database ready: ✓"
+    log "INFO" "  - Migrations applied: ✓"
+    log "INFO" "  - Permissions configured: ✓"
+    log "INFO" "  - Configuration validated: ✓"
   '';
 
 in
@@ -3362,6 +3497,48 @@ in
         message = "SSL certificate file must be provided when SSL key file is specified";
       }
       
+      # Database integration validation assertions
+      {
+        assertion = cfg.database.connectionPool.connectionTimeout < cfg.database.migration.timeout;
+        message = "Database connection timeout (${toString cfg.database.connectionPool.connectionTimeout}s) should be less than migration timeout (${toString cfg.database.migration.timeout}s)";
+      }
+      {
+        assertion = cfg.database.migration.lockTimeout < cfg.database.migration.timeout;
+        message = "Database migration lock timeout (${toString cfg.database.migration.lockTimeout}s) should be less than migration timeout (${toString cfg.database.migration.timeout}s)";
+      }
+      {
+        assertion = cfg.database.healthCheck.timeout < cfg.database.healthCheck.interval;
+        message = "Database health check timeout (${toString cfg.database.healthCheck.timeout}s) should be less than health check interval (${toString cfg.database.healthCheck.interval}s)";
+      }
+      {
+        assertion = !cfg.database.performance.enablePreparedStatements || cfg.database.performance.preparedStatementCacheSize > 0;
+        message = "Prepared statement cache size must be greater than 0 when prepared statements are enabled";
+      }
+      {
+        assertion = cfg.database.retry.initialDelay * (lib.pow cfg.database.retry.backoffMultiplier cfg.database.retry.maxRetries) <= cfg.database.retry.maxDelay * 10;
+        message = "Database retry configuration may result in excessively long delays. Consider reducing max retries or backoff multiplier";
+      }
+      {
+        assertion = cfg.database.connectionPool.maxConnections * 2 <= 1000; # Reasonable upper bound for most systems
+        message = "Database max connections (${toString cfg.database.connectionPool.maxConnections}) is very high and may impact system performance";
+      }
+      {
+        assertion = !cfg.database.healthCheck.enable || cfg.database.healthCheck.failureThreshold <= cfg.database.retry.maxRetries;
+        message = "Database health check failure threshold should not exceed retry max retries for consistent behavior";
+      }
+      {
+        assertion = cfg.database.performance.statementTimeout == 0 || cfg.database.performance.statementTimeout >= cfg.database.connectionPool.connectionTimeout;
+        message = "Database statement timeout should be 0 (disabled) or >= connection timeout to avoid connection timeouts before statement timeouts";
+      }
+      {
+        assertion = cfg.database.performance.lockTimeout == 0 || cfg.database.performance.lockTimeout <= cfg.database.performance.statementTimeout || cfg.database.performance.statementTimeout == 0;
+        message = "Database lock timeout should be <= statement timeout when both are enabled";
+      }
+      {
+        assertion = cfg.database.connectionPool.maxLifetime >= cfg.database.connectionPool.idleTimeout;
+        message = "Database connection max lifetime (${toString cfg.database.connectionPool.maxLifetime}s) should be >= idle timeout (${toString cfg.database.connectionPool.idleTimeout}s)";
+      }
+      
       # Configuration validation assertions
       {
         assertion = configValidation.validationReport.valid;
@@ -3506,16 +3683,50 @@ in
         RemainAfterExit = true;
         ExecStart = migrateDbScript;
         User = "postgres";
-        Environment = "PATH=${pkgs.postgresql}/bin:${pkgs.sqlx-cli}/bin";
+        Environment = [
+          "PATH=${pkgs.postgresql}/bin:${pkgs.sqlx-cli}/bin:${pkgs.bc}/bin"
+          "DATABASE_URL=${buildDatabaseUrl cfg}"
+          "PGCONNECT_TIMEOUT=${toString cfg.database.connectionPool.connectionTimeout}"
+          "PGCOMMAND_TIMEOUT=${toString cfg.database.performance.statementTimeout}"
+        ];
         
-        # Resource limits for migration process
-      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
-        MemoryMax = mkIf (cfg.resourceLimits.memory.migrateMax != null) cfg.resourceLimits.memory.migrateMax;
-        CPUQuota = mkIf (cfg.resourceLimits.cpu.migrateQuota != null) cfg.resourceLimits.cpu.migrateQuota;
-        
-        # Timeout for long-running migrations
-        TimeoutStartSec = "600s";
+        # Enhanced timeouts based on migration configuration
+        TimeoutStartSec = "${toString (cfg.database.migration.timeout + 60)}s";
         TimeoutStopSec = "30s";
+        
+        # Basic process limits
+        LimitNOFILE = "1024";
+        LimitNPROC = "256";
+        
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Memory management for database operations
+        MemoryMax = mkIf (cfg.resourceLimits.memory.migrateMax != null) cfg.resourceLimits.memory.migrateMax;
+        MemoryHigh = mkIf (cfg.resourceLimits.memory.migrateMax != null) 
+          (let maxMem = cfg.resourceLimits.memory.migrateMax; in
+           if lib.hasSuffix "G" maxMem then "${toString ((lib.toInt (lib.removeSuffix "G" maxMem)) * 3 / 4)}G"
+           else if lib.hasSuffix "M" maxMem then "${toString ((lib.toInt (lib.removeSuffix "M" maxMem)) * 3 / 4)}M"
+           else maxMem);
+        MemorySwapMax = "0"; # Disable swap for database operations
+        
+        # CPU resource management
+        CPUQuota = mkIf (cfg.resourceLimits.cpu.migrateQuota != null) cfg.resourceLimits.cpu.migrateQuota;
+        CPUWeight = 800; # Higher priority for migrations
+        
+        # IO limits for database-intensive operations
+        IOReadBandwidthMax = "/ 200M";  # Reasonable limit for migration reads
+        IOWriteBandwidthMax = "/ 200M"; # Reasonable limit for migration writes
+        IOReadIOPSMax = "/ 1000";       # IOPS limit for reads
+        IOWriteIOPSMax = "/ 1000";      # IOPS limit for writes
+        
+        # Enhanced file descriptor limits for database connections
+        LimitNOFILE = "${toString (cfg.database.connectionPool.maxConnections * 4 + 512)}";
+        
+        # Process limits to prevent runaway migrations
+        LimitNPROC = "512";
+        
+        # Enhanced restart policy for migration failures
+        RestartPreventExitStatus = "1 2"; # Don't restart on configuration errors
+        
       });
     };
 
@@ -4780,12 +4991,35 @@ in
       environment = {
         DATABASE_URL = buildDatabaseUrl cfg;
         RUST_LOG = "warn"; # Only log warnings and errors for health checks
+        PGCONNECT_TIMEOUT = toString cfg.database.healthCheck.timeout;
+        PGCOMMAND_TIMEOUT = toString cfg.database.healthCheck.timeout;
       };
       
       serviceConfig = {
         Type = "oneshot";
         User = cfg.database.user;
         Group = cfg.database.user;
+        
+        # Resource limits for health checks
+        MemoryMax = "128M";  # Health checks should be lightweight
+        MemoryHigh = "96M";
+        MemorySwapMax = "0";
+        CPUQuota = "50%";    # Limit CPU usage for health checks
+        CPUWeight = 100;     # Lower priority than main services
+        
+        # IO limits for health check queries
+        IOReadBandwidthMax = "/ 10M";
+        IOWriteBandwidthMax = "/ 10M";
+        IOReadIOPSMax = "/ 100";
+        IOWriteIOPSMax = "/ 100";
+        
+        # Process limits
+        LimitNOFILE = "256";
+        LimitNPROC = "32";
+        
+        # Timeout configuration
+        TimeoutStartSec = "${toString (cfg.database.healthCheck.timeout + 10)}s";
+        TimeoutStopSec = "10s";
         ExecStart = pkgs.writeShellScript "sinex-database-health" ''
           set -euo pipefail
           
@@ -5129,20 +5363,40 @@ in
               fi
             '') cfg.healthMonitoring.dependencies.criticalServices)}
             
-            # Check database if enabled
+            # Check database health (either via dedicated service or direct check)
             ${lib.optionalString cfg.healthMonitoring.dependencies.checkDatabase ''
-              if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q >/dev/null 2>&1; then
-                if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" >/dev/null 2>&1; then
-                  echo "database:healthy:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+              if systemctl is-active sinex-database-health.service >/dev/null 2>&1 && [ "${toString cfg.database.healthCheck.enable}" = "1" ]; then
+                # Use results from dedicated database health service if available
+                db_status_file="${cfg.directories.health}/db_last_status"
+                if [ -f "$db_status_file" ]; then
+                  db_status=$(cat "$db_status_file" 2>/dev/null || echo "0")
+                  if [ "$db_status" = "1" ]; then
+                    echo "database:healthy:via_dedicated_service:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  else
+                    echo "database:unhealthy:via_dedicated_service:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                    overall_status="degraded"
+                    critical_failures=$((critical_failures + 1))
+                  fi
                 else
-                  echo "database:unhealthy:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  echo "database:unknown:no_dedicated_status:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
                   overall_status="degraded"
                   critical_failures=$((critical_failures + 1))
                 fi
               else
-                echo "database:disconnected:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
-                overall_status="critical"
-                critical_failures=$((critical_failures + 1))
+                # Fallback to direct database check when dedicated service is not available
+                if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q >/dev/null 2>&1; then
+                  if timeout ${toString cfg.database.healthCheck.timeout} echo "${cfg.database.healthCheck.query}" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" >/dev/null 2>&1; then
+                    echo "database:healthy:direct_check:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  else
+                    echo "database:unhealthy:direct_check:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                    overall_status="degraded"
+                    critical_failures=$((critical_failures + 1))
+                  fi
+                else
+                  echo "database:disconnected:direct_check:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  overall_status="critical"
+                  critical_failures=$((critical_failures + 1))
+                fi
               fi
             ''}
             

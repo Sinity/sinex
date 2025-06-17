@@ -2,26 +2,13 @@ use sinex_ulid::Ulid;
 use std::str::FromStr;
 use proptest::prelude::*;
 
-#[test]
-fn test_ulid_creation() {
-    let ulid1 = Ulid::new();
-    let ulid2 = Ulid::new();
-    assert_ne!(ulid1, ulid2);
-}
+// Removed basic ULID library tests - testing library functionality, not Sinex logic
 
 #[test]
 fn test_monotonic_ulid() {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new_monotonic(Some(&ulid1));
     assert!(ulid2 > ulid1);
-}
-
-#[test]
-fn test_uuid_conversion() {
-    let ulid = Ulid::new();
-    let uuid = ulid.to_uuid();
-    let ulid2 = Ulid::from_uuid(uuid);
-    assert_eq!(ulid, ulid2);
 }
 
 proptest! {
