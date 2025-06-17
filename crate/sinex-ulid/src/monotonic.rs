@@ -54,7 +54,8 @@ impl MonotonicUlidGenerator {
             let counter = self.counter.fetch_add(1, Ordering::SeqCst);
             
             // Check for counter overflow (extremely unlikely but handle gracefully)
-            if counter == u32::MAX {
+            // Note: fetch_add returns the previous value, so check for u32::MAX - 1
+            if counter >= u32::MAX - 1 {
                 // Wait for next millisecond to avoid overflow
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 
@@ -93,9 +94,22 @@ impl MonotonicUlidGenerator {
         } else {
             // Use counter even for past timestamps to maintain uniqueness
             let counter = self.counter.fetch_add(1, Ordering::SeqCst);
-            let ulid = self.create_with_counter(timestamp_ms, counter);
             
-            Ulid::from(ulid)
+            // Handle counter overflow to maintain monotonic ordering
+            // Note: fetch_add returns the previous value, so check for u32::MAX - 1
+            if counter >= u32::MAX - 1 {
+                // If we've hit max counter, we need to increment timestamp by 1ms
+                // to maintain strict monotonic ordering
+                let new_timestamp_ms = timestamp_ms + 1;
+                self.last_timestamp.store(new_timestamp_ms, Ordering::SeqCst);
+                self.counter.store(0, Ordering::SeqCst);
+                
+                let ulid = self.create_with_counter(new_timestamp_ms, 0);
+                Ulid::from(ulid)
+            } else {
+                let ulid = self.create_with_counter(timestamp_ms, counter);
+                Ulid::from(ulid)
+            }
         }
     }
     

@@ -262,7 +262,7 @@ fn test_ulid_display_debug_traits() {
     assert_eq!(display, ulid.to_string());
     assert_eq!(display.len(), 26);
     
-    // Debug trait should be more detailed
+    // Debug trait should be more detailed  
     let debug = format!("{:?}", ulid);
     assert!(debug.contains("Ulid"));
     assert!(debug.contains(&ulid.to_string()));

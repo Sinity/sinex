@@ -19,9 +19,15 @@ pub enum UlidError {
 pub type Error = UlidError;
 
 /// A wrapper around ULID that provides PostgreSQL compatibility via UUID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Ulid(InnerUlid);
+
+impl fmt::Debug for Ulid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Ulid({})", self.to_string())
+    }
+}
 
 impl Ulid {
     /// Generate a new ULID
