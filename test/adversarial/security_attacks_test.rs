@@ -141,6 +141,7 @@ fn test_path_case_confusion_attacks() {
     }
 }
 
+
 #[test]
 fn test_json_parser_differential() {
     // Different JSON parsers handle edge cases differently
@@ -158,6 +159,93 @@ fn test_json_parser_differential() {
         match serde_json::from_str::<serde_json::Value>(json_str) {
             Ok(val) => println!("Parsed OK: {} -> {:?}", json_str, val),
             Err(e) => println!("Parse error: {} -> {}", json_str, e),
+        }
+    }
+}
+
+#[test]
+fn test_hash_collision_dos_attack() {
+    // Create JSON object with keys that hash to same bucket using djb2 collision strings
+    let mut collision_object = HashMap::new();
+    
+    // Known djb2 hash collision strings (hash to same value)
+    let djb2_collisions = vec![
+        ("hetairas", "mentioner"),
+        ("heliotropes", "neurospora"),
+        ("depravement", "serafins"),
+        ("stylist", "subgenera"),
+        ("joyful", "synaphea"),
+        ("redescribed", "urites"),
+    ];
+    
+    // Build large object with colliding keys
+    for i in 0..1000 {
+        for (key1, key2) in &djb2_collisions {
+            collision_object.insert(format!("{}_{}", key1, i), format!("value1_{}", i));
+            collision_object.insert(format!("{}_{}", key2, i), format!("value2_{}", i));
+        }
+    }
+    
+    let start = std::time::Instant::now();
+    let json_value = json!(collision_object);
+    let _serialized = serde_json::to_string(&json_value);
+    let elapsed = start.elapsed();
+    
+    println!("Hash collision DoS test:");
+    println!("- Object size: {} keys", collision_object.len());
+    println!("- Serialization time: {:?}", elapsed);
+    
+    if elapsed.as_millis() > 100 {
+        println!("POTENTIAL VULNERABILITY: Hash collision causing performance degradation!");
+    }
+    
+    // Also test deserialization performance
+    let serialized = serde_json::to_string(&json_value).unwrap();
+    let start = std::time::Instant::now();
+    let _: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    let deser_elapsed = start.elapsed();
+    
+    println!("- Deserialization time: {:?}", deser_elapsed);
+    if deser_elapsed.as_millis() > 100 {
+        println!("POTENTIAL VULNERABILITY: Hash collision affecting deserialization!");
+    }
+}
+
+#[test]
+fn test_json_nested_array_explosion() {
+    // Test exponentially expanding nested arrays that can cause memory exhaustion
+    let mut nested_array = json!([1, 2, 3]);
+    
+    // Each iteration doubles the size by nesting the array inside itself
+    for level in 1..=12 { // Limit to prevent actual OOM in test
+        nested_array = json!([nested_array.clone(), nested_array.clone()]);
+        
+        let serialized = serde_json::to_string(&nested_array).unwrap_or_else(|_| "FAILED".to_string());
+        println!("Level {}: Array serialized size: {} bytes", level, serialized.len());
+        
+        // Stop if size gets too large (theoretical explosion would be much larger)
+        if serialized.len() > 1_000_000 {
+            println!("STOPPING: Array explosion reaching memory limits at level {}", level);
+            break;
+        }
+    }
+    
+    // Test with string content explosion
+    let base_string = "x".repeat(100);
+    let mut exploding_strings = json!([base_string]);
+    
+    for level in 1..=8 {
+        exploding_strings = json!([exploding_strings.clone(), exploding_strings.clone()]);
+        
+        if let Ok(serialized) = serde_json::to_string(&exploding_strings) {
+            println!("String explosion level {}: {} bytes", level, serialized.len());
+            if serialized.len() > 10_000_000 {
+                println!("STOPPING: String explosion at level {}", level);
+                break;
+            }
+        } else {
+            println!("Serialization failed at level {}", level);
+            break;
         }
     }
 }

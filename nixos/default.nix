@@ -1,2 +1,2 @@
-# Import the full Sinex module
-import ./full.nix
+# Import the modularized Sinex module structure
+import ./modules

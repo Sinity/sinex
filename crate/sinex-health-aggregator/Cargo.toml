@@ -1,0 +1,42 @@
+[package]
+name = "sinex-health-aggregator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sinex-health-aggregator"
+path = "src/main.rs"
+
+[dependencies]
+# Core Sinex dependencies
+sinex-core = { path = "../sinex-core" }
+sinex-db = { path = "../sinex-db" }
+
+# HTTP server
+axum = { workspace = true }
+tokio = { workspace = true }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Collections (using std lib)

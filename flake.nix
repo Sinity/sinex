@@ -36,10 +36,16 @@
             ];
           };
 
+          # Extract git information for version tracking
+          gitRev = self.rev or self.dirtyRev or "unknown";
+          gitShortRev = builtins.substring 0 8 gitRev;
+          version = "0.1.0"; # TODO: Extract from workspace
+          buildTime = toString builtins.currentTime;
+
           # Helper to build Rust packages with common configuration
           buildRustPackage = package: pkgs.rustPlatform.buildRustPackage {
             pname = package;
-            version = "0.1.0";
+            version = version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             buildInputs = with pkgs; [ openssl dbus systemd ];
@@ -53,6 +59,16 @@
                 echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
                 exit 1
               fi
+              
+              # Create build info for version tracking
+              mkdir -p src/generated
+              cat > src/generated/build_info.rs << EOF
+              pub const VERSION: &str = "${version}";
+              pub const GIT_HASH: &str = "${gitRev}";
+              pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
+              pub const BUILD_TIME: &str = "${buildTime}";
+              pub const BUILD_HOST: &str = "${builtins.currentSystem}";
+              EOF
             '';
             postInstall = ''
               # Include migrations in the package
@@ -94,6 +110,7 @@
           packages = {
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
             unifiedCollector = buildRustPackage "sinex-collector";
+            healthAggregator = buildRustPackage "sinex-health-aggregator";
             default = buildRustPackage "sinex-collector";
             inherit pg_jsonschema;
           };

@@ -1,6 +1,7 @@
 # ADR-014: Routing Cache Architecture
 
 ## Status
+
 Accepted
 
 ## Context
@@ -87,6 +88,7 @@ Initial testing with 10K events/hour workload:
 The materialized view must be refreshed when agent configurations change:
 
 1. **Trigger on `agent_manifests`**:
+
    ```sql
    CREATE OR REPLACE FUNCTION refresh_routing_cache()
    RETURNS TRIGGER AS $$
@@ -120,6 +122,7 @@ This ensures no changes to worker implementation while gaining routing performan
 ## Consequences
 
 ### Positive
+
 - **10x+ Performance Improvement**: Batch processing dramatically reduces per-event overhead
 - **Better Observability**: Explicit routing process with metrics and logging
 - **Flexible Routing Logic**: Easy to extend routing rules without database triggers
@@ -128,20 +131,22 @@ This ensures no changes to worker implementation while gaining routing performan
 - **TTL Management**: Automatic cleanup prevents unbounded work queue growth
 
 ### Negative  
+
 - **Additional Complexity**: New routing service requires monitoring and maintenance
 - **Slight Processing Delay**: 1-5 second delay between event ingestion and work queue insertion
 - **Cache Invalidation Logic**: Must ensure routing cache stays synchronized with agent manifests
 - **Migration Effort**: Existing trigger-based deployments need migration planning
 
 ### Neutral
+
 - **Similar Resource Usage**: Overall system resource usage comparable
 - **Backward Compatibility**: Maintained through type aliases and status mapping
 
 ## Implementation Notes
 
-1. **Gradual Rollout**: Deploy with feature flags to enable gradual migration
-2. **Monitoring**: Comprehensive metrics for cache hit rates, batch sizes, processing delays
-3. **Fallback Strategy**: Ability to disable batch router and fall back to trigger-based routing during emergencies
-4. **Configuration**: Batch interval configurable from 1-60 seconds based on workload characteristics
+1. **Monitoring**: Comprehensive metrics for cache hit rates, batch sizes, processing delays
+2. **Fallback Strategy**: Ability to disable batch router and fall back to trigger-based routing during emergencies
+3. **Configuration**: Batch interval configurable from 1-60 seconds based on workload characteristics
 
 This architectural change positions the system for higher event volumes while maintaining reliability and improving developer experience through better observability and testability.
+

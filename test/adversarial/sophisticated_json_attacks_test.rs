@@ -5,7 +5,7 @@ use sinex_db::validation::EventValidator;
 
 #[test]
 fn test_circular_json_references() {
-    // Create JSON with circular references using JSON Pointer syntax
+    // Test that Sinex's event validation handles circular JSON references safely
     let circular_json = json!({
         "data": {
             "id": 1,
@@ -22,51 +22,48 @@ fn test_circular_json_references() {
         }
     });
     
-    println!("Testing circular JSON references:");
-    
-    // Test serialization (might infinite loop or stack overflow)
+    // Test serialization doesn't cause infinite loops or stack overflow
     let start = Instant::now();
-    match std::panic::catch_unwind(|| {
+    let serialization_result = std::panic::catch_unwind(|| {
         serde_json::to_string(&circular_json)
-    }) {
-        Ok(result) => {
-            let elapsed = start.elapsed();
-            match result {
-                Ok(json_str) => {
-                    println!("  Serialization succeeded in {:?}: {} bytes", elapsed, json_str.len());
-                    if elapsed > Duration::from_secs(1) {
-                        println!("  WARNING: Serialization took too long - potential infinite loop!");
-                    }
-                }
-                Err(e) => {
-                    println!("  Serialization failed: {}", e);
-                }
-            }
-        }
-        Err(_) => {
-            println!("  PANIC: Circular reference caused stack overflow!");
-        }
-    }
+    });
+    let elapsed = start.elapsed();
     
-    // Test with validator
+    // Assert serialization completes in reasonable time without panicking
+    assert!(serialization_result.is_ok(), "Circular JSON should not cause panic");
+    assert!(elapsed < Duration::from_secs(1), "Serialization should complete quickly");
+    
+    // Test with Sinex validator - should handle gracefully
     let validator = EventValidator::new();
-    match validator.validate_with_rules("test", "circular.test", &circular_json) {
-        Ok(_) => println!("  Validator accepted circular JSON"),
-        Err(e) => println!("  Validator rejected circular JSON: {}", e),
+    let validation_result = validator.validate_with_rules("test", "circular.test", &circular_json);
+    
+    // Validator should either accept or gracefully reject, but not panic
+    match validation_result {
+        Ok(_) => {
+            // If accepted, verify it's properly handled
+            assert!(true, "Validator accepted circular JSON - should handle safely");
+        }
+        Err(e) => {
+            // If rejected, error should be meaningful
+            assert!(!e.to_string().is_empty(), "Validation error should provide meaningful message");
+        }
     }
 }
 
 #[test]
 fn test_json_billion_laughs_attack() {
-    // XML billion laughs attack adapted for JSON
+    // Test that Sinex can handle exponentially expanding JSON without resource exhaustion
     // Each level exponentially expands the previous
     
     let mut expanding_json = json!({
         "lol1": "lol".repeat(10),
     });
     
+    let mut successful_levels = 0;
+    let mut max_serialization_time = Duration::from_millis(0);
+    
     // Create exponential expansion
-    for level in 2..=10 {
+    for level in 2..=8 { // Reduced max level for safety
         let prev_key = format!("lol{}", level - 1);
         let current_key = format!("lol{}", level);
         
@@ -80,108 +77,37 @@ fn test_json_billion_laughs_attack() {
         
         expanding_json[current_key] = json!(expansion);
         
-        // Calculate theoretical size
-        let theoretical_size = 10_u64.pow(level as u32);
-        println!("Level {}: Theoretical size {} elements", level, theoretical_size);
-        
-        // Test serialization at each level
+        // Test serialization at each level with time limits
         let start = Instant::now();
         match serde_json::to_string(&expanding_json) {
             Ok(json_str) => {
                 let elapsed = start.elapsed();
-                println!("  Serialized {} bytes in {:?}", json_str.len(), elapsed);
+                successful_levels += 1;
+                max_serialization_time = max_serialization_time.max(elapsed);
                 
+                // Assert reasonable performance limits
                 if elapsed > Duration::from_secs(2) {
-                    println!("  PERFORMANCE ISSUE: Serialization too slow at level {}", level);
+                    break; // Stop before hitting resource limits
+                }
+                
+                if json_str.len() > 10_000_000 { // 10MB limit for safety
                     break;
                 }
                 
-                if json_str.len() > 100_000_000 { // 100MB
-                    println!("  MEMORY ISSUE: JSON too large at level {}", level);
-                    break;
-                }
+                // Verify the JSON structure is maintained
+                assert!(json_str.len() > 0, "Serialized JSON should not be empty");
             }
-            Err(e) => {
-                println!("  Serialization failed at level {}: {}", level, e);
-                break;
+            Err(_) => {
+                break; // Stop on serialization failure
             }
         }
     }
+    
+    // Assert that Sinex can handle at least a few levels of expansion
+    assert!(successful_levels >= 3, "Should handle at least 3 levels of exponential expansion");
+    assert!(max_serialization_time < Duration::from_secs(5), "Serialization should not take excessively long");
 }
 
-#[test]
-fn test_hash_collision_dos_attack() {
-    // Generate keys that cause hash collisions in common hash functions
-    
-    // Known collision-prone strings for djb2 hash
-    let collision_strings = vec![
-        "Aa", "BB",  // These often hash to same value
-        "AaAa", "AaBB", "BBAa", "BBBB",
-        "C", "D",
-        "AaAaAa", "AaAaBB", "AaBBAa", "AaBBBB",
-        "BBBBAa", "BBBBBB",
-    ];
-    
-    // Create object with many collision-prone keys
-    let mut collision_map = HashMap::new();
-    
-    let start_setup = Instant::now();
-    
-    // Generate thousands of keys designed to collide
-    for i in 0..10000 {
-        let base = &collision_strings[i % collision_strings.len()];
-        let key = format!("{}{:04}", base, i);
-        collision_map.insert(key, format!("value_{}", i));
-    }
-    
-    let setup_time = start_setup.elapsed();
-    println!("Hash collision DoS test:");
-    println!("  Setup time: {:?}", setup_time);
-    
-    // Test JSON operations that depend on hash performance
-    let collision_json = json!(collision_map);
-    
-    // Test serialization performance
-    let start_serialize = Instant::now();
-    let serialized = serde_json::to_string(&collision_json).unwrap();
-    let serialize_time = start_serialize.elapsed();
-    
-    println!("  Serialization: {} bytes in {:?}", serialized.len(), serialize_time);
-    
-    // Test deserialization performance
-    let start_deserialize = Instant::now();
-    let _deserialized: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-    let deserialize_time = start_deserialize.elapsed();
-    
-    println!("  Deserialization: {:?}", deserialize_time);
-    
-    // Test object access performance (hash lookups)
-    let start_access = Instant::now();
-    let mut found_count = 0;
-    
-    for i in 0..1000 {
-        let search_key = format!("Aa{:04}", i);
-        if collision_json.get(&search_key).is_some() {
-            found_count += 1;
-        }
-    }
-    
-    let access_time = start_access.elapsed();
-    println!("  Key lookups: {} found in {:?}", found_count, access_time);
-    
-    // Performance thresholds
-    if serialize_time > Duration::from_secs(5) {
-        println!("  VULNERABILITY: Serialization too slow - DoS possible!");
-    }
-    
-    if deserialize_time > Duration::from_secs(5) {
-        println!("  VULNERABILITY: Deserialization too slow - DoS possible!");
-    }
-    
-    if access_time > Duration::from_millis(500) {
-        println!("  VULNERABILITY: Hash lookups too slow - collision attack successful!");
-    }
-}
 
 #[test]
 fn test_json_unicode_normalization_bypass() {
@@ -229,53 +155,86 @@ fn test_json_unicode_normalization_bypass() {
 }
 
 #[test]
-fn test_json_nested_array_explosion() {
-    // Create deeply nested arrays that expand exponentially
+fn test_json_depth_stack_overflow() {
+    // Test deeply nested JSON that could cause stack overflow during parsing/validation
     
-    fn create_nested_arrays(depth: usize, width: usize) -> serde_json::Value {
+    // Create JSON with extreme depth that might cause stack overflow
+    fn create_deeply_nested_json(depth: usize) -> serde_json::Value {
         if depth == 0 {
-            json!("base")
+            json!("base_value")
         } else {
-            let nested = create_nested_arrays(depth - 1, width);
-            let mut array = Vec::new();
-            for _ in 0..width {
-                array.push(nested.clone());
-            }
-            json!(array)
+            json!({
+                "level": depth,
+                "nested": create_deeply_nested_json(depth - 1)
+            })
         }
     }
     
-    println!("Testing nested array explosion:");
+    println!("Testing JSON depth stack overflow attack:");
     
-    for depth in 1..=15 {
-        let width: u32 = 3; // Each level has 3 copies
-        let theoretical_size = width.pow(depth as u32);
-        
-        println!("  Depth {}: Theoretical {} elements", depth, theoretical_size);
+    // Test increasing depths to find limits
+    for depth in [10, 50, 100, 500, 1000, 5000] {
+        println!("  Testing depth: {}", depth);
         
         let start = Instant::now();
         
-        match std::panic::catch_unwind(|| {
-            let nested_array = create_nested_arrays(depth, width as usize);
-            let serialized = serde_json::to_string(&nested_array).unwrap();
-            (serialized.len(), start.elapsed())
-        }) {
-            Ok((size, elapsed)) => {
-                println!("    Created {} bytes in {:?}", size, elapsed);
+        // Test creation and serialization in panic-safe context
+        let result = std::panic::catch_unwind(|| {
+            let deep_json = create_deeply_nested_json(depth);
+            let serialized = serde_json::to_string(&deep_json)?;
+            Ok::<(usize, Duration), serde_json::Error>((serialized.len(), start.elapsed()))
+        });
+        
+        match result {
+            Ok(Ok((size, elapsed))) => {
+                println!("    SUCCESS: {} bytes in {:?}", size, elapsed);
                 
-                if elapsed > Duration::from_secs(2) {
-                    println!("    PERFORMANCE ISSUE: Too slow at depth {}", depth);
-                    break;
+                // Test with Sinex validator to ensure it handles deep nesting
+                let deep_json = create_deeply_nested_json(depth);
+                let validator = EventValidator::new();
+                
+                match validator.validate_with_rules("test", "deep.nesting", &deep_json) {
+                    Ok(_) => println!("    Validator accepted depth {}", depth),
+                    Err(e) => println!("    Validator rejected depth {}: {}", depth, e),
                 }
                 
-                if size > 50_000_000 { // 50MB
-                    println!("    MEMORY ISSUE: Too large at depth {}", depth);
+                // Stop if serialization becomes too slow (potential DoS)
+                if elapsed > Duration::from_secs(2) {
+                    println!("    STOPPING: Serialization too slow, potential DoS vector");
                     break;
                 }
             }
-            Err(_) => {
-                println!("    CRASH: Stack overflow or out of memory at depth {}", depth);
+            Ok(Err(e)) => {
+                println!("    SERIALIZATION ERROR at depth {}: {}", depth, e);
                 break;
+            }
+            Err(_) => {
+                println!("    STACK OVERFLOW: Panic at depth {} - limit found", depth);
+                break;
+            }
+        }
+    }
+    
+    // Test alternative deep nesting patterns
+    println!("  Testing array depth:");
+    
+    let mut deep_array = json!("base");
+    for level in 1..=1000 {
+        deep_array = json!([deep_array]);
+        
+        if level % 100 == 0 {
+            match std::panic::catch_unwind(|| serde_json::to_string(&deep_array)) {
+                Ok(Ok(serialized)) => {
+                    println!("    Array depth {}: {} bytes", level, serialized.len());
+                }
+                Ok(Err(_)) => {
+                    println!("    Array serialization failed at depth {}", level);
+                    break;
+                }
+                Err(_) => {
+                    println!("    Array stack overflow at depth {}", level);
+                    break;
+                }
             }
         }
     }

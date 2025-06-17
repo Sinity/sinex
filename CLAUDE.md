@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file is my persistent memory for working with the Sinex project.
+This file provides comprehensive guidance for all agents working with the Sinex project, including workflows, role assignments, and operational procedures.
 
 ## 🎯 Project Purpose & Architecture
 
@@ -51,10 +51,23 @@ impl EventSource for MyEventSource {
 - Clean up obsolete code/files proactively
 - Avoid proliferating around arbitrary ad-hoc scripts, documentation and other such files. There's designated space for such documentation needs you might have - spec/docs/claude
 
-## 🌟 Memory Bank
+## 🚨 Critical Agent Responsibilities
 
-- After you finish with your task which involved modifying source code, ensure there is no mess left behind, git commit your changes and only then your job is considered done.
-- Always examine actual source code, not just documentation which may be outdated
+### Task Completion Protocol
+1. **Code changes are not complete until committed to git**
+2. **Always examine actual source code**, not just documentation which may be outdated
+3. **Clean up as you go** - remove obsolete files, update related documentation
+4. **Update SQLX cache** when adding new database queries (`just sqlx-prepare`)
+5. **Run tests** before committing (`just test`)
+6. **Update this CLAUDE.md** when adding new patterns or workflows
+
+### Quality Gates
+- [ ] Code compiles: `cargo check --workspace`
+- [ ] Tests pass: `just test`
+- [ ] SQLX cache updated: `just sqlx-check`
+- [ ] Nix build works: `nix build`
+- [ ] Changes committed: `git status` shows clean
+- [ ] Documentation updated if patterns changed
 
 ## 📁 Project Map
 
@@ -365,3 +378,297 @@ postgresql:///sinex_dev?host=/run/postgresql
 - Check workspace members individually if commands miss packages
 - Recent commits (`git log`) reveal when cache updates are needed
 
+## 🎭 Agent Role Assignments
+
+### Primary Development Agent
+**Role**: Lead implementation of new features and architectural changes
+**Responsibilities**:
+- Implement core EventSource patterns and major features
+- Create new database migrations and schema changes
+- Update NixOS modules and deployment configuration
+- Write comprehensive tests for new functionality
+- Update architecture documentation (STAD.md, TIMs)
+
+**Branch Pattern**: `claude/YYYY-MM-DD-feature-name`
+**Commit Pattern**: `feat: implement X` or `refactor: improve Y`
+
+### Bug Fix Agent
+**Role**: Address bugs, regressions, and system reliability issues
+**Responsibilities**:
+- Fix failing tests and compilation errors
+- Address performance issues and memory leaks
+- Handle deployment and operational issues
+- Create regression tests for fixed bugs
+- Update troubleshooting documentation
+
+**Branch Pattern**: `claude/YYYY-MM-DD-fix-issue-name`
+**Commit Pattern**: `fix: resolve X` or `perf: optimize Y`
+
+### Documentation Agent
+**Role**: Maintain project documentation and knowledge management
+**Responsibilities**:
+- Update spec/ documentation when code changes
+- Maintain CLAUDE.md with current workflows
+- Create architectural diagrams and decision records
+- Update example configurations and usage guides
+- Keep project map current with actual structure
+
+**Branch Pattern**: `claude/YYYY-MM-DD-docs-topic`
+**Commit Pattern**: `docs: update X documentation`
+
+### Testing Agent
+**Role**: Expand test coverage and validation scenarios
+**Responsibilities**:
+- Write unit, integration, and system tests
+- Create adversarial and edge case tests
+- Implement test automation and CI improvements
+- Add performance benchmarks and stress tests
+- Validate NixOS VM test scenarios
+
+**Branch Pattern**: `claude/YYYY-MM-DD-test-area`
+**Commit Pattern**: `test: add X validation` or `ci: improve Y automation`
+
+### Operations Agent
+**Role**: Deployment, monitoring, and system reliability
+**Responsibilities**:
+- Improve NixOS deployment modules
+- Implement health monitoring and alerting
+- Create backup and recovery procedures
+- Optimize database performance and maintenance
+- Handle version management and rollback procedures
+
+**Branch Pattern**: `claude/YYYY-MM-DD-ops-improvement`
+**Commit Pattern**: `ops: improve X deployment` or `monitoring: add Y metrics`
+
+## 📋 Standardized Workflows
+
+### Git Workflow Protocol
+
+#### For All Agents:
+1. **Start with clean state**: `git checkout master && git pull`
+2. **Create descriptive branch**: `git checkout -b claude/2024-06-17-role-description`
+3. **Make focused commits**: Each commit addresses one logical change
+4. **Test before committing**: Run quality gates (see Critical Responsibilities)
+5. **Push and create PR**: `git push origin branch-name`
+6. **Squash merge to master**: Keep history clean
+7. **Delete branch**: `git branch -d branch-name`
+
+#### Commit Message Standards:
+```
+type(scope): description
+
+Longer explanation if needed, including:
+- Why this change was necessary
+- What alternative approaches were considered
+- Any breaking changes or migration steps
+
+Fixes #123
+Closes #456
+
+🤖 Generated with Claude Code
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+**Types**: `feat`, `fix`, `docs`, `test`, `refactor`, `ops`, `perf`, `ci`
+**Scopes**: `core`, `db`, `collector`, `worker`, `events`, `nixos`, `cli`
+
+### Database Change Workflow
+
+#### Adding New Tables/Columns:
+1. **Create migration**: `just migrate-create descriptive_name`
+2. **Write idempotent SQL**: Use `IF NOT EXISTS`, `IF EXISTS` appropriately
+3. **Update Rust models**: Add/modify structs in `sinex-db`
+4. **Add queries**: Create new `sqlx::query!` macros as needed
+5. **Update SQLX cache**: `just sqlx-prepare`
+6. **Test migration**: `dropdb sinex_dev && createdb sinex_dev && just migrate`
+7. **Write tests**: Validate new schema and queries work
+8. **Commit everything**: Including `.sqlx/` cache files
+
+#### Migration Safety Rules:
+- Never delete columns or tables in production migrations
+- Use separate migrations for schema and data changes
+- Test migrations on realistic data volumes
+- Always have rollback procedure documented
+
+### Testing Workflow
+
+#### Test Categories & When to Use:
+- **Unit Tests** (`test/unit/`): Test individual functions and components
+- **Integration Tests** (`test/integration/`): Test component interactions
+- **System Tests** (`test/system/`): Test complete workflows end-to-end
+- **Adversarial Tests** (`test/adversarial/`): Edge cases, attacks, stress scenarios
+
+#### Testing Protocol:
+1. **Write tests first** for new features (TDD when practical)
+2. **Run affected tests**: `cargo test <module>` for quick feedback
+3. **Run full test suite**: `just test-all` before committing
+4. **Add regression tests**: For every bug fixed
+5. **Update test documentation**: When adding new test patterns
+
+#### Test Quality Standards:
+- Tests must be deterministic (no flaky tests)
+- Tests must be isolated (no shared state)
+- Tests must be fast (unit tests <1s, integration <10s)
+- Tests must have clear failure messages
+- Tests must clean up after themselves
+
+### Code Review Workflow
+
+#### Self-Review Checklist:
+- [ ] Code follows established patterns in codebase
+- [ ] Error handling is comprehensive and appropriate
+- [ ] Logging provides useful debugging information
+- [ ] Performance impact considered and measured
+- [ ] Security implications reviewed
+- [ ] Documentation updated for public interfaces
+- [ ] Migration path provided for breaking changes
+
+#### Architecture Change Protocol:
+1. **Create ADR**: Document decision in `spec/docs/adr/`
+2. **Update STAD.md**: Reflect architectural changes
+3. **Create implementation plan**: Break into phases
+4. **Get consensus**: Discuss with other agents via issues
+5. **Implement incrementally**: Small, reviewable changes
+6. **Update diagrams**: Keep `spec/diagram/` current
+
+### Deployment Workflow
+
+#### NixOS Module Development:
+1. **Test in development**: Use NixOS VM tests first
+2. **Validate configuration**: `nix flake check`
+3. **Test actual deployment**: On development system
+4. **Update documentation**: Module options and examples
+5. **Create migration guide**: For existing deployments
+
+#### Health Monitoring Protocol:
+1. **Every service** must emit heartbeat events every 30-60 seconds
+2. **Include rich context**: Memory usage, event counts, errors
+3. **Use structured logging**: JSON format for parsing
+4. **Implement graceful shutdown**: Handle SIGTERM properly
+5. **Provide health endpoints**: HTTP endpoint for external monitoring
+
+### Emergency Response Workflow
+
+#### Production Issues:
+1. **Assess impact**: Is data being lost? Are events being missed?
+2. **Immediate mitigation**: Stop ingestion if corruption risk
+3. **Create hotfix branch**: `claude/YYYY-MM-DD-hotfix-issue`
+4. **Implement minimal fix**: Address symptoms first
+5. **Test thoroughly**: Can't make production worse
+6. **Deploy carefully**: Have rollback plan ready
+7. **Root cause analysis**: Create issue for proper fix
+
+#### System Recovery:
+1. **Database corruption**: Restore from backup, replay events
+2. **Service failures**: Check logs, restart with health monitoring
+3. **Configuration errors**: Rollback to last known good
+4. **Performance issues**: Check resource usage, scale appropriately
+
+## 🔧 Technical Standards
+
+### Code Style Guidelines
+- **Rust**: Follow `rustfmt` and `clippy` recommendations
+- **SQL**: Use lowercase with snake_case, descriptive names
+- **Nix**: Follow nixpkgs conventions, use lib functions
+- **Python**: Follow PEP 8, use type hints
+- **Bash**: Use `set -euo pipefail`, quote variables
+
+### Performance Requirements
+- **Event ingestion**: >1000 events/second single-threaded
+- **Database queries**: <100ms for typical operations
+- **Memory usage**: <512MB per service in steady state
+- **Startup time**: <30 seconds for all services
+- **Health checks**: <5 seconds response time
+
+### Security Requirements
+- **No secrets in logs**: Redact sensitive information
+- **Database connections**: Use connection pooling with limits
+- **File permissions**: Restrict access to service user only
+- **Input validation**: Validate all external inputs
+- **Error handling**: Don't leak internal information
+
+### Monitoring Standards
+- **Structured logging**: Use JSON format with consistent fields
+- **Metrics emission**: Prometheus-compatible metrics
+- **Error tracking**: Include stack traces and context
+- **Performance monitoring**: Track latency and throughput
+- **Health indicators**: CPU, memory, disk, network usage
+
+## 📊 Quality Metrics
+
+### Development Velocity
+- **Time to first commit**: <30 minutes from task assignment
+- **Test coverage**: >80% for core functionality
+- **Build time**: <5 minutes for full workspace
+- **Deployment time**: <10 minutes including health checks
+
+### System Reliability
+- **Uptime target**: 99.9% for data collection
+- **Data loss tolerance**: Zero tolerance for event loss
+- **Recovery time**: <15 minutes for service restart
+- **Rollback time**: <5 minutes for configuration issues
+
+### Agent Coordination
+- **Conflict resolution**: <24 hours for merge conflicts
+- **Communication**: Use GitHub issues for coordination
+- **Knowledge sharing**: Update CLAUDE.md with new patterns
+- **Documentation lag**: <7 days between code and doc updates
+
+## 🎯 Success Criteria
+
+For any agent completing work on Sinex:
+
+### Functional Success
+- [ ] All intended functionality works as specified
+- [ ] No regressions in existing functionality
+- [ ] Performance meets or exceeds requirements
+- [ ] Error handling is comprehensive and appropriate
+
+### Technical Success
+- [ ] Code follows established patterns and conventions
+- [ ] Tests are comprehensive and pass consistently
+- [ ] Documentation is accurate and up-to-date
+- [ ] SQLX cache is current and builds work offline
+
+### Operational Success
+- [ ] Deployment is idempotent and reliable
+- [ ] Health monitoring provides useful visibility
+- [ ] Rollback procedures work as expected
+- [ ] System performance is maintained or improved
+
+### Knowledge Success
+- [ ] CLAUDE.md updated with new patterns or changes
+- [ ] Other agents can build upon the work without confusion
+- [ ] Architectural decisions are documented with rationale
+- [ ] Future maintenance is clearly supported
+
+## 🔄 Continuous Improvement
+
+### Regular Reviews
+- **Weekly**: Review agent effectiveness and coordination
+- **Monthly**: Update workflows based on lessons learned
+- **Quarterly**: Assess architecture and performance trends
+- **Annually**: Major technology and pattern updates
+
+### Feedback Integration
+- **Error patterns**: Turn repeated issues into automated checks
+- **Performance bottlenecks**: Proactively address before they impact users
+- **Documentation gaps**: Fill based on common questions
+- **Tool improvements**: Automate manual processes where possible
+
+### Knowledge Management
+- **Capture tribal knowledge**: Document non-obvious patterns
+- **Share lessons learned**: Update this file with new insights
+- **Cross-train capabilities**: Agents should understand multiple roles
+- **Maintain expertise**: Keep up with Rust, Nix, PostgreSQL best practices
+
+---
+
+## 🧪 Testing Principles
+
+1. **Don't test the language/library** - Focus on our business logic
+2. **Don't test assignment** - Test behavior, not simple data movement
+3. **Test behavior, not implementation** - Validate business rules and system behavior
+4. **Focus on edge cases** - Boundary conditions and error scenarios provide most value
+5. **Test integration points** - Validate how components work together
+6. **Make tests maintainable** - Clear, focused tests that evolve with the code

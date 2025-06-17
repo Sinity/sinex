@@ -46,11 +46,15 @@ Sinex has comprehensive test coverage across multiple categories:
   - Regression tests for known issues
   - Performance benchmarks
 
-- **VM tests**: 1 comprehensive test
-  - Full NixOS module integration
-  - Database setup and permissions
-  - Event capture verification
-  - Service resilience testing
+- **VM tests**: Full NixOS integration testing
+  - Complete system validation in isolated VMs
+  - PostgreSQL + TimescaleDB setup verification
+  - Real event source testing (filesystem, terminal, clipboard, Hyprland)
+  - Service startup and shutdown resilience
+  - Multi-source stress testing with configurable intensity
+  - Failure recovery scenarios (database disconnection, process crashes)
+  - Performance validation under various load patterns
+  - Wayland/GUI environment testing with proper isolation
 
 ### Running Tests
 

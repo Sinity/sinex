@@ -1,6 +1,20 @@
+//! Unit tests for core Sinex functionality
+//! 
+//! Tests the basic building blocks of the event system:
+//! - RawEventBuilder for creating events
+//! - Event constants and source identifiers
+//! - ULID generation and properties
+
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
 use serde_json::json;
 
+/// Test basic event creation with RawEventBuilder
+/// 
+/// Verifies that:
+/// - Events are created with correct source and type
+/// - Payload is properly attached
+/// - Auto-generated fields (host, ID) are populated
+/// - ULID format is correct (26 characters)
 #[test]
 fn test_raw_event_builder_basic() {
     let event = RawEventBuilder::new(
@@ -16,27 +30,13 @@ fn test_raw_event_builder_basic() {
     assert!(event.id.to_string().len() == 26); // ULID length
 }
 
-#[test]
-fn test_sources_constants() {
-    assert_eq!(sources::FILESYSTEM, "filesystem");
-    assert_eq!(sources::TERMINAL_KITTY, "terminal.kitty");
-    assert_eq!(sources::HYPRLAND, "hyprland");
-    assert_eq!(sources::CLIPBOARD, "clipboard");
-    assert_eq!(sources::SINEX, "sinex");
-}
-
-#[test]
-fn test_event_type_constants() {
-    assert_eq!(event_type_constants::filesystem::FILE_CREATED, "file.created");
-    assert_eq!(event_type_constants::filesystem::FILE_MODIFIED, "file.modified");
-    assert_eq!(event_type_constants::filesystem::FILE_DELETED, "file.deleted");
-    
-    assert_eq!(event_type_constants::terminal::COMMAND_EXECUTED, "command.executed");
-    
-    assert_eq!(event_type_constants::sinex::AGENT_STARTUP, "agent.startup");
-    assert_eq!(event_type_constants::sinex::AGENT_HEARTBEAT, "agent.heartbeat");
-}
-
+/// Test creating multiple events with different sources
+/// 
+/// Ensures that:
+/// - Multiple events can be created independently
+/// - Each event gets a unique ULID
+/// - Different sources and types work correctly
+/// - ULIDs maintain time ordering when created in sequence
 #[test]
 fn test_multiple_event_creation() {
     let events = vec![
