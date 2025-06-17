@@ -1,13 +1,14 @@
 // Routing cache tests - should fail until materialized view implementation is complete
 // Tests for replacing per-row trigger routing with materialized view approach
 
+use crate::db_test;
 use sinex_db::queries::*;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use anyhow::Result;
 use serde_json::json;
 
-#[sqlx::test]
+db_test! {
 async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
@@ -23,9 +24,9 @@ async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
     
     assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
     Ok(())
-}
+}}
 
-#[sqlx::test]
+db_test! {
 async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     // Test that routing_cache has the correct columns (event_type, agent_id)
     let columns = sqlx::query!(
@@ -51,9 +52,9 @@ async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     assert_eq!(agent_id_col.data_type.as_ref(), Some(&"text".to_string()));
     
     Ok(())
-}
+}}
 
-#[sqlx::test]
+db_test! {
 async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result<()> {
     // Test that routing_cache is automatically refreshed when agent_manifests change
     
@@ -90,9 +91,9 @@ async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result
     assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
     
     Ok(())
-}
+}}
 
-#[sqlx::test]
+db_test! {
 async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()> {
     // Test that the batch router function creates work queue entries based on routing cache
     
@@ -134,9 +135,9 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     assert!(event_ids.contains(&event2_id.to_uuid()));
     
     Ok(())
-}
+}}
 
-#[sqlx::test]
+db_test! {
 async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> {
     // Test that batch router doesn't create duplicate work queue entries
     
@@ -172,9 +173,9 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
     
     Ok(())
-}
+}}
 
-#[sqlx::test]
+db_test! {
 async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()> {
     // Test that routing cache approach performs better than per-row triggers
     // This is a conceptual test - in practice we'd measure timing
@@ -215,7 +216,7 @@ async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()
     assert!(duration.as_millis() < 1000, "Batch routing should complete quickly");
     
     Ok(())
-}
+}}
 
 // Helper functions
 
