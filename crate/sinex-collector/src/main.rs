@@ -35,6 +35,10 @@ struct Args {
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     log_level: String,
+    
+    /// Validate configuration and exit
+    #[arg(long)]
+    validate_config: bool,
 }
 
 
@@ -56,6 +60,53 @@ async fn main() -> Result<()> {
     } else {
         CollectorConfig::load()?
     };
+    
+    // If validating config only, do that and exit
+    if args.validate_config {
+        info!("Validating configuration...");
+        
+        let report = config.get_validation_report();
+        
+        println!("=== Configuration Validation Report ===");
+        println!("Configuration file: {}", args.config.as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "default locations".to_string()));
+        println!("Valid: {}", if report.valid { "✓" } else { "✗" });
+        println!("Enabled Events: {}", config.enabled_events.len());
+        println!();
+        
+        if !report.errors.is_empty() {
+            println!("❌ ERRORS:");
+            for error in &report.errors {
+                println!("  - {}", error);
+            }
+            println!();
+        }
+        
+        if !report.warnings.is_empty() {
+            println!("⚠️  WARNINGS:");
+            for warning in &report.warnings {
+                println!("  - {}", warning);
+            }
+            println!();
+        }
+        
+        if !report.recommendations.is_empty() {
+            println!("💡 RECOMMENDATIONS:");
+            for rec in &report.recommendations {
+                println!("  - {}", rec);
+            }
+            println!();
+        }
+        
+        if report.valid {
+            println!("✅ Configuration is valid");
+            std::process::exit(0);
+        } else {
+            println!("❌ Configuration validation failed");
+            std::process::exit(1);
+        }
+    }
     
     info!(?config.enabled_events, "Configuration loaded");
     

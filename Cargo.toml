@@ -40,6 +40,7 @@ gethostname.workspace = true
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
+toml = "0.8"
 
 # Example dependencies
 tracing-subscriber = { workspace = true }

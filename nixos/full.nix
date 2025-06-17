@@ -12,8 +12,17 @@ let
   cfg = config.services.sinex;
   configGen = import ./config-gen.nix { inherit lib pkgs; };
 
-  # Use config generation from separate module
+  # Use config generation from separate module with validation
   collectorConfigFile = configGen.mkCollectorConfigFile cfg.unifiedCollector cfg;
+  
+  # Configuration validation and dry-run results
+  configValidation = configGen.mkCollectorConfigDryRun cfg.unifiedCollector cfg;
+  
+  # Configuration optimization suggestions
+  configOptimization = {
+    performance = configGen.optimization.getPerformanceSuggestions cfg.unifiedCollector cfg;
+    security = configGen.optimization.getSecuritySuggestions cfg.unifiedCollector cfg;
+  };
 
   # Helper function to escape database identifiers
   escapeDbIdentifier = str: lib.escape ["?" "&" "=" "'" "\"" " " "\\" "/"] str;
@@ -3352,11 +3361,77 @@ in
         assertion = cfg.database.ssl.keyFile == null || cfg.database.ssl.certFile != null;
         message = "SSL certificate file must be provided when SSL key file is specified";
       }
+      
+      # Configuration validation assertions
+      {
+        assertion = configValidation.validationReport.valid;
+        message = "Configuration validation failed:\n${lib.concatStringsSep "\n" configValidation.validationReport.errors}";
+      }
+      
+      # Event type validation assertions
+      {
+        assertion = (lib.length configValidation.validationReport.unknownEvents) == 0;
+        message = "Unknown event types detected: ${lib.concatStringsSep ", " configValidation.validationReport.unknownEvents}";
+      }
+      
+      {
+        assertion = (lib.length configValidation.validationReport.malformedEvents) == 0;
+        message = "Malformed event types detected: ${lib.concatStringsSep ", " configValidation.validationReport.malformedEvents}";
+      }
     ];
 
     # System packages
     environment.systemPackages = [ cfg.package ] 
-      ++ lib.optionals cfg.blobStorage.enable [ pkgs.git-annex pkgs.git ];
+      ++ lib.optionals cfg.blobStorage.enable [ pkgs.git-annex pkgs.git ]
+      ++ [
+        # Configuration validation utilities
+        (pkgs.writeShellScriptBin "sinex-config-validate" ''
+          echo "Running Sinex configuration validation..."
+          systemctl start sinex-config-validate.service
+          journalctl -u sinex-config-validate.service --no-pager -f
+        '')
+        
+        (pkgs.writeShellScriptBin "sinex-config-dry-run" ''
+          echo "Running Sinex configuration dry-run test..."
+          systemctl start sinex-config-dry-run.service
+          journalctl -u sinex-config-dry-run.service --no-pager -f
+        '')
+        
+        (pkgs.writeShellScriptBin "sinex-config-check" ''
+          echo "Checking Sinex configuration migration needs..."
+          systemctl start sinex-config-migrate.service
+          journalctl -u sinex-config-migrate.service --no-pager -f
+        '')
+        
+        (pkgs.writeShellScriptBin "sinex-config-status" ''
+          echo "=== Sinex Configuration Status ==="
+          echo
+          echo "Configuration file: ${collectorConfigFile}"
+          echo "Valid: ${if configValidation.summary.valid then "✓" else "✗"}"
+          echo "Enabled Events: ${toString configValidation.summary.enabledEvents}"
+          echo "Enabled Sources: ${toString configValidation.summary.enabledSources}"
+          echo
+          echo "Recent validation runs:"
+          journalctl -u sinex-config-validate.service --no-pager -n 5 --output=short-iso
+        '')
+        
+        (pkgs.writeShellScriptBin "sinex-config-show" ''
+          echo "=== Current Sinex Configuration ==="
+          echo
+          if [ -f "${collectorConfigFile}" ]; then
+            echo "Configuration file: ${collectorConfigFile}"
+            echo "File size: $(stat -c%s '${collectorConfigFile}') bytes"
+            echo
+            echo "Configuration content:"
+            echo "----------------------------------------"
+            cat "${collectorConfigFile}"
+            echo "----------------------------------------"
+          else
+            echo "Configuration file not found: ${collectorConfigFile}"
+            exit 1
+          fi
+        '')
+      ];
     
     # Activation scripts for git-annex setup
     system.activationScripts.sinex-annex-setup = mkIf (cfg.blobStorage.enable && cfg.blobStorage.activationScripts.enable) {
@@ -5420,6 +5495,182 @@ in
         OnBootSec = "${toString cfg.promoWorker.healthCheck.readinessProbe.initialDelay}s";
         OnUnitActiveSec = "${toString cfg.promoWorker.healthCheck.readinessProbe.periodSeconds}s";
         Persistent = true;
+      };
+    };
+
+    # Configuration validation and testing service
+    systemd.services.sinex-config-validate = {
+      description = "Sinex Configuration Validation and Diagnostics";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        StandardOutput = "journal";
+        StandardError = "journal";
+        ExecStart = pkgs.writeShellScript "sinex-config-validate" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Configuration Validation ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Configuration summary
+          echo "Configuration Summary:"
+          echo "  Valid: ${if configValidation.summary.valid then "✓" else "✗"}"
+          echo "  Enabled Events: ${toString configValidation.summary.enabledEvents}"
+          echo "  Enabled Sources: ${toString configValidation.summary.enabledSources}"
+          echo "  Config Sections: ${toString configValidation.summary.configSections}"
+          echo
+          
+          # Validation results
+          ${lib.optionalString (configValidation.summary.hasErrors) ''
+            echo "❌ ERRORS:"
+            ${lib.concatMapStringsSep "\n" (error: "echo \"  - ${error}\"") configValidation.validationReport.errors}
+            echo
+          ''}
+          
+          ${lib.optionalString (configValidation.summary.hasWarnings) ''
+            echo "⚠️  WARNINGS:"
+            ${lib.concatMapStringsSep "\n" (warning: "echo \"  - ${warning}\"") configValidation.validationReport.warnings}
+            echo
+          ''}
+          
+          ${lib.optionalString (configValidation.summary.hasRecommendations) ''
+            echo "💡 RECOMMENDATIONS:"
+            ${lib.concatMapStringsSep "\n" (rec: "echo \"  - ${rec}\"") configValidation.validationReport.recommendations}
+            echo
+          ''}
+          
+          # Performance suggestions
+          ${lib.optionalString ((lib.length configOptimization.performance) > 0) ''
+            echo "🚀 PERFORMANCE SUGGESTIONS:"
+            ${lib.concatMapStringsSep "\n" (sugg: 
+              "echo \"  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}\""
+            ) configOptimization.performance}
+            echo
+          ''}
+          
+          # Security suggestions
+          ${lib.optionalString ((lib.length configOptimization.security) > 0) ''
+            echo "🔒 SECURITY SUGGESTIONS:"
+            ${lib.concatMapStringsSep "\n" (sugg: 
+              "echo \"  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}\""
+            ) configOptimization.security}
+            echo
+          ''}
+          
+          # Configuration file validation
+          echo "Configuration File Validation:"
+          if [ -f "${collectorConfigFile}" ]; then
+            echo "  ✓ Configuration file exists: ${collectorConfigFile}"
+            
+            # Validate TOML syntax
+            if ${pkgs.remarshal}/bin/toml2json < "${collectorConfigFile}" > /dev/null 2>&1; then
+              echo "  ✓ TOML syntax is valid"
+            else
+              echo "  ✗ TOML syntax is invalid"
+              exit 1
+            fi
+            
+            # Show configuration size
+            file_size=$(stat -c%s "${collectorConfigFile}")
+            echo "  📄 Configuration size: $file_size bytes"
+            
+            # Show enabled events count
+            events_count=$(${pkgs.remarshal}/bin/toml2json < "${collectorConfigFile}" | ${pkgs.jq}/bin/jq '.enabled_events | length')
+            echo "  🎯 Enabled events: $events_count"
+            
+          else
+            echo "  ✗ Configuration file missing: ${collectorConfigFile}"
+            exit 1
+          fi
+          
+          echo
+          echo "=== Configuration Validation Complete ==="
+        '';
+      };
+    };
+    
+    # Configuration dry-run testing service
+    systemd.services.sinex-config-dry-run = {
+      description = "Sinex Configuration Dry-Run Test";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        StandardOutput = "journal";
+        StandardError = "journal";
+        ExecStart = pkgs.writeShellScript "sinex-config-dry-run" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Configuration Dry-Run Test ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Test configuration loading
+          echo "Testing configuration loading..."
+          export SINEX_CONFIG="${collectorConfigFile}"
+          export DATABASE_URL="${buildDatabaseUrl cfg}"
+          
+          # Run collector in dry-run mode (if available)
+          if ${cfg.package}/bin/sinex-collector --version > /dev/null 2>&1; then
+            echo "  ✓ Collector binary is available"
+            
+            # Test configuration parsing
+            if ${cfg.package}/bin/sinex-collector --dry-run --config "${collectorConfigFile}" 2>&1; then
+              echo "  ✓ Configuration dry-run successful"
+            else
+              echo "  ✗ Configuration dry-run failed"
+              exit 1
+            fi
+          else
+            echo "  ⚠️  Collector binary not available for testing"
+          fi
+          
+          echo
+          echo "=== Dry-Run Test Complete ==="
+        '';
+      };
+    };
+    
+    # Configuration migration helper service
+    systemd.services.sinex-config-migrate = {
+      description = "Sinex Configuration Migration Helper";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        StandardOutput = "journal";
+        StandardError = "journal";
+        ExecStart = pkgs.writeShellScript "sinex-config-migrate" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Configuration Migration Check ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Check for migration needs
+          ${lib.optionalString (configGen.migration.needsMigration configValidation.config) ''
+            echo "⚠️  Configuration migration needed!"
+            echo "Old event format detected. Consider updating configuration."
+            echo
+            echo "Migration would change:"
+            # Show what would be migrated
+            echo "  command_executed → command.executed"
+            echo "  file_created → file.created"
+            echo "  file_modified → file.modified"
+            echo "  file_deleted → file.deleted"
+            echo "  window_focused → window.focused"
+            echo "  workspace_changed → workspace.changed"
+            echo
+            echo "To apply migration, update your configuration manually."
+          ''}
+          
+          echo "Migration check complete"
+        '';
       };
     };
 
