@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use sinex_db::validation::EventValidator;
 
@@ -153,6 +154,91 @@ fn test_json_unicode_normalization_bypass() {
     }
 }
 
+#[test]
+fn test_json_depth_stack_overflow() {
+    // Test deeply nested JSON that could cause stack overflow during parsing/validation
+    
+    // Create JSON with extreme depth that might cause stack overflow
+    fn create_deeply_nested_json(depth: usize) -> serde_json::Value {
+        if depth == 0 {
+            json!("base_value")
+        } else {
+            json!({
+                "level": depth,
+                "nested": create_deeply_nested_json(depth - 1)
+            })
+        }
+    }
+    
+    println!("Testing JSON depth stack overflow attack:");
+    
+    // Test increasing depths to find limits
+    for depth in [10, 50, 100, 500, 1000, 5000] {
+        println!("  Testing depth: {}", depth);
+        
+        let start = Instant::now();
+        
+        // Test creation and serialization in panic-safe context
+        let result = std::panic::catch_unwind(|| {
+            let deep_json = create_deeply_nested_json(depth);
+            let serialized = serde_json::to_string(&deep_json)?;
+            Ok::<(usize, Duration), serde_json::Error>((serialized.len(), start.elapsed()))
+        });
+        
+        match result {
+            Ok(Ok((size, elapsed))) => {
+                println!("    SUCCESS: {} bytes in {:?}", size, elapsed);
+                
+                // Test with Sinex validator to ensure it handles deep nesting
+                let deep_json = create_deeply_nested_json(depth);
+                let validator = EventValidator::new();
+                
+                match validator.validate_with_rules("test", "deep.nesting", &deep_json) {
+                    Ok(_) => println!("    Validator accepted depth {}", depth),
+                    Err(e) => println!("    Validator rejected depth {}: {}", depth, e),
+                }
+                
+                // Stop if serialization becomes too slow (potential DoS)
+                if elapsed > Duration::from_secs(2) {
+                    println!("    STOPPING: Serialization too slow, potential DoS vector");
+                    break;
+                }
+            }
+            Ok(Err(e)) => {
+                println!("    SERIALIZATION ERROR at depth {}: {}", depth, e);
+                break;
+            }
+            Err(_) => {
+                println!("    STACK OVERFLOW: Panic at depth {} - limit found", depth);
+                break;
+            }
+        }
+    }
+    
+    // Test alternative deep nesting patterns
+    println!("  Testing array depth:");
+    
+    let mut deep_array = json!("base");
+    for level in 1..=1000 {
+        deep_array = json!([deep_array]);
+        
+        if level % 100 == 0 {
+            match std::panic::catch_unwind(|| serde_json::to_string(&deep_array)) {
+                Ok(Ok(serialized)) => {
+                    println!("    Array depth {}: {} bytes", level, serialized.len());
+                }
+                Ok(Err(_)) => {
+                    println!("    Array serialization failed at depth {}", level);
+                    break;
+                }
+                Err(_) => {
+                    println!("    Array stack overflow at depth {}", level);
+                    break;
+                }
+            }
+        }
+    }
+}
 
 #[test]
 fn test_json_key_confusion_attack() {
