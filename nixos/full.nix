@@ -1755,6 +1755,703 @@ in
       };
     };
 
+    # Error Handling and Graceful Degradation Configuration
+    errorHandling = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable comprehensive error handling and graceful degradation";
+      };
+
+      # Global Circuit Breaker Configuration
+      circuitBreaker = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable circuit breaker pattern for failing components";
+        };
+
+        failureThreshold = mkOption {
+          type = types.int;
+          default = 10;
+          description = "Number of consecutive failures before opening circuit";
+        };
+
+        recoveryThreshold = mkOption {
+          type = types.int;
+          default = 3;
+          description = "Number of consecutive successes to close circuit";
+        };
+
+        timeout = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Timeout in seconds before attempting recovery";
+        };
+
+        halfOpenMaxCalls = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum calls allowed in half-open state";
+        };
+
+        slowCallThreshold = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Threshold in seconds to consider a call slow";
+        };
+
+        slowCallRateThreshold = mkOption {
+          type = types.float;
+          default = 0.5;
+          description = "Percentage of slow calls before opening circuit (0.0-1.0)";
+        };
+      };
+
+      # Retry Strategy Configuration
+      retryStrategy = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable global retry strategies";
+        };
+
+        maxRetries = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum number of retry attempts";
+        };
+
+        initialDelay = mkOption {
+          type = types.int;
+          default = 1;
+          description = "Initial retry delay in seconds";
+        };
+
+        maxDelay = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Maximum retry delay in seconds";
+        };
+
+        backoffMultiplier = mkOption {
+          type = types.float;
+          default = 2.0;
+          description = "Exponential backoff multiplier";
+        };
+
+        jitterEnabled = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Add random jitter to retry delays";
+        };
+
+        jitterRange = mkOption {
+          type = types.float;
+          default = 0.1;
+          description = "Jitter range as percentage of delay (0.0-1.0)";
+        };
+
+        retryableErrors = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "connection_timeout"
+            "connection_refused" 
+            "temporary_failure"
+            "rate_limited"
+            "server_error"
+            "network_unreachable"
+          ];
+          description = "List of error types that should trigger retries";
+        };
+
+        nonRetryableErrors = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "authentication_failed"
+            "authorization_denied"
+            "invalid_request"
+            "not_found"
+            "conflict"
+          ];
+          description = "List of error types that should not be retried";
+        };
+      };
+
+      # Timeout Management
+      timeouts = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable comprehensive timeout management";
+        };
+
+        operation = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Default operation timeout in seconds";
+        };
+
+        connection = mkOption {
+          type = types.int;
+          default = 10;
+          description = "Connection establishment timeout in seconds";
+        };
+
+        read = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Read operation timeout in seconds";
+        };
+
+        write = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Write operation timeout in seconds";
+        };
+
+        shutdown = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Graceful shutdown timeout in seconds";
+        };
+
+        healthCheck = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Health check timeout in seconds";
+        };
+
+        startup = mkOption {
+          type = types.int;
+          default = 120;
+          description = "Service startup timeout in seconds";
+        };
+      };
+
+      # Fallback Mechanisms
+      fallbacks = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable fallback mechanisms for failed components";
+        };
+
+        databaseFallback = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable database fallback strategies";
+          };
+
+          strategy = mkOption {
+            type = types.enum [ "file" "memory" "skip" "circuit_breaker" ];
+            default = "file";
+            description = "Fallback strategy when database is unavailable";
+          };
+
+          filePath = mkOption {
+            type = types.str;
+            default = "/var/lib/sinex/fallback/events.json";
+            description = "File path for event storage fallback";
+          };
+
+          maxMemoryBuffer = mkOption {
+            type = types.str;
+            default = "100M";
+            description = "Maximum memory buffer size for in-memory fallback";
+          };
+
+          batchSize = mkOption {
+            type = types.int;
+            default = 1000;
+            description = "Batch size for fallback operations";
+          };
+
+          flushInterval = mkOption {
+            type = types.int;
+            default = 60;
+            description = "Interval to flush fallback buffer in seconds";
+          };
+        };
+
+        eventSourceFallbacks = {
+          filesystem = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable filesystem monitoring fallbacks";
+            };
+
+            fallbackToPolling = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Fall back to polling if inotify fails";
+            };
+
+            pollingInterval = mkOption {
+              type = types.int;
+              default = 10;
+              description = "Polling interval in seconds for fallback";
+            };
+
+            reducedPaths = mkOption {
+              type = types.listOf types.str;
+              default = [ "/home/${cfg.targetUser}/Documents" ];
+              description = "Reduced set of paths to monitor in degraded mode";
+            };
+          };
+
+          dbus = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable D-Bus monitoring fallbacks";
+            };
+
+            fallbackToSession = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Fall back to session bus if system bus fails";
+            };
+
+            essentialSignals = mkOption {
+              type = types.listOf types.str;
+              default = [
+                "org.freedesktop.Notifications"
+                "org.mpris.MediaPlayer2"
+              ];
+              description = "Essential signals to monitor in degraded mode";
+            };
+
+            skipNonEssential = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Skip non-essential signals when degraded";
+            };
+          };
+
+          terminal = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable terminal monitoring fallbacks";
+            };
+
+            fallbackToHistory = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Fall back to history files if scrollback fails";
+            };
+
+            reducedFrequency = mkOption {
+              type = types.int;
+              default = 60;
+              description = "Reduced polling frequency in degraded mode";
+            };
+
+            essentialOnly = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Monitor only essential terminal events in degraded mode";
+            };
+          };
+        };
+      };
+
+      # Partial Failure Handling
+      partialFailure = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable partial failure handling modes";
+        };
+
+        mode = mkOption {
+          type = types.enum [ "continue" "degrade" "halt" ];
+          default = "degrade";
+          description = "Mode for handling partial system failures";
+        };
+
+        continuationThreshold = mkOption {
+          type = types.float;
+          default = 0.7;
+          description = "Minimum percentage of working components to continue normal operation";
+        };
+
+        degradationThreshold = mkOption {
+          type = types.float;
+          default = 0.4;
+          description = "Minimum percentage of working components before degraded operation";
+        };
+
+        essentialSources = mkOption {
+          type = types.listOf types.str;
+          default = [ "filesystem" "terminal" ];
+          description = "Event sources considered essential for system operation";
+        };
+
+        optionalSources = mkOption {
+          type = types.listOf types.str;
+          default = [ "clipboard" "dbus" "hyprland" ];
+          description = "Event sources that can be disabled without critical impact";
+        };
+
+        adaptiveLoading = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Dynamically adjust load based on available resources";
+        };
+
+        loadReductionSteps = mkOption {
+          type = types.listOf types.attrs;
+          default = [
+            { threshold = 0.8; action = "reduce_frequency"; factor = 0.5; }
+            { threshold = 0.6; action = "disable_optional"; sources = [ "clipboard" ]; }
+            { threshold = 0.4; action = "disable_optional"; sources = [ "dbus" ]; }
+            { threshold = 0.2; action = "essential_only"; sources = []; }
+          ];
+          description = "Steps for load reduction in degraded conditions";
+        };
+      };
+
+      # Error Recovery Strategies
+      recovery = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable automated error recovery strategies";
+        };
+
+        strategies = {
+          restart = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable component restart recovery";
+            };
+
+            maxRestarts = mkOption {
+              type = types.int;
+              default = 3;
+              description = "Maximum restarts within time window";
+            };
+
+            restartWindow = mkOption {
+              type = types.str;
+              default = "10min";
+              description = "Time window for counting restarts";
+            };
+
+            gracefulTimeout = mkOption {
+              type = types.int;
+              default = 30;
+              description = "Timeout for graceful restart in seconds";
+            };
+          };
+
+          reconnect = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable connection recovery";
+            };
+
+            maxReconnects = mkOption {
+              type = types.int;
+              default = 10;
+              description = "Maximum reconnection attempts";
+            };
+
+            reconnectDelay = mkOption {
+              type = types.int;
+              default = 5;
+              description = "Initial reconnection delay in seconds";
+            };
+
+            connectionPoolReset = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Reset connection pool on recovery";
+            };
+          };
+
+          reset = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable state reset recovery";
+            };
+
+            preserveEssentialState = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Preserve essential state during reset";
+            };
+
+            clearCaches = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Clear caches during reset";
+            };
+
+            resetQueues = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Reset processing queues (may lose data)";
+            };
+          };
+
+          escalation = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Enable recovery escalation";
+            };
+
+            escalationLevels = mkOption {
+              type = types.listOf types.str;
+              default = [ "retry" "restart" "degrade" "alert" ];
+              description = "Escalation levels for recovery attempts";
+            };
+
+            escalationDelay = mkOption {
+              type = types.int;
+              default = 30;
+              description = "Delay between escalation levels in seconds";
+            };
+
+            maxEscalationLevel = mkOption {
+              type = types.int;
+              default = 3;
+              description = "Maximum escalation level before giving up";
+            };
+          };
+        };
+
+        preventiveActions = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable preventive recovery actions";
+          };
+
+          memoryPressureHandling = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Take action on memory pressure warnings";
+          };
+
+          diskSpaceMonitoring = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Monitor disk space and take preventive action";
+          };
+
+          connectionLeakDetection = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Detect and fix connection leaks";
+          };
+
+          performanceDegradationDetection = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Detect performance degradation and adapt";
+          };
+        };
+      };
+
+      # Error Logging and Alerting
+      logging = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable enhanced error logging";
+        };
+
+        logLevel = mkOption {
+          type = types.enum [ "trace" "debug" "info" "warn" "error" ];
+          default = "warn";
+          description = "Minimum log level for error handling events";
+        };
+
+        structuredLogging = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable structured logging for errors";
+        };
+
+        errorCorrelation = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable error correlation across components";
+        };
+
+        errorMetrics = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Export error handling metrics to Prometheus";
+        };
+
+        destinations = {
+          journald = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Log errors to systemd journal";
+          };
+
+          file = mkOption {
+            type = types.nullOr types.str;
+            default = "/var/log/sinex/errors.log";
+            description = "File path for error logs";
+          };
+
+          database = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Store error events in database";
+          };
+
+          syslog = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Send errors to syslog";
+          };
+        };
+
+        retention = {
+          fileSize = mkOption {
+            type = types.str;
+            default = "100M";
+            description = "Maximum size for error log files";
+          };
+
+          fileCount = mkOption {
+            type = types.int;
+            default = 10;
+            description = "Number of error log files to retain";
+          };
+
+          archiveAfter = mkOption {
+            type = types.str;
+            default = "30d";
+            description = "Archive error logs after this duration";
+          };
+        };
+      };
+
+      # Alerting Configuration
+      alerting = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable error-based alerting";
+        };
+
+        severity = {
+          critical = mkOption {
+            type = types.listOf types.str;
+            default = [
+              "database_connection_failed"
+              "all_event_sources_failed"
+              "disk_space_critical"
+              "memory_exhausted"
+            ];
+            description = "Error conditions that trigger critical alerts";
+          };
+
+          warning = mkOption {
+            type = types.listOf types.str;
+            default = [
+              "event_source_degraded"
+              "circuit_breaker_open"
+              "high_error_rate"
+              "performance_degraded"
+            ];
+            description = "Error conditions that trigger warning alerts";
+          };
+
+          info = mkOption {
+            type = types.listOf types.str;
+            default = [
+              "recovery_successful"
+              "circuit_breaker_closed"
+              "fallback_activated"
+              "degraded_mode_entered"
+            ];
+            description = "Error conditions that trigger info alerts";
+          };
+        };
+
+        thresholds = {
+          errorRate = mkOption {
+            type = types.float;
+            default = 0.1;
+            description = "Error rate threshold for alerting (0.0-1.0)";
+          };
+
+          errorBurst = mkOption {
+            type = types.int;
+            default = 10;
+            description = "Number of errors in burst threshold";
+          };
+
+          errorWindow = mkOption {
+            type = types.str;
+            default = "5min";
+            description = "Time window for error rate calculation";
+          };
+        };
+
+        cooldown = {
+          critical = mkOption {
+            type = types.str;
+            default = "1min";
+            description = "Cooldown between critical alerts";
+          };
+
+          warning = mkOption {
+            type = types.str;
+            default = "5min";
+            description = "Cooldown between warning alerts";
+          };
+
+          info = mkOption {
+            type = types.str;
+            default = "15min";
+            description = "Cooldown between info alerts";
+          };
+        };
+
+        destinations = {
+          journald = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Send alerts to systemd journal";
+          };
+
+          webhook = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Webhook URL for external alert notifications";
+          };
+
+          email = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Email address for alert notifications";
+          };
+
+          command = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Command to execute for alert notifications";
+          };
+        };
+      };
+    };
+
     resourceLimits = {
       memory = {
         collectorMax = mkOption {
@@ -2842,6 +3539,126 @@ in
         SINEX_LIVENESS_PATH = cfg.unifiedCollector.healthCheck.livenessPath;
         SINEX_HEALTH_CHECK_TIMEOUT = toString cfg.unifiedCollector.healthCheck.timeout;
         SINEX_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}";
+        
+        # Error handling and graceful degradation environment variables
+        SINEX_ERROR_HANDLING_ENABLED = if cfg.errorHandling.enable then "true" else "false";
+        
+        # Circuit breaker configuration
+        SINEX_CIRCUIT_BREAKER_ENABLED = if cfg.errorHandling.circuitBreaker.enable then "true" else "false";
+        SINEX_CIRCUIT_BREAKER_FAILURE_THRESHOLD = toString cfg.errorHandling.circuitBreaker.failureThreshold;
+        SINEX_CIRCUIT_BREAKER_RECOVERY_THRESHOLD = toString cfg.errorHandling.circuitBreaker.recoveryThreshold;
+        SINEX_CIRCUIT_BREAKER_TIMEOUT = toString cfg.errorHandling.circuitBreaker.timeout;
+        SINEX_CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS = toString cfg.errorHandling.circuitBreaker.halfOpenMaxCalls;
+        SINEX_CIRCUIT_BREAKER_SLOW_CALL_THRESHOLD = toString cfg.errorHandling.circuitBreaker.slowCallThreshold;
+        SINEX_CIRCUIT_BREAKER_SLOW_CALL_RATE_THRESHOLD = toString cfg.errorHandling.circuitBreaker.slowCallRateThreshold;
+        
+        # Retry strategy configuration
+        SINEX_RETRY_ENABLED = if cfg.errorHandling.retryStrategy.enable then "true" else "false";
+        SINEX_RETRY_MAX_RETRIES = toString cfg.errorHandling.retryStrategy.maxRetries;
+        SINEX_RETRY_INITIAL_DELAY = toString cfg.errorHandling.retryStrategy.initialDelay;
+        SINEX_RETRY_MAX_DELAY = toString cfg.errorHandling.retryStrategy.maxDelay;
+        SINEX_RETRY_BACKOFF_MULTIPLIER = toString cfg.errorHandling.retryStrategy.backoffMultiplier;
+        SINEX_RETRY_JITTER_ENABLED = if cfg.errorHandling.retryStrategy.jitterEnabled then "true" else "false";
+        SINEX_RETRY_JITTER_RANGE = toString cfg.errorHandling.retryStrategy.jitterRange;
+        SINEX_RETRY_RETRYABLE_ERRORS = lib.concatStringsSep "," cfg.errorHandling.retryStrategy.retryableErrors;
+        SINEX_RETRY_NON_RETRYABLE_ERRORS = lib.concatStringsSep "," cfg.errorHandling.retryStrategy.nonRetryableErrors;
+        
+        # Timeout management configuration
+        SINEX_TIMEOUTS_ENABLED = if cfg.errorHandling.timeouts.enable then "true" else "false";
+        SINEX_TIMEOUT_OPERATION = toString cfg.errorHandling.timeouts.operation;
+        SINEX_TIMEOUT_CONNECTION = toString cfg.errorHandling.timeouts.connection;
+        SINEX_TIMEOUT_READ = toString cfg.errorHandling.timeouts.read;
+        SINEX_TIMEOUT_WRITE = toString cfg.errorHandling.timeouts.write;
+        SINEX_TIMEOUT_SHUTDOWN = toString cfg.errorHandling.timeouts.shutdown;
+        SINEX_TIMEOUT_HEALTH_CHECK = toString cfg.errorHandling.timeouts.healthCheck;
+        SINEX_TIMEOUT_STARTUP = toString cfg.errorHandling.timeouts.startup;
+        
+        # Fallback mechanism configuration
+        SINEX_FALLBACKS_ENABLED = if cfg.errorHandling.fallbacks.enable then "true" else "false";
+        SINEX_FALLBACK_DATABASE_ENABLED = if cfg.errorHandling.fallbacks.databaseFallback.enable then "true" else "false";
+        SINEX_FALLBACK_DATABASE_STRATEGY = cfg.errorHandling.fallbacks.databaseFallback.strategy;
+        SINEX_FALLBACK_DATABASE_FILE_PATH = cfg.errorHandling.fallbacks.databaseFallback.filePath;
+        SINEX_FALLBACK_DATABASE_MAX_MEMORY_BUFFER = cfg.errorHandling.fallbacks.databaseFallback.maxMemoryBuffer;
+        SINEX_FALLBACK_DATABASE_BATCH_SIZE = toString cfg.errorHandling.fallbacks.databaseFallback.batchSize;
+        SINEX_FALLBACK_DATABASE_FLUSH_INTERVAL = toString cfg.errorHandling.fallbacks.databaseFallback.flushInterval;
+        
+        # Event source fallback configuration
+        SINEX_FALLBACK_FILESYSTEM_ENABLED = if cfg.errorHandling.fallbacks.eventSourceFallbacks.filesystem.enable then "true" else "false";
+        SINEX_FALLBACK_FILESYSTEM_TO_POLLING = if cfg.errorHandling.fallbacks.eventSourceFallbacks.filesystem.fallbackToPolling then "true" else "false";
+        SINEX_FALLBACK_FILESYSTEM_POLLING_INTERVAL = toString cfg.errorHandling.fallbacks.eventSourceFallbacks.filesystem.pollingInterval;
+        SINEX_FALLBACK_FILESYSTEM_REDUCED_PATHS = lib.concatStringsSep ":" cfg.errorHandling.fallbacks.eventSourceFallbacks.filesystem.reducedPaths;
+        
+        SINEX_FALLBACK_DBUS_ENABLED = if cfg.errorHandling.fallbacks.eventSourceFallbacks.dbus.enable then "true" else "false";
+        SINEX_FALLBACK_DBUS_TO_SESSION = if cfg.errorHandling.fallbacks.eventSourceFallbacks.dbus.fallbackToSession then "true" else "false";
+        SINEX_FALLBACK_DBUS_ESSENTIAL_SIGNALS = lib.concatStringsSep "," cfg.errorHandling.fallbacks.eventSourceFallbacks.dbus.essentialSignals;
+        SINEX_FALLBACK_DBUS_SKIP_NON_ESSENTIAL = if cfg.errorHandling.fallbacks.eventSourceFallbacks.dbus.skipNonEssential then "true" else "false";
+        
+        SINEX_FALLBACK_TERMINAL_ENABLED = if cfg.errorHandling.fallbacks.eventSourceFallbacks.terminal.enable then "true" else "false";
+        SINEX_FALLBACK_TERMINAL_TO_HISTORY = if cfg.errorHandling.fallbacks.eventSourceFallbacks.terminal.fallbackToHistory then "true" else "false";
+        SINEX_FALLBACK_TERMINAL_REDUCED_FREQUENCY = toString cfg.errorHandling.fallbacks.eventSourceFallbacks.terminal.reducedFrequency;
+        SINEX_FALLBACK_TERMINAL_ESSENTIAL_ONLY = if cfg.errorHandling.fallbacks.eventSourceFallbacks.terminal.essentialOnly then "true" else "false";
+        
+        # Partial failure handling configuration
+        SINEX_PARTIAL_FAILURE_ENABLED = if cfg.errorHandling.partialFailure.enable then "true" else "false";
+        SINEX_PARTIAL_FAILURE_MODE = cfg.errorHandling.partialFailure.mode;
+        SINEX_PARTIAL_FAILURE_CONTINUATION_THRESHOLD = toString cfg.errorHandling.partialFailure.continuationThreshold;
+        SINEX_PARTIAL_FAILURE_DEGRADATION_THRESHOLD = toString cfg.errorHandling.partialFailure.degradationThreshold;
+        SINEX_PARTIAL_FAILURE_ESSENTIAL_SOURCES = lib.concatStringsSep "," cfg.errorHandling.partialFailure.essentialSources;
+        SINEX_PARTIAL_FAILURE_OPTIONAL_SOURCES = lib.concatStringsSep "," cfg.errorHandling.partialFailure.optionalSources;
+        SINEX_PARTIAL_FAILURE_ADAPTIVE_LOADING = if cfg.errorHandling.partialFailure.adaptiveLoading then "true" else "false";
+        
+        # Recovery strategy configuration
+        SINEX_RECOVERY_ENABLED = if cfg.errorHandling.recovery.enable then "true" else "false";
+        SINEX_RECOVERY_RESTART_ENABLED = if cfg.errorHandling.recovery.strategies.restart.enable then "true" else "false";
+        SINEX_RECOVERY_RESTART_MAX_RESTARTS = toString cfg.errorHandling.recovery.strategies.restart.maxRestarts;
+        SINEX_RECOVERY_RESTART_WINDOW = cfg.errorHandling.recovery.strategies.restart.restartWindow;
+        SINEX_RECOVERY_RESTART_GRACEFUL_TIMEOUT = toString cfg.errorHandling.recovery.strategies.restart.gracefulTimeout;
+        
+        SINEX_RECOVERY_RECONNECT_ENABLED = if cfg.errorHandling.recovery.strategies.reconnect.enable then "true" else "false";
+        SINEX_RECOVERY_RECONNECT_MAX_RECONNECTS = toString cfg.errorHandling.recovery.strategies.reconnect.maxReconnects;
+        SINEX_RECOVERY_RECONNECT_DELAY = toString cfg.errorHandling.recovery.strategies.reconnect.reconnectDelay;
+        SINEX_RECOVERY_RECONNECT_POOL_RESET = if cfg.errorHandling.recovery.strategies.reconnect.connectionPoolReset then "true" else "false";
+        
+        SINEX_RECOVERY_RESET_ENABLED = if cfg.errorHandling.recovery.strategies.reset.enable then "true" else "false";
+        SINEX_RECOVERY_RESET_PRESERVE_ESSENTIAL_STATE = if cfg.errorHandling.recovery.strategies.reset.preserveEssentialState then "true" else "false";
+        SINEX_RECOVERY_RESET_CLEAR_CACHES = if cfg.errorHandling.recovery.strategies.reset.clearCaches then "true" else "false";
+        SINEX_RECOVERY_RESET_QUEUES = if cfg.errorHandling.recovery.strategies.reset.resetQueues then "true" else "false";
+        
+        SINEX_RECOVERY_ESCALATION_ENABLED = if cfg.errorHandling.recovery.strategies.escalation.enable then "true" else "false";
+        SINEX_RECOVERY_ESCALATION_LEVELS = lib.concatStringsSep "," cfg.errorHandling.recovery.strategies.escalation.escalationLevels;
+        SINEX_RECOVERY_ESCALATION_DELAY = toString cfg.errorHandling.recovery.strategies.escalation.escalationDelay;
+        SINEX_RECOVERY_ESCALATION_MAX_LEVEL = toString cfg.errorHandling.recovery.strategies.escalation.maxEscalationLevel;
+        
+        # Preventive actions configuration
+        SINEX_RECOVERY_PREVENTIVE_ENABLED = if cfg.errorHandling.recovery.preventiveActions.enable then "true" else "false";
+        SINEX_RECOVERY_MEMORY_PRESSURE_HANDLING = if cfg.errorHandling.recovery.preventiveActions.memoryPressureHandling then "true" else "false";
+        SINEX_RECOVERY_DISK_SPACE_MONITORING = if cfg.errorHandling.recovery.preventiveActions.diskSpaceMonitoring then "true" else "false";
+        SINEX_RECOVERY_CONNECTION_LEAK_DETECTION = if cfg.errorHandling.recovery.preventiveActions.connectionLeakDetection then "true" else "false";
+        SINEX_RECOVERY_PERFORMANCE_DEGRADATION_DETECTION = if cfg.errorHandling.recovery.preventiveActions.performanceDegradationDetection then "true" else "false";
+        
+        # Error logging configuration
+        SINEX_ERROR_LOGGING_ENABLED = if cfg.errorHandling.logging.enable then "true" else "false";
+        SINEX_ERROR_LOGGING_LEVEL = cfg.errorHandling.logging.logLevel;
+        SINEX_ERROR_LOGGING_STRUCTURED = if cfg.errorHandling.logging.structuredLogging then "true" else "false";
+        SINEX_ERROR_LOGGING_CORRELATION = if cfg.errorHandling.logging.errorCorrelation then "true" else "false";
+        SINEX_ERROR_LOGGING_METRICS = if cfg.errorHandling.logging.errorMetrics then "true" else "false";
+        SINEX_ERROR_LOGGING_TO_JOURNALD = if cfg.errorHandling.logging.destinations.journald then "true" else "false";
+        SINEX_ERROR_LOGGING_TO_FILE = if cfg.errorHandling.logging.destinations.file != null then cfg.errorHandling.logging.destinations.file else "";
+        SINEX_ERROR_LOGGING_TO_DATABASE = if cfg.errorHandling.logging.destinations.database then "true" else "false";
+        SINEX_ERROR_LOGGING_TO_SYSLOG = if cfg.errorHandling.logging.destinations.syslog then "true" else "false";
+        
+        # Error alerting configuration
+        SINEX_ERROR_ALERTING_ENABLED = if cfg.errorHandling.alerting.enable then "true" else "false";
+        SINEX_ERROR_ALERTING_RATE_THRESHOLD = toString cfg.errorHandling.alerting.thresholds.errorRate;
+        SINEX_ERROR_ALERTING_BURST_THRESHOLD = toString cfg.errorHandling.alerting.thresholds.errorBurst;
+        SINEX_ERROR_ALERTING_WINDOW = cfg.errorHandling.alerting.thresholds.errorWindow;
+        SINEX_ERROR_ALERTING_COOLDOWN_CRITICAL = cfg.errorHandling.alerting.cooldown.critical;
+        SINEX_ERROR_ALERTING_COOLDOWN_WARNING = cfg.errorHandling.alerting.cooldown.warning;
+        SINEX_ERROR_ALERTING_COOLDOWN_INFO = cfg.errorHandling.alerting.cooldown.info;
+        SINEX_ERROR_ALERTING_TO_JOURNALD = if cfg.errorHandling.alerting.destinations.journald then "true" else "false";
+        SINEX_ERROR_ALERTING_WEBHOOK = if cfg.errorHandling.alerting.destinations.webhook != null then cfg.errorHandling.alerting.destinations.webhook else "";
+        SINEX_ERROR_ALERTING_EMAIL = if cfg.errorHandling.alerting.destinations.email != null then cfg.errorHandling.alerting.destinations.email else "";
+        SINEX_ERROR_ALERTING_COMMAND = if cfg.errorHandling.alerting.destinations.command != null then cfg.errorHandling.alerting.destinations.command else "";
       };
 
       serviceConfig = {
@@ -2889,8 +3706,11 @@ in
           exit 1
         '');
 
-        Restart = cfg.unifiedCollector.restart.policy;
-        RestartSec = cfg.unifiedCollector.restart.baseDelay;
+        # Enhanced restart configuration with error handling integration
+        Restart = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.unifiedCollector.restart.policy;
+        RestartSec = if cfg.errorHandling.enable then toString cfg.errorHandling.recovery.strategies.restart.gracefulTimeout else cfg.unifiedCollector.restart.baseDelay;
+        StartLimitBurst = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.errorHandling.recovery.strategies.restart.maxRestarts;
+        StartLimitIntervalSec = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.errorHandling.recovery.strategies.restart.restartWindow;
 
         # Security hardening - use static user to match database
         User = cfg.database.user;
@@ -2921,9 +3741,9 @@ in
         # Process limits
         TasksMax = "256";
         
-        # Timeout settings
-        TimeoutStartSec = "60s";
-        TimeoutStopSec = "30s";
+        # Enhanced timeout settings with error handling integration
+        TimeoutStartSec = if cfg.errorHandling.timeouts.enable then "${toString cfg.errorHandling.timeouts.startup}s" else "60s";
+        TimeoutStopSec = if cfg.errorHandling.timeouts.enable then "${toString cfg.errorHandling.timeouts.shutdown}s" else "30s";
         TimeoutAbortSec = "10s";
         
         # Watchdog settings for health monitoring
@@ -3020,8 +3840,8 @@ in
         SINEX_WORKER_POLL_INTERVAL = toString cfg.promoWorker.pollInterval;
         SINEX_WORKER_BATCH_SIZE = toString cfg.promoWorker.batchSize;
         SINEX_WORKER_MAX_PROCESSING_TIME = cfg.queueManagement.monitoring.maxProcessingTime;
-        SINEX_WORKER_CIRCUIT_BREAKER_THRESHOLD = toString cfg.queueManagement.limits.circuitBreakerThreshold;
-        SINEX_WORKER_CIRCUIT_BREAKER_TIMEOUT = cfg.queueManagement.limits.circuitBreakerTimeout;
+        SINEX_WORKER_QUEUE_CIRCUIT_BREAKER_THRESHOLD = toString cfg.queueManagement.limits.circuitBreakerThreshold;
+        SINEX_WORKER_QUEUE_CIRCUIT_BREAKER_TIMEOUT = cfg.queueManagement.limits.circuitBreakerTimeout;
         
         # Directory configuration environment variables
         SINEX_STATE_DIR = cfg.directories.state;
@@ -3047,6 +3867,47 @@ in
         SINEX_WORKER_HEALTH_MAX_QUEUE_DEPTH = toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold;
         SINEX_WORKER_HEALTH_MAX_PROCESSING_TIME = cfg.promoWorker.healthCheck.queueHealth.processingTimeThreshold;
         SINEX_WORKER_HEALTH_STALLED_JOB_THRESHOLD = cfg.promoWorker.healthCheck.queueHealth.stalledJobThreshold;
+        
+        # Error handling and graceful degradation environment variables (worker-specific)
+        SINEX_WORKER_ERROR_HANDLING_ENABLED = if cfg.errorHandling.enable then "true" else "false";
+        
+        # Circuit breaker configuration for worker
+        SINEX_WORKER_CIRCUIT_BREAKER_ENABLED = if cfg.errorHandling.circuitBreaker.enable then "true" else "false";
+        SINEX_WORKER_CIRCUIT_BREAKER_FAILURE_THRESHOLD = toString cfg.errorHandling.circuitBreaker.failureThreshold;
+        SINEX_WORKER_CIRCUIT_BREAKER_RECOVERY_THRESHOLD = toString cfg.errorHandling.circuitBreaker.recoveryThreshold;
+        SINEX_WORKER_CIRCUIT_BREAKER_TIMEOUT = toString cfg.errorHandling.circuitBreaker.timeout;
+        
+        # Retry strategy configuration for worker
+        SINEX_WORKER_RETRY_ENABLED = if cfg.errorHandling.retryStrategy.enable then "true" else "false";
+        SINEX_WORKER_RETRY_MAX_RETRIES = toString cfg.errorHandling.retryStrategy.maxRetries;
+        SINEX_WORKER_RETRY_INITIAL_DELAY = toString cfg.errorHandling.retryStrategy.initialDelay;
+        SINEX_WORKER_RETRY_MAX_DELAY = toString cfg.errorHandling.retryStrategy.maxDelay;
+        SINEX_WORKER_RETRY_BACKOFF_MULTIPLIER = toString cfg.errorHandling.retryStrategy.backoffMultiplier;
+        SINEX_WORKER_RETRY_JITTER_ENABLED = if cfg.errorHandling.retryStrategy.jitterEnabled then "true" else "false";
+        
+        # Timeout management for worker
+        SINEX_WORKER_TIMEOUTS_ENABLED = if cfg.errorHandling.timeouts.enable then "true" else "false";
+        SINEX_WORKER_TIMEOUT_OPERATION = toString cfg.errorHandling.timeouts.operation;
+        SINEX_WORKER_TIMEOUT_CONNECTION = toString cfg.errorHandling.timeouts.connection;
+        SINEX_WORKER_TIMEOUT_READ = toString cfg.errorHandling.timeouts.read;
+        SINEX_WORKER_TIMEOUT_WRITE = toString cfg.errorHandling.timeouts.write;
+        SINEX_WORKER_TIMEOUT_SHUTDOWN = toString cfg.errorHandling.timeouts.shutdown;
+        
+        # Fallback mechanisms for worker
+        SINEX_WORKER_FALLBACKS_ENABLED = if cfg.errorHandling.fallbacks.enable then "true" else "false";
+        SINEX_WORKER_FALLBACK_DATABASE_ENABLED = if cfg.errorHandling.fallbacks.databaseFallback.enable then "true" else "false";
+        SINEX_WORKER_FALLBACK_DATABASE_STRATEGY = cfg.errorHandling.fallbacks.databaseFallback.strategy;
+        
+        # Recovery strategies for worker
+        SINEX_WORKER_RECOVERY_ENABLED = if cfg.errorHandling.recovery.enable then "true" else "false";
+        SINEX_WORKER_RECOVERY_RESTART_ENABLED = if cfg.errorHandling.recovery.strategies.restart.enable then "true" else "false";
+        SINEX_WORKER_RECOVERY_RECONNECT_ENABLED = if cfg.errorHandling.recovery.strategies.reconnect.enable then "true" else "false";
+        SINEX_WORKER_RECOVERY_RESET_ENABLED = if cfg.errorHandling.recovery.strategies.reset.enable then "true" else "false";
+        
+        # Worker error logging and alerting
+        SINEX_WORKER_ERROR_LOGGING_ENABLED = if cfg.errorHandling.logging.enable then "true" else "false";
+        SINEX_WORKER_ERROR_LOGGING_LEVEL = cfg.errorHandling.logging.logLevel;
+        SINEX_WORKER_ERROR_ALERTING_ENABLED = if cfg.errorHandling.alerting.enable then "true" else "false";
       };
 
       serviceConfig = {
@@ -3094,8 +3955,11 @@ in
           exit 1
         '');
 
-        Restart = cfg.promoWorker.restart.policy;
-        RestartSec = cfg.promoWorker.restart.baseDelay;
+        # Enhanced restart configuration with error handling integration
+        Restart = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.promoWorker.restart.policy;
+        RestartSec = if cfg.errorHandling.enable then toString cfg.errorHandling.recovery.strategies.restart.gracefulTimeout else cfg.promoWorker.restart.baseDelay;
+        StartLimitBurst = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.errorHandling.recovery.strategies.restart.maxRestarts;
+        StartLimitIntervalSec = mkIf cfg.errorHandling.recovery.strategies.restart.enable cfg.errorHandling.recovery.strategies.restart.restartWindow;
 
         # Security hardening - use static user to match database
         User = cfg.database.user;
@@ -3120,9 +3984,9 @@ in
         # Process limits
         TasksMax = "128";
         
-        # Timeout settings
-        TimeoutStartSec = "30s";
-        TimeoutStopSec = "15s";
+        # Enhanced timeout settings with error handling integration
+        TimeoutStartSec = if cfg.errorHandling.timeouts.enable then "${toString cfg.errorHandling.timeouts.startup}s" else "30s";
+        TimeoutStopSec = if cfg.errorHandling.timeouts.enable then "${toString cfg.errorHandling.timeouts.shutdown}s" else "15s";
         TimeoutAbortSec = "5s";
         
         # Watchdog for worker health
@@ -3658,8 +4522,13 @@ in
       
       # Configuration directory (with different ownership)
       "d ${cfg.directories.config} ${cfg.directories.permissions.state} root root"
+      
+      # Error handling fallback directory
+      "d ${lib.dirOf cfg.errorHandling.fallbacks.databaseFallback.filePath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
     ] ++ optional cfg.blobStorage.enable 
-      "d ${cfg.blobStorage.repositoryPath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}";
+      "d ${cfg.blobStorage.repositoryPath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+    ++ optional (cfg.errorHandling.logging.destinations.file != null)
+      "d ${lib.dirOf cfg.errorHandling.logging.destinations.file} ${cfg.directories.permissions.logs} ${cfg.database.user} ${cfg.database.user}";
 
     # Disk space monitoring service
     systemd.services.sinex-disk-monitor = mkIf cfg.diskMonitoring.enable {
