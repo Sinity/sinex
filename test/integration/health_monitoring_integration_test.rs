@@ -101,7 +101,7 @@ impl SystemHealthMonitor {
 #[tokio::test]
 async fn test_comprehensive_health_monitoring_system() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Initialize health monitoring system
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
@@ -127,8 +127,8 @@ async fn test_comprehensive_health_monitoring_system() -> Result<()> {
     assert_eq!(initial_health.len(), components.len(), "All components should be registered");
     
     for component in &components {
-        assert!(initial_health.contains_key(component), "Component {} should be registered", component);
-        assert_eq!(initial_health[component].status, HealthStatus::Unknown, "Initial status should be unknown");
+        assert!(initial_health.contains_key(*component), "Component {} should be registered", component);
+        assert_eq!(initial_health[*component].status, HealthStatus::Unknown, "Initial status should be unknown");
     }
     
     // Test 2: Simulate health checks for all components
@@ -305,7 +305,7 @@ async fn check_worker_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
     match sqlx::query("SELECT COUNT(*) FROM sinex_schemas.work_queue").fetch_one(pool).await {
         Ok(_) => {
             // Test worker operations by checking if we can claim work
-            match queries::claim_promotion_queue_items(pool, "health-check-agent", "health-worker", 0).await {
+            match queries::claim_work_queue_items(pool, "health-check-agent", "health-worker", 0).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
@@ -488,7 +488,7 @@ impl Clone for SystemHealthMonitor {
 #[tokio::test]
 async fn test_health_monitoring_with_real_workload() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
     
@@ -532,7 +532,7 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
                 let _ = queries::add_to_promotion_queue(&workload_pool, event.id, "health-test-agent", 3).await;
                 
                 // Try to claim work
-                match queries::claim_promotion_queue_items(&workload_pool, "health-test-agent", "health-worker", 1).await {
+                match queries::claim_work_queue_items(&workload_pool, "health-test-agent", "health-worker", 1).await {
                     Ok(items) => {
                         workload_monitor.update_component_health("worker_system", HealthStatus::Healthy, None).await;
                         

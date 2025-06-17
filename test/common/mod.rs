@@ -394,8 +394,9 @@ pub mod cleanup {
     
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &PgPool) -> Result<()> {
-        // Use the existing queries function
-        queries::truncate_all_tables(pool).await
+        // Use the existing cleanup function from test_setup
+        crate::test_setup::cleanup_test_data(pool).await
+            .map_err(|e| anyhow::anyhow!("Failed to cleanup test data: {}", e))
     }
     
     /// Clean up test files and directories

@@ -8,6 +8,7 @@ members = [
     "crate/sinex-events",
     "crate/sinex-collector",
     "crate/sinex-annex",
+    "crate/sinex-health-aggregator",
 ]
 resolver = "2"
 

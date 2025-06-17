@@ -140,7 +140,18 @@ async fn main() -> Result<()> {
     };
     
     // Create and run the collector
-    let mut collector = UnifiedCollector::new(config, output_config, db_pool, validator);
+    let mut collector = UnifiedCollector::new(config, output_config, db_pool.clone(), validator);
+    
+    // Spawn heartbeat emission task if database is available
+    if let Some(ref pool) = db_pool {
+        let heartbeat_pool = pool.clone();
+        tokio::spawn(async move {
+            use sinex_core::HeartbeatEmitter;
+            let emitter = HeartbeatEmitter::new(heartbeat_pool, "unified-collector".to_string(), 30);
+            emitter.run().await;
+        });
+        info!("Started heartbeat emission for unified-collector");
+    }
     
     // Run until shutdown signal
     tokio::select! {

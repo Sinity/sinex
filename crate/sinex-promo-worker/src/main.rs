@@ -260,6 +260,15 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
     };
     let mut scanner = EventScanner::new(config);
     
+    // Start heartbeat emission task
+    let heartbeat_pool = pool.clone();
+    task::spawn(async move {
+        use sinex_core::HeartbeatEmitter;
+        let emitter = HeartbeatEmitter::new(heartbeat_pool, "promo-worker-scanner".to_string(), 45);
+        emitter.run().await;
+    });
+    info!("Started heartbeat emission for promo-worker-scanner");
+    
     // Start metrics server
     let metrics_handle = task::spawn(async move {
         if let Err(e) = start_metrics_server(args.metrics_port).await {
@@ -323,7 +332,7 @@ async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result
     let events_processed = Arc::new(AtomicU64::new(0));
     let start_time = Instant::now();
 
-    // Start heartbeat task
+    // Start legacy heartbeat task  
     let heartbeat_pool = pool.clone();
     let heartbeat_agent_name = agent_name.clone();
     let heartbeat_events = events_processed.clone();
@@ -337,6 +346,15 @@ async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result
             error!(error = %e, "Heartbeat task failed");
         }
     });
+
+    // Start new component heartbeat emission task
+    let new_heartbeat_pool = pool.clone();
+    task::spawn(async move {
+        use sinex_core::HeartbeatEmitter;
+        let emitter = HeartbeatEmitter::new(new_heartbeat_pool, "promo-worker".to_string(), 45);
+        emitter.run().await;
+    });
+    info!("Started component heartbeat emission for promo-worker");
 
     // Start metrics server
     let metrics_handle = task::spawn(async move {

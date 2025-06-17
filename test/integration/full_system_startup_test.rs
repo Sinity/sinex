@@ -29,22 +29,11 @@ fn create_comprehensive_config() -> CollectorConfig {
         "clipboard.content.changed".to_string(),
     ];
     
-    // Configure monitoring and health checks
-    config.monitoring.health_check_interval_secs = 30;
-    config.monitoring.metrics_enabled = true;
-    config.monitoring.failure_threshold = 3;
-    config.monitoring.recovery_timeout_secs = 60;
+    // Configure git-annex integration using the simplified config structure
+    config.annex_repo_path = Some("/tmp/test-annex".to_string());
     
-    // Configure git-annex integration
-    config.git_annex.enabled = true;
-    config.git_annex.repository_path = "/tmp/test-annex".to_string();
-    config.git_annex.size_threshold_bytes = 1024 * 1024; // 1MB
-    
-    // Configure database with comprehensive settings
-    config.database.max_connections = 50;
-    config.database.connection_timeout_secs = 30;
-    config.database.health_check_enabled = true;
-    config.database.migration_timeout_secs = 300;
+    // Note: monitoring and database config are no longer part of CollectorConfig
+    // They are handled elsewhere in the application
     
     config
 }
@@ -54,7 +43,7 @@ async fn test_system_startup_with_all_configurations() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
     
     // Clean database state
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let config = create_comprehensive_config();
     
@@ -164,8 +153,8 @@ async fn test_git_annex_startup(annex_path: &std::path::Path) -> Result<bool> {
 }
 
 async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
-    let (tx, mut rx) = mpsc::channel(1000);
-    let mut source_handles = Vec::new();
+    let (tx, mut rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
+    let mut source_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let healthy_sources = Arc::new(AtomicBool::new(true));
     
     // Test that each configured event source can initialize
@@ -311,10 +300,10 @@ async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     let event_id = queries::insert_event(pool, &test_event).await?.id;
     
     // Add to promotion queue
-    queries::add_to_promotion_queue(pool, event_id, "test-agent", 3).await?;
+    queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
     
     // Test that workers can claim items
-    let claimed_items = queries::claim_promotion_queue_items(
+    let claimed_items = queries::claim_work_queue_items(
         pool, 
         "test-agent", 
         "startup-worker", 
@@ -388,7 +377,7 @@ async fn test_configuration_validation_end_to_end() -> Result<()> {
 #[tokio::test]
 async fn test_graceful_degradation_on_component_failure() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let mut config = create_comprehensive_config();
     
@@ -473,7 +462,7 @@ async fn test_annex_fallback_scenario() -> Result<bool> {
 #[tokio::test]
 async fn test_system_health_monitoring_integration() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let config = create_comprehensive_config();
     
@@ -501,10 +490,8 @@ async fn test_comprehensive_health_monitoring(config: &CollectorConfig, pool: &s
         all_healthy = false;
     }
     
-    // Check that monitoring configuration is sensible
-    assert!(config.monitoring.health_check_interval_secs > 0, "Health check interval should be positive");
-    assert!(config.monitoring.failure_threshold > 0, "Failure threshold should be positive");
-    assert!(config.monitoring.recovery_timeout_secs > 0, "Recovery timeout should be positive");
+    // Note: monitoring configuration is no longer part of CollectorConfig 
+    // due to config structure simplification, so these checks are disabled
     
     // Simulate health checks for all enabled sources
     for event_type in &config.enabled_events {
@@ -559,7 +546,7 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
 #[tokio::test]
 async fn test_comprehensive_error_handling_integration() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Test 1: Configuration errors should be handled gracefully
     let config_error_handling = test_configuration_error_handling().await?;
@@ -639,12 +626,12 @@ async fn test_worker_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
     let event_id2 = queries::insert_event(pool, &test_event2).await?.id;
     
     // Add both to promotion queue
-    queries::add_to_promotion_queue(pool, event_id1, "test-agent", 3).await?;
-    queries::add_to_promotion_queue(pool, event_id2, "test-agent", 3).await?;
+    queries::add_to_work_queue(pool, event_id1, "test-agent", 3).await?;
+    queries::add_to_work_queue(pool, event_id2, "test-agent", 3).await?;
     
     // Simulate one worker succeeding and another failing
-    let claimed_items1 = queries::claim_promotion_queue_items(pool, "test-agent", "worker1", 1).await?;
-    let claimed_items2 = queries::claim_promotion_queue_items(pool, "test-agent", "worker2", 1).await?;
+    let claimed_items1 = queries::claim_work_queue_items(pool, "test-agent", "worker1", 1).await?;
+    let claimed_items2 = queries::claim_work_queue_items(pool, "test-agent", "worker2", 1).await?;
     
     assert!(!claimed_items1.is_empty(), "Worker1 should claim an item");
     assert!(!claimed_items2.is_empty(), "Worker2 should claim an item");

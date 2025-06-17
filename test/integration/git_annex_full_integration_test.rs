@@ -185,7 +185,7 @@ impl GitAnnexTestRepo {
 #[tokio::test]
 async fn test_git_annex_integration_with_event_pipeline() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let annex_repo = GitAnnexTestRepo::new().await?;
     
@@ -333,7 +333,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
     
     for (i, event_id) in event_ids.iter().enumerate() {
         // Claim work item
-        let claimed_items = queries::claim_promotion_queue_items(
+        let claimed_items = queries::claim_work_queue_items(
             pool, 
             "annex-test-agent", 
             &format!("annex-worker-{}", i), 
@@ -386,7 +386,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
     assert_eq!(processed_events.len(), 3, "All events should be processed");
     
     // Check that promotion queue is empty
-    let remaining_work = queries::claim_promotion_queue_items(pool, "annex-test-agent", "cleanup-worker", 10).await?;
+    let remaining_work = queries::claim_work_queue_items(pool, "annex-test-agent", "cleanup-worker", 10).await?;
     assert!(remaining_work.is_empty(), "No work should remain in queue");
     
     println!("✅ Event processing with git-annex blob integration successful");
@@ -447,7 +447,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
             
             loop {
                 // Try to claim work
-                let claimed = queries::claim_promotion_queue_items(&pool, "concurrent-test-agent", &worker_name, 1).await;
+                let claimed = queries::claim_work_queue_items(&pool, "concurrent-test-agent", &worker_name, 1).await;
                 
                 match claimed {
                     Ok(items) => {
@@ -457,7 +457,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
                         
                         for item in items {
                             // Get event details
-                            if let Ok(event) = crate::common::get_event_by_id(&pool, item.event_id).await {
+                            if let Ok(event) = crate::common::get_event_by_id(&pool, item.raw_event_id).await {
                                 if let Some(file_name) = event.payload["file_name"].as_str() {
                                     // Simulate accessing git-annex file
                                     let file_path = annex_repo_path.join(file_name);
@@ -481,12 +481,14 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
                                                 success_count.fetch_add(1, Ordering::SeqCst);
                                             } else {
                                                 failure_count.fetch_add(1, Ordering::SeqCst);
-                                                let _ = queries::fail_promotion_queue_item(&pool, item.queue_id, "File read failed").await;
+                                                let next_retry = chrono::Utc::now() + chrono::Duration::minutes(5);
+                                                let _ = queries::fail_work_queue_item(&pool, item.queue_id, "File read failed", next_retry).await;
                                             }
                                         }
                                         _ => {
                                             failure_count.fetch_add(1, Ordering::SeqCst);
-                                            let _ = queries::fail_promotion_queue_item(&pool, item.queue_id, "Git-annex get failed").await;
+                                            let next_retry = chrono::Utc::now() + chrono::Duration::minutes(5);
+                                            let _ = queries::fail_work_queue_item(&pool, item.queue_id, "Git-annex get failed", next_retry).await;
                                         }
                                     }
                                 }
@@ -631,7 +633,7 @@ async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo:
 #[tokio::test]
 async fn test_git_annex_fallback_scenarios() -> Result<()> {
     let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    queries::truncate_all_tables(&pool).await?;
+    crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Test system behavior when git-annex is not available
     test_annex_unavailable_fallback(&pool).await?;
