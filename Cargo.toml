@@ -21,6 +21,10 @@ authors.workspace = true
 name = "integration"
 path = "test/mod.rs"
 
+[[test]]
+name = "property_tests"
+path = "test/property/work_queue_property_tests.rs"
+
 
 [dependencies]
 anyhow.workspace = true

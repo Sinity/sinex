@@ -1187,3 +1187,70 @@ pub async fn get_dlq_items(
 
     Ok(events)
 }
+// ===== Test Helper Functions =====
+
+/// Create a test agent for use in tests
+pub async fn create_test_agent(
+    pool: &PgPool,
+    agent_name: &str,
+    description: &str,
+) -> Result<AgentManifest> {
+    upsert_agent_manifest(
+        pool,
+        agent_name,
+        "1.0.0",
+        "running",
+        "test",
+        Some(description),
+        None,
+        None,
+    ).await
+}
+
+/// Insert a work queue item for testing
+pub async fn insert_work_queue_item(
+    pool: &PgPool,
+    raw_event_id: Ulid,
+    target_agent_name: &str,
+) -> Result<WorkQueueItem> {
+    let record = sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
+        VALUES ($1::uuid::ulid, $2)
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at as "created_at!", 
+            processing_worker_id,
+            processed_at,
+            failure_reason
+        "#,
+        raw_event_id.to_uuid(),
+        target_agent_name
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(WorkQueueItem {
+        queue_id: Ulid::from_uuid(record.queue_id),
+        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        target_agent_name: record.target_agent_name,
+        status: record.status,
+        attempts: record.attempts,
+        max_attempts: record.max_attempts,
+        last_attempt_ts: record.last_attempt_ts,
+        next_retry_ts: record.next_retry_ts,
+        error_message_last: record.error_message_last,
+        created_at: record.created_at,
+        processing_worker_id: record.processing_worker_id,
+        processed_at: record.processed_at,
+        failure_reason: record.failure_reason,
+    })
+}
