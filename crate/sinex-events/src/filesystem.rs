@@ -138,8 +138,39 @@ impl FilesystemMonitor {
         for pattern in &config.ignore_patterns {
             let expanded = shellexpand::tilde(pattern);
             if let Ok(glob_pattern) = glob::Pattern::new(&expanded) {
-                if glob_pattern.matches(&path_str) {
-                    debug!("Ignoring path due to pattern: {}", path_str);
+                let matches = if pattern.contains('/') || pattern.contains("**") {
+                    // Pattern contains path separators
+                    if pattern.starts_with('/') || pattern.contains("**/") {
+                        // Absolute path or contains **/, match against full path
+                        glob_pattern.matches(&path_str)
+                    } else {
+                        // Relative path pattern, check if it matches any suffix of the path
+                        // Convert path to use forward slashes for consistent matching
+                        let normalized_path = path_str.replace('\\', "/");
+                        let path_components: Vec<&str> = normalized_path.split('/').collect();
+                        
+                        // Try matching the pattern against all possible suffixes
+                        let mut found_match = false;
+                        for i in 0..path_components.len() {
+                            let suffix = path_components[i..].join("/");
+                            if glob_pattern.matches(&suffix) {
+                                found_match = true;
+                                break;
+                            }
+                        }
+                        found_match
+                    }
+                } else {
+                    // Pattern is filename-only, match against just the filename
+                    if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                        glob_pattern.matches(filename)
+                    } else {
+                        false
+                    }
+                };
+                
+                if matches {
+                    debug!("Ignoring path due to pattern: {} (pattern: {})", path_str, pattern);
                     return None;
                 }
             }

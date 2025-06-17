@@ -110,6 +110,13 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
     assert!(event.is_some());
     
     let event = event.unwrap();
+    
+    // Debug: Print the actual event payload to understand what we're getting
+    eprintln!("DEBUG: Received event payload: {:?}", event.payload);
+    if let Some(path) = event.payload.get("path") {
+        eprintln!("DEBUG: Event path: {:?}", path.as_str());
+    }
+    
     assert!(event.payload.get("path").unwrap().as_str().unwrap().contains("valid.txt"));
     
     // Should not receive more events (the ignored files)
@@ -176,6 +183,69 @@ async fn test_clipboard_monitor_initialization() -> Result<()> {
     
     assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
     
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    
+    // Create a subdirectory to test path-based patterns
+    let sub_dir = temp_dir.path().join("logs");
+    fs::create_dir(&sub_dir)?;
+    
+    let config = json!({
+        "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],
+        "ignore_patterns": [
+            "*.tmp",           // filename pattern
+            "test_*",          // filename pattern 
+            "logs/*.log",      // path-based pattern
+            "**/debug/**"      // recursive path pattern
+        ],
+        "debounce_ms": 50
+    });
+    
+    let ctx = create_test_context(config);
+    let mut watcher = FilesystemMonitor::initialize(ctx).await?;
+    
+    let (tx, mut rx) = mpsc::channel(20);
+    
+    let capture_handle = tokio::spawn(async move {
+        watcher.stream_events(tx).await
+    });
+    
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    // Files that should be ignored
+    fs::write(temp_dir.path().join("backup.tmp"), "ignored")?;           // *.tmp
+    fs::write(temp_dir.path().join("test_data.txt"), "ignored")?;        // test_*  
+    fs::write(sub_dir.join("error.log"), "ignored")?;                    // logs/*.log
+    
+    // Files that should be captured
+    fs::write(temp_dir.path().join("valid.txt"), "captured")?;
+    fs::write(sub_dir.join("config.json"), "captured")?;
+    
+    // Collect events for a short period
+    let mut events = Vec::new();
+    for _ in 0..5 {
+        match timeout(Duration::from_millis(100), rx.recv()).await {
+            Ok(Some(event)) => events.push(event),
+            _ => break,
+        }
+    }
+    
+    // Should have received events for valid.txt and config.json only
+    assert!(events.len() >= 2, "Expected at least 2 events, got {}", events.len());
+    
+    for event in &events {
+        let path = event.payload.get("path").unwrap().as_str().unwrap();
+        assert!(
+            path.contains("valid.txt") || path.contains("config.json"),
+            "Unexpected event for path: {}", path
+        );
+    }
+    
+    capture_handle.abort();
     Ok(())
 }
 
