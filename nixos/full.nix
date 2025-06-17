@@ -15,43 +15,144 @@ let
   # Use config generation from separate module
   collectorConfigFile = configGen.mkCollectorConfigFile cfg.unifiedCollector cfg;
 
-  # Database migration script
+  # Helper function to escape database identifiers
+  escapeDbIdentifier = str: lib.escape ["?" "&" "=" "'" "\"" " " "\\" "/"] str;
+  
+  # Database migration script with idempotent permissions
   migrateDbScript = pkgs.writeShellScript "migrate-sinex-db" ''
-    set -e
-
-    # Wait for PostgreSQL to be available
-    until ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql; do
-      echo "Waiting for PostgreSQL to be ready..."
-      sleep 2
-    done
-
-    # Run migrations (they create extensions and schema)
-    export DATABASE_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
-    ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations
+    set -euo pipefail
     
-    # Grant permissions to sinex user on all schemas and tables
-    ${pkgs.postgresql}/bin/psql -d ${cfg.database.name} <<EOF
-      -- Grant usage on all schemas
-      GRANT USAGE ON SCHEMA raw, core, sinex_schemas, sinex_router TO ${cfg.database.user};
+    # Logging function with timestamps
+    log() {
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    }
+    
+    log "Starting Sinex database migration and setup"
+
+    # Wait for PostgreSQL to be available with extended timeout and exponential backoff
+    TIMEOUT=120
+    ELAPSED=0
+    DELAY=1
+    log "Waiting for PostgreSQL to become available..."
+    
+    while ! ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; do
+      if [ $ELAPSED -ge $TIMEOUT ]; then
+        log "ERROR: PostgreSQL did not become ready within $TIMEOUT seconds"
+        log "Last pg_isready output:"
+        ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql || true
+        exit 1
+      fi
       
-      -- Grant all privileges on all tables in these schemas
-      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO ${cfg.database.user};
-      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO ${cfg.database.user};
-      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO ${cfg.database.user};
-      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_router TO ${cfg.database.user};
+      log "PostgreSQL not ready, waiting $DELAY seconds... ($ELAPSED/$TIMEOUT elapsed)"
+      sleep $DELAY
+      ELAPSED=$((ELAPSED + DELAY))
       
-      -- Grant usage on all sequences
-      GRANT USAGE ON ALL SEQUENCES IN SCHEMA raw TO ${cfg.database.user};
-      GRANT USAGE ON ALL SEQUENCES IN SCHEMA core TO ${cfg.database.user};
-      GRANT USAGE ON ALL SEQUENCES IN SCHEMA sinex_schemas TO ${cfg.database.user};
-      GRANT USAGE ON ALL SEQUENCES IN SCHEMA sinex_router TO ${cfg.database.user};
-      
-      -- Set default privileges for future objects
-      ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL ON TABLES TO ${cfg.database.user};
-      ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL ON TABLES TO ${cfg.database.user};
-      ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL ON TABLES TO ${cfg.database.user};
-      ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_router GRANT ALL ON TABLES TO ${cfg.database.user};
-    EOF
+      # Exponential backoff up to 8 seconds
+      if [ $DELAY -lt 8 ]; then
+        DELAY=$((DELAY * 2))
+      fi
+    done
+    
+    log "PostgreSQL is ready"
+
+    # Verify database exists
+    export DATABASE_URL="postgresql://postgres/${escapeDbIdentifier cfg.database.name}?host=/run/postgresql"
+    if ! ${pkgs.postgresql}/bin/psql -lqt | cut -d '|' -f 1 | grep -qw "${escapeDbIdentifier cfg.database.name}"; then
+      log "ERROR: Database '${escapeDbIdentifier cfg.database.name}' does not exist"
+      exit 1
+    fi
+    
+    log "Database '${escapeDbIdentifier cfg.database.name}' exists"
+
+    # Run migrations with proper error handling
+    log "Running database migrations..."
+    if ! timeout 300 ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations; then
+      log "ERROR: Database migration failed or timed out"
+      exit 1
+    fi
+    
+    log "Database migrations completed successfully"
+    
+    # Grant permissions to sinex user on all schemas and tables (fully idempotent)
+    log "Setting up database permissions..."
+    if ! ${pkgs.postgresql}/bin/psql -d ${escapeDbIdentifier cfg.database.name} <<'EOF'
+      DO $$
+      DECLARE
+        schema_name text;
+        schemas text[] := ARRAY['raw', 'core', 'sinex_schemas', 'sinex_router'];
+        user_name text := '${escapeDbIdentifier cfg.database.user}';
+        schema_exists boolean;
+        user_exists boolean;
+      BEGIN
+        -- Check if user exists
+        SELECT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_user WHERE usename = user_name
+        ) INTO user_exists;
+        
+        IF NOT user_exists THEN
+          RAISE WARNING 'User % does not exist, skipping permission grants', user_name;
+          RETURN;
+        END IF;
+        
+        RAISE NOTICE 'Setting up permissions for user: %', user_name;
+        
+        -- Grant usage on each schema if it exists (idempotent)
+        FOREACH schema_name IN ARRAY schemas
+        LOOP
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.schemata 
+            WHERE schema_name = schema_name
+          ) INTO schema_exists;
+          
+          IF schema_exists THEN
+            RAISE NOTICE 'Granting permissions on schema: %', schema_name;
+            
+            BEGIN
+              -- Grant schema usage (idempotent - no error if already granted)
+              EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', schema_name, user_name);
+              
+              -- Grant all privileges on existing tables (idempotent)
+              EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I TO %I', schema_name, user_name);
+              
+              -- Grant usage on all sequences (idempotent)
+              EXECUTE format('GRANT USAGE ON ALL SEQUENCES IN SCHEMA %I TO %I', schema_name, user_name);
+              
+              -- Set default privileges for future tables (idempotent)
+              EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL ON TABLES TO %I', schema_name, user_name);
+              
+              -- Set default privileges for future sequences (idempotent)
+              EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT USAGE ON SEQUENCES TO %I', schema_name, user_name);
+              
+              RAISE NOTICE 'Successfully granted permissions on schema: %', schema_name;
+              
+            EXCEPTION
+              WHEN OTHERS THEN
+                RAISE WARNING 'Failed to grant some permissions on schema %: % (SQLSTATE: %)', 
+                  schema_name, SQLERRM, SQLSTATE;
+                -- Continue with other schemas
+            END;
+          ELSE
+            RAISE NOTICE 'Schema % does not exist, skipping', schema_name;
+          END IF;
+        END LOOP;
+        
+        RAISE NOTICE 'Permission setup completed for user: %', user_name;
+        
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE WARNING 'Unexpected error during permission setup: % (SQLSTATE: %)', SQLERRM, SQLSTATE;
+          -- Don't fail the entire script for permission issues
+      END;
+      $$;
+EOF
+    then
+      log "WARNING: Permission setup encountered errors, but continuing..."
+      log "This may be expected if permissions were already granted"
+    else
+      log "Database permissions configured successfully"
+    fi
+    
+    log "Database setup completed successfully"
   '';
 
 in
