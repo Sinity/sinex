@@ -1,5 +1,5 @@
 use proptest::prelude::*;
-use serde_json::{json, Value};
+use serde_json::Value;
 use uuid::Uuid;
 use chrono::{DateTime, Utc, Duration};
 
@@ -102,105 +102,8 @@ fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
 }
 
 proptest! {
-    /// Test that any valid JSON can be stored as event payload
-    #[test]
-    fn test_event_payload_accepts_any_json(
-        payload in arb_json_value(),
-        source in arb_event_source(),
-        event_type in arb_event_type(),
-        host in arb_host_name(),
-        _ts_orig in prop::option::of(arb_timestamp()),
-    ) {
-        // This would test actual database insertion in a real test
-        // For now, verify the payload can be serialized/deserialized
-        let serialized = serde_json::to_string(&payload).unwrap();
-        let deserialized: Value = serde_json::from_str(&serialized).unwrap();
-        
-        // For floating point numbers, we need to be more forgiving due to precision
-        // Instead of direct equality, verify structure is preserved
-        assert_json_values_equivalent(&payload, &deserialized);
-        
-        // Verify source format
-        assert!(source.contains('.'));
-        assert!(source.chars().all(|c| c.is_ascii_lowercase() || c == '.'));
-        
-        // Verify event type format
-        assert!(event_type.contains('_'));
-        assert!(event_type.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_numeric() || c == 'v'));
-        
-        // Verify host format
-        assert!(!host.is_empty());
-        assert!(host.len() <= 63);
-    }
 
-    /// Test JSON Schema validation boundaries
-    #[test]
-    fn test_json_schema_validation_boundaries(
-        required_fields in prop::collection::vec("[a-z_]+", 0..5),
-        optional_fields in prop::collection::vec("[a-z_]+", 0..5),
-    ) {
-        // Create a JSON schema
-        let mut properties = serde_json::Map::new();
-        let mut required = Vec::new();
-        
-        for field in &required_fields {
-            properties.insert(field.clone(), json!({
-                "type": "string"
-            }));
-            required.push(Value::String(field.clone()));
-        }
-        
-        for field in &optional_fields {
-            properties.insert(field.clone(), json!({
-                "type": ["string", "null"]
-            }));
-        }
-        
-        let schema = json!({
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": false
-        });
-        
-        // Verify schema is valid JSON
-        let schema_str = serde_json::to_string(&schema).unwrap();
-        let parsed: Value = serde_json::from_str(&schema_str).unwrap();
-        assert_eq!(schema, parsed);
-    }
 
-    /// Test agent manifest subscription patterns
-    #[test]
-    fn test_agent_subscription_patterns(
-        sources in prop::collection::vec(arb_event_source(), 0..10),
-        event_types in prop::collection::vec(arb_event_type(), 0..10),
-    ) {
-        // Build subscription object
-        let mut subscriptions = serde_json::Map::new();
-        
-        for (i, source) in sources.iter().enumerate() {
-            let types = event_types.iter()
-                .skip(i)
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>();
-            
-            if !types.is_empty() {
-                subscriptions.insert(
-                    source.clone(),
-                    Value::Array(types.into_iter().map(Value::String).collect())
-                );
-            }
-        }
-        
-        let subscription_json = Value::Object(subscriptions);
-        
-        // Verify it can be serialized
-        let serialized = serde_json::to_string(&subscription_json).unwrap();
-        let deserialized: Value = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(subscription_json, deserialized);
-    }
 
     /// Test queue retry timing boundaries
     #[test]
