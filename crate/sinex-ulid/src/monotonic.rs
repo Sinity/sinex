@@ -85,11 +85,10 @@ impl MonotonicUlidGenerator {
         
         if timestamp_ms > last_ts {
             self.last_timestamp.store(timestamp_ms, Ordering::SeqCst);
-            self.counter.store(0, Ordering::SeqCst);
+            self.counter.store(1, Ordering::SeqCst); // Set to 1 since we're using counter 0
             
-            let mut ulid = InnerUlid::from_datetime(datetime.into());
-            self.embed_process_id(&mut ulid);
-            
+            // Use counter-based generation for consistency with same-timestamp case
+            let ulid = self.create_with_counter(timestamp_ms, 0);
             Ulid::from(ulid)
         } else {
             // Use counter even for past timestamps to maintain uniqueness
