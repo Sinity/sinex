@@ -58,6 +58,37 @@ test-worker:
 test-regression:
     cargo test --test integration system::regression::
 
+# Phase 7-9 comprehensive integration tests
+test-system-startup:
+    cargo test --test integration integration::full_system_startup_test:: -- --nocapture
+
+test-failure-recovery:
+    cargo test --test integration integration::failure_recovery_integration_test:: -- --nocapture
+
+test-health-monitoring:
+    cargo test --test integration integration::health_monitoring_integration_test:: -- --nocapture
+
+test-git-annex-integration:
+    cargo test --test integration integration::git_annex_full_integration_test:: -- --nocapture
+
+test-config-validation:
+    cargo test --test integration integration::configuration_validation_integration_test:: -- --nocapture
+
+# Comprehensive integration test suite
+test-integration-comprehensive:
+    echo "🧪 Running comprehensive integration test suite..."
+    just test-system-startup
+    echo "✅ System startup tests completed"
+    just test-failure-recovery  
+    echo "✅ Failure recovery tests completed"
+    just test-health-monitoring
+    echo "✅ Health monitoring tests completed"
+    just test-config-validation
+    echo "✅ Configuration validation tests completed"
+    just test-git-annex-integration
+    echo "✅ Git-annex integration tests completed"
+    echo "🎉 All comprehensive integration tests passed!"
+
 test-all:
     echo "🧪 Running comprehensive test suite..."
     just test
@@ -67,6 +98,14 @@ test-all:
     just test-e2e-dry-run
     echo "✅ E2E dry-run tests completed"
     echo "🎉 All core tests passed!"
+
+test-all-comprehensive:
+    echo "🧪 Running complete comprehensive test suite..."
+    just test-all
+    echo "✅ Core test suite completed"
+    just test-integration-comprehensive
+    echo "✅ Comprehensive integration tests completed"
+    echo "🎉 All tests passed - system fully validated!"
 
 watch:
     cargo watch -x test
