@@ -123,13 +123,14 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
 #[tokio::test]
 async fn test_kitty_socket_listener_initialization() -> Result<()> {
     let config = json!({
-        "socket_path": "/tmp/test-kitty-socket"
+        "socket_path": "/tmp/test-kitty-socket",
+        "polling_interval_secs": 2
     });
     
     let ctx = create_test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
     
-    assert_eq!(KittySocketListener::SOURCE_NAME, "terminal_kitty");
+    assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
     
     Ok(())
 }
@@ -139,13 +140,18 @@ async fn test_asciinema_recorder_initialization() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let config = json!({
         "recordings_dir": temp_dir.path().to_str().unwrap(),
-        "watch_interval_secs": 5
+        "file_pattern": "*.cast",
+        "polling_interval_secs": 5,
+        "auto_start_recording": false,
+        "record_command": "asciinema rec --quiet --overwrite",
+        "git_annex_repo": null,
+        "auto_annex": false
     });
     
     let ctx = create_test_context(config);
     let _recorder = AsciinemaRecorder::initialize(ctx).await?;
     
-    assert_eq!(AsciinemaRecorder::SOURCE_NAME, "asciinema");
+    assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
     
     Ok(())
 }
@@ -153,30 +159,45 @@ async fn test_asciinema_recorder_initialization() -> Result<()> {
 #[tokio::test] 
 async fn test_clipboard_monitor_initialization() -> Result<()> {
     let config = json!({
-        "monitor_selection": true,
         "monitor_clipboard": true,
-        "poll_interval_ms": 500
+        "monitor_primary": true,
+        "monitor_secondary": false,
+        "poll_interval_ms": 500,
+        "hash_file_content": false,
+        "max_preview_length": 100,
+        "enable_history": false,
+        "max_history_entries": 100,
+        "max_content_size": 1048576,
+        "annex_repo_path": null
     });
     
     let ctx = create_test_context(config);
     let _monitor = ClipboardMonitor::initialize(ctx).await?;
     
-    assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard");
+    assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
     
     Ok(())
 }
 
 #[tokio::test]
 async fn test_scrollback_capture_initialization() -> Result<()> {
+    let temp_dir = TempDir::new()?;
     let config = json!({
+        "kitty_socket_path": "/tmp/test-kitty-socket",
         "capture_interval_secs": 15,
-        "max_lines": 5000
+        "max_scrollback_lines": 5000,
+        "include_ansi_codes": false,
+        "capture_command_output": true,
+        "save_to_files": false,
+        "scrollback_dir": temp_dir.path().to_str().unwrap(),
+        "capture_on_command": false,
+        "command_capture_delay_ms": 500
     });
     
     let ctx = create_test_context(config);
     let _capture = ScrollbackCapture::initialize(ctx).await?;
     
-    assert_eq!(ScrollbackCapture::SOURCE_NAME, "scrollback");
+    assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
     
     Ok(())
 }
