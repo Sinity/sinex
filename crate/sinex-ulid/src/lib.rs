@@ -19,9 +19,15 @@ pub enum UlidError {
 pub type Error = UlidError;
 
 /// A wrapper around ULID that provides PostgreSQL compatibility via UUID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Ulid(InnerUlid);
+
+impl fmt::Debug for Ulid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Ulid({})", self.to_string())
+    }
+}
 
 impl Ulid {
     /// Generate a new ULID
@@ -120,9 +126,50 @@ impl FromStr for Ulid {
     type Err = UlidError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        InnerUlid::from_str(s)
-            .map(Self)
-            .map_err(|e| UlidError::InvalidFormat(e.to_string()))
+        // Validate basic requirements before delegating to inner ULID
+        if s.is_empty() {
+            return Err(UlidError::InvalidFormat("Empty string".to_string()));
+        }
+        
+        if s.len() != 26 {
+            return Err(UlidError::InvalidFormat(format!(
+                "ULID must be exactly 26 characters, got {}", s.len()
+            )));
+        }
+        
+        // Check for valid Crockford's base32 characters only (0-9, A-Z except I, L, O, U)
+        // This implementation allows both upper and lower case, but no I, L, O, U
+        for ch in s.chars() {
+            match ch {
+                '0'..='9' | 'A'..='H' | 'J'..='K' | 'M'..='N' | 'P'..='T' | 'V'..='Z' |
+                'a'..='h' | 'j'..='k' | 'm'..='n' | 'p'..='t' | 'v'..='z' => {
+                    // Valid characters
+                }
+                _ => {
+                    return Err(UlidError::InvalidFormat(format!(
+                        "ULID contains invalid base32 character: '{}'", ch
+                    )));
+                }
+            }
+        }
+        
+        // Try to parse first to validate basic format, then check timestamp range
+        let inner_ulid = InnerUlid::from_str(s)
+            .map_err(|e| UlidError::InvalidFormat(e.to_string()))?;
+        
+        // Validate timestamp range (ULID timestamp is 48 bits, max value is 2^48 - 1 ms)
+        // This corresponds to the year 10895 CE, which is reasonable to restrict
+        let timestamp_ms = inner_ulid.timestamp_ms();
+        let max_timestamp = (1u64 << 48) - 1; // 2^48 - 1 = 281474976710655
+        
+        if timestamp_ms > max_timestamp {
+            return Err(UlidError::InvalidFormat(format!(
+                "ULID timestamp {} exceeds maximum allowed value {}", 
+                timestamp_ms, max_timestamp
+            )));
+        }
+        
+        Ok(Self(inner_ulid))
     }
 }
 

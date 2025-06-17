@@ -250,8 +250,8 @@ impl EventScanner {
         Ok(events)
     }
     
-    /// Get events that don't have promotion queue entries yet
-    pub async fn get_unpromoted_events(
+    /// Get events that don't have work queue entries yet
+    pub async fn get_unqueued_events(
         &self,
         pool: &PgPool,
         limit: usize,
@@ -271,7 +271,7 @@ impl EventScanner {
             FROM raw.events e
             WHERE NOT EXISTS (
                 SELECT 1 
-                FROM sinex_schemas.promotion_queue pq 
+                FROM sinex_schemas.work_queue pq 
                 WHERE pq.raw_event_id = e.id
             )
             ORDER BY e.id ASC

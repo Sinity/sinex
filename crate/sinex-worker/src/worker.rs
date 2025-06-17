@@ -2,7 +2,7 @@ use crate::{calculate_backoff_secs, EventProcessor};
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use sinex_db::queries::{
-    claim_promotion_queue_items, complete_promotion_queue_item, fail_promotion_queue_item,
+    claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
     insert_dlq_event,
 };
 use sinex_db::models::RawEvent;
@@ -63,7 +63,7 @@ impl Worker {
 
     /// Process a single batch of items
     async fn process_batch(&self) -> Result<usize> {
-        let items = claim_promotion_queue_items(
+        let items = claim_work_queue_items(
             &self.pool,
             self.processor.agent_name(),
             &self.worker_id,
@@ -89,7 +89,7 @@ impl Worker {
             match self.processor.process_event(&self.pool, &item).await {
                 Ok(()) => {
                     // Successfully processed
-                    if let Err(e) = complete_promotion_queue_item(&self.pool, item.queue_id.into()).await {
+                    if let Err(e) = complete_work_queue_item(&self.pool, item.queue_id.into()).await {
                         error!(
                             worker_id = %self.worker_id,
                             queue_id = %item.queue_id,
@@ -177,14 +177,14 @@ impl Worker {
                         }
                         
                         // Remove from promotion queue regardless
-                        let _ = complete_promotion_queue_item(&self.pool, item.queue_id).await;
+                        let _ = complete_work_queue_item(&self.pool, item.queue_id).await;
                         self.metrics.items_dlq.inc();
                     } else {
                         // Schedule retry
                         let delay_secs = calculate_backoff_secs(item.attempts);
                         let next_retry = Utc::now() + Duration::seconds(delay_secs as i64);
                         
-                        if let Err(e) = fail_promotion_queue_item(
+                        if let Err(e) = fail_work_queue_item(
                             &self.pool,
                             item.queue_id.into(),
                             &format!("{:?}", e),

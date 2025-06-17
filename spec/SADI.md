@@ -1,6 +1,6 @@
-# Sinex Exocortex: System Architecture & Document Interrelation (SADI) - v0.2
+# Sinex Exocortex: System Architecture & Document Interrelation (SADI) - v0.3
 
-> **📊 IMPLEMENTATION STATUS**: Core database substrate ✅ **IMPLEMENTED**, Basic event processing ✅ **IMPLEMENTED**, Advanced features ❌ **PLANNED** - see detailed status in architectural modules.
+> **📊 IMPLEMENTATION STATUS**: Core database substrate ✅ **IMPLEMENTED**, Unified ingestion framework ✅ **IMPLEMENTED**, Distributed work processing ✅ **IMPLEMENTED**, Activity segmentation system ✅ **IMPLEMENTED**, NixOS module ⚠️ **IN DEVELOPMENT**, Advanced AI features ❌ **PLANNED** - see detailed status in architectural modules.
 
 **(Reflecting Modular Documentation Structure)**
 
@@ -40,7 +40,7 @@ The Exocortex is built on a local-first, robust, and extensible technical founda
 * **Primary Development Language (Backend/Agents):** Rust.
 * **Secrets Management:** `agenix` ([ADR-006](docs/adr/ADR-006-NixOSSecretsManagementTool.md)).
 * **Large File (Blob) Management:** `git-annex` with metadata in `core_blobs`.
-* **Core Data Flow:** Immutable `raw.events` -> PostgreSQL-based `sinex_schemas.promotion_queue` -> Agent-driven processing (Polling primary - [ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)).
+* **Core Data Flow:** UnifiedCollector -> Immutable `raw.events` -> Materialized view routing -> `work_queue` -> Agent-driven processing via `SELECT FOR UPDATE SKIP LOCKED` ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md); [ADR-014](docs/adr/0014-routing-cache.md)).
 * **Desktop Integration:** Hyprland IPC (primary), C++ Plugin (future) - [ADR-003](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md); Layered Terminal Capture (Atuin, Asciinema, Kitty RC) - [ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md).
 * **PKM Content Handling:** Database-native with Yjs CRDTs ([ADR-004](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)).
 
@@ -131,6 +131,7 @@ This section clarifies the role of each primary project document in the new modu
 * `[ADR-006-NixOSSecretsManagementTool.md](docs/adr/ADR-006-NixOSSecretsManagementTool.md)`: `agenix` for NixOS secrets.
 * `[ADR-007-LargeScaleVectorSearchStrategy.md](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)`: `pgvector` CPU first, GPU DB later.
 * `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)`: Layered approach for terminal capture.
+* `[ADR-014-RoutingCache.md](docs/adr/0014-routing-cache.md)`: Materialized view routing cache for work distribution.
 
 **3.3. Technical Implementation Modules (`docs/tims/`)**
 A comprehensive suite of TIMs provides detailed implementation specifications for individual components and features. These are organized into subdirectories corresponding to the architectural modules (e.g., `data_substrate/`, `ingestors/`, `operations/`).

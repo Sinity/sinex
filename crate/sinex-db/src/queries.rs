@@ -1,4 +1,4 @@
-use crate::models::{AgentManifest, DlqEvent, PromotionQueueItem, RawEvent};
+use crate::models::{AgentManifest, DlqEvent, WorkQueueItem, RawEvent};
 use crate::validation::EventValidator;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -177,21 +177,21 @@ pub async fn upsert_agent_manifest(
     Ok(record)
 }
 
-/// Claim items from the promotion queue for processing
-pub async fn claim_promotion_queue_items(
+/// Claim items from the work queue for processing
+pub async fn claim_work_queue_items(
     pool: &PgPool,
     target_agent_name: &str,
     worker_id: &str,
     batch_size: i64,
-) -> Result<Vec<PromotionQueueItem>> {
+) -> Result<Vec<WorkQueueItem>> {
     // Use query! for compile-time checking, then map UUIDs to ULIDs
     let records = sqlx::query!(
         r#"
-        UPDATE sinex_schemas.promotion_queue
+        UPDATE sinex_schemas.work_queue
         SET status = 'processing', last_attempt_ts = now(), processing_worker_id = $3
         WHERE queue_id IN (
             SELECT queue_id
-            FROM sinex_schemas.promotion_queue
+            FROM sinex_schemas.work_queue
             WHERE
                 status IN ('pending', 'failed_retryable')
                 AND target_agent_name = $1
@@ -214,7 +214,9 @@ pub async fn claim_promotion_queue_items(
             next_retry_ts, 
             error_message_last,
             created_at as "created_at!", 
-            processing_worker_id
+            processing_worker_id,
+            processed_at,
+            failure_reason
         "#,
         target_agent_name,
         batch_size,
@@ -226,7 +228,7 @@ pub async fn claim_promotion_queue_items(
     // Map UUID fields to ULID with compile-time verified field access
     let items = records
         .into_iter()
-        .map(|record| PromotionQueueItem {
+        .map(|record| WorkQueueItem {
             queue_id: Ulid::from_uuid(record.queue_id),
             raw_event_id: Ulid::from_uuid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
@@ -238,16 +240,22 @@ pub async fn claim_promotion_queue_items(
             error_message_last: record.error_message_last,
             created_at: record.created_at,
             processing_worker_id: record.processing_worker_id,
+            processed_at: record.processed_at,
+            failure_reason: record.failure_reason,
         })
         .collect();
 
     Ok(items)
 }
 
-/// Mark a promotion queue item as successfully processed
-pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+/// Mark a work queue item as successfully processed
+pub async fn complete_work_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
-        "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
+        r#"
+        UPDATE sinex_schemas.work_queue 
+        SET status = 'succeeded', processed_at = now(), processing_worker_id = NULL
+        WHERE queue_id = $1::uuid::ulid
+        "#,
         queue_id.to_uuid()
     )
     .execute(pool)
@@ -256,8 +264,14 @@ pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Ulid) -> Res
     Ok(())
 }
 
-/// Mark a promotion queue item as failed and schedule retry
-pub async fn fail_promotion_queue_item(
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use complete_work_queue_item instead")]
+pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+    complete_work_queue_item(pool, queue_id).await
+}
+
+/// Mark a work queue item as failed and schedule retry
+pub async fn fail_work_queue_item(
     pool: &PgPool,
     queue_id: Ulid,
     error_message: &str,
@@ -265,7 +279,7 @@ pub async fn fail_promotion_queue_item(
 ) -> Result<()> {
     sqlx::query!(
         r#"
-        UPDATE sinex_schemas.promotion_queue
+        UPDATE sinex_schemas.work_queue
         SET 
             attempts = attempts + 1,
             status = 'failed_retryable',
@@ -282,6 +296,42 @@ pub async fn fail_promotion_queue_item(
     .await?;
 
     Ok(())
+}
+
+/// Mark a work queue item as permanently failed
+pub async fn fail_work_queue_item_permanently(
+    pool: &PgPool,
+    queue_id: Ulid,
+    failure_reason: &str,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.work_queue
+        SET 
+            status = 'failed',
+            failure_reason = $2,
+            processed_at = now(),
+            processing_worker_id = NULL
+        WHERE queue_id = $1::uuid::ulid
+        "#,
+        queue_id.to_uuid(),
+        failure_reason
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use fail_work_queue_item instead")]
+pub async fn fail_promotion_queue_item(
+    pool: &PgPool,
+    queue_id: Ulid,
+    error_message: &str,
+    next_retry_ts: DateTime<Utc>,
+) -> Result<()> {
+    fail_work_queue_item(pool, queue_id, error_message, next_retry_ts).await
 }
 
 /// Update agent heartbeat timestamp
@@ -773,16 +823,16 @@ pub async fn get_events_in_time_range(
     Ok(events)
 }
 
-/// Add an event to the promotion queue
-pub async fn add_to_promotion_queue(
+/// Add an event to the work queue
+pub async fn add_to_work_queue(
     pool: &PgPool,
     raw_event_id: Ulid,
     target_agent_name: &str,
     max_attempts: i32,
-) -> Result<PromotionQueueItem> {
+) -> Result<WorkQueueItem> {
     let record = sqlx::query!(
         r#"
-        INSERT INTO sinex_schemas.promotion_queue 
+        INSERT INTO sinex_schemas.work_queue 
             (raw_event_id, target_agent_name, max_attempts)
         VALUES ($1::uuid::ulid, $2, $3)
         RETURNING 
@@ -796,7 +846,9 @@ pub async fn add_to_promotion_queue(
             next_retry_ts, 
             error_message_last,
             created_at as "created_at!", 
-            processing_worker_id
+            processing_worker_id,
+            processed_at,
+            failure_reason
         "#,
         raw_event_id.to_uuid(),
         target_agent_name,
@@ -805,7 +857,7 @@ pub async fn add_to_promotion_queue(
     .fetch_one(pool)
     .await?;
 
-    Ok(PromotionQueueItem {
+    Ok(WorkQueueItem {
         queue_id: Ulid::from_uuid(record.queue_id),
         raw_event_id: Ulid::from_uuid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
@@ -817,21 +869,34 @@ pub async fn add_to_promotion_queue(
         error_message_last: record.error_message_last,
         created_at: record.created_at,
         processing_worker_id: record.processing_worker_id,
+        processed_at: record.processed_at,
+        failure_reason: record.failure_reason,
     })
 }
 
-/// Get the next promotion queue item for processing
-pub async fn get_next_promotion_item(
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use add_to_work_queue instead")]
+pub async fn add_to_promotion_queue(
+    pool: &PgPool,
+    raw_event_id: Ulid,
+    target_agent_name: &str,
+    max_attempts: i32,
+) -> Result<WorkQueueItem> {
+    add_to_work_queue(pool, raw_event_id, target_agent_name, max_attempts).await
+}
+
+/// Get the next work queue item for processing
+pub async fn get_next_work_item(
     pool: &PgPool,
     target_agent_name: &str,
-) -> Result<Option<PromotionQueueItem>> {
+) -> Result<Option<WorkQueueItem>> {
     let record = sqlx::query!(
         r#"
-        UPDATE sinex_schemas.promotion_queue
+        UPDATE sinex_schemas.work_queue
         SET status = 'processing', last_attempt_ts = now()
         WHERE queue_id = (
             SELECT queue_id
-            FROM sinex_schemas.promotion_queue
+            FROM sinex_schemas.work_queue
             WHERE
                 status = 'pending'
                 AND target_agent_name = $1
@@ -851,7 +916,9 @@ pub async fn get_next_promotion_item(
             next_retry_ts, 
             error_message_last,
             created_at as "created_at!", 
-            processing_worker_id
+            processing_worker_id,
+            processed_at,
+            failure_reason
         "#,
         target_agent_name
     )
@@ -859,7 +926,7 @@ pub async fn get_next_promotion_item(
     .await?;
 
     match record {
-        Some(record) => Ok(Some(PromotionQueueItem {
+        Some(record) => Ok(Some(WorkQueueItem {
             queue_id: Ulid::from_uuid(record.queue_id),
             raw_event_id: Ulid::from_uuid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
@@ -871,17 +938,28 @@ pub async fn get_next_promotion_item(
             error_message_last: record.error_message_last,
             created_at: record.created_at,
             processing_worker_id: record.processing_worker_id,
+            processed_at: record.processed_at,
+            failure_reason: record.failure_reason,
         })),
         None => Ok(None),
     }
 }
 
-/// Complete a promotion queue item (mark as completed)
-pub async fn complete_promotion_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use get_next_work_item instead")]
+pub async fn get_next_promotion_item(
+    pool: &PgPool,
+    target_agent_name: &str,
+) -> Result<Option<WorkQueueItem>> {
+    get_next_work_item(pool, target_agent_name).await
+}
+
+/// Complete a work queue item (mark as completed)
+pub async fn complete_work_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
         r#"
-        UPDATE sinex_schemas.promotion_queue
-        SET status = 'completed'
+        UPDATE sinex_schemas.work_queue
+        SET status = 'succeeded', processed_at = now()
         WHERE queue_id = $1::uuid::ulid
         "#,
         queue_id.to_uuid()
@@ -892,22 +970,36 @@ pub async fn complete_promotion_item(pool: &PgPool, queue_id: Ulid) -> Result<()
     Ok(())
 }
 
-/// Fail a promotion queue item and optionally retry or move to DLQ
-pub async fn fail_promotion_item(
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use complete_work_item instead")]
+pub async fn complete_promotion_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+    complete_work_item(pool, queue_id).await
+}
+
+/// Fail a work queue item and optionally retry or move to DLQ
+pub async fn fail_work_item(
     pool: &PgPool,
     queue_id: Ulid,
     error_message: &str,
 ) -> Result<()> {
     let record = sqlx::query!(
         r#"
-        UPDATE sinex_schemas.promotion_queue
+        UPDATE sinex_schemas.work_queue
         SET 
             attempts = attempts + 1,
             error_message_last = $2,
             last_attempt_ts = now(),
             status = CASE 
                 WHEN attempts + 1 >= max_attempts THEN 'failed'
-                ELSE 'pending'
+                ELSE 'failed_retryable'
+            END,
+            processed_at = CASE 
+                WHEN attempts + 1 >= max_attempts THEN now()
+                ELSE processed_at
+            END,
+            failure_reason = CASE 
+                WHEN attempts + 1 >= max_attempts THEN $2
+                ELSE failure_reason
             END
         WHERE queue_id = $1::uuid::ulid
         RETURNING 
@@ -924,9 +1016,8 @@ pub async fn fail_promotion_item(
     .fetch_one(pool)
     .await?;
 
-    // If max attempts reached, move to DLQ
+    // If max attempts reached, move to DLQ but keep in work queue for metrics/TTL
     if record.status == "failed" {
-        // Get the original event to add to DLQ
         let event = get_event_by_id(pool, Ulid::from_uuid(record.raw_event_id)).await?;
         
         insert_dlq_event(
@@ -940,21 +1031,23 @@ pub async fn fail_promotion_item(
             event.payload,
             None,
         ).await?;
-
-        // Remove from promotion queue
-        sqlx::query!(
-            "DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1::uuid::ulid",
-            queue_id.to_uuid()
-        )
-        .execute(pool)
-        .await?;
     }
 
     Ok(())
 }
 
-/// Get a promotion queue item by ID
-pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<PromotionQueueItem> {
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use fail_work_item instead")]
+pub async fn fail_promotion_item(
+    pool: &PgPool,
+    queue_id: Ulid,
+    error_message: &str,
+) -> Result<()> {
+    fail_work_item(pool, queue_id, error_message).await
+}
+
+/// Get a work queue item by ID
+pub async fn get_work_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<WorkQueueItem> {
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -968,8 +1061,10 @@ pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<P
             next_retry_ts, 
             error_message_last,
             created_at as "created_at!", 
-            processing_worker_id
-        FROM sinex_schemas.promotion_queue
+            processing_worker_id,
+            processed_at,
+            failure_reason
+        FROM sinex_schemas.work_queue
         WHERE queue_id = $1::uuid::ulid
         "#,
         queue_id.to_uuid()
@@ -977,7 +1072,7 @@ pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<P
     .fetch_one(pool)
     .await?;
 
-    Ok(PromotionQueueItem {
+    Ok(WorkQueueItem {
         queue_id: Ulid::from_uuid(record.queue_id),
         raw_event_id: Ulid::from_uuid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
@@ -989,7 +1084,49 @@ pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<P
         error_message_last: record.error_message_last,
         created_at: record.created_at,
         processing_worker_id: record.processing_worker_id,
+        processed_at: record.processed_at,
+        failure_reason: record.failure_reason,
     })
+}
+
+/// Legacy alias for backward compatibility
+#[deprecated(note = "Use get_work_item_by_id instead")]
+pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<WorkQueueItem> {
+    get_work_item_by_id(pool, queue_id).await
+}
+
+/// Purge old completed work queue items based on TTL policy
+/// Removes items with status 'succeeded' or 'failed' that have processed_at older than 90 days
+pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"
+        DELETE FROM sinex_schemas.work_queue
+        WHERE status IN ('succeeded', 'failed')
+        AND processed_at IS NOT NULL
+        AND processed_at < now() - interval '90 days'
+        "#
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected())
+}
+
+/// Get count of work queue items eligible for purging (for monitoring)
+pub async fn count_purgeable_work_queue_items(pool: &PgPool) -> Result<i64> {
+    let result = sqlx::query!(
+        r#"
+        SELECT COUNT(*) as count
+        FROM sinex_schemas.work_queue
+        WHERE status IN ('succeeded', 'failed')
+        AND processed_at IS NOT NULL
+        AND processed_at < now() - interval '90 days'
+        "#
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(result.count.unwrap_or(0))
 }
 
 /// Get DLQ items for a specific agent
@@ -1049,4 +1186,71 @@ pub async fn get_dlq_items(
         .collect();
 
     Ok(events)
+}
+// ===== Test Helper Functions =====
+
+/// Create a test agent for use in tests
+pub async fn create_test_agent(
+    pool: &PgPool,
+    agent_name: &str,
+    description: &str,
+) -> Result<AgentManifest> {
+    upsert_agent_manifest(
+        pool,
+        agent_name,
+        "1.0.0",
+        "running",
+        "test",
+        Some(description),
+        None,
+        None,
+    ).await
+}
+
+/// Insert a work queue item for testing
+pub async fn insert_work_queue_item(
+    pool: &PgPool,
+    raw_event_id: Ulid,
+    target_agent_name: &str,
+) -> Result<WorkQueueItem> {
+    let record = sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
+        VALUES ($1::uuid::ulid, $2)
+        RETURNING 
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
+            target_agent_name as "target_agent_name!", 
+            status as "status!", 
+            attempts as "attempts!", 
+            max_attempts as "max_attempts!",
+            last_attempt_ts, 
+            next_retry_ts, 
+            error_message_last,
+            created_at as "created_at!", 
+            processing_worker_id,
+            processed_at,
+            failure_reason
+        "#,
+        raw_event_id.to_uuid(),
+        target_agent_name
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(WorkQueueItem {
+        queue_id: Ulid::from_uuid(record.queue_id),
+        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        target_agent_name: record.target_agent_name,
+        status: record.status,
+        attempts: record.attempts,
+        max_attempts: record.max_attempts,
+        last_attempt_ts: record.last_attempt_ts,
+        next_retry_ts: record.next_retry_ts,
+        error_message_last: record.error_message_last,
+        created_at: record.created_at,
+        processing_worker_id: record.processing_worker_id,
+        processed_at: record.processed_at,
+        failure_reason: record.failure_reason,
+    })
 }

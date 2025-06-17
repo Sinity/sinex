@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::queries::{claim_promotion_queue_items, complete_promotion_queue_item};
+use sinex_db::queries::{claim_work_queue_items, complete_work_queue_item};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Barrier;
@@ -43,9 +43,9 @@ async fn insert_test_items(pool: &PgPool, count: i32) -> Result<Vec<Ulid>> {
         .execute(pool)
         .await?;
         
-        // Then insert into promotion queue
+        // Then insert into work queue
         sqlx::query(
-            "INSERT INTO sinex_schemas.promotion_queue (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
+            "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
              VALUES ($1, $2, $3, 0, 3, NOW())"
         )
         .bind(queue_id.to_uuid())
@@ -82,7 +82,7 @@ db_test! {
                 
                 loop {
                     // Try to claim items using the production function
-                    let items = claim_promotion_queue_items(
+                    let items = claim_work_queue_items(
                         &pool,
                         "test_worker",
                         &format!("worker-{}", worker_id),
@@ -99,7 +99,7 @@ db_test! {
                         tokio::time::sleep(Duration::from_millis(50)).await;
                         
                         // Mark as processed by completing it
-                        complete_promotion_queue_item(&pool, item.queue_id).await?;
+                        complete_work_queue_item(&pool, item.queue_id).await?;
                         
                         local_processed += 1;
                     }
@@ -124,7 +124,7 @@ db_test! {
         
         // Verify no items remain
         let remaining_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'test_worker'"
+            "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'test_worker'"
         )
         .fetch_one(&*pool)
         .await?;
@@ -174,7 +174,7 @@ db_test! {
                 
                 loop {
                     // Try to claim items using production logic
-                    let items = claim_promotion_queue_items(
+                    let items = claim_work_queue_items(
                         &pool,
                         "test_worker",
                         &format!("worker-{}", worker_id),
@@ -189,7 +189,7 @@ db_test! {
                         // Simulate work
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         
-                        complete_promotion_queue_item(&pool, item.queue_id).await?;
+                        complete_work_queue_item(&pool, item.queue_id).await?;
                         processed += 1;
                     }
                 }
@@ -227,7 +227,7 @@ db_test! {
         let _items = insert_test_items(&pool, 1).await?;
         
         // Worker 1: Claim the item
-        let claimed = claim_promotion_queue_items(
+        let claimed = claim_work_queue_items(
             &pool,
             "test_worker",
             "worker-1",
@@ -237,7 +237,7 @@ db_test! {
         assert_eq!(claimed.len(), 1, "Should claim exactly one item");
         
         // Worker 2: Try to claim - should get nothing since worker 1 has it
-        let items = claim_promotion_queue_items(
+        let items = claim_work_queue_items(
             &pool,
             "test_worker",
             "worker-2",
@@ -247,11 +247,11 @@ db_test! {
         assert_eq!(items.len(), 0, "Worker 2 should not get any items while worker 1 has them");
         
         // Complete the item processing
-        complete_promotion_queue_item(&pool, claimed[0].queue_id).await?;
+        complete_work_queue_item(&pool, claimed[0].queue_id).await?;
         
         // Verify the item is gone
         let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = 'test_worker'"
+            "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'test_worker'"
         )
         .fetch_one(&pool)
         .await?;
@@ -281,9 +281,9 @@ db_test! {
             .execute(&pool)
             .await?;
             
-            // Insert into promotion queue with staggered timestamps
+            // Insert into work queue with staggered timestamps
             sqlx::query(
-                "INSERT INTO sinex_schemas.promotion_queue 
+                "INSERT INTO sinex_schemas.work_queue 
                  (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
                  VALUES ($1, $2, $3, 0, 3, NOW() + interval '1 second' * $4)"
             )
@@ -323,7 +323,7 @@ db_test! {
                 barrier.wait().await;
                 
                 loop {
-                    let items = claim_promotion_queue_items(
+                    let items = claim_work_queue_items(
                         &pool,
                         "test_worker",
                         &format!("worker-{}", worker_id),
@@ -339,7 +339,7 @@ db_test! {
                         order.push(item.created_at);
                         drop(order);
                         
-                        complete_promotion_queue_item(&pool, item.queue_id).await?;
+                        complete_work_queue_item(&pool, item.queue_id).await?;
                     }
                 }
                 

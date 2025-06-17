@@ -9,10 +9,10 @@ nixos-vm/
 ├── default.nix         # Test entry point
 ├── vm-config.nix       # Shared VM configuration
 ├── test-scenarios/     # Individual test scenarios
-│   ├── basic-flow.nix  # Basic E2E test (implemented)
-│   ├── multi-source.nix # Multi-source stress test (TODO)
-│   ├── failure-recovery.nix # Failure recovery test (TODO)
-│   └── performance.nix # Performance validation (TODO)
+│   ├── basic-flow.nix  # Basic E2E test ✅
+│   ├── multi-source.nix # Multi-source stress test ✅
+│   ├── failure-recovery.nix # Failure recovery test ✅
+│   └── performance.nix # Performance validation ✅
 └── lib/                # Shared test utilities
     ├── assertions.nix  # Test assertion helpers (TODO)
     └── helpers.nix     # Common test functions (TODO)
@@ -55,17 +55,53 @@ nix build .#checks.x86_64-linux.sinex-vm-basic -L
 
 - ✅ **Basic infrastructure**: VM config, test runner, simple test
 - ✅ **PostgreSQL + TimescaleDB**: Database setup in VM
-- ✅ **Simulated Sinex**: Basic collector and query commands
-- 🚧 **Real Sinex integration**: Need to build actual binaries in VM
-- 🚧 **Advanced scenarios**: Multi-source, failure recovery, performance
+- ✅ **Real Sinex integration**: Full collector and worker binaries in VM
+- ✅ **Advanced scenarios**: Multi-source stress, failure recovery, performance validation
+- ✅ **Comprehensive testing**: All major failure modes and performance characteristics covered
 
-## Next Steps
+## Test Scenarios
 
-1. Integrate real Sinex binaries into the VM
-2. Add actual event sources (filesystem watcher, terminal monitor)
-3. Implement more complex test scenarios
-4. Add visual regression tests with screenshots
-5. Create performance benchmarks
+### Basic Flow Test (`basic-flow.nix`)
+- System setup and initialization
+- Individual event source validation (filesystem, shell history, Atuin, asciinema, clipboard, D-Bus, Hyprland)
+- Service restart resilience
+- Database connectivity and schema validation
+
+### Multi-Source Stress Test (`multi-source.nix`)
+- Concurrent operation of all event sources under load
+- Configurable stress intensity (low/medium/high)
+- System stability validation under high-frequency event generation
+- Resource usage monitoring and memory/CPU validation
+- Event distribution verification across sources
+
+### Failure Recovery Test (`failure-recovery.nix`)
+- Database disconnection and reconnection handling
+- Collector and worker crash recovery
+- Memory pressure and disk space resilience
+- Network partition simulation
+- Multiple simultaneous failure scenarios
+- Graceful degradation validation
+
+### Performance Validation Test (`performance.nix`)
+- High-frequency event generation (burst, sustained, ramp-up, spike patterns)
+- Multi-source concurrent load testing
+- Query performance under load
+- Database performance analysis
+- System resource utilization monitoring
+- Performance regression validation
+
+## Running All Tests
+
+```bash
+# Run individual test scenarios
+just test-vm-basic
+just test-vm-multi-source  
+just test-vm-failure-recovery
+just test-vm-performance
+
+# Run all VM tests
+just test-vm-all
+```
 
 ## Debugging
 

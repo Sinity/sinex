@@ -36,7 +36,9 @@ enabled_events = [
 [event.clipboard]
 monitor_clipboard = true
 monitor_primary = true
+monitor_secondary = false
 poll_interval_ms = 500
+hash_file_content = false
 max_preview_length = 100
 enable_history = true
 max_history_entries = 1000
