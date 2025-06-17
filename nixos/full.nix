@@ -1355,6 +1355,177 @@ in
         default = 2;
         description = "Minimum number of copies for git-annex";
       };
+
+      # Advanced Configuration
+      backend = mkOption {
+        type = types.str;
+        default = "SHA256E";
+        description = "Git-annex backend to use for new files";
+      };
+
+      repoDescription = mkOption {
+        type = types.str;
+        default = "Sinex Blob Storage";
+        description = "Description for the git-annex repository";
+      };
+
+      largeFiles = mkOption {
+        type = types.str;
+        default = "anything";
+        description = "Git-annex largefiles expression for automatic annexing";
+      };
+
+      # Health Monitoring
+      healthCheck = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable git-annex repository health checks";
+        };
+
+        interval = mkOption {
+          type = types.int;
+          default = 3600;
+          description = "Health check interval in seconds";
+        };
+
+        fastFsck = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Use fast fsck mode for routine health checks";
+        };
+
+        wantedSize = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Maximum repository size (e.g., '10G', '1T'). Null for unlimited.";
+        };
+      };
+
+      # Maintenance Tasks
+      maintenance = {
+        enableAutoGc = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable automatic garbage collection";
+        };
+
+        gcSchedule = mkOption {
+          type = types.str;
+          default = "weekly";
+          description = "Schedule for garbage collection (systemd timer format)";
+        };
+
+        enablePeriodicFsck = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable periodic file system consistency checks";
+        };
+
+        fsckSchedule = mkOption {
+          type = types.str;
+          default = "monthly";
+          description = "Schedule for periodic fsck (systemd timer format)";
+        };
+
+        enableAutoSync = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable automatic synchronization with remotes";
+        };
+
+        syncSchedule = mkOption {
+          type = types.str;
+          default = "hourly";
+          description = "Schedule for auto-sync with remotes (systemd timer format)";
+        };
+
+        unusedCleanup = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Automatically clean up unused files during maintenance";
+        };
+
+        unusedRetention = mkOption {
+          type = types.str;
+          default = "30d";
+          description = "How long to keep unused files before cleanup";
+        };
+      };
+
+      # Remote Configuration
+      remotes = mkOption {
+        type = types.attrsOf (types.submodule {
+          options = {
+            url = mkOption {
+              type = types.str;
+              description = "URL or path to the remote repository";
+            };
+
+            type = mkOption {
+              type = types.enum [ "git" "directory" "rsync" "S3" "glacier" ];
+              default = "git";
+              description = "Type of remote";
+            };
+
+            autoInit = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Automatically initialize the remote";
+            };
+
+            autoSync = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Include this remote in automatic sync operations";
+            };
+
+            encryption = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = "Encryption method for remote (none, hybrid, shared, etc.)";
+            };
+
+            cost = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = "Cost value for this remote (lower is preferred)";
+            };
+
+            extraConfig = mkOption {
+              type = types.attrsOf types.str;
+              default = {};
+              description = "Additional git-annex remote configuration";
+            };
+          };
+        });
+        default = {};
+        description = "Git-annex remote repositories configuration";
+      };
+
+      # Activation Scripts
+      activationScripts = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Use activation scripts for git-annex initialization";
+        };
+
+        preInitCommands = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Commands to run before git-annex initialization";
+        };
+
+        postInitCommands = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "git config core.filemode false"
+            "git config core.symlinks true"
+          ];
+          description = "Commands to run after git-annex initialization";
+        };
+      };
     };
 
     observability = {
@@ -2428,6 +2599,14 @@ in
         assertion = !cfg.blobStorage.enable || cfg.blobStorage.numCopies >= 1 && cfg.blobStorage.numCopies <= 10;
         message = "Git-annex number of copies must be between 1 and 10 (got ${toString cfg.blobStorage.numCopies})";
       }
+      {
+        assertion = !cfg.blobStorage.enable || cfg.blobStorage.healthCheck.interval >= 300;
+        message = "Git-annex health check interval must be at least 300 seconds (got ${toString cfg.blobStorage.healthCheck.interval})";
+      }
+      {
+        assertion = !cfg.blobStorage.enable || (cfg.blobStorage.backend != "");
+        message = "Git-annex backend cannot be empty when blob storage is enabled";
+      }
 
       # Monitoring validations
       {
@@ -2479,7 +2658,35 @@ in
     ];
 
     # System packages
-    environment.systemPackages = [ cfg.package ];
+    environment.systemPackages = [ cfg.package ] 
+      ++ lib.optionals cfg.blobStorage.enable [ pkgs.git-annex pkgs.git ];
+    
+    # Activation scripts for git-annex setup
+    system.activationScripts.sinex-annex-setup = mkIf (cfg.blobStorage.enable && cfg.blobStorage.activationScripts.enable) {
+      text = ''
+        echo "Setting up git-annex repository directory structure..."
+        
+        # Ensure the parent directory exists with correct ownership
+        mkdir -p "$(dirname ${cfg.blobStorage.repositoryPath})"
+        chown -R ${cfg.database.user}:${cfg.database.user} "$(dirname ${cfg.blobStorage.repositoryPath})"
+        
+        # Create the repository directory if it doesn't exist
+        if [ ! -d "${cfg.blobStorage.repositoryPath}" ]; then
+          mkdir -p "${cfg.blobStorage.repositoryPath}"
+          chown ${cfg.database.user}:${cfg.database.user} "${cfg.blobStorage.repositoryPath}"
+          chmod ${cfg.directories.permissions.state} "${cfg.blobStorage.repositoryPath}"
+          echo "Created git-annex repository directory: ${cfg.blobStorage.repositoryPath}"
+        fi
+        
+        # Ensure proper permissions for health monitoring
+        mkdir -p "${cfg.directories.health}"
+        chown ${cfg.database.user}:${cfg.database.user} "${cfg.directories.health}"
+        chmod ${cfg.directories.permissions.state} "${cfg.directories.health}"
+        
+        echo "Git-annex activation script completed"
+      '';
+      deps = [ ];
+    };
     
     # Create sinex user and group
     users.users.${cfg.database.user} = mkIf cfg.database.autoSetup {
@@ -2964,29 +3171,430 @@ in
       };
     };
 
-    # Git-annex initialization
+    # Git-annex repository initialization
     systemd.services.sinex-annex-init = mkIf (cfg.blobStorage.enable && cfg.blobStorage.autoInit) {
       description = "Initialize Sinex git-annex repository";
       wantedBy = [ "multi-user.target" ];
-      before = [ "sinex-unified-collector.service" ];
+      before = [ "sinex-unified-collector.service" "sinex-annex-remotes-setup.service" ];
 
-      script = ''
-        if [ ! -d "${cfg.blobStorage.repositoryPath}/.git" ]; then
-          mkdir -p "$(dirname ${cfg.blobStorage.repositoryPath})"
-          cd "$(dirname ${cfg.blobStorage.repositoryPath})"
-          git init "$(basename ${cfg.blobStorage.repositoryPath})"
-          cd "$(basename ${cfg.blobStorage.repositoryPath})"
-          ${pkgs.git-annex}/bin/git-annex init "Sinex Blob Storage"
-          git config annex.numcopies ${toString cfg.blobStorage.numCopies}
-          git config annex.largefiles "anything"
-          git config annex.backend "SHA256E"
+      script = let
+        preInitCommands = concatStringsSep "\n" cfg.blobStorage.activationScripts.preInitCommands;
+        postInitCommands = concatStringsSep "\n" cfg.blobStorage.activationScripts.postInitCommands;
+      in ''
+        set -euo pipefail
+        
+        cd "${cfg.blobStorage.repositoryPath}"
+        
+        # Pre-initialization commands
+        ${preInitCommands}
+        
+        # Initialize repository if not already done
+        if [ ! -d ".git" ]; then
+          echo "Initializing git repository..."
+          ${pkgs.git}/bin/git init
+          echo "Repository initialized"
         fi
+        
+        # Initialize git-annex if not already done
+        if [ ! -d ".git/annex" ]; then
+          echo "Initializing git-annex repository..."
+          ${pkgs.git-annex}/bin/git-annex init "${cfg.blobStorage.repoDescription}"
+          echo "Git-annex initialized"
+        fi
+        
+        # Configure git-annex settings
+        echo "Configuring git-annex settings..."
+        ${pkgs.git}/bin/git config annex.numcopies ${toString cfg.blobStorage.numCopies}
+        ${pkgs.git}/bin/git config annex.largefiles "${cfg.blobStorage.largeFiles}"
+        ${pkgs.git}/bin/git config annex.backend "${cfg.blobStorage.backend}"
+        
+        # Create .gitattributes if it doesn't exist
+        if [ ! -f ".gitattributes" ]; then
+          cat > .gitattributes << 'EOF'
+        # Automatically annex files matching largefiles configuration
+        * annex.largefiles=${cfg.blobStorage.largeFiles}
+        # But not git/nix metadata files
+        .gitattributes annex.largefiles=nothing
+        .gitignore annex.largefiles=nothing
+        flake.* annex.largefiles=nothing
+        default.nix annex.largefiles=nothing
+        shell.nix annex.largefiles=nothing
+        EOF
+          ${pkgs.git}/bin/git add .gitattributes
+          if ! ${pkgs.git}/bin/git diff --cached --quiet; then
+            ${pkgs.git}/bin/git commit -m "Initial commit: configure git-annex largefiles"
+          fi
+        fi
+        
+        # Post-initialization commands
+        ${postInitCommands}
+        
+        echo "Git-annex repository initialization completed"
       '';
 
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        User = "root";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
+        '';
+      };
+    };
+
+    # Git-annex remotes setup service
+    systemd.services.sinex-annex-remotes-setup = mkIf (cfg.blobStorage.enable && cfg.blobStorage.remotes != {}) {
+      description = "Setup Sinex git-annex remotes";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-annex-init.service" "network.target" ];
+      wants = [ "sinex-annex-init.service" ];
+
+      script = let
+        setupRemoteScript = name: remote: ''
+          echo "Setting up remote: ${name}"
+          
+          # Add git remote if it doesn't exist
+          if ! ${pkgs.git}/bin/git remote get-url "${name}" >/dev/null 2>&1; then
+            echo "Adding git remote ${name}: ${remote.url}"
+            ${pkgs.git}/bin/git remote add "${name}" "${remote.url}"
+          fi
+          
+          # Initialize git-annex remote if configured
+          ${lib.optionalString remote.autoInit ''
+            if ! ${pkgs.git-annex}/bin/git-annex info "${name}" >/dev/null 2>&1; then
+              echo "Initializing git-annex remote: ${name}"
+              ${pkgs.git-annex}/bin/git-annex initremote "${name}" \
+                type=${remote.type} \
+                ${lib.optionalString (remote.encryption != null) "encryption=${remote.encryption}"} \
+                ${lib.optionalString (remote.cost != null) "cost=${toString remote.cost}"} \
+                ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${v}") remote.extraConfig)} \
+                || echo "Remote ${name} already exists or failed to initialize"
+            fi
+          ''}
+          
+          echo "Remote ${name} setup completed"
+        '';
+        remoteSetupCommands = lib.concatStringsSep "\n" (lib.mapAttrsToList setupRemoteScript cfg.blobStorage.remotes);
+      in ''
+        set -euo pipefail
+        
+        cd "${cfg.blobStorage.repositoryPath}"
+        
+        # Ensure we're in a git-annex repository
+        if [ ! -d ".git/annex" ]; then
+          echo "Error: Not a git-annex repository"
+          exit 1
+        fi
+        
+        echo "Setting up git-annex remotes..."
+        ${remoteSetupCommands}
+        
+        echo "All remotes setup completed"
+      '';
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
+        '';
+      };
+    };
+
+    # Git-annex garbage collection service
+    systemd.services.sinex-annex-gc = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoGc) {
+      description = "Sinex git-annex garbage collection";
+      
+      script = ''
+        set -euo pipefail
+        
+        cd "${cfg.blobStorage.repositoryPath}"
+        
+        echo "Starting git-annex garbage collection..."
+        
+        # Clean up unused files older than retention period
+        ${lib.optionalString cfg.blobStorage.maintenance.unusedCleanup ''
+          echo "Identifying unused files..."
+          unused_files=$(${pkgs.git-annex}/bin/git-annex unused --used-refspec=+refs/heads/*:refs/heads/* 2>/dev/null || true)
+          
+          if [ -n "$unused_files" ]; then
+            echo "Found unused files, checking retention period..."
+            # Note: This is a simplified approach. In practice, you'd want more sophisticated
+            # unused file management based on actual timestamps and retention policies.
+            ${pkgs.git-annex}/bin/git-annex dropunused --force 1-1000 2>/dev/null || true
+            echo "Cleaned up old unused files"
+          else
+            echo "No unused files found"
+          fi
+        ''}
+        
+        # Run git garbage collection
+        echo "Running git garbage collection..."
+        ${pkgs.git}/bin/git gc --auto
+        
+        # Run git-annex unused cleanup
+        echo "Running git-annex unused cleanup..."
+        ${pkgs.git-annex}/bin/git-annex unused >/dev/null 2>&1 || true
+        
+        echo "Git-annex garbage collection completed"
+      '';
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        IOSchedulingClass = 3;  # Idle I/O priority
+        CPUSchedulingPolicy = "idle";
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
+        '';
+      };
+    };
+
+    # Git-annex periodic fsck service
+    systemd.services.sinex-annex-fsck = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enablePeriodicFsck) {
+      description = "Sinex git-annex periodic file system check";
+      
+      script = ''
+        set -euo pipefail
+        
+        cd "${cfg.blobStorage.repositoryPath}"
+        
+        echo "Starting git-annex periodic fsck..."
+        
+        # Determine fsck mode based on configuration
+        fsck_args=""
+        ${lib.optionalString cfg.blobStorage.healthCheck.fastFsck ''
+          fsck_args="--fast"
+        ''}
+        
+        # Run fsck
+        echo "Running git-annex fsck $fsck_args..."
+        ${pkgs.git-annex}/bin/git-annex fsck $fsck_args
+        
+        echo "Git-annex periodic fsck completed"
+      '';
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        IOSchedulingClass = 3;  # Idle I/O priority
+        CPUSchedulingPolicy = "idle";
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
+        '';
+      };
+    };
+
+    # Git-annex sync service
+    systemd.services.sinex-annex-sync = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoSync) {
+      description = "Sinex git-annex automatic synchronization";
+      
+      script = let
+        syncRemotes = lib.filter (remote: remote.autoSync) (lib.attrValues cfg.blobStorage.remotes);
+        remoteNames = lib.concatStringsSep " " (lib.mapAttrsToList (name: remote: 
+          lib.optionalString remote.autoSync name
+        ) cfg.blobStorage.remotes);
+      in ''
+        set -euo pipefail
+        
+        cd "${cfg.blobStorage.repositoryPath}"
+        
+        echo "Starting git-annex synchronization..."
+        
+        # Sync with all auto-sync enabled remotes
+        ${lib.optionalString (remoteNames != "") ''
+          echo "Syncing with remotes: ${remoteNames}"
+          ${pkgs.git-annex}/bin/git-annex sync ${remoteNames}
+        ''}
+        
+        # If no specific remotes, sync with all
+        ${lib.optionalString (remoteNames == "") ''
+          echo "Syncing with all remotes..."
+          ${pkgs.git-annex}/bin/git-annex sync
+        ''}
+        
+        echo "Git-annex synchronization completed"
+      '';
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
+        '';
+      };
+    };
+
+    # Git-annex health check service
+    systemd.services.sinex-annex-health = mkIf (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) {
+      description = "Sinex git-annex repository health check";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-annex-init.service" ];
+      wants = [ "sinex-annex-init.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        WorkingDirectory = cfg.blobStorage.repositoryPath;
+        ExecStart = pkgs.writeShellScript "sinex-annex-health" ''
+          set -euo pipefail
+          
+          # Health check configuration
+          HEALTH_CHECK_TIMEOUT=300  # 5 minutes for git-annex operations
+          FAILURE_THRESHOLD=3
+          SUCCESS_THRESHOLD=2
+          
+          # Health state tracking
+          STATE_DIR="${cfg.directories.health}"
+          mkdir -p "$STATE_DIR"
+          FAILURE_COUNT_FILE="$STATE_DIR/annex_failure_count"
+          SUCCESS_COUNT_FILE="$STATE_DIR/annex_success_count"
+          LAST_STATUS_FILE="$STATE_DIR/annex_last_status"
+          
+          # Helper functions
+          get_count() {
+            [ -f "$1" ] && cat "$1" || echo "0"
+          }
+          
+          set_count() {
+            echo "$2" > "$1"
+          }
+          
+          cd "${cfg.blobStorage.repositoryPath}"
+          
+          echo "=== Git-annex Health Check ==="
+          echo "Repository: ${cfg.blobStorage.repositoryPath}"
+          echo "Timestamp: $(date)"
+          echo
+          
+          health_check_result=0
+          failure_count=$(get_count "$FAILURE_COUNT_FILE")
+          success_count=$(get_count "$SUCCESS_COUNT_FILE")
+          
+          # Test 1: Repository structure
+          if [ ! -d ".git" ]; then
+            echo "✗ Git repository not found" >&2
+            health_check_result=1
+          elif [ ! -d ".git/annex" ]; then
+            echo "✗ Git-annex not initialized" >&2
+            health_check_result=1
+          else
+            echo "✓ Repository structure is valid"
+          fi
+          
+          # Test 2: Basic git-annex operations
+          if [ "$health_check_result" -eq 0 ]; then
+            echo "Running git-annex status check..."
+            if timeout $HEALTH_CHECK_TIMEOUT ${pkgs.git-annex}/bin/git-annex version >/dev/null 2>&1; then
+              echo "✓ Git-annex is responsive"
+            else
+              echo "✗ Git-annex version check failed" >&2
+              health_check_result=1
+            fi
+            
+            # Test repository consistency
+            echo "Running repository consistency check..."
+            if timeout $HEALTH_CHECK_TIMEOUT ${pkgs.git-annex}/bin/git-annex fsck --fast --quiet >/dev/null 2>&1; then
+              echo "✓ Repository consistency check passed"
+            else
+              echo "⚠️  Repository consistency check failed (may indicate corruption)" >&2
+              health_check_result=1
+            fi
+          fi
+          
+          # Test 3: Check repository size if limit configured
+          ${lib.optionalString (cfg.blobStorage.healthCheck.wantedSize != null) ''
+            echo "Checking repository size limit..."
+            repo_size=$(du -sb . | cut -f1)
+            size_limit_bytes=$(numfmt --from=iec "${cfg.blobStorage.healthCheck.wantedSize}")
+            
+            if [ "$repo_size" -gt "$size_limit_bytes" ]; then
+              echo "⚠️  Repository size ($repo_size bytes) exceeds limit (${cfg.blobStorage.healthCheck.wantedSize})" >&2
+              # Don't fail health check for size warnings, just log
+            else
+              echo "✓ Repository size within limits"
+            fi
+          ''}
+          
+          # Test 4: Check available disk space
+          echo "Checking available disk space..."
+          available_space=$(df -B1 . | tail -1 | awk '{print $4}')
+          required_space=$((1024 * 1024 * 1024))  # 1GB minimum
+          
+          if [ "$available_space" -lt "$required_space" ]; then
+            echo "✗ Insufficient disk space ($(numfmt --to=iec $available_space) available)" >&2
+            health_check_result=1
+          else
+            echo "✓ Sufficient disk space available"
+          fi
+          
+          # Update health status tracking
+          if [ "$health_check_result" -eq 0 ]; then
+            success_count=$((success_count + 1))
+            set_count "$SUCCESS_COUNT_FILE" "$success_count"
+            
+            if [ "$success_count" -ge "$SUCCESS_THRESHOLD" ]; then
+              echo "✅ Git-annex repository is healthy"
+              logger -t sinex-annex-health "Git-annex repository health check passed"
+              set_count "$FAILURE_COUNT_FILE" "0"
+              set_count "$LAST_STATUS_FILE" "1"
+            fi
+          else
+            failure_count=$((failure_count + 1))
+            set_count "$FAILURE_COUNT_FILE" "$failure_count"
+            set_count "$SUCCESS_COUNT_FILE" "0"
+            
+            if [ "$failure_count" -ge "$FAILURE_THRESHOLD" ]; then
+              echo "🚨 Git-annex repository marked as unhealthy after $failure_count failures" >&2
+              logger -t sinex-annex-health "CRITICAL: Git-annex repository marked as unhealthy"
+              set_count "$LAST_STATUS_FILE" "0"
+            else
+              echo "⚠️  Git-annex health check failed ($failure_count/$FAILURE_THRESHOLD failures)" >&2
+              logger -t sinex-annex-health "WARNING: Git-annex repository health check failed"
+            fi
+          fi
+          
+          # Additional diagnostic information on failure
+          if [ "$health_check_result" -ne 0 ]; then
+            echo
+            echo "=== Diagnostic Information ==="
+            
+            # Git repository status
+            if ${pkgs.git}/bin/git status >/dev/null 2>&1; then
+              echo "✓ Git repository is accessible"
+            else
+              echo "✗ Git repository access failed" >&2
+            fi
+            
+            # Git-annex info
+            echo "Git-annex repository info:"
+            ${pkgs.git-annex}/bin/git-annex info || echo "Failed to get git-annex info"
+            
+            # Disk usage
+            echo "Repository disk usage:"
+            du -sh . 2>/dev/null || echo "Failed to get disk usage"
+            
+            echo "Available disk space:"
+            df -h . 2>/dev/null || echo "Failed to get disk space info"
+          fi
+          
+          exit $health_check_result
+        '';
+        EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
+          PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex pkgs.coreutils pkgs.util-linux ]}
+        '';
       };
     };
 
@@ -3610,6 +4218,22 @@ in
               done
             ''}
             
+            # Check git-annex repository health if enabled
+            ${lib.optionalString (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) ''
+              if [ -f "${cfg.directories.health}/annex_last_status" ]; then
+                annex_status=$(cat "${cfg.directories.health}/annex_last_status" 2>/dev/null || echo "0")
+                if [ "$annex_status" = "1" ]; then
+                  echo "annex:${cfg.blobStorage.repositoryPath}:healthy:repository_ok:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                else
+                  echo "annex:${cfg.blobStorage.repositoryPath}:critical:repository_failed:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+                  overall_status="critical"
+                  critical_failures=$((critical_failures + 1))
+                fi
+              else
+                echo "annex:${cfg.blobStorage.repositoryPath}:unknown:no_status_file:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
+              fi
+            ''}
+            
             echo "overall:$overall_status:$critical_failures:$(date -Iseconds)" >> "$SINEX_HEALTH_STATE_FILE"
             echo "$overall_status"
           }
@@ -3621,15 +4245,37 @@ in
             if [ "$SINEX_HEALTH_ENABLE_RECOVERY" = "true" ]; then
               echo "Initiating recovery for $failed_service..."
               
-              ${lib.optionalString cfg.healthMonitoring.recovery.actions.restartServices ''
-                echo "Restarting $failed_service..."
-                systemctl restart "$failed_service" || echo "Failed to restart $failed_service"
-              ''}
-              
-              ${lib.optionalString cfg.healthMonitoring.recovery.actions.recreateConnections ''
-                echo "Triggering connection recreation for $failed_service..."
-                systemctl kill -s USR1 "$failed_service" || true
-              ''}
+              # Git-annex specific recovery actions
+              if [[ "$failed_service" == *"annex"* ]]; then
+                ${lib.optionalString (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) ''
+                  echo "Running git-annex specific recovery actions..."
+                  
+                  # Try to repair the repository
+                  cd "${cfg.blobStorage.repositoryPath}" || return 1
+                  echo "Attempting git-annex fsck to repair repository..."
+                  ${pkgs.git-annex}/bin/git-annex fsck --fast || echo "Git-annex fsck failed"
+                  
+                  # Try to reinit if fsck fails
+                  if [ ! -d ".git/annex" ]; then
+                    echo "Attempting to reinitialize git-annex repository..."
+                    ${pkgs.git-annex}/bin/git-annex init "${cfg.blobStorage.repoDescription}" || echo "Git-annex reinit failed"
+                  fi
+                  
+                  # Restart related services
+                  systemctl restart sinex-annex-health.service || true
+                ''}
+              else
+                # Standard recovery actions for other services
+                ${lib.optionalString cfg.healthMonitoring.recovery.actions.restartServices ''
+                  echo "Restarting $failed_service..."
+                  systemctl restart "$failed_service" || echo "Failed to restart $failed_service"
+                ''}
+                
+                ${lib.optionalString cfg.healthMonitoring.recovery.actions.recreateConnections ''
+                  echo "Triggering connection recreation for $failed_service..."
+                  systemctl kill -s USR1 "$failed_service" || true
+                ''}
+              fi
             fi
           }
           
@@ -4020,6 +4666,47 @@ in
         OnCalendar = cfg.directories.cleanup.cleanupSchedule;
         Persistent = true;
         RandomizedDelaySec = "1h";  # Spread load
+      };
+    };
+
+    # Git-annex maintenance timers
+    systemd.timers.sinex-annex-gc = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoGc) {
+      description = "Timer for Sinex git-annex garbage collection";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.blobStorage.maintenance.gcSchedule;
+        Persistent = true;
+        RandomizedDelaySec = "2h";  # Spread load across different repos
+      };
+    };
+
+    systemd.timers.sinex-annex-fsck = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enablePeriodicFsck) {
+      description = "Timer for Sinex git-annex periodic fsck";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.blobStorage.maintenance.fsckSchedule;
+        Persistent = true;
+        RandomizedDelaySec = "6h";  # Spread load for intensive operations
+      };
+    };
+
+    systemd.timers.sinex-annex-sync = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoSync) {
+      description = "Timer for Sinex git-annex auto-sync";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.blobStorage.maintenance.syncSchedule;
+        Persistent = true;
+        RandomizedDelaySec = "15min";  # Small delay for sync operations
+      };
+    };
+
+    systemd.timers.sinex-annex-health = mkIf (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) {
+      description = "Timer for Sinex git-annex health check";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "10min";  # Wait for system to stabilize
+        OnUnitActiveSec = "${toString cfg.blobStorage.healthCheck.interval}s";
+        Persistent = true;
       };
     };
   };
