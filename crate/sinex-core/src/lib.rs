@@ -6,7 +6,7 @@ pub mod validation;
 
 pub use event::{RawEvent, RawEventBuilder};
 pub use event_source_context::EventSourceContext;
-pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth};
+pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
 pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
 
 use serde::{Deserialize, Serialize};

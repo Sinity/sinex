@@ -2889,11 +2889,6 @@ in
         description = "Directory for dead letter queue files";
       };
 
-      health = mkOption {
-        type = types.path;
-        default = "/var/lib/sinex/health";
-        description = "Directory for health check state files";
-      };
 
       monitoring = mkOption {
         type = types.path;
@@ -4136,8 +4131,6 @@ in
               "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.path}"; then
               echo "✓ Collector startup health check passed"
               
-              # Update health state file
-              echo "startup_healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
               
               exit 0
             else
@@ -4385,8 +4378,6 @@ in
               "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.path}"; then
               echo "✓ Worker startup health check passed"
               
-              # Update health state file
-              echo "startup_healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
               
               exit 0
             else

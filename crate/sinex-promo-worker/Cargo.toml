@@ -16,6 +16,7 @@ name = "sinex-promo-worker"
 path = "src/main.rs"
 
 [dependencies]
+sinex-core = { path = "../sinex-core" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-db = { path = "../sinex-db" }
 sinex-worker = { path = "../sinex-worker" }

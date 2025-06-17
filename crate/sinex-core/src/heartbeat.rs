@@ -298,6 +298,17 @@ pub struct HeartbeatEmitter {
     pool: PgPool,
     component_name: String,
     interval_seconds: u64,
+    metrics_provider: Option<Box<dyn MetricsProvider + Send + Sync>>,
+}
+
+/// Trait for components to provide custom metrics to heartbeats
+pub trait MetricsProvider {
+    fn get_events_processed_last_minute(&self) -> u32;
+    fn get_errors_last_hour(&self) -> u32;
+    fn get_last_error_message(&self) -> Option<String>;
+    fn get_custom_metrics(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
 }
 
 impl HeartbeatEmitter {
@@ -306,6 +317,21 @@ impl HeartbeatEmitter {
             pool,
             component_name,
             interval_seconds,
+            metrics_provider: None,
+        }
+    }
+    
+    pub fn with_metrics_provider<T: MetricsProvider + Send + Sync + 'static>(
+        pool: PgPool, 
+        component_name: String, 
+        interval_seconds: u64, 
+        provider: T
+    ) -> Self {
+        Self {
+            pool,
+            component_name,
+            interval_seconds,
+            metrics_provider: Some(Box::new(provider)),
         }
     }
     
@@ -316,11 +342,51 @@ impl HeartbeatEmitter {
         loop {
             interval.tick().await;
             
-            if let Err(e) = ComponentHeartbeat::collect_and_emit(&self.pool, &self.component_name).await {
+            if let Err(e) = self.collect_and_emit_with_provider().await {
                 eprintln!("Failed to emit heartbeat for {}: {}", self.component_name, e);
                 // Continue running even on errors
             }
         }
+    }
+    
+    /// Collect metrics and emit heartbeat using the optional metrics provider
+    async fn collect_and_emit_with_provider(&self) -> Result<(), HeartbeatError> {
+        let mut heartbeat = ComponentHeartbeat::collect_metrics(&self.component_name).await?;
+        
+        // Override component-specific metrics if provider is available
+        if let Some(ref provider) = self.metrics_provider {
+            heartbeat.events_processed_last_minute = provider.get_events_processed_last_minute();
+            heartbeat.errors_last_hour = provider.get_errors_last_hour();
+            heartbeat.last_error_message = provider.get_last_error_message();
+            heartbeat.metrics = provider.get_custom_metrics();
+        }
+        
+        // Insert the heartbeat
+        sqlx::query!(
+            r#"
+            INSERT INTO component_heartbeats 
+            (id, component_name, timestamp, status, uptime_seconds, memory_usage_mb,
+             cpu_usage_percent, events_processed_last_minute, errors_last_hour, 
+             last_error_message, binary_version, git_hash, build_time, metrics)
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            "#,
+            sinex_ulid::Ulid::new().to_string() as _,
+            heartbeat.component_name,
+            heartbeat.timestamp,
+            heartbeat.status.to_string(),
+            heartbeat.uptime_seconds as i64,
+            heartbeat.memory_usage_mb as i32,
+            heartbeat.cpu_usage_percent as f64,
+            heartbeat.events_processed_last_minute as i32,
+            heartbeat.errors_last_hour as i32,
+            heartbeat.last_error_message,
+            heartbeat.binary_version,
+            heartbeat.git_hash,
+            heartbeat.build_time,
+            heartbeat.metrics
+        ).execute(&self.pool).await?;
+        
+        Ok(())
     }
 }
 
