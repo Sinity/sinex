@@ -634,6 +634,308 @@ in
         description = "Store metrics as events in database (in addition to Prometheus)";
       };
     };
+
+    resourceLimits = {
+      memory = {
+        collectorMax = mkOption {
+          type = types.nullOr types.str;
+          default = "2G";
+          description = "Maximum memory for unified collector (MemoryMax)";
+        };
+
+        collectorHigh = mkOption {
+          type = types.nullOr types.str;
+          default = "1.5G";
+          description = "Memory pressure threshold for unified collector (MemoryHigh)";
+        };
+
+        workerMax = mkOption {
+          type = types.nullOr types.str;
+          default = "1G";
+          description = "Maximum memory for promotion worker (MemoryMax)";
+        };
+
+        workerHigh = mkOption {
+          type = types.nullOr types.str;
+          default = "750M";
+          description = "Memory pressure threshold for promotion worker (MemoryHigh)";
+        };
+
+        migrateMax = mkOption {
+          type = types.nullOr types.str;
+          default = "512M";
+          description = "Maximum memory for database migrations (MemoryMax)";
+        };
+      };
+
+      cpu = {
+        collectorQuota = mkOption {
+          type = types.nullOr types.str;
+          default = "200%";
+          description = "CPU quota for unified collector (CPUQuota)";
+        };
+
+        workerQuota = mkOption {
+          type = types.nullOr types.str;
+          default = "150%";
+          description = "CPU quota for promotion worker (CPUQuota)";
+        };
+
+        migrateQuota = mkOption {
+          type = types.nullOr types.str;
+          default = "100%";
+          description = "CPU quota for database migrations (CPUQuota)";
+        };
+
+        collectorWeight = mkOption {
+          type = types.nullOr types.int;
+          default = 500;
+          description = "CPU scheduling weight for unified collector";
+        };
+
+        workerWeight = mkOption {
+          type = types.nullOr types.int;
+          default = 400;
+          description = "CPU scheduling weight for promotion worker";
+        };
+      };
+
+      io = {
+        collectorReadBandwidth = mkOption {
+          type = types.nullOr types.str;
+          default = "100M";
+          description = "IO read bandwidth limit for unified collector";
+        };
+
+        collectorWriteBandwidth = mkOption {
+          type = types.nullOr types.str;
+          default = "50M";
+          description = "IO write bandwidth limit for unified collector";
+        };
+
+        workerReadBandwidth = mkOption {
+          type = types.nullOr types.str;
+          default = "50M";
+          description = "IO read bandwidth limit for promotion worker";
+        };
+
+        workerWriteBandwidth = mkOption {
+          type = types.nullOr types.str;
+          default = "25M";
+          description = "IO write bandwidth limit for promotion worker";
+        };
+
+        collectorIOPS = mkOption {
+          type = types.nullOr types.int;
+          default = 1000;
+          description = "IOPS limit for unified collector";
+        };
+
+        workerIOPS = mkOption {
+          type = types.nullOr types.int;
+          default = 500;
+          description = "IOPS limit for promotion worker";
+        };
+      };
+
+      fileDescriptors = {
+        collectorSoft = mkOption {
+          type = types.nullOr types.int;
+          default = 8192;
+          description = "Soft limit for file descriptors (unified collector)";
+        };
+
+        collectorHard = mkOption {
+          type = types.nullOr types.int;
+          default = 16384;
+          description = "Hard limit for file descriptors (unified collector)";
+        };
+
+        workerSoft = mkOption {
+          type = types.nullOr types.int;
+          default = 4096;
+          description = "Soft limit for file descriptors (promotion worker)";
+        };
+
+        workerHard = mkOption {
+          type = types.nullOr types.int;
+          default = 8192;
+          description = "Hard limit for file descriptors (promotion worker)";
+        };
+      };
+
+      restart = {
+        collectorBurst = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum restart attempts within interval (StartLimitBurst)";
+        };
+
+        collectorInterval = mkOption {
+          type = types.str;
+          default = "10min";
+          description = "Restart rate limiting interval (StartLimitIntervalSec)";
+        };
+
+        workerBurst = mkOption {
+          type = types.int;
+          default = 3;
+          description = "Maximum restart attempts within interval for worker";
+        };
+
+        workerInterval = mkOption {
+          type = types.str;
+          default = "5min";
+          description = "Restart rate limiting interval for worker";
+        };
+
+        enableRateLimiting = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable restart rate limiting for all services";
+        };
+      };
+
+      enableResourceLimits = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable all systemd resource limits";
+      };
+    };
+
+    queueManagement = {
+      monitoring = {
+        enableDepthMonitoring = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable queue depth monitoring";
+        };
+
+        maxQueueDepth = mkOption {
+          type = types.int;
+          default = 10000;
+          description = "Maximum allowed queue depth before alerting";
+        };
+
+        queueDepthWarningThreshold = mkOption {
+          type = types.int;
+          default = 5000;
+          description = "Queue depth warning threshold";
+        };
+
+        enableProcessingTimeMonitoring = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Monitor event processing time";
+        };
+
+        maxProcessingTime = mkOption {
+          type = types.str;
+          default = "30s";
+          description = "Maximum allowed processing time per event";
+        };
+
+        enableBackpressureHandling = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable backpressure handling when queues are full";
+        };
+      };
+
+      limits = {
+        maxConcurrentWorkers = mkOption {
+          type = types.int;
+          default = 4;
+          description = "Maximum concurrent worker processes";
+        };
+
+        maxEventsPerBatch = mkOption {
+          type = types.int;
+          default = 100;
+          description = "Maximum events processed per batch";
+        };
+
+        batchTimeout = mkOption {
+          type = types.str;
+          default = "5s";
+          description = "Timeout for batch processing";
+        };
+
+        enableCircuitBreaker = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable circuit breaker for queue processing";
+        };
+
+        circuitBreakerThreshold = mkOption {
+          type = types.int;
+          default = 10;
+          description = "Number of failures before opening circuit breaker";
+        };
+
+        circuitBreakerTimeout = mkOption {
+          type = types.str;
+          default = "30s";
+          description = "Circuit breaker timeout before attempting recovery";
+        };
+      };
+    };
+
+    diskMonitoring = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable disk space monitoring";
+      };
+
+      dlqPath = mkOption {
+        type = types.path;
+        default = cfg.unifiedCollector.dlq.filePath;
+        description = "Path to monitor for DLQ disk usage";
+      };
+
+      blobStoragePath = mkOption {
+        type = types.path;
+        default = cfg.blobStorage.repositoryPath;
+        description = "Path to monitor for blob storage disk usage";
+      };
+
+      warningThreshold = mkOption {
+        type = types.int;
+        default = 80;
+        description = "Disk usage warning threshold (percentage)";
+      };
+
+      criticalThreshold = mkOption {
+        type = types.int;
+        default = 90;
+        description = "Disk usage critical threshold (percentage)";
+      };
+
+      maxDlqSize = mkOption {
+        type = types.str;
+        default = "1G";
+        description = "Maximum size for DLQ directory";
+      };
+
+      maxBlobStorageSize = mkOption {
+        type = types.str;
+        default = "10G";
+        description = "Maximum size for blob storage";
+      };
+
+      cleanupOldFiles = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable automatic cleanup of old files";
+      };
+
+      retentionDays = mkOption {
+        type = types.int;
+        default = 30;
+        description = "Number of days to retain DLQ files";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -699,7 +1001,16 @@ in
         ExecStart = migrateDbScript;
         User = "postgres";
         Environment = "PATH=${pkgs.postgresql}/bin:${pkgs.sqlx-cli}/bin";
-      };
+        
+        # Resource limits for migration process
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        MemoryMax = mkIf (cfg.resourceLimits.memory.migrateMax != null) cfg.resourceLimits.memory.migrateMax;
+        CPUQuota = mkIf (cfg.resourceLimits.cpu.migrateQuota != null) cfg.resourceLimits.cpu.migrateQuota;
+        
+        # Timeout for long-running migrations
+        TimeoutStartSec = "600s";
+        TimeoutStopSec = "30s";
+      });
     };
 
     # Atuin database initialization service
@@ -738,6 +1049,14 @@ in
         RUST_LOG = cfg.unifiedCollector.logLevel;
         DATABASE_URL = cfg.database.url;
         SINEX_CONFIG = collectorConfigFile;
+        
+        # Queue management environment variables
+        SINEX_MAX_QUEUE_DEPTH = toString cfg.queueManagement.monitoring.maxQueueDepth;
+        SINEX_QUEUE_WARNING_THRESHOLD = toString cfg.queueManagement.monitoring.queueDepthWarningThreshold;
+        SINEX_MAX_PROCESSING_TIME = cfg.queueManagement.monitoring.maxProcessingTime;
+        SINEX_MAX_CONCURRENT_WORKERS = toString cfg.queueManagement.limits.maxConcurrentWorkers;
+        SINEX_BATCH_SIZE = toString cfg.queueManagement.limits.maxEventsPerBatch;
+        SINEX_BATCH_TIMEOUT = cfg.queueManagement.limits.batchTimeout;
       };
 
       serviceConfig = {
@@ -761,7 +1080,51 @@ in
 
         # Capability for monitoring
         AmbientCapabilities = "CAP_DAC_READ_SEARCH";
-      };
+        
+        # Process limits
+        TasksMax = "256";
+        
+        # Timeout settings
+        TimeoutStartSec = "60s";
+        TimeoutStopSec = "30s";
+        TimeoutAbortSec = "10s";
+        
+        # Watchdog settings for health monitoring
+        WatchdogSec = "30s";
+        NotifyAccess = "main";
+        
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Memory limits
+        MemoryMax = mkIf (cfg.resourceLimits.memory.collectorMax != null) cfg.resourceLimits.memory.collectorMax;
+        MemoryHigh = mkIf (cfg.resourceLimits.memory.collectorHigh != null) cfg.resourceLimits.memory.collectorHigh;
+        MemorySwapMax = "0";  # Disable swap for performance
+        
+        # CPU limits
+        CPUQuota = mkIf (cfg.resourceLimits.cpu.collectorQuota != null) cfg.resourceLimits.cpu.collectorQuota;
+        CPUWeight = mkIf (cfg.resourceLimits.cpu.collectorWeight != null) cfg.resourceLimits.cpu.collectorWeight;
+        
+        # IO limits
+        IOReadBandwidthMax = mkIf (cfg.resourceLimits.io.collectorReadBandwidth != null) 
+          "/ ${cfg.resourceLimits.io.collectorReadBandwidth}";
+        IOWriteBandwidthMax = mkIf (cfg.resourceLimits.io.collectorWriteBandwidth != null) 
+          "/ ${cfg.resourceLimits.io.collectorWriteBandwidth}";
+        IOReadIOPSMax = mkIf (cfg.resourceLimits.io.collectorIOPS != null) 
+          "/ ${toString cfg.resourceLimits.io.collectorIOPS}";
+        IOWriteIOPSMax = mkIf (cfg.resourceLimits.io.collectorIOPS != null) 
+          "/ ${toString cfg.resourceLimits.io.collectorIOPS}";
+        
+        # File descriptor limits
+        LimitNOFILE = mkIf (cfg.resourceLimits.fileDescriptors.collectorHard != null) 
+          "${toString cfg.resourceLimits.fileDescriptors.collectorSoft}:${toString cfg.resourceLimits.fileDescriptors.collectorHard}";
+        
+        # Process and thread limits
+        LimitNPROC = "1024";
+        
+      }) // (optionalAttrs (cfg.resourceLimits.restart.enableRateLimiting) {
+        # Restart rate limiting
+        StartLimitBurst = cfg.resourceLimits.restart.collectorBurst;
+        StartLimitIntervalSec = cfg.resourceLimits.restart.collectorInterval;
+      });
     };
 
     # Promotion Worker service
@@ -777,6 +1140,13 @@ in
       environment = {
         RUST_LOG = "info";
         DATABASE_URL = cfg.database.url;
+        
+        # Worker-specific queue management settings
+        SINEX_WORKER_POLL_INTERVAL = toString cfg.promoWorker.pollInterval;
+        SINEX_WORKER_BATCH_SIZE = toString cfg.promoWorker.batchSize;
+        SINEX_WORKER_MAX_PROCESSING_TIME = cfg.queueManagement.monitoring.maxProcessingTime;
+        SINEX_WORKER_CIRCUIT_BREAKER_THRESHOLD = toString cfg.queueManagement.limits.circuitBreakerThreshold;
+        SINEX_WORKER_CIRCUIT_BREAKER_TIMEOUT = cfg.queueManagement.limits.circuitBreakerTimeout;
       };
 
       serviceConfig = {
@@ -792,7 +1162,51 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         NoNewPrivileges = true;
-      };
+        
+        # Process limits
+        TasksMax = "128";
+        
+        # Timeout settings
+        TimeoutStartSec = "30s";
+        TimeoutStopSec = "15s";
+        TimeoutAbortSec = "5s";
+        
+        # Watchdog for worker health
+        WatchdogSec = "60s";
+        NotifyAccess = "main";
+        
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Memory limits
+        MemoryMax = mkIf (cfg.resourceLimits.memory.workerMax != null) cfg.resourceLimits.memory.workerMax;
+        MemoryHigh = mkIf (cfg.resourceLimits.memory.workerHigh != null) cfg.resourceLimits.memory.workerHigh;
+        MemorySwapMax = "0";
+        
+        # CPU limits
+        CPUQuota = mkIf (cfg.resourceLimits.cpu.workerQuota != null) cfg.resourceLimits.cpu.workerQuota;
+        CPUWeight = mkIf (cfg.resourceLimits.cpu.workerWeight != null) cfg.resourceLimits.cpu.workerWeight;
+        
+        # IO limits
+        IOReadBandwidthMax = mkIf (cfg.resourceLimits.io.workerReadBandwidth != null) 
+          "/ ${cfg.resourceLimits.io.workerReadBandwidth}";
+        IOWriteBandwidthMax = mkIf (cfg.resourceLimits.io.workerWriteBandwidth != null) 
+          "/ ${cfg.resourceLimits.io.workerWriteBandwidth}";
+        IOReadIOPSMax = mkIf (cfg.resourceLimits.io.workerIOPS != null) 
+          "/ ${toString cfg.resourceLimits.io.workerIOPS}";
+        IOWriteIOPSMax = mkIf (cfg.resourceLimits.io.workerIOPS != null) 
+          "/ ${toString cfg.resourceLimits.io.workerIOPS}";
+        
+        # File descriptor limits
+        LimitNOFILE = mkIf (cfg.resourceLimits.fileDescriptors.workerHard != null) 
+          "${toString cfg.resourceLimits.fileDescriptors.workerSoft}:${toString cfg.resourceLimits.fileDescriptors.workerHard}";
+        
+        # Process limits
+        LimitNPROC = "512";
+        
+      }) // (optionalAttrs (cfg.resourceLimits.restart.enableRateLimiting) {
+        # Restart rate limiting
+        StartLimitBurst = cfg.resourceLimits.restart.workerBurst;
+        StartLimitIntervalSec = cfg.resourceLimits.restart.workerInterval;
+      });
     };
 
     # Git-annex initialization
@@ -864,9 +1278,387 @@ in
       fi
     '';
 
-    # DLQ directory
+    # DLQ directory and monitoring setup
     systemd.tmpfiles.rules = [
       "d ${cfg.unifiedCollector.dlq.filePath} 0755 sinex sinex"
-    ];
+      "d /var/lib/sinex/monitoring 0755 sinex sinex"
+      "d /var/log/sinex 0755 sinex sinex"
+    ] ++ optional cfg.blobStorage.enable 
+      "d ${cfg.blobStorage.repositoryPath} 0755 sinex sinex";
+
+    # Disk space monitoring service
+    systemd.services.sinex-disk-monitor = mkIf cfg.diskMonitoring.enable {
+      description = "Sinex Disk Space Monitor";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-unified-collector.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-disk-monitor" ''
+          set -euo pipefail
+          
+          # Function to check disk usage and log warnings
+          check_disk_usage() {
+            local path="$1"
+            local name="$2"
+            local warning_threshold=${toString cfg.diskMonitoring.warningThreshold}
+            local critical_threshold=${toString cfg.diskMonitoring.criticalThreshold}
+            
+            if [ ! -d "$path" ]; then
+              echo "Warning: Directory $path does not exist" >&2
+              return 0
+            fi
+            
+            local usage=$(df "$path" | awk 'NR==2 {print $5}' | sed 's/%//')
+            
+            if [ "$usage" -ge "$critical_threshold" ]; then
+              echo "CRITICAL: $name disk usage at $usage% (path: $path)" >&2
+              logger -t sinex-disk-monitor "CRITICAL: $name disk usage at $usage%"
+              return 1
+            elif [ "$usage" -ge "$warning_threshold" ]; then
+              echo "WARNING: $name disk usage at $usage% (path: $path)" >&2
+              logger -t sinex-disk-monitor "WARNING: $name disk usage at $usage%"
+            else
+              echo "OK: $name disk usage at $usage% (path: $path)"
+            fi
+            
+            return 0
+          }
+          
+          # Function to check directory size limits
+          check_directory_size() {
+            local path="$1"
+            local name="$2"
+            local max_size="$3"
+            
+            if [ ! -d "$path" ]; then
+              return 0
+            fi
+            
+            local current_size=$(du -sb "$path" | cut -f1)
+            local max_bytes=$(echo "$max_size" | ${pkgs.gnused}/bin/sed 's/G/*1024*1024*1024/g; s/M/*1024*1024/g; s/K/*1024/g' | bc)
+            
+            if [ "$current_size" -gt "$max_bytes" ]; then
+              echo "WARNING: $name directory size ($current_size bytes) exceeds limit ($max_size)" >&2
+              logger -t sinex-disk-monitor "WARNING: $name directory size exceeds limit"
+              
+              ${optionalString cfg.diskMonitoring.cleanupOldFiles ''
+                if [ "$name" = "DLQ" ]; then
+                  echo "Cleaning up old DLQ files older than ${toString cfg.diskMonitoring.retentionDays} days"
+                  find "$path" -type f -mtime +${toString cfg.diskMonitoring.retentionDays} -delete || true
+                fi
+              ''}
+            fi
+          }
+          
+          # Check disk usage for key directories
+          exit_code=0
+          
+          check_disk_usage "${cfg.diskMonitoring.dlqPath}" "DLQ" || exit_code=1
+          
+          ${optionalString cfg.blobStorage.enable ''
+            check_disk_usage "${cfg.diskMonitoring.blobStoragePath}" "Blob Storage" || exit_code=1
+          ''}
+          
+          # Check directory size limits
+          check_directory_size "${cfg.diskMonitoring.dlqPath}" "DLQ" "${cfg.diskMonitoring.maxDlqSize}"
+          
+          ${optionalString cfg.blobStorage.enable ''
+            check_directory_size "${cfg.diskMonitoring.blobStoragePath}" "Blob Storage" "${cfg.diskMonitoring.maxBlobStorageSize}"
+          ''}
+          
+          exit $exit_code
+        '';
+      };
+    };
+
+    # Timer for regular disk monitoring
+    systemd.timers.sinex-disk-monitor = mkIf cfg.diskMonitoring.enable {
+      description = "Timer for Sinex Disk Space Monitor";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "5min";
+        OnUnitActiveSec = "15min";
+        Persistent = true;
+      };
+    };
+
+    # Queue depth monitoring service
+    systemd.services.sinex-queue-monitor = mkIf cfg.queueManagement.monitoring.enableDepthMonitoring {
+      description = "Sinex Queue Depth Monitor";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" "sinex-migrate.service" ];
+      requires = [ "postgresql.service" ];
+      
+      environment = {
+        DATABASE_URL = cfg.database.url;
+        RUST_LOG = "info";
+      };
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-queue-monitor" ''
+          set -euo pipefail
+          
+          # Query promotion queue depth
+          queue_depth=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
+            SELECT COUNT(*) FROM sinex_schemas.promotion_queue;
+          " | tr -d ' ')
+          
+          warning_threshold=${toString cfg.queueManagement.monitoring.queueDepthWarningThreshold}
+          max_threshold=${toString cfg.queueManagement.monitoring.maxQueueDepth}
+          
+          echo "Current queue depth: $queue_depth"
+          
+          if [ "$queue_depth" -ge "$max_threshold" ]; then
+            echo "CRITICAL: Queue depth ($queue_depth) exceeds maximum ($max_threshold)" >&2
+            logger -t sinex-queue-monitor "CRITICAL: Queue depth exceeds maximum"
+            exit 1
+          elif [ "$queue_depth" -ge "$warning_threshold" ]; then
+            echo "WARNING: Queue depth ($queue_depth) exceeds warning threshold ($warning_threshold)" >&2
+            logger -t sinex-queue-monitor "WARNING: Queue depth exceeds warning threshold"
+          else
+            echo "OK: Queue depth within normal limits"
+          fi
+          
+          # Check for stuck events (processing for too long)
+          stuck_events=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
+            SELECT COUNT(*) FROM sinex_schemas.promotion_queue 
+            WHERE processing_started_at IS NOT NULL 
+            AND processing_started_at < NOW() - INTERVAL '${cfg.queueManagement.monitoring.maxProcessingTime}';
+          " | tr -d ' ')
+          
+          if [ "$stuck_events" -gt "0" ]; then
+            echo "WARNING: Found $stuck_events events stuck in processing" >&2
+            logger -t sinex-queue-monitor "WARNING: Found stuck events in processing"
+          fi
+        '';
+      };
+    };
+
+    # Timer for queue monitoring
+    systemd.timers.sinex-queue-monitor = mkIf cfg.queueManagement.monitoring.enableDepthMonitoring {
+      description = "Timer for Sinex Queue Monitor";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "1min";
+        Persistent = true;
+      };
+    };
+
+    # Resource monitoring and alerting service
+    systemd.services.sinex-resource-monitor = mkIf cfg.resourceLimits.enableResourceLimits {
+      description = "Sinex Resource Usage Monitor";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sinex-unified-collector.service" "sinex-promo-worker.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = "root";  # Need root to read all process info
+        ExecStart = pkgs.writeShellScript "sinex-resource-monitor" ''
+          set -euo pipefail
+          
+          # Function to check memory usage of a service
+          check_service_memory() {
+            local service="$1"
+            local limit="$2"
+            
+            if ! systemctl is-active "$service" >/dev/null 2>&1; then
+              echo "Service $service is not active"
+              return 0
+            fi
+            
+            local pid=$(systemctl show "$service" --property MainPID --value)
+            if [ "$pid" = "0" ] || [ -z "$pid" ]; then
+              echo "Could not determine PID for $service"
+              return 0
+            fi
+            
+            # Get memory usage in MB
+            local memory_kb=$(ps -o rss= -p "$pid" | tr -d ' ' || echo "0")
+            local memory_mb=$((memory_kb / 1024))
+            
+            echo "$service memory usage: $memory_mb MB (PID: $pid)"
+            
+            # Parse limit and convert to MB for comparison
+            if [ -n "$limit" ]; then
+              local limit_mb
+              case "$limit" in
+                *G) limit_mb=$((''${limit%G} * 1024)) ;;
+                *M) limit_mb=''${limit%M} ;;
+                *) limit_mb=0 ;;
+              esac
+              
+              if [ "$limit_mb" -gt 0 ] && [ "$memory_mb" -gt "$((limit_mb * 80 / 100))" ]; then
+                echo "WARNING: $service using $memory_mb MB, approaching limit of $limit" >&2
+                logger -t sinex-resource-monitor "WARNING: $service memory usage high"
+              fi
+            fi
+          }
+          
+          # Function to check CPU usage
+          check_service_cpu() {
+            local service="$1"
+            
+            if ! systemctl is-active "$service" >/dev/null 2>&1; then
+              return 0
+            fi
+            
+            local pid=$(systemctl show "$service" --property MainPID --value)
+            if [ "$pid" = "0" ] || [ -z "$pid" ]; then
+              return 0
+            fi
+            
+            # Get CPU percentage (this is a simple check)
+            local cpu_percent=$(ps -o %cpu= -p "$pid" | tr -d ' ' || echo "0")
+            echo "$service CPU usage: $cpu_percent%"
+            
+            # Alert if CPU usage is consistently high (>80%)
+            if (( $(echo "$cpu_percent > 80" | bc -l) )); then
+              echo "WARNING: $service high CPU usage: $cpu_percent%" >&2
+              logger -t sinex-resource-monitor "WARNING: $service high CPU usage"
+            fi
+          }
+          
+          echo "=== Sinex Resource Monitor Report ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Check collector resources
+          if systemctl is-enabled sinex-unified-collector >/dev/null 2>&1; then
+            echo "--- Unified Collector ---"
+            check_service_memory "sinex-unified-collector" "${cfg.resourceLimits.memory.collectorMax}"
+            check_service_cpu "sinex-unified-collector"
+            echo
+          fi
+          
+          # Check worker resources  
+          if systemctl is-enabled sinex-promo-worker >/dev/null 2>&1; then
+            echo "--- Promotion Worker ---"
+            check_service_memory "sinex-promo-worker" "${cfg.resourceLimits.memory.workerMax}"
+            check_service_cpu "sinex-promo-worker"
+            echo
+          fi
+          
+          # Check service restart counts
+          echo "--- Service Restart Counts ---"
+          for service in sinex-unified-collector sinex-promo-worker; do
+            if systemctl is-enabled "$service" >/dev/null 2>&1; then
+              local restart_count=$(systemctl show "$service" --property NRestarts --value)
+              echo "$service restarts: $restart_count"
+              
+              if [ "$restart_count" -gt 5 ]; then
+                echo "WARNING: $service has restarted $restart_count times" >&2
+                logger -t sinex-resource-monitor "WARNING: $service restart count high"
+              fi
+            fi
+          done
+          
+          echo "=== End Report ==="
+        '';
+      };
+    };
+
+    # Timer for resource monitoring
+    systemd.timers.sinex-resource-monitor = mkIf cfg.resourceLimits.enableResourceLimits {
+      description = "Timer for Sinex Resource Monitor";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "5min";
+        OnUnitActiveSec = "10min";
+        Persistent = true;
+      };
+    };
+
+    # Healthcheck service that aggregates all monitoring
+    systemd.services.sinex-healthcheck = {
+      description = "Sinex System Health Check";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-healthcheck" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Health Check ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          exit_code=0
+          
+          # Check service status
+          echo "--- Service Status ---"
+          for service in sinex-unified-collector sinex-promo-worker; do
+            if systemctl is-enabled "$service" >/dev/null 2>&1; then
+              if systemctl is-active "$service" >/dev/null 2>&1; then
+                echo "✓ $service: ACTIVE"
+              else
+                echo "✗ $service: INACTIVE" >&2
+                exit_code=1
+              fi
+            fi
+          done
+          echo
+          
+          # Check database connectivity
+          echo "--- Database Connectivity ---"
+          if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; then
+            echo "✓ PostgreSQL: CONNECTED"
+            
+            # Test database query
+            if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${cfg.database.url}" >/dev/null 2>&1; then
+              echo "✓ Sinex Database: ACCESSIBLE"
+            else
+              echo "✗ Sinex Database: QUERY FAILED" >&2
+              exit_code=1
+            fi
+          else
+            echo "✗ PostgreSQL: DISCONNECTED" >&2
+            exit_code=1
+          fi
+          echo
+          
+          # Check disk space for critical paths
+          echo "--- Disk Space ---"
+          for path in "${cfg.unifiedCollector.dlq.filePath}" ${optionalString cfg.blobStorage.enable "\"${cfg.blobStorage.repositoryPath}\""}; do
+            if [ -d "$path" ]; then
+              local usage=$(df "$path" | awk 'NR==2 {print $5}' | sed 's/%//')
+              if [ "$usage" -lt "${toString cfg.diskMonitoring.criticalThreshold}" ]; then
+                echo "✓ $path: $usage% used"
+              else
+                echo "✗ $path: $usage% used (CRITICAL)" >&2
+                exit_code=1
+              fi
+            fi
+          done
+          echo
+          
+          if [ $exit_code -eq 0 ]; then
+            echo "🎉 Overall Status: HEALTHY"
+          else
+            echo "⚠️  Overall Status: DEGRADED" >&2
+          fi
+          
+          exit $exit_code
+        '';
+      };
+    };
+
+    # Timer for health checks
+    systemd.timers.sinex-healthcheck = {
+      description = "Timer for Sinex Health Check";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "1min";
+        OnUnitActiveSec = "5min";
+        Persistent = true;
+      };
+    };
   };
 }
