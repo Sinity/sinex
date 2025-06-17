@@ -3555,6 +3555,60 @@ in
         assertion = (lib.length configValidation.validationReport.malformedEvents) == 0;
         message = "Malformed event types detected: ${lib.concatStringsSep ", " configValidation.validationReport.malformedEvents}";
       }
+
+      # Service integration consistency assertions
+      {
+        assertion = !cfg.unifiedCollector.enable || !cfg.unifiedCollector.healthCheck.enable || cfg.unifiedCollector.healthCheck.port != cfg.database.port;
+        message = "Unified collector health check port cannot conflict with database port (collector: ${toString cfg.unifiedCollector.healthCheck.port}, database: ${toString cfg.database.port})";
+      }
+      {
+        assertion = !cfg.promoWorker.enable || !cfg.promoWorker.healthCheck.enable || cfg.promoWorker.healthCheck.port != cfg.database.port;
+        message = "Promotion worker health check port cannot conflict with database port (worker: ${toString cfg.promoWorker.healthCheck.port}, database: ${toString cfg.database.port})";
+      }
+      {
+        assertion = !cfg.healthMonitoring.enable || cfg.healthMonitoring.coordinatorPort != cfg.database.port;
+        message = "Health coordinator port cannot conflict with database port (coordinator: ${toString cfg.healthMonitoring.coordinatorPort}, database: ${toString cfg.database.port})";
+      }
+      
+      # Resource limits and health checks consistency
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || !cfg.unifiedCollector.enable || !cfg.unifiedCollector.healthCheck.enable || cfg.unifiedCollector.healthCheck.timeout * 1000 < (cfg.errorHandling.timeouts.healthCheck * 1000);
+        message = "Unified collector health check timeout (${toString cfg.unifiedCollector.healthCheck.timeout}s) must be less than error handling health check timeout (${toString cfg.errorHandling.timeouts.healthCheck}s)";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || !cfg.promoWorker.enable || !cfg.promoWorker.healthCheck.enable || cfg.promoWorker.healthCheck.timeout * 1000 < (cfg.errorHandling.timeouts.healthCheck * 1000);
+        message = "Promotion worker health check timeout (${toString cfg.promoWorker.healthCheck.timeout}s) must be less than error handling health check timeout (${toString cfg.errorHandling.timeouts.healthCheck}s)";
+      }
+      
+      # Service dependency validation
+      {
+        assertion = !cfg.blobStorage.enable || !cfg.blobStorage.autoInit || lib.hasPrefix "/" cfg.blobStorage.repositoryPath;
+        message = "Git-annex repository path must be absolute when auto-initialization is enabled (got '${cfg.blobStorage.repositoryPath}')";
+      }
+      {
+        assertion = !cfg.blobStorage.enable || cfg.blobStorage.repositoryPath != cfg.directories.state && cfg.blobStorage.repositoryPath != cfg.directories.runtime;
+        message = "Git-annex repository path cannot overlap with system state or runtime directories";
+      }
+      
+      # Health monitoring dependencies consistency
+      {
+        assertion = !cfg.healthMonitoring.enable || (lib.length cfg.healthMonitoring.dependencies.criticalServices) > 0;
+        message = "Health monitoring requires at least one critical service to monitor";
+      }
+      {
+        assertion = !cfg.healthMonitoring.enable || cfg.healthMonitoring.aggregationInterval <= 300;
+        message = "Health monitoring aggregation interval cannot exceed 300 seconds (got ${toString cfg.healthMonitoring.aggregationInterval})";
+      }
+      
+      # Error handling integration validation
+      {
+        assertion = !cfg.errorHandling.enable || !cfg.errorHandling.circuitBreaker.enable || cfg.errorHandling.circuitBreaker.timeout >= 10;
+        message = "Circuit breaker timeout must be at least 10 seconds when enabled (got ${toString cfg.errorHandling.circuitBreaker.timeout})";
+      }
+      {
+        assertion = !cfg.errorHandling.enable || !cfg.errorHandling.retryStrategy.enable || cfg.errorHandling.retryStrategy.initialDelay <= cfg.errorHandling.retryStrategy.maxDelay;
+        message = "Error handling retry initial delay (${toString cfg.errorHandling.retryStrategy.initialDelay}ms) cannot exceed max delay (${toString cfg.errorHandling.retryStrategy.maxDelay}ms)";
+      }
     ];
 
     # System packages
@@ -4332,6 +4386,7 @@ in
       description = "Initialize Sinex git-annex repository";
       wantedBy = [ "multi-user.target" ];
       before = [ "sinex-unified-collector.service" "sinex-annex-remotes-setup.service" ];
+      after = [ "network.target" ];
 
       script = let
         preInitCommands = concatStringsSep "\n" cfg.blobStorage.activationScripts.preInitCommands;
@@ -4394,10 +4449,38 @@ in
         User = cfg.database.user;
         Group = cfg.database.user;
         WorkingDirectory = cfg.blobStorage.repositoryPath;
+        
+        # State directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        
+        # Security configuration
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        
+        # Timeout configuration
+        TimeoutStartSec = "300s";  # Git operations can take time
+        TimeoutStopSec = "30s";
+        
         EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
           PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
         '';
-      };
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Resource limits for initialization
+        MemoryMax = "512M";
+        MemoryHigh = "384M";
+        MemorySwapMax = "0";
+        CPUQuota = "200%";
+        IOReadBandwidthMax = "/ 50M";
+        IOWriteBandwidthMax = "/ 50M";
+        TasksMax = "64";
+        LimitNOFILE = "1024";
+        LimitNPROC = "256";
+      });
     };
 
     # Git-annex remotes setup service
@@ -4456,10 +4539,38 @@ in
         User = cfg.database.user;
         Group = cfg.database.user;
         WorkingDirectory = cfg.blobStorage.repositoryPath;
+        
+        # State directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        
+        # Security configuration
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        
+        # Timeout configuration
+        TimeoutStartSec = "180s";
+        TimeoutStopSec = "30s";
+        
         EnvironmentFile = pkgs.writeText "sinex-annex-env" ''
           PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}
         '';
-      };
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Resource limits for remote setup
+        MemoryMax = "256M";
+        MemoryHigh = "192M";
+        MemorySwapMax = "0";
+        CPUQuota = "100%";
+        IOReadBandwidthMax = "/ 20M";
+        IOWriteBandwidthMax = "/ 20M";
+        TasksMax = "32";
+        LimitNOFILE = "512";
+        LimitNPROC = "128";
+      });
     };
 
     # Git-annex garbage collection service
@@ -5568,7 +5679,17 @@ in
         TimeoutStartSec = "30s";
         TimeoutStopSec = "15s";
         TimeoutAbortSec = "5s";
-      };
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Resource limits for health coordination
+        MemoryMax = "256M";
+        MemoryHigh = "192M";
+        MemorySwapMax = "0";
+        CPUQuota = "50%";
+        IOReadBandwidthMax = "/ 10M";
+        IOWriteBandwidthMax = "/ 10M";
+        LimitNOFILE = "512";
+        LimitNPROC = "64";
+      });
     };
 
     # Individual Service Health Check Services
@@ -5582,6 +5703,23 @@ in
         Type = "oneshot";
         User = cfg.database.user;
         Group = cfg.database.user;
+        
+        # State directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        
+        # Security configuration
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        
+        # Timeout configuration
+        TimeoutStartSec = "30s";
+        TimeoutStopSec = "10s";
+        
         ExecStart = pkgs.writeShellScript "collector-health-monitor" ''
           set -euo pipefail
           
@@ -5610,7 +5748,18 @@ in
             exit 1  # Trigger restart if liveness fails
           fi
         '';
-      };
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Resource limits for health monitoring
+        MemoryMax = "64M";
+        MemoryHigh = "48M";
+        MemorySwapMax = "0";
+        CPUQuota = "25%";
+        IOReadBandwidthMax = "/ 5M";
+        IOWriteBandwidthMax = "/ 5M";
+        TasksMax = "16";
+        LimitNOFILE = "128";
+        LimitNPROC = "32";
+      });
     };
 
     systemd.services.sinex-worker-health-monitor = mkIf (cfg.promoWorker.enable && cfg.promoWorker.healthCheck.enable) {
@@ -5623,6 +5772,23 @@ in
         Type = "oneshot";
         User = cfg.database.user;
         Group = cfg.database.user;
+        
+        # State directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        
+        # Security configuration
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        NoNewPrivileges = true;
+        
+        # Timeout configuration
+        TimeoutStartSec = "45s";  # Slightly longer due to database query
+        TimeoutStopSec = "10s";
+        
         ExecStart = pkgs.writeShellScript "worker-health-monitor" ''
           set -euo pipefail
           
@@ -5663,7 +5829,18 @@ in
             fi
           ''}
         '';
-      };
+      } // (optionalAttrs cfg.resourceLimits.enableResourceLimits {
+        # Resource limits for worker health monitoring
+        MemoryMax = "128M";  # Slightly more due to database access
+        MemoryHigh = "96M";
+        MemorySwapMax = "0";
+        CPUQuota = "50%";
+        IOReadBandwidthMax = "/ 10M";
+        IOWriteBandwidthMax = "/ 10M";
+        TasksMax = "32";
+        LimitNOFILE = "256";
+        LimitNPROC = "64";
+      });
     };
 
     # Legacy health check service (simplified, for compatibility)
