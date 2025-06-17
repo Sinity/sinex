@@ -170,22 +170,23 @@ impl EventSource for ClipboardMonitor {
         
         info!("Initializing clipboard monitor");
         
-        // Check for required tools
-        let wl_paste_available = Command::new("which")
-            .arg("wl-paste")
+        // Check for required tools - try direct execution instead of 'which'
+        let wl_paste_available = Command::new("wl-paste")
+            .arg("--version")
             .output()
             .await
             .map(|o| o.status.success())
             .unwrap_or(false);
             
-        let xclip_available = Command::new("which")
-            .arg("xclip")
+        let xclip_available = Command::new("xclip")
+            .arg("-version")
             .output()
             .await
             .map(|o| o.status.success())
             .unwrap_or(false);
             
         if !wl_paste_available && !xclip_available {
+            error!("Neither wl-clipboard nor xclip found. Install one for clipboard monitoring");
             return Err(sinex_core::CoreError::Other(
                 "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring".to_string()
             ));

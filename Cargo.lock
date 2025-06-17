@@ -2551,6 +2551,7 @@ dependencies = [
  "sinex-ulid",
  "sqlx",
  "sys-info",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "toml",
@@ -2692,6 +2693,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

@@ -57,6 +57,10 @@ sys-info = "0.9"
 jsonschema = "0.17"
 validator = { version = "0.16", features = ["derive"] }
 
+# Testing dependencies
+[dev-dependencies]
+tempfile = "3.0"
+
 [[bin]]
 name = "sinex-collector"
 path = "src/main.rs"

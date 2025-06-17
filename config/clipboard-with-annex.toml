@@ -13,9 +13,13 @@ enabled_events = [
 # Monitor both standard clipboard and primary selection
 monitor_clipboard = true
 monitor_primary = true
+monitor_secondary = false
 
 # Poll every 500ms for changes
 poll_interval_ms = 500
+
+# Include file content hashes
+hash_file_content = false
 
 # Text preview length for small content
 max_preview_length = 100

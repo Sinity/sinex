@@ -152,8 +152,10 @@ impl UnifiedCollector {
         }
         
         if self.needs_source("clipboard.monitor") {
-            let handle = self.start_clipboard_source(event_tx.clone()).await?;
-            handles.push(handle);
+            match self.start_clipboard_source(event_tx.clone()).await {
+                Ok(handle) => handles.push(handle),
+                Err(e) => error!("Failed to start clipboard source: {}. Clipboard monitoring disabled.", e),
+            }
         }
         
         if self.needs_source("journal.monitor") {

@@ -61,9 +61,9 @@ pub struct AgentManifest {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Promotion queue item
+/// Work queue item (formerly promotion queue)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct PromotionQueueItem {
+pub struct WorkQueueItem {
     pub queue_id: Ulid,
     pub raw_event_id: Ulid,
     pub target_agent_name: String,
@@ -75,17 +75,25 @@ pub struct PromotionQueueItem {
     pub error_message_last: Option<String>,
     pub created_at: DateTime<Utc>,
     pub processing_worker_id: Option<String>,
+    pub processed_at: Option<DateTime<Utc>>,  // New: TTL policy tracking
+    pub failure_reason: Option<String>,       // New: Detailed failure information
 }
 
-/// Status values for promotion queue
+/// Legacy alias for backward compatibility during transition
+#[deprecated(note = "Use WorkQueueItem instead")]
+pub type PromotionQueueItem = WorkQueueItem;
+
+/// Status values for work queue
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueStatus {
     Pending,
     Processing,
-    Completed,
+    Succeeded,       // New: Successfully processed
+    Failed,          // New: Permanently failed
     FailedRetryable,
-    Failed,
+    #[deprecated(note = "Use Succeeded instead")]
+    Completed,       // Legacy, maps to Succeeded
 }
 
 impl QueueStatus {
@@ -93,9 +101,11 @@ impl QueueStatus {
         match self {
             Self::Pending => "pending",
             Self::Processing => "processing",
-            Self::Completed => "completed",
-            Self::FailedRetryable => "failed_retryable",
+            Self::Succeeded => "succeeded",
             Self::Failed => "failed",
+            Self::FailedRetryable => "failed_retryable",
+            #[allow(deprecated)]
+            Self::Completed => "succeeded", // Map legacy to succeeded
         }
     }
 }
@@ -105,9 +115,10 @@ impl From<String> for QueueStatus {
         match s.as_str() {
             "pending" => Self::Pending,
             "processing" => Self::Processing,
-            "completed" => Self::Completed,
-            "failed_retryable" => Self::FailedRetryable,
+            "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
+            "failed_retryable" => Self::FailedRetryable,
+            "completed" => Self::Succeeded, // Map legacy to succeeded
             _ => Self::Pending,
         }
     }
@@ -118,9 +129,10 @@ impl From<&str> for QueueStatus {
         match s {
             "pending" => Self::Pending,
             "processing" => Self::Processing,
-            "completed" => Self::Completed,
-            "failed_retryable" => Self::FailedRetryable,
+            "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
+            "failed_retryable" => Self::FailedRetryable,
+            "completed" => Self::Succeeded, // Map legacy to succeeded
             _ => Self::Pending,
         }
     }

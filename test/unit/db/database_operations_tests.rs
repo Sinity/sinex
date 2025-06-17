@@ -159,18 +159,18 @@ async fn test_query_events_by_type(pool: sqlx::PgPool) -> Result<(), Box<dyn std
 }
 
 #[sqlx::test]
-async fn test_promotion_queue_operations(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_operations(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Insert a raw event first
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
-        json!({"path": "/test/promotion_test.txt"})
+        json!({"path": "/test/work_queue_test.txt"})
     ).build();
     
     let inserted_event = queries::insert_event(&pool, &event).await?;
     
-    // Add to promotion queue
-    let queue_item = queries::add_to_promotion_queue(
+    // Add to work queue
+    let queue_item = queries::add_to_work_queue(
         &pool,
         inserted_event.id,
         "test_agent",
@@ -179,31 +179,31 @@ async fn test_promotion_queue_operations(pool: sqlx::PgPool) -> Result<(), Box<d
     
     assert_eq!(queue_item.raw_event_id, inserted_event.id);
     assert_eq!(queue_item.target_agent_name, "test_agent");
-    assert_eq!(queue_item.status, sinex_db::models::QueueStatus::Pending);
+    assert_eq!(queue_item.status, "pending");
     assert_eq!(queue_item.attempts, 0);
     assert_eq!(queue_item.max_attempts, 3);
     
     // Get next item for processing
-    let next_item = queries::get_next_promotion_item(&pool, "test_agent").await?;
+    let next_item = queries::get_next_work_item(&pool, "test_agent").await?;
     assert!(next_item.is_some());
     
     let item = next_item.unwrap();
     assert_eq!(item.raw_event_id, inserted_event.id);
     assert_eq!(item.target_agent_name, "test_agent");
-    assert_eq!(item.status, sinex_db::models::QueueStatus::Processing);
+    assert_eq!(item.status, "processing");
     
     // Complete processing
-    queries::complete_promotion_item(&pool, item.queue_id).await?;
+    queries::complete_work_item(&pool, item.queue_id).await?;
     
     // Verify item is completed
-    let completed_item = queries::get_promotion_item_by_id(&pool, item.queue_id).await?;
-    assert_eq!(completed_item.status, sinex_db::models::QueueStatus::Completed);
+    let completed_item = queries::get_work_item_by_id(&pool, item.queue_id).await?;
+    assert_eq!(completed_item.status, "succeeded");
     
     Ok(())
 }
 
 #[sqlx::test]
-async fn test_promotion_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Insert a raw event
     let event = RawEventBuilder::new(
         "filesystem",
@@ -213,8 +213,8 @@ async fn test_promotion_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<
     
     let inserted_event = queries::insert_event(&pool, &event).await?;
     
-    // Add to promotion queue with limited retries
-    let queue_item = queries::add_to_promotion_queue(
+    // Add to work queue with limited retries
+    let queue_item = queries::add_to_work_queue(
         &pool,
         inserted_event.id,
         "retry_agent",
@@ -223,7 +223,7 @@ async fn test_promotion_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<
     
     // Get and fail processing multiple times
     for attempt in 1..=3 {
-        let next_item = queries::get_next_promotion_item(&pool, "retry_agent").await?;
+        let next_item = queries::get_next_work_item(&pool, "retry_agent").await?;
         
         if attempt <= 2 {
             // Should get an item
@@ -232,7 +232,7 @@ async fn test_promotion_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<
             assert_eq!(item.attempts, attempt - 1);
             
             // Fail the processing
-            queries::fail_promotion_item(&pool, item.queue_id, "Test failure").await?;
+            queries::fail_work_item(&pool, item.queue_id, "Test failure").await?;
         } else {
             // Should not get an item after max retries
             assert!(next_item.is_none());

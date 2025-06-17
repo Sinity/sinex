@@ -13,3 +13,4 @@ mod network_distributed_issues_test;
 mod query_interface_exploits_test;
 mod event_type_specific_test;
 mod worker_coordination_test;
+mod numeric_overflow_bugs_test;

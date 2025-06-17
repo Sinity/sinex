@@ -299,10 +299,10 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     .execute(&pool)
     .await?;
     
-    // Insert promotion queue item with ULID foreign key
+    // Insert work queue item with ULID foreign key
     let queue_id = Ulid::new();
     sqlx::query(
-        "INSERT INTO sinex_schemas.promotion_queue (queue_id, raw_event_id, target_agent_name) 
+        "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name) 
          VALUES ($1::ulid, $2::ulid, $3)"
     )
     .bind(&queue_id.to_string())
@@ -315,7 +315,7 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     let found_event_id: String = sqlx::query_scalar(
         "SELECT e.id::text 
          FROM raw.events e
-         JOIN sinex_schemas.promotion_queue pq ON e.id = pq.raw_event_id
+         JOIN sinex_schemas.work_queue pq ON e.id = pq.raw_event_id
          WHERE pq.queue_id = $1::ulid"
     )
     .bind(&queue_id.to_string())

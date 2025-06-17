@@ -70,7 +70,7 @@ fn test_ulid_invalid_string_parsing() {
     let invalid_strings = vec![
         "",                                  // Empty
         "0",                                 // Too short
-        "01234567890123456789012345",        // 25 chars (1 too short)
+        "0123456789012345678901234",         // 25 chars (1 too short)
         "012345678901234567890123456",       // 27 chars (1 too long)
         "0123456789ABCDEFGHIJKLMNOP",        // Contains invalid chars (I, O)
         "XXXXXXXXXXXXXXXXXXXXXXXX",          // Invalid base32
@@ -262,7 +262,7 @@ fn test_ulid_display_debug_traits() {
     assert_eq!(display, ulid.to_string());
     assert_eq!(display.len(), 26);
     
-    // Debug trait should be more detailed
+    // Debug trait should be more detailed  
     let debug = format!("{:?}", ulid);
     assert!(debug.contains("Ulid"));
     assert!(debug.contains(&ulid.to_string()));

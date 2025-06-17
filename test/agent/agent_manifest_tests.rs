@@ -171,7 +171,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     .unwrap();
     
     sqlx::query(
-        "INSERT INTO sinex_schemas.promotion_queue (raw_event_id, target_agent_name) 
+        "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name) 
          VALUES ($1::ulid, $2)"
     )
     .bind(&event_id.to_string())
@@ -180,7 +180,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     .await
     .unwrap();
     
-    // Delete agent - should cascade delete promotion queue items
+    // Delete agent - should cascade delete work queue items
     sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
         .bind("delete_test_agent")
         .execute(&pool)
@@ -198,16 +198,16 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     
     assert_eq!(count, 0, "Agent should be deleted");
     
-    // Verify promotion queue items were cascade deleted
+    // Verify work queue items were cascade deleted
     let queue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.promotion_queue WHERE target_agent_name = $1"
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1"
     )
     .bind("delete_test_agent")
     .fetch_one(&pool)
     .await
     .unwrap();
     
-    assert_eq!(queue_count, 0, "Promotion queue items should be cascade deleted");
+    assert_eq!(queue_count, 0, "Work queue items should be cascade deleted");
     
     Ok(())
 }
