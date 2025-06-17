@@ -1397,6 +1397,376 @@ in
         assertion = config.services.postgresql.package.version >= "14";
         message = "Sinex requires PostgreSQL 14 or later";
       }
+
+      # Poll interval validations - must be > 0 for all event sources
+      {
+        assertion = !cfg.unifiedCollector.sources.atuin.enable || cfg.unifiedCollector.sources.atuin.pollInterval > 0;
+        message = "Atuin poll interval must be greater than 0 seconds (got ${toString cfg.unifiedCollector.sources.atuin.pollInterval})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.kittyScrollback.enable || cfg.unifiedCollector.sources.kittyScrollback.captureInterval > 0;
+        message = "Kitty scrollback capture interval must be greater than 0 seconds (got ${toString cfg.unifiedCollector.sources.kittyScrollback.captureInterval})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.clipboard.enable || cfg.unifiedCollector.sources.clipboard.pollInterval > 0;
+        message = "Clipboard poll interval must be greater than 0 milliseconds (got ${toString cfg.unifiedCollector.sources.clipboard.pollInterval})";
+      }
+      {
+        assertion = !cfg.promoWorker.enable || cfg.promoWorker.pollInterval > 0;
+        message = "Promotion worker poll interval must be greater than 0 seconds (got ${toString cfg.promoWorker.pollInterval})";
+      }
+
+      # Batch size validations - reasonable bounds (1-10000)
+      {
+        assertion = !cfg.promoWorker.enable || (cfg.promoWorker.batchSize >= 1 && cfg.promoWorker.batchSize <= 10000);
+        message = "Promotion worker batch size must be between 1 and 10000 (got ${toString cfg.promoWorker.batchSize})";
+      }
+      {
+        assertion = cfg.queueManagement.limits.maxEventsPerBatch >= 1 && cfg.queueManagement.limits.maxEventsPerBatch <= 10000;
+        message = "Queue management max events per batch must be between 1 and 10000 (got ${toString cfg.queueManagement.limits.maxEventsPerBatch})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.clipboard.enable || (cfg.unifiedCollector.sources.clipboard.maxHistoryEntries >= 1 && cfg.unifiedCollector.sources.clipboard.maxHistoryEntries <= 100000);
+        message = "Clipboard max history entries must be between 1 and 100000 (got ${toString cfg.unifiedCollector.sources.clipboard.maxHistoryEntries})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.kittyScrollback.enable || (cfg.unifiedCollector.sources.kittyScrollback.maxScrollbackLines >= 100 && cfg.unifiedCollector.sources.kittyScrollback.maxScrollbackLines <= 1000000);
+        message = "Kitty max scrollback lines must be between 100 and 1000000 (got ${toString cfg.unifiedCollector.sources.kittyScrollback.maxScrollbackLines})";
+      }
+
+      # Port conflict validations
+      {
+        assertion = cfg.unifiedCollector.metricsPort != cfg.promoWorker.metricsPort;
+        message = "Unified collector and promotion worker cannot use the same metrics port (both using ${toString cfg.unifiedCollector.metricsPort})";
+      }
+      {
+        assertion = cfg.database.port != cfg.unifiedCollector.metricsPort && cfg.database.port != cfg.promoWorker.metricsPort;
+        message = "Database port cannot conflict with metrics ports (database: ${toString cfg.database.port}, collector: ${toString cfg.unifiedCollector.metricsPort}, worker: ${toString cfg.promoWorker.metricsPort})";
+      }
+
+      # Path validity validations - absolute paths where required
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.base;
+        message = "Base directory must be an absolute path (got '${cfg.directories.base}')";
+      }
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.state;
+        message = "State directory must be an absolute path (got '${cfg.directories.state}')";
+      }
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.runtime;
+        message = "Runtime directory must be an absolute path (got '${cfg.directories.runtime}')";
+      }
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.cache;
+        message = "Cache directory must be an absolute path (got '${cfg.directories.cache}')";
+      }
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.logs;
+        message = "Logs directory must be an absolute path (got '${cfg.directories.logs}')";
+      }
+      {
+        assertion = lib.hasPrefix "/" cfg.directories.dlq;
+        message = "DLQ directory must be an absolute path (got '${cfg.directories.dlq}')";
+      }
+      {
+        assertion = !cfg.blobStorage.enable || lib.hasPrefix "/" cfg.blobStorage.repositoryPath;
+        message = "Blob storage repository path must be an absolute path (got '${cfg.blobStorage.repositoryPath}')";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.atuin.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.atuin.databasePath;
+        message = "Atuin database path must be an absolute path (got '${cfg.unifiedCollector.sources.atuin.databasePath}')";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.shellHistory.zshPath;
+        message = "Zsh history path must be an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.zshPath}')";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.shellHistory.bashPath;
+        message = "Bash history path must be an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.bashPath}')";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.asciinema.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.asciinema.recordingsPath;
+        message = "Asciinema recordings path must be an absolute path (got '${cfg.unifiedCollector.sources.asciinema.recordingsPath}')";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.kittyScrollback.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.kittyScrollback.socketPath;
+        message = "Kitty socket path must be an absolute path (got '${cfg.unifiedCollector.sources.kittyScrollback.socketPath}')";
+      }
+      {
+        assertion = builtins.all (path: lib.hasPrefix "/" path) cfg.unifiedCollector.sources.filesystem.watchPaths;
+        message = "All filesystem watch paths must be absolute paths (got: ${lib.concatStringsSep ", " (builtins.filter (path: !lib.hasPrefix "/" path) cfg.unifiedCollector.sources.filesystem.watchPaths)})";
+      }
+
+      # SSL file validations - paths must exist if provided
+      {
+        assertion = cfg.database.ssl.certFile == null || builtins.pathExists cfg.database.ssl.certFile;
+        message = "SSL certificate file does not exist: ${toString cfg.database.ssl.certFile}";
+      }
+      {
+        assertion = cfg.database.ssl.keyFile == null || builtins.pathExists cfg.database.ssl.keyFile;
+        message = "SSL key file does not exist: ${toString cfg.database.ssl.keyFile}";
+      }
+      {
+        assertion = cfg.database.ssl.caFile == null || builtins.pathExists cfg.database.ssl.caFile;
+        message = "SSL CA file does not exist: ${toString cfg.database.ssl.caFile}";
+      }
+      {
+        assertion = cfg.database.ssl.crlFile == null || builtins.pathExists cfg.database.ssl.crlFile;
+        message = "SSL CRL file does not exist: ${toString cfg.database.ssl.crlFile}";
+      }
+
+      # Database connection settings consistency
+      {
+        assertion = cfg.database.connectionPool.minConnections <= cfg.database.connectionPool.maxConnections;
+        message = "Database minimum connections (${toString cfg.database.connectionPool.minConnections}) cannot exceed maximum connections (${toString cfg.database.connectionPool.maxConnections})";
+      }
+      {
+        assertion = cfg.database.connectionPool.minConnections >= 1;
+        message = "Database minimum connections must be at least 1 (got ${toString cfg.database.connectionPool.minConnections})";
+      }
+      {
+        assertion = cfg.database.connectionPool.maxConnections >= 1 && cfg.database.connectionPool.maxConnections <= 1000;
+        message = "Database maximum connections must be between 1 and 1000 (got ${toString cfg.database.connectionPool.maxConnections})";
+      }
+      {
+        assertion = cfg.database.connectionPool.connectionTimeout > 0 && cfg.database.connectionPool.connectionTimeout <= 300;
+        message = "Database connection timeout must be between 1 and 300 seconds (got ${toString cfg.database.connectionPool.connectionTimeout})";
+      }
+      {
+        assertion = cfg.database.connectionPool.idleTimeout > 0;
+        message = "Database idle timeout must be greater than 0 seconds (got ${toString cfg.database.connectionPool.idleTimeout})";
+      }
+      {
+        assertion = cfg.database.connectionPool.maxLifetime > 0;
+        message = "Database max lifetime must be greater than 0 seconds (got ${toString cfg.database.connectionPool.maxLifetime})";
+      }
+      {
+        assertion = cfg.database.retry.maxRetries >= 0 && cfg.database.retry.maxRetries <= 20;
+        message = "Database max retries must be between 0 and 20 (got ${toString cfg.database.retry.maxRetries})";
+      }
+      {
+        assertion = cfg.database.retry.initialDelay > 0 && cfg.database.retry.initialDelay <= 60;
+        message = "Database initial retry delay must be between 1 and 60 seconds (got ${toString cfg.database.retry.initialDelay})";
+      }
+      {
+        assertion = cfg.database.retry.maxDelay > 0 && cfg.database.retry.maxDelay <= 300;
+        message = "Database max retry delay must be between 1 and 300 seconds (got ${toString cfg.database.retry.maxDelay})";
+      }
+      {
+        assertion = cfg.database.retry.initialDelay <= cfg.database.retry.maxDelay;
+        message = "Database initial retry delay (${toString cfg.database.retry.initialDelay}s) cannot exceed max retry delay (${toString cfg.database.retry.maxDelay}s)";
+      }
+      {
+        assertion = cfg.database.retry.backoffMultiplier >= 1.0 && cfg.database.retry.backoffMultiplier <= 10.0;
+        message = "Database backoff multiplier must be between 1.0 and 10.0 (got ${toString cfg.database.retry.backoffMultiplier})";
+      }
+
+      # Resource limits sanity checks
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.fileDescriptors.collectorSoft <= cfg.resourceLimits.fileDescriptors.collectorHard;
+        message = "Collector soft file descriptor limit (${toString cfg.resourceLimits.fileDescriptors.collectorSoft}) cannot exceed hard limit (${toString cfg.resourceLimits.fileDescriptors.collectorHard})";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.fileDescriptors.workerSoft <= cfg.resourceLimits.fileDescriptors.workerHard;
+        message = "Worker soft file descriptor limit (${toString cfg.resourceLimits.fileDescriptors.workerSoft}) cannot exceed hard limit (${toString cfg.resourceLimits.fileDescriptors.workerHard})";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.fileDescriptors.collectorSoft >= 1024;
+        message = "Collector soft file descriptor limit must be at least 1024 (got ${toString cfg.resourceLimits.fileDescriptors.collectorSoft})";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.fileDescriptors.workerSoft >= 512;
+        message = "Worker soft file descriptor limit must be at least 512 (got ${toString cfg.resourceLimits.fileDescriptors.workerSoft})";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.restart.collectorBurst >= 1 && cfg.resourceLimits.restart.collectorBurst <= 20;
+        message = "Collector restart burst must be between 1 and 20 (got ${toString cfg.resourceLimits.restart.collectorBurst})";
+      }
+      {
+        assertion = !cfg.resourceLimits.enableResourceLimits || cfg.resourceLimits.restart.workerBurst >= 1 && cfg.resourceLimits.restart.workerBurst <= 20;
+        message = "Worker restart burst must be between 1 and 20 (got ${toString cfg.resourceLimits.restart.workerBurst})";
+      }
+      {
+        assertion = cfg.resourceLimits.io.collectorIOPS == null || (cfg.resourceLimits.io.collectorIOPS >= 100 && cfg.resourceLimits.io.collectorIOPS <= 100000);
+        message = "Collector IOPS limit must be between 100 and 100000 (got ${toString cfg.resourceLimits.io.collectorIOPS})";
+      }
+      {
+        assertion = cfg.resourceLimits.io.workerIOPS == null || (cfg.resourceLimits.io.workerIOPS >= 100 && cfg.resourceLimits.io.workerIOPS <= 100000);
+        message = "Worker IOPS limit must be between 100 and 100000 (got ${toString cfg.resourceLimits.io.workerIOPS})";
+      }
+
+      # User/group existence validations
+      {
+        assertion = !cfg.database.autoSetup || config.users.users ? ${cfg.database.user} || cfg.database.user == "postgres";
+        message = "Database user '${cfg.database.user}' must exist or be created by autoSetup, or use 'postgres' for system user";
+      }
+      {
+        assertion = config.users.users ? ${cfg.targetUser};
+        message = "Target user '${cfg.targetUser}' must exist on the system for file monitoring";
+      }
+
+      # Directory permissions validations
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.state != null;
+        message = "State directory permissions must be valid octal format (e.g., '0755', got '${cfg.directories.permissions.state}')";
+      }
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.runtime != null;
+        message = "Runtime directory permissions must be valid octal format (e.g., '0755', got '${cfg.directories.permissions.runtime}')";
+      }
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.cache != null;
+        message = "Cache directory permissions must be valid octal format (e.g., '0755', got '${cfg.directories.permissions.cache}')";
+      }
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.logs != null;
+        message = "Logs directory permissions must be valid octal format (e.g., '0755', got '${cfg.directories.permissions.logs}')";
+      }
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.config != null;
+        message = "Config file permissions must be valid octal format (e.g., '0644', got '${cfg.directories.permissions.config}')";
+      }
+      {
+        assertion = builtins.match "^[0-7]{3,4}$" cfg.directories.permissions.sockets != null;
+        message = "Socket directory permissions must be valid octal format (e.g., '0750', got '${cfg.directories.permissions.sockets}')";
+      }
+
+      # Database performance validations
+      {
+        assertion = cfg.database.performance.statementTimeout >= 0;
+        message = "Database statement timeout must be non-negative (got ${toString cfg.database.performance.statementTimeout})";
+      }
+      {
+        assertion = cfg.database.performance.lockTimeout >= 0;
+        message = "Database lock timeout must be non-negative (got ${toString cfg.database.performance.lockTimeout})";
+      }
+      {
+        assertion = cfg.database.performance.idleInTransactionTimeout >= 0;
+        message = "Database idle in transaction timeout must be non-negative (got ${toString cfg.database.performance.idleInTransactionTimeout})";
+      }
+      {
+        assertion = cfg.database.performance.preparedStatementCacheSize >= 0 && cfg.database.performance.preparedStatementCacheSize <= 10000;
+        message = "Database prepared statement cache size must be between 0 and 10000 (got ${toString cfg.database.performance.preparedStatementCacheSize})";
+      }
+
+      # Health check validations
+      {
+        assertion = !cfg.database.healthCheck.enable || cfg.database.healthCheck.interval > 0;
+        message = "Database health check interval must be greater than 0 seconds (got ${toString cfg.database.healthCheck.interval})";
+      }
+      {
+        assertion = !cfg.database.healthCheck.enable || cfg.database.healthCheck.timeout > 0 && cfg.database.healthCheck.timeout <= 60;
+        message = "Database health check timeout must be between 1 and 60 seconds (got ${toString cfg.database.healthCheck.timeout})";
+      }
+      {
+        assertion = !cfg.database.healthCheck.enable || cfg.database.healthCheck.failureThreshold >= 1 && cfg.database.healthCheck.failureThreshold <= 20;
+        message = "Database health check failure threshold must be between 1 and 20 (got ${toString cfg.database.healthCheck.failureThreshold})";
+      }
+      {
+        assertion = !cfg.database.healthCheck.enable || cfg.database.healthCheck.successThreshold >= 1 && cfg.database.healthCheck.successThreshold <= 20;
+        message = "Database health check success threshold must be between 1 and 20 (got ${toString cfg.database.healthCheck.successThreshold})";
+      }
+
+      # Migration validations
+      {
+        assertion = cfg.database.migration.timeout > 0 && cfg.database.migration.timeout <= 3600;
+        message = "Database migration timeout must be between 1 and 3600 seconds (got ${toString cfg.database.migration.timeout})";
+      }
+      {
+        assertion = !cfg.database.migration.enableLocking || cfg.database.migration.lockTimeout > 0 && cfg.database.migration.lockTimeout <= 1800;
+        message = "Database migration lock timeout must be between 1 and 1800 seconds when locking is enabled (got ${toString cfg.database.migration.lockTimeout})";
+      }
+
+      # Queue management validations
+      {
+        assertion = cfg.queueManagement.monitoring.maxQueueDepth > 0 && cfg.queueManagement.monitoring.maxQueueDepth <= 1000000;
+        message = "Maximum queue depth must be between 1 and 1000000 (got ${toString cfg.queueManagement.monitoring.maxQueueDepth})";
+      }
+      {
+        assertion = cfg.queueManagement.monitoring.queueDepthWarningThreshold <= cfg.queueManagement.monitoring.maxQueueDepth;
+        message = "Queue depth warning threshold (${toString cfg.queueManagement.monitoring.queueDepthWarningThreshold}) cannot exceed max queue depth (${toString cfg.queueManagement.monitoring.maxQueueDepth})";
+      }
+      {
+        assertion = cfg.queueManagement.limits.maxConcurrentWorkers >= 1 && cfg.queueManagement.limits.maxConcurrentWorkers <= 64;
+        message = "Maximum concurrent workers must be between 1 and 64 (got ${toString cfg.queueManagement.limits.maxConcurrentWorkers})";
+      }
+      {
+        assertion = !cfg.queueManagement.limits.enableCircuitBreaker || cfg.queueManagement.limits.circuitBreakerThreshold >= 1 && cfg.queueManagement.limits.circuitBreakerThreshold <= 100;
+        message = "Circuit breaker threshold must be between 1 and 100 when enabled (got ${toString cfg.queueManagement.limits.circuitBreakerThreshold})";
+      }
+
+      # Disk monitoring validations
+      {
+        assertion = !cfg.diskMonitoring.enable || cfg.diskMonitoring.warningThreshold >= 1 && cfg.diskMonitoring.warningThreshold <= 100;
+        message = "Disk warning threshold must be between 1 and 100 percent (got ${toString cfg.diskMonitoring.warningThreshold})";
+      }
+      {
+        assertion = !cfg.diskMonitoring.enable || cfg.diskMonitoring.criticalThreshold >= 1 && cfg.diskMonitoring.criticalThreshold <= 100;
+        message = "Disk critical threshold must be between 1 and 100 percent (got ${toString cfg.diskMonitoring.criticalThreshold})";
+      }
+      {
+        assertion = !cfg.diskMonitoring.enable || cfg.diskMonitoring.warningThreshold < cfg.diskMonitoring.criticalThreshold;
+        message = "Disk warning threshold (${toString cfg.diskMonitoring.warningThreshold}%) must be less than critical threshold (${toString cfg.diskMonitoring.criticalThreshold}%)";
+      }
+      {
+        assertion = !cfg.diskMonitoring.enable || cfg.diskMonitoring.retentionDays >= 1 && cfg.diskMonitoring.retentionDays <= 365;
+        message = "Disk monitoring retention days must be between 1 and 365 (got ${toString cfg.diskMonitoring.retentionDays})";
+      }
+
+      # Blob storage validations
+      {
+        assertion = !cfg.blobStorage.enable || cfg.blobStorage.numCopies >= 1 && cfg.blobStorage.numCopies <= 10;
+        message = "Git-annex number of copies must be between 1 and 10 (got ${toString cfg.blobStorage.numCopies})";
+      }
+
+      # Monitoring validations
+      {
+        assertion = !cfg.database.monitoring.enableMetrics || cfg.database.monitoring.metricsInterval > 0 && cfg.database.monitoring.metricsInterval <= 3600;
+        message = "Database metrics interval must be between 1 and 3600 seconds when enabled (got ${toString cfg.database.monitoring.metricsInterval})";
+      }
+      {
+        assertion = !cfg.database.monitoring.enableSlowQueryLog || cfg.database.monitoring.slowQueryThreshold > 0;
+        message = "Database slow query threshold must be greater than 0 milliseconds when enabled (got ${toString cfg.database.monitoring.slowQueryThreshold})";
+      }
+
+      # Event source specific validations
+      {
+        assertion = !cfg.unifiedCollector.sources.kittyScrollback.enable || cfg.unifiedCollector.sources.kittyScrollback.commandCaptureDelay >= 0 && cfg.unifiedCollector.sources.kittyScrollback.commandCaptureDelay <= 10000;
+        message = "Kitty command capture delay must be between 0 and 10000 milliseconds (got ${toString cfg.unifiedCollector.sources.kittyScrollback.commandCaptureDelay})";
+      }
+      {
+        assertion = !cfg.unifiedCollector.sources.clipboard.enable || cfg.unifiedCollector.sources.clipboard.maxPreviewLength >= 10 && cfg.unifiedCollector.sources.clipboard.maxPreviewLength <= 10000;
+        message = "Clipboard max preview length must be between 10 and 10000 characters (got ${toString cfg.unifiedCollector.sources.clipboard.maxPreviewLength})";
+      }
+
+      # DLQ validations
+      {
+        assertion = cfg.unifiedCollector.dlq.maxRetries >= 0 && cfg.unifiedCollector.dlq.maxRetries <= 20;
+        message = "DLQ max retries must be between 0 and 20 (got ${toString cfg.unifiedCollector.dlq.maxRetries})";
+      }
+      {
+        assertion = cfg.unifiedCollector.dlq.retryDelaySecs > 0 && cfg.unifiedCollector.dlq.retryDelaySecs <= 3600;
+        message = "DLQ retry delay must be between 1 and 3600 seconds (got ${toString cfg.unifiedCollector.dlq.retryDelaySecs})";
+      }
+
+      # SSL mode consistency validation
+      {
+        assertion = cfg.database.ssl.mode != "verify-ca" || cfg.database.ssl.caFile != null;
+        message = "SSL CA file must be provided when using 'verify-ca' mode";
+      }
+      {
+        assertion = cfg.database.ssl.mode != "verify-full" || cfg.database.ssl.caFile != null;
+        message = "SSL CA file must be provided when using 'verify-full' mode";
+      }
+      {
+        assertion = cfg.database.ssl.certFile == null || cfg.database.ssl.keyFile != null;
+        message = "SSL key file must be provided when SSL certificate file is specified";
+      }
+      {
+        assertion = cfg.database.ssl.keyFile == null || cfg.database.ssl.certFile != null;
+        message = "SSL certificate file must be provided when SSL key file is specified";
+      }
     ];
 
     # System packages
