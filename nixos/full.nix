@@ -167,6 +167,12 @@ in
       description = "The Sinex package to use";
     };
 
+    targetUser = mkOption {
+      type = types.str;
+      default = "sinity";
+      description = "Username whose files to monitor (defaults to sinity)";
+    };
+
     database = {
       host = mkOption {
         type = types.str;
@@ -265,7 +271,7 @@ in
 
           databasePath = mkOption {
             type = types.str;
-            default = "~/.local/share/atuin/history.db";
+            default = "/home/${cfg.targetUser}/.local/share/atuin/history.db";
             description = "Path to Atuin SQLite database";
           };
         };
@@ -279,13 +285,13 @@ in
 
           zshPath = mkOption {
             type = types.str;
-            default = "~/.zsh_history";
+            default = "/home/${cfg.targetUser}/.zsh_history";
             description = "Path to zsh history file";
           };
 
           bashPath = mkOption {
             type = types.str;
-            default = "~/.bash_history";
+            default = "/home/${cfg.targetUser}/.bash_history";
             description = "Path to bash history file";
           };
         };
@@ -299,7 +305,7 @@ in
 
           recordingsPath = mkOption {
             type = types.str;
-            default = "~/.local/share/asciinema";
+            default = "/home/${cfg.targetUser}/.local/share/asciinema";
             description = "Path to asciinema recordings directory";
           };
 
@@ -364,8 +370,8 @@ in
           watchPaths = mkOption {
             type = types.listOf types.str;
             default = [
-              "~/Documents"
-              "~/Projects"
+              "/home/${cfg.targetUser}/Documents"
+              "/home/${cfg.targetUser}/Projects"
             ];
             description = "Paths to monitor for filesystem events";
           };
@@ -704,11 +710,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        User = cfg.database.user;
-        Group = cfg.database.user;
+        User = cfg.targetUser;
+        Group = "users";
         ExecStart = pkgs.writeShellScript "init-atuin" ''
           set -e
-          cd /var/lib/sinex
           if [ ! -f ${cfg.unifiedCollector.sources.atuin.databasePath} ]; then
             ${pkgs.atuin}/bin/atuin init zsh
             ${pkgs.atuin}/bin/atuin import auto
@@ -841,7 +846,7 @@ in
       # Automatic asciinema recording for Sinex
       if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
         export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.unifiedCollector.sources.asciinema.recordingsPath}"
+        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
         mkdir -p "$ASCIINEMA_DIR"
         exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
           "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
@@ -852,7 +857,7 @@ in
       # Automatic asciinema recording for Sinex
       if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
         export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.unifiedCollector.sources.asciinema.recordingsPath}"
+        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
         mkdir -p "$ASCIINEMA_DIR"
         exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
           "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
