@@ -859,7 +859,8 @@ in
 
         filePath = mkOption {
           type = types.path;
-          default = "/var/lib/sinex/dlq";
+          default = cfg.directories.dlq;
+          defaultText = literalExpression "cfg.directories.dlq";
           description = "Path for file-based DLQ storage";
         };
       };
@@ -900,7 +901,8 @@ in
 
       repositoryPath = mkOption {
         type = types.path;
-        default = "/var/lib/sinex/annex";
+        default = "${cfg.directories.state}/annex";
+        defaultText = literalExpression ''"''${cfg.directories.state}/annex"'';
         description = "Path to git-annex repository";
       };
 
@@ -1111,6 +1113,144 @@ in
       };
     };
 
+    directories = {
+      base = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex";
+        description = "Base directory for all Sinex data";
+      };
+
+      state = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex";
+        description = "Directory for persistent state data (StateDirectory)";
+      };
+
+      runtime = mkOption {
+        type = types.path;
+        default = "/run/sinex";
+        description = "Directory for runtime data (RuntimeDirectory)";
+      };
+
+      cache = mkOption {
+        type = types.path;
+        default = "/var/cache/sinex";
+        description = "Directory for cache data (CacheDirectory)";
+      };
+
+      logs = mkOption {
+        type = types.path;
+        default = "/var/log/sinex";
+        description = "Directory for log files (LogsDirectory)";
+      };
+
+      dlq = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex/dlq";
+        description = "Directory for dead letter queue files";
+      };
+
+      health = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex/health";
+        description = "Directory for health check state files";
+      };
+
+      monitoring = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex/monitoring";
+        description = "Directory for monitoring data";
+      };
+
+      config = mkOption {
+        type = types.path;
+        default = "/etc/sinex";
+        description = "Directory for configuration files";
+      };
+
+      sockets = mkOption {
+        type = types.path;
+        default = "/run/sinex/sockets";
+        description = "Directory for Unix domain sockets";
+      };
+
+      pid = mkOption {
+        type = types.path;
+        default = "/run/sinex/pid";
+        description = "Directory for PID files";
+      };
+
+      permissions = {
+        state = mkOption {
+          type = types.str;
+          default = "0755";
+          description = "Permissions for state directories";
+        };
+
+        runtime = mkOption {
+          type = types.str;
+          default = "0755";
+          description = "Permissions for runtime directories";
+        };
+
+        cache = mkOption {
+          type = types.str;
+          default = "0755";
+          description = "Permissions for cache directories";
+        };
+
+        logs = mkOption {
+          type = types.str;
+          default = "0755";
+          description = "Permissions for log directories";
+        };
+
+        config = mkOption {
+          type = types.str;
+          default = "0644";
+          description = "Permissions for configuration files";
+        };
+
+        sockets = mkOption {
+          type = types.str;
+          default = "0750";
+          description = "Permissions for socket directories";
+        };
+      };
+
+      cleanup = {
+        enableAutoCleanup = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable automatic cleanup of temporary files";
+        };
+
+        maxTempAge = mkOption {
+          type = types.str;
+          default = "7d";
+          description = "Maximum age for temporary files before cleanup";
+        };
+
+        maxCacheAge = mkOption {
+          type = types.str;
+          default = "30d";
+          description = "Maximum age for cache files before cleanup";
+        };
+
+        maxLogAge = mkOption {
+          type = types.str;
+          default = "90d";
+          description = "Maximum age for log files before cleanup";
+        };
+
+        cleanupSchedule = mkOption {
+          type = types.str;
+          default = "daily";
+          description = "Schedule for cleanup operations (systemd timer format)";
+        };
+      };
+    };
+
     queueManagement = {
       monitoring = {
         enableDepthMonitoring = mkOption {
@@ -1267,7 +1407,7 @@ in
       isSystemUser = true;
       group = cfg.database.user;
       description = "Sinex service user";
-      home = "/var/lib/sinex";
+      home = cfg.directories.state;
       createHome = true;
       shell = pkgs.bash;  # Allow shell access for testing and maintenance
     };
@@ -1395,6 +1535,18 @@ in
         SINEX_MAX_CONCURRENT_WORKERS = toString cfg.queueManagement.limits.maxConcurrentWorkers;
         SINEX_BATCH_SIZE = toString cfg.queueManagement.limits.maxEventsPerBatch;
         SINEX_BATCH_TIMEOUT = cfg.queueManagement.limits.batchTimeout;
+        
+        # Directory configuration environment variables
+        SINEX_STATE_DIR = cfg.directories.state;
+        SINEX_RUNTIME_DIR = cfg.directories.runtime;
+        SINEX_CACHE_DIR = cfg.directories.cache;
+        SINEX_LOGS_DIR = cfg.directories.logs;
+        SINEX_DLQ_DIR = cfg.directories.dlq;
+        SINEX_HEALTH_DIR = cfg.directories.health;
+        SINEX_MONITORING_DIR = cfg.directories.monitoring;
+        SINEX_CONFIG_DIR = cfg.directories.config;
+        SINEX_SOCKETS_DIR = cfg.directories.sockets;
+        SINEX_PID_DIR = cfg.directories.pid;
       };
 
       serviceConfig = {
@@ -1406,8 +1558,18 @@ in
         # Security hardening - use static user to match database
         User = cfg.database.user;
         Group = cfg.database.user;
+        
+        # Directory configuration
         StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
         RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        CacheDirectory = "sinex";
+        CacheDirectoryMode = cfg.directories.permissions.cache;
+        LogsDirectory = "sinex";
+        LogsDirectoryMode = cfg.directories.permissions.logs;
+        
+        # Security configuration
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = "read-only";
@@ -1515,6 +1677,18 @@ in
         SINEX_WORKER_MAX_PROCESSING_TIME = cfg.queueManagement.monitoring.maxProcessingTime;
         SINEX_WORKER_CIRCUIT_BREAKER_THRESHOLD = toString cfg.queueManagement.limits.circuitBreakerThreshold;
         SINEX_WORKER_CIRCUIT_BREAKER_TIMEOUT = cfg.queueManagement.limits.circuitBreakerTimeout;
+        
+        # Directory configuration environment variables
+        SINEX_STATE_DIR = cfg.directories.state;
+        SINEX_RUNTIME_DIR = cfg.directories.runtime;
+        SINEX_CACHE_DIR = cfg.directories.cache;
+        SINEX_LOGS_DIR = cfg.directories.logs;
+        SINEX_DLQ_DIR = cfg.directories.dlq;
+        SINEX_HEALTH_DIR = cfg.directories.health;
+        SINEX_MONITORING_DIR = cfg.directories.monitoring;
+        SINEX_CONFIG_DIR = cfg.directories.config;
+        SINEX_SOCKETS_DIR = cfg.directories.sockets;
+        SINEX_PID_DIR = cfg.directories.pid;
       };
 
       serviceConfig = {
@@ -1526,6 +1700,18 @@ in
         # Security hardening - use static user to match database
         User = cfg.database.user;
         Group = cfg.database.user;
+        
+        # Directory configuration
+        StateDirectory = "sinex";
+        StateDirectoryMode = cfg.directories.permissions.state;
+        RuntimeDirectory = "sinex";
+        RuntimeDirectoryMode = cfg.directories.permissions.runtime;
+        CacheDirectory = "sinex";
+        CacheDirectoryMode = cfg.directories.permissions.cache;
+        LogsDirectory = "sinex";
+        LogsDirectoryMode = cfg.directories.permissions.logs;
+        
+        # Security configuration
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -1646,14 +1832,25 @@ in
       fi
     '';
 
-    # DLQ directory and monitoring setup
+    # Directory structure setup
     systemd.tmpfiles.rules = [
-      "d ${cfg.unifiedCollector.dlq.filePath} 0755 sinex sinex"
-      "d /var/lib/sinex/monitoring 0755 sinex sinex"
-      "d /var/lib/sinex/health 0755 sinex sinex"
-      "d /var/log/sinex 0755 sinex sinex"
+      # Base directories
+      "d ${cfg.directories.state} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.runtime} ${cfg.directories.permissions.runtime} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.cache} ${cfg.directories.permissions.cache} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.logs} ${cfg.directories.permissions.logs} ${cfg.database.user} ${cfg.database.user}"
+      
+      # Specific functional directories
+      "d ${cfg.directories.dlq} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.health} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.monitoring} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.sockets} ${cfg.directories.permissions.sockets} ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.pid} ${cfg.directories.permissions.runtime} ${cfg.database.user} ${cfg.database.user}"
+      
+      # Configuration directory (with different ownership)
+      "d ${cfg.directories.config} ${cfg.directories.permissions.state} root root"
     ] ++ optional cfg.blobStorage.enable 
-      "d ${cfg.blobStorage.repositoryPath} 0755 sinex sinex";
+      "d ${cfg.blobStorage.repositoryPath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}";
 
     # Disk space monitoring service
     systemd.services.sinex-disk-monitor = mkIf cfg.diskMonitoring.enable {
@@ -1846,7 +2043,7 @@ in
           SUCCESS_THRESHOLD=${toString cfg.database.healthCheck.successThreshold}
           
           # Health state tracking files
-          STATE_DIR="/var/lib/sinex/health"
+          STATE_DIR="${cfg.directories.health}"
           mkdir -p "$STATE_DIR"
           FAILURE_COUNT_FILE="$STATE_DIR/db_failure_count"
           SUCCESS_COUNT_FILE="$STATE_DIR/db_success_count"
@@ -2149,8 +2346,8 @@ in
               
               # Check database health status if health checks are enabled
               ${lib.optionalString cfg.database.healthCheck.enable ''
-                if [ -f "/var/lib/sinex/health/db_last_status" ]; then
-                  db_health_status=$(cat /var/lib/sinex/health/db_last_status)
+                if [ -f "${cfg.directories.health}/db_last_status" ]; then
+                  db_health_status=$(cat ${cfg.directories.health}/db_last_status)
                   if [ "$db_health_status" = "1" ]; then
                     echo "✓ Database Health: HEALTHY"
                   else
@@ -2159,9 +2356,9 @@ in
                   fi
                   
                   # Show failure/success counts
-                  if [ -f "/var/lib/sinex/health/db_failure_count" ]; then
-                    failure_count=$(cat /var/lib/sinex/health/db_failure_count)
-                    success_count=$(cat /var/lib/sinex/health/db_success_count 2>/dev/null || echo "0")
+                  if [ -f "${cfg.directories.health}/db_failure_count" ]; then
+                    failure_count=$(cat ${cfg.directories.health}/db_failure_count)
+                    success_count=$(cat ${cfg.directories.health}/db_success_count 2>/dev/null || echo "0")
                     echo "  Health Stats: $success_count successes, $failure_count failures"
                   fi
                 else
@@ -2212,6 +2409,121 @@ in
         OnBootSec = "1min";
         OnUnitActiveSec = "5min";
         Persistent = true;
+      };
+    };
+
+    # Directory cleanup service
+    systemd.services.sinex-directory-cleanup = mkIf cfg.directories.cleanup.enableAutoCleanup {
+      description = "Sinex Directory Cleanup Service";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-directory-cleanup" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Directory Cleanup ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Function to clean directory with age limit
+          cleanup_directory() {
+            local dir="$1"
+            local age="$2"
+            local description="$3"
+            
+            if [ ! -d "$dir" ]; then
+              echo "Directory $dir does not exist, skipping cleanup"
+              return 0
+            fi
+            
+            echo "Cleaning $description in $dir (age: $age)"
+            
+            # Convert age to find format (e.g., "7d" -> "+7")
+            local find_age
+            case "$age" in
+              *d) find_age="+''${age%d}" ;;
+              *h) find_age="+''${age%h}"/24 ;;
+              *m) find_age="+''${age%m}"/1440 ;;
+              *) find_age="+1" ;;  # Default to 1 day if format unknown
+            esac
+            
+            # Find and remove old files
+            local removed_count=0
+            if removed_count=$(find "$dir" -type f -mtime "$find_age" -delete -print | wc -l); then
+              echo "  Removed $removed_count old files from $description"
+            else
+              echo "  Warning: Failed to clean some files in $description" >&2
+            fi
+            
+            # Find and remove empty directories (but not the base directory itself)
+            local removed_dirs=0
+            if removed_dirs=$(find "$dir" -mindepth 1 -type d -empty -delete -print | wc -l); then
+              echo "  Removed $removed_dirs empty directories from $description"
+            else
+              echo "  Note: No empty directories found in $description"
+            fi
+          }
+          
+          # Function to check and report directory sizes
+          report_directory_size() {
+            local dir="$1"
+            local description="$2"
+            
+            if [ ! -d "$dir" ]; then
+              return 0
+            fi
+            
+            local size_bytes=$(du -sb "$dir" | cut -f1)
+            local size_human=$(du -sh "$dir" | cut -f1)
+            
+            echo "  $description: $size_human ($size_bytes bytes)"
+          }
+          
+          echo "--- Pre-cleanup Directory Sizes ---"
+          report_directory_size "${cfg.directories.cache}" "Cache directory"
+          report_directory_size "${cfg.directories.logs}" "Logs directory"
+          report_directory_size "${cfg.directories.runtime}" "Runtime directory"
+          echo
+          
+          # Perform cleanup operations
+          echo "--- Cleanup Operations ---"
+          
+          # Clean cache directory
+          cleanup_directory "${cfg.directories.cache}" "${cfg.directories.cleanup.maxCacheAge}" "cache files"
+          
+          # Clean log directory
+          cleanup_directory "${cfg.directories.logs}" "${cfg.directories.cleanup.maxLogAge}" "log files"
+          
+          # Clean runtime temporary files
+          cleanup_directory "${cfg.directories.runtime}" "${cfg.directories.cleanup.maxTempAge}" "runtime files"
+          
+          # Clean DLQ directory if configured
+          if [ -d "${cfg.directories.dlq}" ]; then
+            cleanup_directory "${cfg.directories.dlq}" "${cfg.directories.cleanup.maxTempAge}" "DLQ files"
+          fi
+          
+          echo
+          echo "--- Post-cleanup Directory Sizes ---"
+          report_directory_size "${cfg.directories.cache}" "Cache directory"
+          report_directory_size "${cfg.directories.logs}" "Logs directory" 
+          report_directory_size "${cfg.directories.runtime}" "Runtime directory"
+          echo
+          
+          echo "=== Cleanup Completed ==="
+        '';
+      };
+    };
+
+    # Timer for directory cleanup
+    systemd.timers.sinex-directory-cleanup = mkIf cfg.directories.cleanup.enableAutoCleanup {
+      description = "Timer for Sinex Directory Cleanup";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.directories.cleanup.cleanupSchedule;
+        Persistent = true;
+        RandomizedDelaySec = "1h";  # Spread load
       };
     };
   };
