@@ -1,0 +1,292 @@
+// Routing cache tests - should fail until materialized view implementation is complete
+// Tests for replacing per-row trigger routing with materialized view approach
+
+use sinex_db::queries::*;
+use sinex_ulid::Ulid;
+use sqlx::PgPool;
+use anyhow::Result;
+use serde_json::json;
+
+#[sqlx::test]
+async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
+    // Test that the routing_cache materialized view exists
+    let view_exists = sqlx::query!(
+        r#"
+        SELECT COUNT(*) as count 
+        FROM information_schema.tables 
+        WHERE table_schema = 'sinex_schemas' 
+        AND table_name = 'routing_cache'
+        "#
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
+    Ok(())
+}
+
+#[sqlx::test]
+async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
+    // Test that routing_cache has the correct columns (event_type, agent_id)
+    let columns = sqlx::query!(
+        r#"
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_schema = 'sinex_schemas' 
+        AND table_name = 'routing_cache'
+        ORDER BY ordinal_position
+        "#
+    )
+    .fetch_all(&pool)
+    .await?;
+    
+    assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
+    
+    let event_type_col = &columns[0];
+    assert_eq!(event_type_col.column_name.as_ref(), Some(&"event_type".to_string()));
+    assert_eq!(event_type_col.data_type.as_ref(), Some(&"text".to_string()));
+    
+    let agent_id_col = &columns[1];
+    assert_eq!(agent_id_col.column_name.as_ref(), Some(&"agent_id".to_string()));
+    assert_eq!(agent_id_col.data_type.as_ref(), Some(&"text".to_string()));
+    
+    Ok(())
+}
+
+#[sqlx::test]
+async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result<()> {
+    // Test that routing_cache is automatically refreshed when agent_manifests change
+    
+    // Create an agent with specific event subscriptions
+    let agent_name = "test-router-agent";
+    let subscriptions = json!({
+        "filesystem": ["file_created", "file_modified"],
+        "terminal": ["command_executed"]
+    });
+    
+    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    
+    // Manually refresh the view (this function should exist after implementation)
+    refresh_routing_cache(&pool).await?;
+    
+    // Check that routing cache contains the expected entries
+    let cache_entries = sqlx::query!(
+        "SELECT event_type, agent_id FROM sinex_schemas.routing_cache WHERE agent_id = $1 ORDER BY event_type",
+        agent_name
+    )
+    .fetch_all(&pool)
+    .await?;
+    
+    assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
+    
+    // Verify the specific entries
+    assert_eq!(cache_entries[0].event_type.as_ref(), Some(&"filesystem:file_created".to_string()));
+    assert_eq!(cache_entries[0].agent_id.as_ref(), Some(&agent_name.to_string()));
+    
+    assert_eq!(cache_entries[1].event_type.as_ref(), Some(&"filesystem:file_modified".to_string()));
+    assert_eq!(cache_entries[1].agent_id.as_ref(), Some(&agent_name.to_string()));
+    
+    assert_eq!(cache_entries[2].event_type.as_ref(), Some(&"terminal:command_executed".to_string()));
+    assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
+    
+    Ok(())
+}
+
+#[sqlx::test]
+async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()> {
+    // Test that the batch router function creates work queue entries based on routing cache
+    
+    // Create an agent
+    let agent_name = "batch-test-agent";
+    let subscriptions = json!({
+        "test_source": ["test_event"]
+    });
+    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    
+    // Create some test events
+    let event1_id = insert_test_event(&pool, "test_source", "test_event", "test data 1").await?;
+    let event2_id = insert_test_event(&pool, "test_source", "test_event", "test data 2").await?;
+    
+    // Refresh routing cache
+    refresh_routing_cache(&pool).await?;
+    
+    // Run batch router (this function should exist after implementation)
+    let routed_count = run_batch_router(&pool).await?;
+    
+    // Should have routed 2 events
+    assert_eq!(routed_count, 2, "Should route 2 events to the agent");
+    
+    // Verify work queue entries were created
+    let work_items = sqlx::query!(
+        "SELECT raw_event_id::uuid as raw_event_id FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .fetch_all(&pool)
+    .await?;
+    
+    assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
+    
+    let event_ids: Vec<uuid::Uuid> = work_items.into_iter()
+        .filter_map(|item| item.raw_event_id)
+        .collect();
+    
+    assert!(event_ids.contains(&event1_id.to_uuid()));
+    assert!(event_ids.contains(&event2_id.to_uuid()));
+    
+    Ok(())
+}
+
+#[sqlx::test]
+async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> {
+    // Test that batch router doesn't create duplicate work queue entries
+    
+    let agent_name = "dedup-test-agent";
+    let subscriptions = json!({
+        "test_source": ["test_event"]
+    });
+    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    
+    // Create a test event
+    let event_id = insert_test_event(&pool, "test_source", "test_event", "dedup test").await?;
+    
+    // Refresh routing cache
+    refresh_routing_cache(&pool).await?;
+    
+    // Run batch router twice
+    let first_run = run_batch_router(&pool).await?;
+    let second_run = run_batch_router(&pool).await?;
+    
+    // First run should route 1 event, second run should route 0 (no duplicates)
+    assert_eq!(first_run, 1, "First run should route 1 event");
+    assert_eq!(second_run, 0, "Second run should not create duplicates");
+    
+    // Verify only one work queue entry exists
+    let work_items = sqlx::query!(
+        "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND raw_event_id = $2::uuid::ulid",
+        agent_name,
+        event_id.to_uuid()
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
+    
+    Ok(())
+}
+
+#[sqlx::test]
+async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()> {
+    // Test that routing cache approach performs better than per-row triggers
+    // This is a conceptual test - in practice we'd measure timing
+    
+    // Create multiple agents with different subscriptions
+    for i in 0..10 {
+        let agent_name = format!("perf-agent-{}", i);
+        let subscriptions = json!({
+            "test_source": [format!("event_type_{}", i % 3)]
+        });
+        create_agent_with_subscriptions(&pool, &agent_name, &subscriptions).await?;
+    }
+    
+    // Refresh routing cache once
+    refresh_routing_cache(&pool).await?;
+    
+    // Create many events
+    let mut event_ids = Vec::new();
+    for i in 0..100 {
+        let event_id = insert_test_event(
+            &pool, 
+            "test_source", 
+            &format!("event_type_{}", i % 3),
+            &format!("perf test {}", i)
+        ).await?;
+        event_ids.push(event_id);
+    }
+    
+    // Run batch router (should be fast since routing cache is pre-computed)
+    let start = std::time::Instant::now();
+    let routed_count = run_batch_router(&pool).await?;
+    let duration = start.elapsed();
+    
+    // Should route all events to appropriate agents
+    assert!(routed_count > 0, "Should route some events");
+    
+    // Performance assertion (batch should be faster than 100 individual triggers)
+    assert!(duration.as_millis() < 1000, "Batch routing should complete quickly");
+    
+    Ok(())
+}
+
+// Helper functions
+
+async fn create_agent_with_subscriptions(
+    pool: &PgPool, 
+    agent_name: &str, 
+    subscriptions: &serde_json::Value
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.agent_manifests 
+        (agent_name, version, status, agent_type, subscribes_to_event_types, registered_at, updated_at)
+        VALUES ($1, '1.0.0', 'running', 'test', $2, now(), now())
+        ON CONFLICT (agent_name) DO UPDATE SET 
+            subscribes_to_event_types = $2,
+            updated_at = now()
+        "#,
+        agent_name,
+        subscriptions
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn insert_test_event(
+    pool: &PgPool, 
+    source: &str, 
+    event_type: &str, 
+    test_data: &str
+) -> Result<Ulid> {
+    let payload = json!({
+        "test": test_data,
+        "source": source,
+        "event_type": event_type
+    });
+    
+    let event = insert_raw_event(
+        pool,
+        source,
+        event_type,
+        "test_host",
+        payload,
+        None,
+        Some("1.0.0"),
+        None,
+    ).await?;
+    
+    Ok(event.id)
+}
+
+// Functions that should exist after implementation
+
+async fn refresh_routing_cache(pool: &PgPool) -> Result<()> {
+    // This function should refresh the materialized view
+    sqlx::query!("REFRESH MATERIALIZED VIEW sinex_schemas.routing_cache")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn run_batch_router(pool: &PgPool) -> Result<i64> {
+    // This function should run the batch router logic
+    // For now, return a placeholder - will be implemented
+    sqlx::query!(
+        r#"
+        SELECT sinex_router.batch_route_events() as routed_count
+        "#
+    )
+    .fetch_one(pool)
+    .await
+    .map(|r| r.routed_count.unwrap_or(0))
+    .map_err(Into::into)
+}

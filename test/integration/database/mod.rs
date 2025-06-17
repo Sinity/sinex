@@ -7,3 +7,4 @@ pub mod jsonschema_validation_tests;
 pub mod schema_validation_tests;
 pub mod work_queue_tests;
 pub mod work_queue_ttl_tests;
+pub mod routing_cache_tests;
