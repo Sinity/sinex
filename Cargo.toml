@@ -8,6 +8,7 @@ members = [
     "crate/sinex-events",
     "crate/sinex-collector",
     "crate/sinex-annex",
+    "crate/sinex-health-aggregator",
 ]
 resolver = "2"
 
@@ -40,6 +41,10 @@ gethostname.workspace = true
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
+toml = "0.8"
+tempfile = "3.10"
+rand = "0.8"
+lazy_static = "1.4"
 
 # Example dependencies
 tracing-subscriber = { workspace = true }

@@ -98,8 +98,43 @@ Test component interactions:
 - **collector/**: Event source lifecycle, configuration, coordination
 - **worker/**: Queue processing, concurrency, error handling
 - **event_sources/**: Individual event sources with real events
+- **failure_modes/**: System behavior under failure conditions
 
 **Coverage Goal**: ≥80% line coverage
+
+#### Failure Mode Tests
+
+The `integration/failure_modes/` directory contains tests for various failure scenarios:
+
+1. **Channel Backpressure** (`channel_backpressure_test.rs`):
+   - Tests event channel overflow when producers outpace consumers
+   - Verifies graceful degradation and event dropping behavior
+   - Simulates memory pressure with large event payloads
+   - Tests event source crash and recovery mechanisms
+
+2. **Configuration Reload** (`config_reload_test.rs`):
+   - Tests configuration changes during active processing
+   - Validates config reload timing (during batch, between batches)
+   - Tests invalid configuration rejection
+   - Ensures graceful handling of reload during shutdown
+
+3. **Network Timeouts** (`network_timeout_test.rs`):
+   - Tests database connection timeout scenarios
+   - Simulates various network conditions (fast, slow, intermittent)
+   - Tests retry logic with exponential backoff
+   - Verifies connection pool behavior under timeout conditions
+
+4. **Worker Orphans** (`worker_orphan_test.rs`):
+   - Tests detection of orphaned workers (crashed but holding work)
+   - Verifies work item recovery from dead workers
+   - Tests zombie worker prevention mechanisms
+   - Ensures proper cleanup of worker state
+
+5. **Connection Pool Exhaustion** (`connection_pool_test.rs`):
+   - Tests behavior when connection pool is exhausted
+   - Simulates various workload patterns (steady, burst, long-running)
+   - Tests connection leak detection and reporting
+   - Verifies deadlock prevention in connection acquisition
 
 ### System Tests (`system/`)
 
@@ -276,6 +311,33 @@ just test-all
 just coverage-lcov
 ```
 
+## NixOS VM Testing
+
+Sinex includes comprehensive NixOS VM-based end-to-end testing for complete system validation:
+
+### VM Test Structure
+- **Basic Flow Test**: System setup, individual event sources, service resilience
+- **Multi-Source Stress Test**: Concurrent operation under configurable load intensities
+- **Failure Recovery Test**: Database disconnection, crash recovery, resource pressure
+- **Performance Validation**: High-frequency events, query performance, resource monitoring
+
+### Wayland/GUI Environment Fixes
+The VM tests include proper Wayland compositor setup for GUI event testing:
+- Fixed greetd configuration by replacing with direct Weston service
+- Proper XDG_RUNTIME_DIR and permissions setup
+- Service dependency ordering to ensure Wayland readiness
+- Headless mode suitable for automated testing
+- Support for wl-clipboard, Kitty terminal, and Hyprland integration
+
+### Running VM Tests
+```bash
+just test-vm-basic           # Basic flow test
+just test-vm-multi-source    # Multi-source stress test  
+just test-vm-failure-recovery # Failure recovery test
+just test-vm-performance     # Performance validation test
+just test-vm-all            # All VM tests
+```
+
 ## Test Index
 
 ### Unit Tests
@@ -307,6 +369,11 @@ just coverage-lcov
 | `integration/event_sources/atuin_tests.rs` | Atuin history integration | Command history parsing |
 | `integration/event_sources/event_source_tests.rs` | Event source lifecycle | Initialize, stream, shutdown |
 | `integration/event_sources/terminal_tests.rs` | Terminal event capture | Command execution events |
+| `integration/failure_modes/channel_backpressure_test.rs` | Channel overflow handling | Backpressure, event drops |
+| `integration/failure_modes/config_reload_test.rs` | Config reload scenarios | Hot reload, validation |
+| `integration/failure_modes/network_timeout_test.rs` | Network timeout handling | Connection timeouts, retries |
+| `integration/failure_modes/worker_orphan_test.rs` | Orphaned worker detection | Worker crashes, cleanup |
+| `integration/failure_modes/connection_pool_test.rs` | Connection pool exhaustion | Pool limits, deadlocks |
 
 ### System Tests
 
@@ -375,3 +442,148 @@ The test suite succeeds when:
 ✅ **Maintainable**: Tests are clear and easy to update  
 
 When tests pass, Sinex works correctly as a complete event capture and processing system.
+
+## What "Sinex Works" Means
+
+Based on the architecture, a working Sinex system must demonstrate:
+
+1. **Event Capture**: Event sources successfully capture and stream events
+2. **Event Storage**: Events are stored immutably in PostgreSQL with proper validation
+3. **Event Processing**: Workers process events from the promotion queue
+4. **Event Query**: CLI can retrieve and display captured events
+5. **End-to-End Flow**: Complete pipeline from capture → storage → processing → query
+
+## Coverage Requirements
+
+### Target Coverage Metrics
+
+- **Core crates** (sinex-core, sinex-db, sinex-worker): ≥80%
+- **Overall project coverage**: ≥70%
+- **Critical paths**: 100% coverage for event capture → storage → query
+
+### Coverage Commands
+
+```bash
+just coverage           # Run tests with coverage
+just coverage-html      # Generate HTML coverage report
+just coverage-lcov      # Generate LCOV format for CI
+just coverage-report    # Open coverage report in browser
+```
+
+Coverage reports are generated in `.coverage/` directory (gitignored).
+
+## Adversarial Testing Philosophy
+
+Beyond functional correctness, the test suite includes comprehensive adversarial tests to ensure resilience:
+
+### Resource Exhaustion
+- Channel overflow and backpressure (10K channel capacity)
+- Connection pool exhaustion (test with pool_size + 10 concurrent ops)
+- Memory leak detection over 24-hour runs
+- File descriptor leaks from filesystem watchers
+
+### Race Conditions
+- ULID generation with clock regression handling
+- Worker queue double-claim prevention using `FOR UPDATE SKIP LOCKED`
+- Concurrent event updates with lost update detection
+- Multi-process ULID collision testing (100 processes × 1000 ULIDs)
+
+### Security Vulnerabilities
+- Path traversal prevention (including symlinks and null bytes)
+- Command injection protection in shell metacharacter detection
+- JSON schema DoS protection (ReDoS patterns, deep nesting)
+- ULID injection attempts and timestamp corruption
+
+### Data Corruption Scenarios
+- Partial batch failure with complete rollback verification
+- Transaction consistency under concurrent modifications
+- Lost update prevention in read-modify-write patterns
+- Orphaned state detection in promotion queue
+
+## Known Issues and Workarounds
+
+### Common Test Failures
+
+1. **ts_ingest insertion error**: 
+   - **Issue**: `ts_ingest` is a GENERATED column from ULID timestamp
+   - **Fix**: Use `insert_event()` function instead of raw SQL
+
+2. **Connection pool timeout**:
+   - **Issue**: Tests exhaust connection pool
+   - **Fix**: Ensure test cleanup in correct FK dependency order
+
+3. **ULID monotonicity violations**:
+   - **Issue**: Counter overflow creates non-monotonic ULIDs
+   - **Fix**: Handle overflow by incrementing timestamp when counter wraps
+
+4. **Worker claim races**:
+   - **Issue**: Multiple workers can claim same queue item
+   - **Fix**: Use `SELECT FOR UPDATE SKIP LOCKED` pattern consistently
+
+### Wayland Compositor Issues
+
+When testing window manager event sources in VMs:
+
+1. **greetd configuration conflicts**: Replace with direct Weston service
+2. **XDG_RUNTIME_DIR permissions**: Ensure proper ownership and 0700 mode
+3. **Service dependency ordering**: Wayland must be ready before dependent services
+4. **Headless mode**: Use Weston with virtual output for CI environments
+
+## Red-Team Test Implementation
+
+The test suite includes "red-team" adversarial tests targeting specific known vulnerabilities:
+
+### Critical Bug Categories
+
+1. **ULID Implementation Bugs**:
+   - Monotonic counter overflow → all-zero random part
+   - Invalid timestamp silently returns current time
+   - Multi-process collision without proper entropy
+
+2. **Worker Queue Race Conditions**:
+   - TOCTOU race in promotion queue claims
+   - Orphaned claims on partial failure
+   - Delete without state validation
+
+3. **Resource Leaks**:
+   - Filesystem watcher thread accumulation
+   - Unbounded clipboard history growth
+   - Connection pool with disabled health checks
+
+4. **Security Vulnerabilities**:
+   - Command injection via shell splitting
+   - Path traversal in git-annex operations
+   - Predictable temp file patterns
+
+### Test Implementation Strategy
+
+Each vulnerability test follows this pattern:
+
+```rust
+#[tokio::test]
+async fn test_specific_vulnerability() {
+    // 1. Set up conditions that trigger the bug
+    // 2. Execute the vulnerable code path
+    // 3. Assert the bug manifests (test FAILS before fix)
+    // 4. After fix: test PASSES, confirming resolution
+}
+```
+
+## Performance Baselines
+
+Tests establish and monitor performance baselines:
+
+- **Event ingestion**: 50K events/second sustained
+- **Query latency**: p99 < 100ms for recent events
+- **Memory usage**: < 500MB for collector under load
+- **Connection pool**: No exhaustion with 2× expected load
+
+Performance regression alerts trigger on >10% degradation.
+
+## Security Considerations
+
+- Tests should not log sensitive information (passwords, keys)
+- Use test-specific databases to avoid data corruption
+- Clean up all resources after each test run
+- Don't commit real credential files or production configs
+- Sanitize error messages that might leak system details

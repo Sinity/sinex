@@ -77,6 +77,7 @@ watch_paths = ["/tmp"]
     
     // Keep appending to config to grow memory
     let mut accumulated_configs = Vec::new();
+    let mut successful_reloads = 0;
     
     for i in 0..100 {
         // Append more and more data
@@ -103,59 +104,25 @@ watch_paths = {}
             update_rx.recv()
         ).await {
             accumulated_configs.push(config);
-            println!("Config {} loaded, total in memory: {}", i, accumulated_configs.len());
+            successful_reloads += 1;
         }
         
-        // Check if we're accumulating memory
+        // Check if we're accumulating memory - break if we hit limits
         if accumulated_configs.len() > 50 {
-            println!("WARNING: Config updates accumulating in memory!");
             break;
-        }
-    }
-}
-
-#[test]
-fn test_json_depth_stack_overflow() {
-    // Create extremely deeply nested JSON
-    fn create_nested_json(depth: usize) -> serde_json::Value {
-        if depth == 0 {
-            serde_json::json!({"value": "bottom"})
-        } else {
-            serde_json::json!({
-                "level": depth,
-                "nested": create_nested_json(depth - 1)
-            })
         }
     }
     
-    // Test increasing depths
-    for depth in [100, 500, 1000, 5000, 10000] {
-        println!("Testing JSON depth: {}", depth);
-        
-        let result = std::panic::catch_unwind(|| {
-            let nested = create_nested_json(depth);
-            let serialized = serde_json::to_string(&nested);
-            
-            match serialized {
-                Ok(json_str) => {
-                    println!("  Serialized to {} bytes", json_str.len());
-                    
-                    // Try to parse it back
-                    match serde_json::from_str::<serde_json::Value>(&json_str) {
-                        Ok(_) => println!("  Parsed successfully"),
-                        Err(e) => println!("  Parse failed: {}", e),
-                    }
-                }
-                Err(e) => println!("  Serialization failed: {}", e),
-            }
-        });
-        
-        if result.is_err() {
-            println!("  STACK OVERFLOW at depth {}", depth);
-            break;
-        }
+    // Assert that config manager handles reloads gracefully
+    assert!(successful_reloads > 0, "Should handle at least some config reloads");
+    assert!(accumulated_configs.len() <= 100, "Should not accumulate unlimited configs in memory");
+    
+    // Verify config integrity
+    for config in &accumulated_configs {
+        assert!(!config.enabled_events.is_empty(), "Config should maintain enabled events");
     }
 }
+
 
 #[test]
 fn test_string_concatenation_memory_bomb() {

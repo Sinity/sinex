@@ -6,8 +6,6 @@ use thiserror::Error;
 use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
 
-pub mod monotonic;
-
 #[derive(Error, Debug)]
 pub enum UlidError {
     #[error("Invalid ULID format: {0}")]
@@ -33,33 +31,6 @@ impl Ulid {
     /// Generate a new ULID
     pub fn new() -> Self {
         Self(InnerUlid::new())
-    }
-
-    /// Generate a monotonic ULID (guaranteed to be greater than the previous if called in same millisecond)
-    pub fn new_monotonic(previous: Option<&Self>) -> Self {
-        match previous {
-            Some(prev) => {
-                let prev_inner = prev.0;
-                let now = InnerUlid::new();
-                if now <= prev_inner {
-                    // If new ULID would be <= previous, increment the random part
-                    let mut bytes = prev_inner.to_bytes();
-                    // Increment the random part (last 10 bytes)
-                    for i in (6..16).rev() {
-                        if bytes[i] < 255 {
-                            bytes[i] += 1;
-                            break;
-                        } else {
-                            bytes[i] = 0;
-                        }
-                    }
-                    Self(InnerUlid::from_bytes(bytes))
-                } else {
-                    Self(now)
-                }
-            }
-            None => Self::new(),
-        }
     }
 
     /// Create from a timestamp
@@ -235,4 +206,3 @@ mod sqlx_impl {
         }
     }
 }
-

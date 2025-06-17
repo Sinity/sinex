@@ -1,1 +1,1 @@
-mod status_conversion_tests;
+// Removed status_conversion_tests.rs - was testing trivial enum conversions

@@ -2,17 +2,17 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use sinex_db::{
-    models::{AgentHeartbeat, WorkQueueItem, RawEvent},
-    queries::{insert_raw_event, update_agent_heartbeat, upsert_agent_manifest},
+    models::{WorkQueueItem, RawEvent},
+    queries::{upsert_agent_manifest},
 };
 use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::{signal, task, time::sleep};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
@@ -170,50 +170,6 @@ async fn register_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn emit_heartbeat(
-    pool: PgPool, 
-    agent_name: String,
-    events_processed: Arc<AtomicU64>,
-    start_time: Instant,
-) -> Result<()> {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-    
-    loop {
-        interval.tick().await;
-        
-        let uptime = start_time.elapsed().as_secs();
-        let events_count = events_processed.load(Ordering::Relaxed);
-        
-        let heartbeat = AgentHeartbeat {
-            agent_name: agent_name.clone(),
-            status: "running".to_string(),
-            uptime_seconds: uptime,
-            events_processed_session: events_count,
-            dlq_size: 0, // Still TODO: Would need DLQ manager integration
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
-
-        match insert_raw_event(
-            &pool,
-            "sinex.agent.heartbeat",
-            "heartbeat",
-            &gethostname::gethostname().to_string_lossy(),
-            serde_json::to_value(&heartbeat)?,
-            Some(chrono::Utc::now()),
-            Some(env!("CARGO_PKG_VERSION")),
-            None,
-        )
-        .await
-        {
-            Ok(_) => {
-                let _ = update_agent_heartbeat(&pool, &agent_name).await;
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to emit heartbeat");
-            }
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -259,6 +215,15 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
         process_historical: false,
     };
     let mut scanner = EventScanner::new(config);
+    
+    // Start heartbeat emission task
+    let heartbeat_pool = pool.clone();
+    task::spawn(async move {
+        use sinex_core::HeartbeatEmitter;
+        let emitter = HeartbeatEmitter::new(heartbeat_pool, "promo-worker-scanner".to_string(), 45);
+        emitter.run().await;
+    });
+    info!("Started heartbeat emission for promo-worker-scanner");
     
     // Start metrics server
     let metrics_handle = task::spawn(async move {
@@ -315,28 +280,64 @@ async fn scan_and_promote(pool: &PgPool, scanner: &mut EventScanner) -> Result<u
     Ok(count)
 }
 
+/// Metrics provider that tracks events processed
+struct WorkerMetrics {
+    events_processed: Arc<AtomicU64>,
+    start_time: std::time::Instant,
+}
+
+impl sinex_core::MetricsProvider for WorkerMetrics {
+    fn get_events_processed_last_minute(&self) -> u32 {
+        // Simplified - returns total events processed
+        // In a real implementation, you'd track events per minute
+        self.events_processed.load(Ordering::Relaxed) as u32
+    }
+    
+    fn get_errors_last_hour(&self) -> u32 {
+        // No error tracking yet
+        0
+    }
+    
+    fn get_last_error_message(&self) -> Option<String> {
+        None
+    }
+    
+    fn get_custom_metrics(&self) -> serde_json::Value {
+        serde_json::json!({
+            "total_events_processed": self.events_processed.load(Ordering::Relaxed),
+            "uptime_seconds": self.start_time.elapsed().as_secs()
+        })
+    }
+}
+
 /// Run as a worker processing work queue entries
 async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode");
 
-    // Create shared state for tracking
+    // Create shared state for tracking events processed
     let events_processed = Arc::new(AtomicU64::new(0));
-    let start_time = Instant::now();
+    let start_time = std::time::Instant::now();
 
-    // Start heartbeat task
+    // Create metrics provider
+    let metrics = WorkerMetrics {
+        events_processed: events_processed.clone(),
+        start_time,
+    };
+
+    // Start unified component heartbeat emission task with metrics
     let heartbeat_pool = pool.clone();
     let heartbeat_agent_name = agent_name.clone();
-    let heartbeat_events = events_processed.clone();
     task::spawn(async move {
-        if let Err(e) = emit_heartbeat(
+        use sinex_core::HeartbeatEmitter;
+        let emitter = HeartbeatEmitter::with_metrics_provider(
             heartbeat_pool, 
-            heartbeat_agent_name,
-            heartbeat_events,
-            start_time,
-        ).await {
-            error!(error = %e, "Heartbeat task failed");
-        }
+            heartbeat_agent_name, 
+            45, 
+            metrics
+        );
+        emitter.run().await;
     });
+    info!(agent = %agent_name, "Started component heartbeat emission with metrics");
 
     // Start metrics server
     let metrics_handle = task::spawn(async move {

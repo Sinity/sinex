@@ -1,0 +1,283 @@
+use sinex_core::{EventSource, EventSourceContext, RawEvent};
+use sinex_ulid::Ulid;
+use tokio::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Test what happens when event channel fills up
+#[tokio::test]
+async fn test_channel_backpressure_handling() {
+    // Small channel to trigger backpressure quickly
+    let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
+    
+    let events_generated = Arc::new(AtomicU64::new(0));
+    let events_dropped = Arc::new(AtomicU64::new(0));
+    
+    // Fast producer
+    let gen_count = events_generated.clone();
+    let drop_count = events_dropped.clone();
+    let producer = tokio::spawn(async move {
+        for i in 0..1000 {
+            let event = RawEvent {
+                id: Ulid::new(),
+                source: "fast_producer".to_string(),
+                event_type: "test.event".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: "test".to_string(),
+                ingestor_version: None,
+                payload_schema_id: None,
+                payload: serde_json::json!({"seq": i}),
+            };
+            
+            gen_count.fetch_add(1, Ordering::Relaxed);
+            
+            // Try send with timeout to avoid blocking forever
+            match tx.send_timeout(event, Duration::from_millis(10)).await {
+                Ok(_) => {},
+                Err(e) => {
+                    drop_count.fetch_add(1, Ordering::Relaxed);
+                    if i < 50 {
+                        // Log first few drops
+                        eprintln!("Dropped event {}: {:?}", i, e);
+                    }
+                }
+            }
+            
+            // Generate faster than consumer
+            if i < 100 {
+                // Start fast
+                tokio::time::sleep(Duration::from_micros(100)).await;
+            }
+        }
+    });
+    
+    // Slow consumer
+    let consumed = Arc::new(AtomicU64::new(0));
+    let cons_count = consumed.clone();
+    let consumer = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            // Simulate slow processing
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            cons_count.fetch_add(1, Ordering::Relaxed);
+            
+            if let Some(seq) = event.payload.get("seq").and_then(|v| v.as_u64()) {
+                if seq < 10 {
+                    eprintln!("Consumed event seq: {}", seq);
+                }
+            }
+        }
+    });
+    
+    // Let it run
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    
+    // Stop producer
+    producer.abort();
+    let _ = producer.await;
+    
+    // Drain remaining
+    drop(tx);
+    consumer.await.unwrap();
+    
+    let generated = events_generated.load(Ordering::Relaxed);
+    let dropped = events_dropped.load(Ordering::Relaxed);
+    let consumed_count = consumed.load(Ordering::Relaxed);
+    
+    println!("Backpressure test results:");
+    println!("  Generated: {}", generated);
+    println!("  Dropped: {}", dropped);
+    println!("  Consumed: {}", consumed_count);
+    println!("  Drop rate: {:.1}%", dropped as f64 / generated as f64 * 100.0);
+    
+    // Verify some events were dropped due to backpressure
+    assert!(dropped > 0, "Expected some events to be dropped");
+    assert!(consumed_count > 0, "Expected some events to be consumed");
+    assert!(consumed_count + dropped <= generated, "Accounting error");
+}
+
+/// Test graceful degradation under memory pressure
+#[tokio::test]
+async fn test_memory_pressure_handling() {
+    let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
+    
+    // Track memory usage
+    let start_memory = get_current_memory_usage();
+    
+    // Generate events with large payloads
+    let producer = tokio::spawn(async move {
+        for i in 0..100 {
+            // Increasingly large payloads
+            let size = 1024 * (i + 1); // 1KB to 100KB
+            let large_data = "x".repeat(size);
+            
+            let event = RawEvent {
+                id: Ulid::new(),
+                source: "memory_test".to_string(),
+                event_type: "large.payload".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: "test".to_string(),
+                ingestor_version: None,
+                payload_schema_id: None,
+                payload: serde_json::json!({
+                    "seq": i,
+                    "data": large_data,
+                    "size_kb": size / 1024
+                }),
+            };
+            
+            if tx.send(event).await.is_err() {
+                eprintln!("Channel closed at event {}", i);
+                break;
+            }
+            
+            // Check memory usage periodically
+            if i % 10 == 0 {
+                let current_memory = get_current_memory_usage();
+                let delta_mb = (current_memory - start_memory) / 1_048_576;
+                println!("After {} events: +{} MB", i, delta_mb);
+                
+                // Simulate memory pressure threshold
+                if delta_mb > 100 {
+                    eprintln!("Memory pressure detected at {} MB", delta_mb);
+                    break;
+                }
+            }
+        }
+    });
+    
+    // Consumer that tracks payload sizes
+    let mut total_bytes = 0u64;
+    let mut event_count = 0u64;
+    
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(event) = rx.recv().await {
+            if let Some(size) = event.payload.get("size_kb").and_then(|v| v.as_u64()) {
+                total_bytes += size * 1024;
+                event_count += 1;
+            }
+        }
+    }).await.ok();
+    
+    producer.abort();
+    
+    println!("Memory pressure test results:");
+    println!("  Events processed: {}", event_count);
+    println!("  Total payload size: {} MB", total_bytes / 1_048_576);
+    
+    assert!(event_count > 0, "Should process some events");
+}
+
+/// Test event source crash and restart
+#[tokio::test]
+async fn test_event_source_crash_recovery() {
+    struct CrashingEventSource {
+        crash_after: u64,
+        events_sent: Arc<AtomicU64>,
+    }
+    
+    #[async_trait::async_trait]
+    impl EventSource for CrashingEventSource {
+        type Config = ();
+        const SOURCE_NAME: &'static str = "crashing_source";
+        
+        async fn initialize(_ctx: EventSourceContext) -> Result<Self, Box<dyn std::error::Error>> {
+            Ok(Self {
+                crash_after: 50,
+                events_sent: Arc::new(AtomicU64::new(0)),
+            })
+        }
+        
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), Box<dyn std::error::Error>> {
+            for i in 0..100 {
+                let event = RawEvent {
+                    id: Ulid::new(),
+                    source: "crashing".to_string(),
+                    event_type: "test".to_string(),
+                    ts_ingest: chrono::Utc::now(),
+                    ts_orig: None,
+                    host: "test".to_string(),
+                    ingestor_version: None,
+                    payload_schema_id: None,
+                    payload: serde_json::json!({"seq": i}),
+                };
+                
+                tx.send(event).await?;
+                self.events_sent.fetch_add(1, Ordering::Relaxed);
+                
+                if i == self.crash_after {
+                    // Simulate crash
+                    panic!("Simulated event source crash at event {}", i);
+                }
+                
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok(())
+        }
+    }
+    
+    // Test automatic restart behavior
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut source = CrashingEventSource::initialize(EventSourceContext::new(serde_json::Value::Null))
+        .await
+        .unwrap();
+    
+    let sent_count = source.events_sent.clone();
+    
+    // Run source in supervised task
+    let source_handle = tokio::spawn(async move {
+        let result = source.stream_events(tx.clone()).await;
+        eprintln!("Source ended with: {:?}", result);
+        
+        // Simulate restart after crash
+        if result.is_err() {
+            eprintln!("Restarting source after crash...");
+            let mut new_source = CrashingEventSource {
+                crash_after: 200, // Won't crash again
+                events_sent: sent_count.clone(),
+            };
+            
+            // Continue from where we left off
+            let _ = new_source.stream_events(tx).await;
+        }
+    });
+    
+    // Collect events
+    let mut received = Vec::new();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = rx.recv().await {
+            if let Some(seq) = event.payload.get("seq").and_then(|v| v.as_u64()) {
+                received.push(seq);
+            }
+        }
+    }).await.ok();
+    
+    source_handle.abort();
+    
+    println!("Source crash test results:");
+    println!("  Events sent: {}", sent_count.load(Ordering::Relaxed));
+    println!("  Events received: {}", received.len());
+    println!("  Last sequence: {:?}", received.last());
+    
+    // Should have received events before and after crash
+    assert!(received.len() > 50, "Should receive events after crash");
+}
+
+fn get_current_memory_usage() -> u64 {
+    // Simple approximation - in real code use /proc/self/status or similar
+    std::alloc::System.into().used_memory()
+}
+
+// Placeholder for memory tracking
+trait MemoryTracker {
+    fn used_memory(&self) -> u64;
+}
+
+impl MemoryTracker for std::alloc::System {
+    fn used_memory(&self) -> u64 {
+        // This is a stub - real implementation would read from /proc/self/status
+        0
+    }
+}

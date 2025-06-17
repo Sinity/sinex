@@ -329,5 +329,148 @@ pub mod env {
     }
 }
 
+/// Helper for creating a simple test event with custom source and type
+pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::RawEvent {
+    RawEventBuilder::new(
+        source,
+        event_type,
+        json!({
+            "test": true,
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        })
+    ).build()
+}
+
+/// Helper for creating test events with specific payload
+pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
+    RawEventBuilder::new(source, event_type, payload).build()
+}
+
+/// Health check utilities for integration tests
+#[allow(dead_code)]
+pub mod health {
+    use super::*;
+    
+    /// Check if database is healthy
+    pub async fn check_database_health(pool: &PgPool) -> Result<bool> {
+        match sqlx::query("SELECT 1").fetch_one(pool).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+    
+    /// Check if git-annex is available
+    pub async fn check_git_annex_available() -> bool {
+        use std::process::Command;
+        
+        match Command::new("git").args(["annex", "version"]).output() {
+            Ok(output) => output.status.success(),
+            Err(_) => false,
+        }
+    }
+    
+    /// Check if required system tools are available
+    pub async fn check_system_tools() -> Vec<(String, bool)> {
+        let tools = vec!["git", "kitty", "hyprctl", "wl-paste", "xclip"];
+        let mut results = Vec::new();
+        
+        for tool in tools {
+            let available = std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            results.push((tool.to_string(), available));
+        }
+        
+        results
+    }
+}
+
+/// Cleanup utilities for integration tests
+#[allow(dead_code)]
+pub mod cleanup {
+    use super::*;
+    
+    /// Truncate all test tables
+    pub async fn truncate_all_tables(pool: &PgPool) -> Result<()> {
+        // Use the existing cleanup function from test_setup
+        crate::test_setup::cleanup_test_data(pool).await
+            .map_err(|e| anyhow::anyhow!("Failed to cleanup test data: {}", e))
+    }
+    
+    /// Clean up test files and directories
+    pub async fn cleanup_test_files(paths: &[&str]) -> Result<()> {
+        for path in paths {
+            if std::path::Path::new(path).exists() {
+                if std::path::Path::new(path).is_dir() {
+                    let _ = std::fs::remove_dir_all(path);
+                } else {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Configuration utilities for integration tests
+#[allow(dead_code)]
+pub mod config {
+    use super::*;
+    use tempfile::NamedTempFile;
+    use tokio::fs;
+    
+    /// Create a temporary configuration file
+    pub async fn create_temp_config(content: &str) -> Result<NamedTempFile> {
+        let temp_file = NamedTempFile::new()?;
+        fs::write(temp_file.path(), content).await?;
+        Ok(temp_file)
+    }
+    
+    /// Create a minimal valid configuration
+    pub fn minimal_valid_config() -> String {
+        r#"
+enabled_events = ["filesystem.file.created"]
+
+[monitoring]
+health_check_interval_secs = 30
+metrics_enabled = true
+
+[database]
+max_connections = 10
+"#.to_string()
+    }
+    
+    /// Create a comprehensive test configuration
+    pub fn comprehensive_test_config() -> String {
+        r#"
+enabled_events = [
+    "filesystem.file.created",
+    "filesystem.file.modified", 
+    "terminal.command.executed",
+    "hyprland.window.focus",
+    "clipboard.content.changed"
+]
+
+[monitoring]
+health_check_interval_secs = 30
+metrics_enabled = true
+failure_threshold = 3
+recovery_timeout_secs = 60
+
+[database]
+max_connections = 50
+connection_timeout_secs = 30
+health_check_enabled = true
+
+[git_annex]
+enabled = true
+repository_path = "/tmp/test-annex"
+size_threshold_bytes = 1024000
+"#.to_string()
+    }
+}
+
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;

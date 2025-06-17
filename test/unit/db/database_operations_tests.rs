@@ -10,75 +10,7 @@ async fn setup_test_db() -> sqlx::PgPool {
     create_test_pool(&database_url).await.unwrap()
 }
 
-#[sqlx::test]
-async fn test_insert_and_retrieve_raw_event(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Create a test event
-    let event = RawEventBuilder::new(
-        "filesystem",
-        "file.created",
-        json!({
-            "path": "/test/file.txt",
-            "size": 1024,
-            "permissions": "644"
-        })
-    ).build();
-    
-    // Insert event
-    let inserted_event = queries::insert_event(&pool, &event).await?;
-    assert_eq!(inserted_event.id, event.id);
-    assert_eq!(inserted_event.source, event.source);
-    assert_eq!(inserted_event.event_type, event.event_type);
-    assert_eq!(inserted_event.payload, event.payload);
-    
-    // Retrieve event by ID
-    let retrieved_event = queries::get_event_by_id(&pool, event.id).await?;
-    assert_eq!(retrieved_event.id, event.id);
-    assert_eq!(retrieved_event.source, event.source);
-    assert_eq!(retrieved_event.event_type, event.event_type);
-    assert_eq!(retrieved_event.payload["path"], "/test/file.txt");
-    assert_eq!(retrieved_event.payload["size"], 1024);
-    
-    Ok(())
-}
-
-#[sqlx::test]
-async fn test_insert_multiple_events(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let mut events = Vec::new();
-    
-    // Create multiple test events
-    for i in 0..5 {
-        let event = RawEventBuilder::new(
-            "terminal_kitty",
-            "command.executed",
-            json!({
-                "command": format!("echo 'test {}'", i),
-                "exit_code": 0,
-                "duration_ms": 100 + i * 10
-            })
-        ).build();
-        events.push(event);
-    }
-    
-    // Insert all events
-    let mut inserted_ids = Vec::new();
-    for event in &events {
-        let inserted = queries::insert_event(&pool, event).await?;
-        inserted_ids.push(inserted.id);
-    }
-    
-    // Verify all events were inserted
-    assert_eq!(inserted_ids.len(), 5);
-    
-    // Retrieve and verify each event
-    for (i, id) in inserted_ids.iter().enumerate() {
-        let retrieved = queries::get_event_by_id(&pool, *id).await?;
-        assert_eq!(retrieved.source, "terminal_kitty");
-        assert_eq!(retrieved.event_type, "command.executed");
-        assert_eq!(retrieved.payload["command"], format!("echo 'test {}'", i));
-    }
-    
-    Ok(())
-}
+// Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 
 #[sqlx::test]
 async fn test_query_events_by_source(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {

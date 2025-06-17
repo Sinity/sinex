@@ -32,4 +32,9 @@ impl EventSourceContext {
         self.annex_repo_path = Some(path);
         self
     }
+    
+    /// Create a test context with empty configuration
+    pub fn for_test() -> Self {
+        Self::new(serde_json::json!({}))
+    }
 }
