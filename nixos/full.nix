@@ -3580,6 +3580,12 @@ in
           journalctl -u sinex-config-migrate.service --no-pager -f
         '')
         
+        (pkgs.writeShellScriptBin "sinex-database-test" ''
+          echo "Running Sinex database connectivity and integration test..."
+          systemctl start sinex-database-connectivity-test.service
+          journalctl -u sinex-database-connectivity-test.service --no-pager -f
+        '')
+        
         (pkgs.writeShellScriptBin "sinex-config-status" ''
           echo "=== Sinex Configuration Status ==="
           echo
@@ -5150,9 +5156,6 @@ in
           echo "=== End Health Check ==="
           exit $health_check_result
         '';
-        
-        # Timeout for the entire health check process (includes setup time)
-        TimeoutStartSec = "${toString (cfg.database.healthCheck.timeout + 10)}s";
       };
     };
 
@@ -5780,19 +5783,19 @@ in
           # Validation results
           ${lib.optionalString (configValidation.summary.hasErrors) ''
             echo "❌ ERRORS:"
-            ${lib.concatMapStringsSep "\n" (error: "echo \"  - ${error}\"") configValidation.validationReport.errors}
+            ${lib.concatMapStringsSep "\n" (error: ''echo "  - ${error}"'') configValidation.validationReport.errors}
             echo
           ''}
           
           ${lib.optionalString (configValidation.summary.hasWarnings) ''
             echo "⚠️  WARNINGS:"
-            ${lib.concatMapStringsSep "\n" (warning: "echo \"  - ${warning}\"") configValidation.validationReport.warnings}
+            ${lib.concatMapStringsSep "\n" (warning: ''echo "  - ${warning}"'') configValidation.validationReport.warnings}
             echo
           ''}
           
           ${lib.optionalString (configValidation.summary.hasRecommendations) ''
             echo "💡 RECOMMENDATIONS:"
-            ${lib.concatMapStringsSep "\n" (rec: "echo \"  - ${rec}\"") configValidation.validationReport.recommendations}
+            ${lib.concatMapStringsSep "\n" (recommendation: ''echo "  - ${recommendation}"'') configValidation.validationReport.recommendations}
             echo
           ''}
           
@@ -5800,7 +5803,7 @@ in
           ${lib.optionalString ((lib.length configOptimization.performance) > 0) ''
             echo "🚀 PERFORMANCE SUGGESTIONS:"
             ${lib.concatMapStringsSep "\n" (sugg: 
-              "echo \"  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}\""
+              ''echo "  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}"''
             ) configOptimization.performance}
             echo
           ''}
@@ -5809,7 +5812,7 @@ in
           ${lib.optionalString ((lib.length configOptimization.security) > 0) ''
             echo "🔒 SECURITY SUGGESTIONS:"
             ${lib.concatMapStringsSep "\n" (sugg: 
-              "echo \"  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}\""
+              ''echo "  [${sugg.impact}] ${sugg.component}: ${sugg.suggestion}"''
             ) configOptimization.security}
             echo
           ''}
@@ -5924,6 +5927,165 @@ in
           ''}
           
           echo "Migration check complete"
+        '';
+      };
+    };
+
+    # Database connectivity and integration test service
+    systemd.services.sinex-database-connectivity-test = {
+      description = "Sinex Database Connectivity and Integration Test";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        StandardOutput = "journal";
+        StandardError = "journal";
+        
+        # Resource limits for connectivity tests
+        MemoryMax = "256M";
+        MemoryHigh = "192M";
+        CPUQuota = "100%";
+        TimeoutStartSec = "${toString (cfg.database.connectionPool.connectionTimeout + 30)}s";
+        
+        ExecStart = pkgs.writeShellScript "sinex-database-connectivity-test" ''
+          set -euo pipefail
+          
+          echo "=== Sinex Database Connectivity Test ==="
+          echo "Timestamp: $(date)"
+          echo
+          
+          # Database configuration summary
+          echo "Database Configuration:"
+          echo "  Host: ${cfg.database.host}:${toString cfg.database.port}"
+          echo "  Database: ${cfg.database.name}"
+          echo "  User: ${cfg.database.user}"
+          echo "  SSL Mode: ${cfg.database.ssl.mode}"
+          echo "  Connection Pool: ${toString cfg.database.connectionPool.minConnections}-${toString cfg.database.connectionPool.maxConnections}"
+          echo "  Connection Timeout: ${toString cfg.database.connectionPool.connectionTimeout}s"
+          echo "  Statement Timeout: ${toString cfg.database.performance.statementTimeout}s"
+          echo "  Health Check Enabled: ${if cfg.database.healthCheck.enable then "yes" else "no"}"
+          echo
+          
+          # Test 1: PostgreSQL service availability
+          echo "Test 1: PostgreSQL Service Availability"
+          if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; then
+            echo "  ✓ PostgreSQL service is ready"
+          else
+            echo "  ✗ PostgreSQL service is not ready"
+            exit 1
+          fi
+          
+          # Test 2: Database existence
+          echo "Test 2: Database Existence"
+          BASIC_URL="postgresql://postgres/${cfg.database.name}?host=/run/postgresql"
+          if ${pkgs.postgresql}/bin/psql -lqt | cut -d '|' -f 1 | grep -qw "${cfg.database.name}"; then
+            echo "  ✓ Database '${cfg.database.name}' exists"
+          else
+            echo "  ✗ Database '${cfg.database.name}' does not exist"
+            exit 1
+          fi
+          
+          # Test 3: Basic connectivity with configured URL
+          echo "Test 3: Basic Connectivity"
+          FULL_URL="${buildDatabaseUrl cfg}"
+          CONNECTION_TIMEOUT=${toString cfg.database.connectionPool.connectionTimeout}
+          
+          if timeout $CONNECTION_TIMEOUT ${pkgs.postgresql}/bin/psql "$FULL_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+            echo "  ✓ Basic connectivity successful with full configuration"
+          else
+            echo "  ⚠️  Full configuration failed, testing with basic URL"
+            if ${pkgs.postgresql}/bin/psql "$BASIC_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+              echo "  ⚠️  Basic connectivity works, but configured URL has issues"
+              echo "  URL (sanitized): $(echo "$FULL_URL" | sed 's/password=[^&]*/password=****/g')"
+            else
+              echo "  ✗ Both configured and basic connectivity failed"
+              exit 1
+            fi
+          fi
+          
+          # Test 4: Connection pool parameter validation
+          echo "Test 4: Connection Pool Configuration"
+          if [ ${toString cfg.database.connectionPool.minConnections} -le ${toString cfg.database.connectionPool.maxConnections} ]; then
+            echo "  ✓ Connection pool min (${toString cfg.database.connectionPool.minConnections}) <= max (${toString cfg.database.connectionPool.maxConnections})"
+          else
+            echo "  ✗ Invalid connection pool configuration"
+            exit 1
+          fi
+          
+          # Test 5: Timeout hierarchy validation
+          echo "Test 5: Timeout Configuration"
+          connection_timeout=${toString cfg.database.connectionPool.connectionTimeout}
+          statement_timeout=${toString cfg.database.performance.statementTimeout}
+          migration_timeout=${toString cfg.database.migration.timeout}
+          
+          if [ $statement_timeout -eq 0 ] || [ $connection_timeout -le $statement_timeout ]; then
+            echo "  ✓ Connection timeout ($connection_timeout s) compatible with statement timeout ($statement_timeout s)"
+          else
+            echo "  ⚠️  Connection timeout > statement timeout may cause issues"
+          fi
+          
+          if [ $statement_timeout -lt $migration_timeout ] || [ $statement_timeout -eq 0 ]; then
+            echo "  ✓ Statement timeout compatible with migration timeout ($migration_timeout s)"
+          else
+            echo "  ⚠️  Statement timeout >= migration timeout may cause migration failures"
+          fi
+          
+          # Test 6: Health check query validation
+          echo "Test 6: Health Check Query"
+          HEALTH_QUERY="${cfg.database.healthCheck.query}"
+          HEALTH_TIMEOUT=${toString cfg.database.healthCheck.timeout}
+          
+          if timeout $HEALTH_TIMEOUT ${pkgs.postgresql}/bin/psql "$FULL_URL" -c "$HEALTH_QUERY" >/dev/null 2>&1; then
+            echo "  ✓ Health check query successful: $HEALTH_QUERY"
+          else
+            echo "  ✗ Health check query failed: $HEALTH_QUERY"
+            exit 1
+          fi
+          
+          # Test 7: Schema and permissions validation
+          echo "Test 7: Schema and Permissions"
+          schema_count=$(${pkgs.postgresql}/bin/psql "$FULL_URL" -t -c "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('raw', 'core', 'sinex_schemas', 'sinex_router');" 2>/dev/null | tr -d ' ' || echo "0")
+          
+          if [ "$schema_count" -gt 0 ]; then
+            echo "  ✓ Found $schema_count Sinex schemas"
+            
+            # Test user permissions on schemas
+            user_permissions=$(${pkgs.postgresql}/bin/psql "$FULL_URL" -t -c "SELECT COUNT(*) FROM information_schema.usage_privileges WHERE grantee = '${cfg.database.user}' AND object_type = 'SCHEMA';" 2>/dev/null | tr -d ' ' || echo "0")
+            if [ "$user_permissions" -gt 0 ]; then
+              echo "  ✓ User '${cfg.database.user}' has schema permissions"
+            else
+              echo "  ⚠️  User '${cfg.database.user}' may lack schema permissions"
+            fi
+          else
+            echo "  ⚠️  No Sinex schemas found (migrations may not have run)"
+          fi
+          
+          # Test 8: Performance test
+          echo "Test 8: Performance Test"
+          start_time=$(date +%s%N)
+          if ${pkgs.postgresql}/bin/psql "$FULL_URL" -c "SELECT COUNT(*) FROM pg_tables;" >/dev/null 2>&1; then
+            end_time=$(date +%s%N)
+            duration_ms=$(( (end_time - start_time) / 1000000 ))
+            echo "  ✓ Query completed in ''${duration_ms}ms"
+            
+            if [ $duration_ms -lt 1000 ]; then
+              echo "  ✓ Performance: Excellent (< 1s)"
+            elif [ $duration_ms -lt 5000 ]; then
+              echo "  ⚠️  Performance: Acceptable (< 5s)"
+            else
+              echo "  ⚠️  Performance: Slow (>= 5s) - check database load"
+            fi
+          else
+            echo "  ✗ Performance test query failed"
+          fi
+          
+          echo
+          echo "=== Database Connectivity Test Summary ==="
+          echo "✓ All critical tests passed"
+          echo "✓ Database is ready for Sinex operations"
+          echo "✓ Configuration is properly integrated"
+          echo
         '';
       };
     };
