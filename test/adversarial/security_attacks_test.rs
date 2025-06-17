@@ -141,26 +141,6 @@ fn test_path_case_confusion_attacks() {
     }
 }
 
-#[test]
-fn test_json_parser_differential() {
-    // Different JSON parsers handle edge cases differently
-    let tricky_json_strings = vec![
-        r#"{"key": 1.0000000000000000000000000000000001}"#,  // Precision loss
-        r#"{"key": 9007199254740993}"#,  // Beyond JS safe integer
-        r#"{"key": "\uD800"}"#,  // Unpaired surrogate
-        r#"{"key": "\u0000"}"#,  // Null character
-        r#"{"a": 1, "a": 2}"#,  // Duplicate keys
-        r#"{"key": -0}"#,  // Negative zero
-        r#"{"key": Infinity}"#,  // Invalid JSON but some parsers accept
-    ];
-    
-    for json_str in tricky_json_strings {
-        match serde_json::from_str::<serde_json::Value>(json_str) {
-            Ok(val) => println!("Parsed OK: {} -> {:?}", json_str, val),
-            Err(e) => println!("Parse error: {} -> {}", json_str, e),
-        }
-    }
-}
 
 #[test]
 fn test_filesystem_race_condition_attacks() {

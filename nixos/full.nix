@@ -1748,6 +1748,24 @@ in
         default = true;
         description = "Configure Prometheus to scrape Sinex metrics";
       };
+      
+      enableGrafana = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Configure Grafana dashboards for Sinex monitoring";
+      };
+      
+      enableAlerting = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable Prometheus alerting rules for Sinex";
+      };
+      
+      retentionPeriod = mkOption {
+        type = types.str;
+        default = "30d";
+        description = "Retention period for monitoring data";
+      };
 
       enableGrafana = mkOption {
         type = types.bool;
@@ -4082,6 +4100,11 @@ in
         SINEX_ERROR_ALERTING_WEBHOOK = if cfg.errorHandling.alerting.destinations.webhook != null then cfg.errorHandling.alerting.destinations.webhook else "";
         SINEX_ERROR_ALERTING_EMAIL = if cfg.errorHandling.alerting.destinations.email != null then cfg.errorHandling.alerting.destinations.email else "";
         SINEX_ERROR_ALERTING_COMMAND = if cfg.errorHandling.alerting.destinations.command != null then cfg.errorHandling.alerting.destinations.command else "";
+        
+        # Monitoring integration
+        SINEX_METRICS_ENABLED = if cfg.observability.enablePrometheus then "true" else "false";
+        SINEX_ERROR_METRICS_FILE = "${cfg.directories.monitoring}/error_metrics.prom";
+        SINEX_PROMETHEUS_PUSHGATEWAY = "localhost:9091";
       };
 
       serviceConfig = {
@@ -4942,25 +4965,775 @@ in
       };
     };
 
-    # Prometheus configuration
-    services.prometheus.scrapeConfigs = mkIf cfg.observability.enablePrometheus [
-      {
-        job_name = "sinex_unified_collector";
-        static_configs = [
+    # Comprehensive Prometheus configuration
+    services.prometheus = mkIf cfg.observability.enablePrometheus {
+      enable = true;
+      port = 9090;
+      retentionTime = cfg.observability.retentionPeriod;
+      
+      scrapeConfigs = [
+        {
+          job_name = "sinex_unified_collector";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.unifiedCollector.metricsPort}" ];
+            }
+          ];
+          scrape_interval = "30s";
+          metrics_path = "/metrics";
+        }
+        {
+          job_name = "sinex_promo_worker";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.promoWorker.metricsPort}" ];
+            }
+          ];
+          scrape_interval = "30s";
+          metrics_path = "/metrics";
+        }
+        # Health endpoints monitoring
+        {
+          job_name = "sinex_health_collector";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.unifiedCollector.healthCheck.port}" ];
+            }
+          ];
+          scrape_interval = "15s";
+          metrics_path = "/health/metrics";
+        }
+        {
+          job_name = "sinex_health_worker";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.promoWorker.healthCheck.port}" ];
+            }
+          ];
+          scrape_interval = "15s";
+          metrics_path = "/health/metrics";
+        }
+        # Health coordinator monitoring
+        {
+          job_name = "sinex_health_coordinator";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.healthMonitoring.coordinatorPort}" ];
+            }
+          ];
+          scrape_interval = "10s";
+          metrics_path = "/health/metrics";
+        }
+        # Database and system monitoring
+        {
+          job_name = "sinex_database";
+          static_configs = [
+            {
+              targets = [ "localhost:${toString cfg.database.port}" ];
+            }
+          ];
+          scrape_interval = "30s";
+          metrics_path = "/metrics";
+        }
+        # Git-annex monitoring
+        (mkIf (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) {
+          job_name = "sinex_git_annex";
+          static_configs = [
+            {
+              targets = [ "localhost:9876" ];  # Git-annex health metrics port
+            }
+          ];
+          scrape_interval = "60s";
+          metrics_path = "/metrics";
+        })
+        # Node exporter for system metrics
+        {
+          job_name = "node_exporter";
+          static_configs = [
+            {
+              targets = [ "localhost:9100" ];
+            }
+          ];
+          scrape_interval = "30s";
+        }
+      ];
+      
+      # Alert manager configuration
+      alertmanagers = mkIf cfg.observability.enableAlerting [
+        {
+          static_configs = [
+            {
+              targets = [ "localhost:9093" ];
+            }
+          ];
+        }
+      ];
+      
+      # Alerting rules
+      rules = mkIf cfg.observability.enableAlerting [
+        (pkgs.writeText "sinex-alerts.yml" ''
+          groups:
+            - name: sinex_health
+              rules:
+                # Service health alerts
+                - alert: SinexCollectorDown
+                  expr: up{job="sinex_unified_collector"} == 0
+                  for: 2m
+                  labels:
+                    severity: critical
+                    service: collector
+                  annotations:
+                    summary: "Sinex Unified Collector is down"
+                    description: "The Sinex Unified Collector has been down for more than 2 minutes"
+                    
+                - alert: SinexWorkerDown
+                  expr: up{job="sinex_promo_worker"} == 0
+                  for: 2m
+                  labels:
+                    severity: critical
+                    service: worker
+                  annotations:
+                    summary: "Sinex Promotion Worker is down"
+                    description: "The Sinex Promotion Worker has been down for more than 2 minutes"
+                    
+                # Health check alerts
+                - alert: SinexHealthCheckFailing
+                  expr: sinex_health_check_status == 0
+                  for: 5m
+                  labels:
+                    severity: warning
+                    service: "{{ $labels.service }}"
+                  annotations:
+                    summary: "Sinex health check failing for {{ $labels.service }}"
+                    description: "Health check for {{ $labels.service }} has been failing for 5 minutes"
+                    
+                - alert: SinexDatabaseUnhealthy
+                  expr: sinex_database_health_status == 0
+                  for: 3m
+                  labels:
+                    severity: critical
+                    service: database
+                  annotations:
+                    summary: "Sinex database is unhealthy"
+                    description: "Database health checks have been failing for 3 minutes"
+                    
+                # Resource usage alerts
+                - alert: SinexHighCPUUsage
+                  expr: process_cpu_seconds_total{job=~"sinex_.*"} > 0.8
+                  for: 10m
+                  labels:
+                    severity: warning
+                    service: "{{ $labels.job }}"
+                  annotations:
+                    summary: "High CPU usage for {{ $labels.job }}"
+                    description: "{{ $labels.job }} has been using >80% CPU for 10 minutes"
+                    
+                - alert: SinexHighMemoryUsage
+                  expr: process_resident_memory_bytes{job=~"sinex_.*"} / process_virtual_memory_max_bytes{job=~"sinex_.*"} > 0.9
+                  for: 10m
+                  labels:
+                    severity: warning
+                    service: "{{ $labels.job }}"
+                  annotations:
+                    summary: "High memory usage for {{ $labels.job }}"
+                    description: "{{ $labels.job }} has been using >90% memory for 10 minutes"
+                    
+                # Queue depth alerts
+                - alert: SinexQueueDepthHigh
+                  expr: sinex_queue_depth > ${toString cfg.queueManagement.monitoring.queueDepthWarningThreshold}
+                  for: 5m
+                  labels:
+                    severity: warning
+                    service: queue
+                  annotations:
+                    summary: "Sinex queue depth is high"
+                    description: "Queue depth ({{ $value }}) exceeds warning threshold (${toString cfg.queueManagement.monitoring.queueDepthWarningThreshold})"
+                    
+                - alert: SinexQueueDepthCritical
+                  expr: sinex_queue_depth > ${toString cfg.queueManagement.monitoring.maxQueueDepth}
+                  for: 2m
+                  labels:
+                    severity: critical
+                    service: queue
+                  annotations:
+                    summary: "Sinex queue depth is critically high"
+                    description: "Queue depth ({{ $value }}) exceeds maximum threshold (${toString cfg.queueManagement.monitoring.maxQueueDepth})"
+                    
+                # Disk space alerts
+                - alert: SinexDiskSpaceWarning
+                  expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/sinex"} / node_filesystem_size_bytes{mountpoint="/var/lib/sinex"}) * 100 < ${toString (100 - cfg.diskMonitoring.warningThreshold)}
+                  for: 5m
+                  labels:
+                    severity: warning
+                    service: filesystem
+                  annotations:
+                    summary: "Sinex disk space warning"
+                    description: "Available disk space is below warning threshold"
+                    
+                - alert: SinexDiskSpaceCritical
+                  expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/sinex"} / node_filesystem_size_bytes{mountpoint="/var/lib/sinex"}) * 100 < ${toString (100 - cfg.diskMonitoring.criticalThreshold)}
+                  for: 2m
+                  labels:
+                    severity: critical
+                    service: filesystem
+                  annotations:
+                    summary: "Sinex disk space critical"
+                    description: "Available disk space is critically low"
+                    
+                # Error rate alerts  
+                - alert: SinexHighErrorRate
+                  expr: rate(sinex_errors_total[5m]) > ${toString cfg.errorHandling.alerting.thresholds.errorRate}
+                  for: 2m
+                  labels:
+                    severity: warning
+                    service: "{{ $labels.service }}"
+                  annotations:
+                    summary: "High error rate in {{ $labels.service }}"
+                    description: "Error rate ({{ $value }}/min) exceeds threshold in {{ $labels.service }}"
+                    
+                # Git-annex specific alerts
+                ${lib.optionalString (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) ''
+                - alert: SinexGitAnnexUnhealthy
+                  expr: sinex_git_annex_health_status == 0
+                  for: 10m
+                  labels:
+                    severity: warning
+                    service: git-annex
+                  annotations:
+                    summary: "Git-annex repository is unhealthy"
+                    description: "Git-annex health checks have been failing for 10 minutes"
+                    
+                - alert: SinexGitAnnexSizeLimit
+                  expr: sinex_git_annex_repo_size_bytes > sinex_git_annex_size_limit_bytes
+                  for: 30m
+                  labels:
+                    severity: warning
+                    service: git-annex
+                  annotations:
+                    summary: "Git-annex repository size exceeds limit"
+                    description: "Repository size ({{ $value | humanize }}) exceeds configured limit"
+                ''}
+        '')
+      ];
+    };
+    
+    # Node exporter for system metrics
+    services.prometheus.exporters.node = mkIf cfg.observability.enablePrometheus {
+      enable = true;
+      port = 9100;
+      enabledCollectors = [
+        "systemd"
+        "filesystem"
+        "meminfo"
+        "diskstats"
+        "netdev"
+        "loadavg"
+        "cpu"
+      ];
+    };
+    
+    # Prometheus pushgateway for ephemeral metrics
+    services.prometheus.pushgateway = mkIf cfg.observability.enablePrometheus {
+      enable = true;
+      web.listen-address = "localhost:9091";
+    };
+    
+    # Comprehensive monitoring metrics aggregator
+    systemd.services.sinex-monitoring-aggregator = mkIf cfg.observability.enablePrometheus {
+      description = "Sinex Monitoring Metrics Aggregator";
+      after = [ "prometheus.service" "prometheus-pushgateway.service" ];
+      wantedBy = [ "multi-user.target" ];
+      
+      environment = {
+        PROMETHEUS_PUSHGATEWAY = "localhost:9091";
+        METRICS_DIR = cfg.directories.monitoring;
+        SINEX_JOB_NAME = "sinex_monitoring";
+      };
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-monitoring-aggregator" ''
+          set -euo pipefail
+          
+          echo "Aggregating Sinex monitoring metrics..."
+          
+          # Function to push metrics to pushgateway
+          push_metrics() {
+            local job_name="$1"
+            local metrics_file="$2"
+            
+            if [ -f "$metrics_file" ]; then
+              echo "Pushing metrics from $metrics_file with job name $job_name"
+              ${pkgs.curl}/bin/curl -X POST \
+                --data-binary "@$metrics_file" \
+                "http://$PROMETHEUS_PUSHGATEWAY/metrics/job/$job_name" || {
+                echo "Failed to push metrics from $metrics_file" >&2
+                return 1
+              }
+            else
+              echo "Metrics file $metrics_file not found, skipping"
+            fi
+          }
+          
+          # Push health metrics
+          push_metrics "sinex_health" "$METRICS_DIR/health_metrics.prom"
+          
+          # Push queue metrics  
+          push_metrics "sinex_queue" "$METRICS_DIR/queue_metrics.prom"
+          
+          # Push error metrics
+          push_metrics "sinex_errors" "$METRICS_DIR/error_metrics.prom"
+          
+          # Push git-annex metrics if enabled
+          ${lib.optionalString (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) ''
+            push_metrics "sinex_git_annex" "$METRICS_DIR/git_annex_metrics.prom"
+          ''}
+          
+          # Generate aggregated system metrics
+          cat > "$METRICS_DIR/system_metrics.prom" << EOF
+# HELP sinex_system_info System information
+# TYPE sinex_system_info gauge
+sinex_system_info{version="1.0",instance="$(hostname)"} 1
+
+# HELP sinex_monitoring_last_run Timestamp of last monitoring aggregation
+# TYPE sinex_monitoring_last_run gauge
+sinex_monitoring_last_run $(date +%s)
+
+# HELP sinex_services_total Total number of Sinex services configured
+# TYPE sinex_services_total gauge
+sinex_services_total ${toString (lib.length cfg.healthMonitoring.dependencies.criticalServices + 1)}
+EOF
+          
+          push_metrics "sinex_system" "$METRICS_DIR/system_metrics.prom"
+          
+          echo "Monitoring metrics aggregation completed"
+        '';
+      };
+    };
+    
+    # Timer for regular monitoring aggregation
+    systemd.timers.sinex-monitoring-aggregator = mkIf cfg.observability.enablePrometheus {
+      description = "Timer for Sinex Monitoring Aggregator";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "1min";
+        Persistent = true;
+      };
+    };
+    
+    # Grafana configuration for comprehensive dashboards
+    services.grafana = mkIf cfg.observability.enableGrafana {
+      enable = true;
+      settings = {
+        server = {
+          http_port = 3000;
+          domain = "localhost";
+        };
+        database = {
+          type = "sqlite3";
+          path = "/var/lib/grafana/grafana.db";
+        };
+        security = {
+          admin_user = "admin";
+          admin_password = "sinex-monitor";
+        };
+      };
+      
+      provision = {
+        enable = true;
+        
+        datasources.settings.datasources = [
           {
-            targets = [ "localhost:${toString cfg.unifiedCollector.metricsPort}" ];
+            name = "Prometheus";
+            type = "prometheus";
+            access = "proxy";
+            url = "http://localhost:9090";
+            isDefault = true;
           }
         ];
-      }
-      {
-        job_name = "sinex_promo_worker";
-        static_configs = [
+        
+        dashboards.settings.providers = [
           {
-            targets = [ "localhost:${toString cfg.promoWorker.metricsPort}" ];
+            name = "sinex";
+            type = "file";
+            options.path = "/var/lib/grafana/dashboards";
+            updateIntervalSeconds = 10;
+            allowUiUpdates = true;
           }
         ];
+      };
+    };
+    
+    # Alert manager configuration
+    services.prometheus.alertmanager = mkIf cfg.observability.enableAlerting {
+      enable = true;
+      port = 9093;
+      configuration = {
+        global = {
+          smtp_smarthost = "localhost:587";
+          smtp_from = "alerts@sinex.local";
+        };
+        
+        route = {
+          group_by = [ "alertname" "service" ];
+          group_wait = "30s";
+          group_interval = "5m";
+          repeat_interval = "1h";
+          receiver = "sinex-alerts";
+          
+          routes = [
+            {
+              match = {
+                severity = "critical";
+              };
+              receiver = "sinex-critical";
+              repeat_interval = "15m";
+            }
+            {
+              match = {
+                service = "database";
+              };
+              receiver = "sinex-database";
+              repeat_interval = "5m";
+            }
+          ];
+        };
+        
+        receivers = [
+          {
+            name = "sinex-alerts";
+            webhook_configs = mkIf (cfg.healthMonitoring.alerting.destinations.webhook != null) [
+              {
+                url = cfg.healthMonitoring.alerting.destinations.webhook;
+                send_resolved = true;
+              }
+            ];
+          }
+          {
+            name = "sinex-critical";
+            webhook_configs = mkIf (cfg.healthMonitoring.alerting.destinations.webhook != null) [
+              {
+                url = cfg.healthMonitoring.alerting.destinations.webhook;
+                send_resolved = true;
+              }
+            ];
+          }
+          {
+            name = "sinex-database";
+            webhook_configs = mkIf (cfg.healthMonitoring.alerting.destinations.webhook != null) [
+              {
+                url = cfg.healthMonitoring.alerting.destinations.webhook;
+                send_resolved = true;
+              }
+            ];
+          }
+        ];
+      };
+    };
+    
+    # Grafana dashboard provisioning
+    systemd.services.sinex-grafana-dashboards = mkIf cfg.observability.enableGrafana {
+      description = "Provision Sinex Grafana Dashboards";
+      after = [ "grafana.service" ];
+      wantedBy = [ "multi-user.target" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = "grafana";
+        Group = "grafana";
+        ExecStart = pkgs.writeShellScript "provision-sinex-dashboards" ''
+          set -euo pipefail
+          
+          mkdir -p /var/lib/grafana/dashboards
+          
+          # Create comprehensive Sinex monitoring dashboard
+          cat > /var/lib/grafana/dashboards/sinex-overview.json << 'EOF'
+{
+  "dashboard": {
+    "id": null,
+    "title": "Sinex System Overview",
+    "tags": ["sinex", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=~\"sinex_.*\"}",
+            "legendFormat": "{{ job }}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "color": "red",
+                    "text": "DOWN"
+                  },
+                  "1": {
+                    "color": "green", 
+                    "text": "UP"
+                  }
+                },
+                "type": "value"
+              }
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Event Processing Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(sinex_events_processed_total[5m])",
+            "legendFormat": "Events/sec",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Queue Depth",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "sinex_queue_depth",
+            "legendFormat": "Queue Depth",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(sinex_errors_total[5m])",
+            "legendFormat": "Errors/sec",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Resource Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes{job=~\"sinex_.*\"}",
+            "legendFormat": "Memory {{ job }}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(process_cpu_seconds_total{job=~\"sinex_.*\"}[5m])",
+            "legendFormat": "CPU {{ job }}",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes",
+            "logBase": 1,
+            "min": 0,
+            "unit": "bytes"
+          },
+          {
+            "label": "Percent",
+            "logBase": 1,
+            "min": 0,
+            "max": 1,
+            "unit": "percentunit"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Health Check Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sinex_health_check_status",
+            "legendFormat": "{{ service }}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "color": "red",
+                    "text": "UNHEALTHY"
+                  },
+                  "1": {
+                    "color": "green",
+                    "text": "HEALTHY"
+                  }
+                },
+                "type": "value"
+              }
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
       }
-    ];
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "version": 1
+  }
+}
+EOF
+          
+          echo "Sinex Grafana dashboards provisioned successfully"
+        '';
+      };
+    };
+    
+    # Comprehensive monitoring stack test service
+    systemd.services.sinex-monitoring-test = mkIf (cfg.observability.enablePrometheus && cfg.healthMonitoring.enable) {
+      description = "Test Sinex Monitoring Stack End-to-End";
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-monitoring-test" ''
+          set -euo pipefail
+          
+          echo "🔍 Testing Sinex Monitoring Stack End-to-End..."
+          echo "=================================================="
+          
+          # Test results
+          total_tests=0
+          passed_tests=0
+          failed_tests=0
+          
+          # Helper function to run test
+          run_test() {
+            local test_name="$1"
+            local test_command="$2"
+            
+            total_tests=$((total_tests + 1))
+            echo
+            echo "🧪 Test $total_tests: $test_name"
+            echo "Command: $test_command"
+            
+            if eval "$test_command" >/dev/null 2>&1; then
+              echo "✅ PASS: $test_name"
+              passed_tests=$((passed_tests + 1))
+            else
+              echo "❌ FAIL: $test_name"
+              failed_tests=$((failed_tests + 1))
+            fi
+          }
+          
+          # 1. Test Prometheus is running and accessible
+          run_test "Prometheus service availability" "${pkgs.curl}/bin/curl -s http://localhost:9090/api/v1/label/__name__/values"
+          
+          # 2. Test Prometheus scraping Sinex services
+          run_test "Sinex collector metrics available" "${pkgs.curl}/bin/curl -s 'http://localhost:9090/api/v1/query?query=up{job=\"sinex_unified_collector\"}'"
+          run_test "Sinex worker metrics available" "${pkgs.curl}/bin/curl -s 'http://localhost:9090/api/v1/query?query=up{job=\"sinex_promo_worker\"}'"
+          
+          # 3. Test health endpoints
+          ${lib.optionalString cfg.unifiedCollector.healthCheck.enable ''
+            run_test "Collector health endpoint" "${pkgs.curl}/bin/curl -f -s http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.path}"
+          ''}
+          
+          ${lib.optionalString cfg.promoWorker.healthCheck.enable ''
+            run_test "Worker health endpoint" "${pkgs.curl}/bin/curl -f -s http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.path}"
+          ''}
+          
+          # 4. Test health coordinator
+          run_test "Health coordinator metrics" "${pkgs.curl}/bin/curl -f -s http://localhost:${toString cfg.healthMonitoring.coordinatorPort}/health/metrics"
+          
+          # 5. Test Alert Manager
+          ${lib.optionalString cfg.observability.enableAlerting ''
+            run_test "AlertManager availability" "${pkgs.curl}/bin/curl -s http://localhost:9093/api/v1/status"
+          ''}
+          
+          # 6. Test Grafana
+          ${lib.optionalString cfg.observability.enableGrafana ''
+            run_test "Grafana availability" "${pkgs.curl}/bin/curl -s http://localhost:3000/api/health"
+            run_test "Grafana dashboard provisioning" "[ -f /var/lib/grafana/dashboards/sinex-overview.json ]"
+          ''}
+          
+          # 7. Test monitoring files generation
+          run_test "Health metrics file exists" "[ -f ${cfg.directories.monitoring}/health_metrics.prom ]"
+          run_test "Queue metrics file exists" "[ -f ${cfg.directories.monitoring}/queue_metrics.prom ]"
+          
+          # 8. Test git-annex monitoring if enabled
+          ${lib.optionalString (cfg.blobStorage.enable && cfg.blobStorage.healthCheck.enable) ''
+            run_test "Git-annex health status file" "[ -f ${cfg.directories.health}/annex_last_status ]"
+            run_test "Git-annex metrics file" "[ -f ${cfg.directories.monitoring}/git_annex_metrics.prom ]"
+          ''}
+          
+          # 9. Test pushgateway
+          run_test "Prometheus pushgateway" "${pkgs.curl}/bin/curl -s http://localhost:9091/metrics"
+          
+          # 10. Test node exporter
+          run_test "Node exporter metrics" "${pkgs.curl}/bin/curl -s http://localhost:9100/metrics"
+          
+          # 11. Test that critical services are being monitored
+          ${lib.concatStringsSep "\\n" (map (service: ''
+            run_test "Service ${service} is monitored" "systemctl is-active ${service}"
+          '') cfg.healthMonitoring.dependencies.criticalServices)}
+          
+          # 12. Test error metrics integration
+          run_test "Error metrics configuration" "[ ! -z \"$SINEX_ERROR_METRICS_FILE\" ]"
+          
+          # Summary
+          echo
+          echo "🎯 MONITORING STACK TEST SUMMARY"
+          echo "=================================="
+          echo "Total tests: $total_tests"
+          echo "Passed: $passed_tests"
+          echo "Failed: $failed_tests"
+          echo
+          
+          if [ "$failed_tests" -eq 0 ]; then
+            echo "🎉 ALL TESTS PASSED! Monitoring stack is fully operational."
+            echo "📊 Access Grafana at: http://localhost:3000 (admin/sinex-monitor)"
+            echo "📈 Access Prometheus at: http://localhost:9090"
+            echo "🚨 Access AlertManager at: http://localhost:9093"
+            echo "🔧 Pushgateway at: http://localhost:9091"
+            exit 0
+          else
+            echo "⚠️  Some tests failed. Please check the monitoring configuration."
+            echo "💡 Run 'systemctl status sinex-monitoring-test' for detailed output"
+            exit 1
+          fi
+        '';
+      };
+    };
 
     # Terminal auto-recording for all users
     programs.bash.promptInit = mkIf cfg.unifiedCollector.sources.asciinema.autoRecord ''
@@ -5490,9 +6263,9 @@ in
       };
     };
 
-    # Health Check Coordination Service  
+    # Health Check Coordination Service with Metrics
     systemd.services.sinex-health-coordinator = mkIf cfg.healthMonitoring.enable {
-      description = "Sinex Health Check Coordinator";
+      description = "Sinex Health Check Coordinator with Prometheus Metrics";
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
 
@@ -5503,6 +6276,8 @@ in
         SINEX_HEALTH_HISTORY_RETENTION = cfg.healthMonitoring.stateManagement.historyRetention;
         SINEX_HEALTH_ENABLE_ALERTING = if cfg.healthMonitoring.alerting.enable then "true" else "false";
         SINEX_HEALTH_ENABLE_RECOVERY = if cfg.healthMonitoring.recovery.enableAutoRecovery then "true" else "false";
+        SINEX_HEALTH_METRICS_PORT = toString cfg.healthMonitoring.coordinatorPort;
+        SINEX_ENABLE_PROMETHEUS_METRICS = if cfg.observability.enablePrometheus then "true" else "false";
       };
 
       serviceConfig = {
