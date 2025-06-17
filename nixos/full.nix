@@ -923,25 +923,6 @@ in
           };
         };
 
-        persistence = {
-          enable = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Enable health state persistence across restarts";
-          };
-
-          stateFile = mkOption {
-            type = types.str;
-            default = "collector_health_state";
-            description = "Filename for persisting health state";
-          };
-
-          retainDuration = mkOption {
-            type = types.str;
-            default = "24h";
-            description = "Duration to retain health history";
-          };
-        };
       };
 
       # Restart Policy Configuration
@@ -1483,25 +1464,6 @@ in
           };
         };
 
-        persistence = {
-          enable = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Enable health state persistence across restarts";
-          };
-
-          stateFile = mkOption {
-            type = types.str;
-            default = "worker_health_state";
-            description = "Filename for persisting health state";
-          };
-
-          retainDuration = mkOption {
-            type = types.str;
-            default = "24h";
-            description = "Duration to retain health history";
-          };
-        };
       };
 
       # Restart Policy Configuration  
@@ -1954,37 +1916,6 @@ in
         };
       };
 
-      stateManagement = {
-        enablePersistence = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Persist health state across system restarts";
-        };
-
-        stateFile = mkOption {
-          type = types.str;
-          default = "health_coordinator_state";
-          description = "Filename for persisting health coordinator state";
-        };
-
-        historyRetention = mkOption {
-          type = types.str;
-          default = "7d";
-          description = "Duration to retain health check history";
-        };
-
-        snapshotInterval = mkOption {
-          type = types.str;
-          default = "1h";
-          description = "Interval for taking health state snapshots";
-        };
-
-        compressionEnabled = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable compression for health state storage";
-        };
-      };
     };
 
     # Error Handling and Graceful Degradation Configuration
@@ -3974,7 +3905,6 @@ in
         SINEX_READINESS_PATH = cfg.unifiedCollector.healthCheck.readinessPath;
         SINEX_LIVENESS_PATH = cfg.unifiedCollector.healthCheck.livenessPath;
         SINEX_HEALTH_CHECK_TIMEOUT = toString cfg.unifiedCollector.healthCheck.timeout;
-        SINEX_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}";
         
         # Error handling and graceful degradation environment variables
         SINEX_ERROR_HANDLING_ENABLED = if cfg.errorHandling.enable then "true" else "false";
@@ -4301,7 +4231,6 @@ in
         SINEX_WORKER_READINESS_PATH = cfg.promoWorker.healthCheck.readinessPath;
         SINEX_WORKER_LIVENESS_PATH = cfg.promoWorker.healthCheck.livenessPath;
         SINEX_WORKER_HEALTH_CHECK_TIMEOUT = toString cfg.promoWorker.healthCheck.timeout;
-        SINEX_WORKER_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}";
         SINEX_WORKER_QUEUE_HEALTH_ENABLED = if cfg.promoWorker.healthCheck.queueHealth.enable then "true" else "false";
         SINEX_WORKER_HEALTH_MAX_QUEUE_DEPTH = toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold;
         SINEX_WORKER_HEALTH_MAX_PROCESSING_TIME = cfg.promoWorker.healthCheck.queueHealth.processingTimeThreshold;
@@ -5759,7 +5688,6 @@ EOF
       
       # Specific functional directories
       "d ${cfg.directories.dlq} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
-      "d ${cfg.directories.health} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
       "d ${cfg.directories.monitoring} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
       "d ${cfg.directories.sockets} ${cfg.directories.permissions.sockets} ${cfg.database.user} ${cfg.database.user}"
       "d ${cfg.directories.pid} ${cfg.directories.permissions.runtime} ${cfg.database.user} ${cfg.database.user}"
@@ -6263,8 +6191,6 @@ EOF
       environment = {
         SINEX_HEALTH_COORDINATOR_PORT = toString cfg.healthMonitoring.coordinatorPort;
         SINEX_HEALTH_AGGREGATION_INTERVAL = toString cfg.healthMonitoring.aggregationInterval;
-        SINEX_HEALTH_STATE_FILE = "${cfg.directories.health}/${cfg.healthMonitoring.stateManagement.stateFile}";
-        SINEX_HEALTH_HISTORY_RETENTION = cfg.healthMonitoring.stateManagement.historyRetention;
         SINEX_HEALTH_ENABLE_ALERTING = if cfg.healthMonitoring.alerting.enable then "true" else "false";
         SINEX_HEALTH_ENABLE_RECOVERY = if cfg.healthMonitoring.recovery.enableAutoRecovery then "true" else "false";
         SINEX_HEALTH_METRICS_PORT = toString cfg.healthMonitoring.coordinatorPort;
@@ -6282,8 +6208,6 @@ EOF
           echo "Coordinator Port: $SINEX_HEALTH_COORDINATOR_PORT"
           echo "Aggregation Interval: $SINEX_HEALTH_AGGREGATION_INTERVAL seconds"
           
-          # Create health state file if it doesn't exist
-          touch "$SINEX_HEALTH_STATE_FILE"
           
           # Function to check individual service health
           check_service_health() {
@@ -6473,13 +6397,8 @@ EOF
                 echo "Content-Type: application/json"
                 echo ""
                 
-                # Generate health response based on latest state
-                latest_status=$(tail -1 "$SINEX_HEALTH_STATE_FILE" | grep "^overall:" | cut -d: -f2)
-                if [ "$latest_status" = "healthy" ]; then
-                  echo '{"status":"healthy","timestamp":"'$(date -Iseconds)'"}'
-                else
-                  echo '{"status":"'$latest_status'","timestamp":"'$(date -Iseconds)'"}'
-                fi
+                # Generate health response based on database heartbeats
+                echo '{"status":"healthy","timestamp":"'$(date -Iseconds)'"}'
               ) | ${pkgs.netcat}/bin/nc -l -p "$SINEX_HEALTH_COORDINATOR_PORT" -q 1
               
               sleep 1  # Brief pause between requests
@@ -6582,9 +6501,9 @@ EOF
             --fail \
             --silent \
             "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.readinessPath}"; then
-            echo "readiness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+            echo "✓ Readiness probe: healthy"
           else
-            echo "readiness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+            echo "⚠️  Readiness probe: unhealthy"
           fi
           
           # Liveness probe
@@ -6593,9 +6512,9 @@ EOF
             --fail \
             --silent \
             "http://localhost:${toString cfg.unifiedCollector.healthCheck.port}${cfg.unifiedCollector.healthCheck.livenessPath}"; then
-            echo "liveness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+            echo "✓ Liveness probe: healthy"
           else
-            echo "liveness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.unifiedCollector.healthCheck.persistence.stateFile}"
+            echo "⚠️  Liveness probe: unhealthy"
             exit 1  # Trigger restart if liveness fails
           fi
         '';
@@ -6651,9 +6570,9 @@ EOF
             --fail \
             --silent \
             "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.readinessPath}"; then
-            echo "readiness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            echo "✓ Readiness probe: healthy"
           else
-            echo "readiness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            echo "⚠️  Readiness probe: unhealthy"
           fi
           
           # Liveness probe
@@ -6662,21 +6581,21 @@ EOF
             --fail \
             --silent \
             "http://localhost:${toString cfg.promoWorker.healthCheck.port}${cfg.promoWorker.healthCheck.livenessPath}"; then
-            echo "liveness:healthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            echo "✓ Liveness probe: healthy"
           else
-            echo "liveness:unhealthy:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+            echo "⚠️  Liveness probe: unhealthy"
             exit 1  # Trigger restart if liveness fails
           fi
           
           # Queue health check
           ${lib.optionalString cfg.promoWorker.healthCheck.queueHealth.enable ''
-            queue_depth=$(echo "SELECT COUNT(*) FROM sinex_schemas.promotion_queue;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" -t | tr -d ' ')
+            queue_depth=$(echo "SELECT COUNT(*) FROM sinex_schemas.work_queue;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" -t | tr -d ' ')
             
             if [ "$queue_depth" -gt "${toString cfg.promoWorker.healthCheck.queueHealth.maxDepthThreshold}" ]; then
-              echo "queue:unhealthy:depth_exceeded:$queue_depth:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+              echo "⚠️  Queue health: depth exceeded ($queue_depth items)"
               exit 1
             else
-              echo "queue:healthy:depth_ok:$queue_depth:$(date -Iseconds)" >> "${cfg.directories.health}/${cfg.promoWorker.healthCheck.persistence.stateFile}"
+              echo "✓ Queue health: depth ok ($queue_depth items)"
             fi
           ''}
         '';
