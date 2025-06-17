@@ -365,3 +365,10 @@ postgresql:///sinex_dev?host=/run/postgresql
 - Check workspace members individually if commands miss packages
 - Recent commits (`git log`) reveal when cache updates are needed
 
+### Testing Principles
+
+  1. Don't test the language/library
+  2. Don't test assignment
+  3. Test behavior, not implementation; validate business rules and system behavior
+  4. Focus on edge cases, boundary conditions and error scenarios
+  5. Test integration points; validate how components work together

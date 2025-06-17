@@ -75,40 +75,42 @@ rec {
         errors = lib.flatten [
           # Git annex dependency checks
           (lib.optional
-            (cfg.sources.asciinema.enable && cfg.sources.asciinema.autoAnnex && !fullCfg.blobStorage.enable)
+            ((cfg.sources.asciinema.enable or false) && (cfg.sources.asciinema.autoAnnex or false) && !(fullCfg.blobStorage.enable or false))
             "asciinema.autoAnnex requires blobStorage.enable = true")
           
-          # Path existence checks
+          # Path existence checks - use path resolution utilities from fullCfg
           (lib.optional
-            (cfg.sources.atuin.enable && !(lib.hasPrefix "/" cfg.sources.atuin.databasePath))
-            "atuin.databasePath must be an absolute path")
+            ((cfg.sources.atuin.enable or false) && !(fullCfg.pathUtils.validateAbsolutePath (cfg.sources.atuin.databasePath or "")))
+            "atuin.databasePath must be an absolute path after resolution (got '${cfg.sources.atuin.databasePath or ""}')")
           
           (lib.optional
-            (cfg.sources.kittyScrollback.enable && !(lib.hasPrefix "/" cfg.sources.kittyScrollback.socketPath))
+            ((cfg.sources.kittyScrollback.enable or false) && !(lib.hasPrefix "/" (cfg.sources.kittyScrollback.socketPath or "")))
             "kittyScrollback.socketPath must be an absolute path")
           
           # Interval validation
           (lib.optional
-            (cfg.sources.atuin.enable && cfg.sources.atuin.pollInterval <= 0)
+            ((cfg.sources.atuin.enable or false) && (cfg.sources.atuin.pollInterval or 1) <= 0)
             "atuin.pollInterval must be greater than 0")
           
           (lib.optional
-            (cfg.sources.kittyScrollback.enable && cfg.sources.kittyScrollback.captureInterval <= 0)
+            ((cfg.sources.kittyScrollback.enable or false) && (cfg.sources.kittyScrollback.captureInterval or 1) <= 0)
             "kittyScrollback.captureInterval must be greater than 0")
           
           (lib.optional
-            (cfg.sources.clipboard.enable && cfg.sources.clipboard.pollInterval <= 0)
+            ((cfg.sources.clipboard.enable or false) && (cfg.sources.clipboard.pollInterval or 1) <= 0)
             "clipboard.pollInterval must be greater than 0")
           
           # Range validation
           (lib.optional
-            (cfg.sources.kittyScrollback.enable && 
-             (cfg.sources.kittyScrollback.maxScrollbackLines < 100 || cfg.sources.kittyScrollback.maxScrollbackLines > 1000000))
+            ((cfg.sources.kittyScrollback.enable or false) && 
+             (let maxLines = cfg.sources.kittyScrollback.maxScrollbackLines or 1000; in
+             (maxLines < 100 || maxLines > 1000000)))
             "kittyScrollback.maxScrollbackLines must be between 100 and 1000000")
           
           (lib.optional
-            (cfg.sources.clipboard.enable &&
-             (cfg.sources.clipboard.maxHistoryEntries < 1 || cfg.sources.clipboard.maxHistoryEntries > 100000))
+            ((cfg.sources.clipboard.enable or false) &&
+             (let maxEntries = cfg.sources.clipboard.maxHistoryEntries or 1000; in
+             (maxEntries < 1 || maxEntries > 100000)))
             "clipboard.maxHistoryEntries must be between 1 and 100000")
         ];
       in {
@@ -122,32 +124,32 @@ rec {
         warnings = lib.flatten [
           # Performance warnings
           (lib.optional
-            (cfg.sources.filesystem.enable && 
-             (lib.length cfg.sources.filesystem.watchPaths) > 10)
+            ((cfg.sources.filesystem.enable or false) && 
+             (lib.length (cfg.sources.filesystem.watchPaths or [])) > 10)
             "filesystem: watching more than 10 paths may impact performance")
           
           (lib.optional
-            (cfg.sources.dbus.enable && cfg.sources.dbus.logAllSignals)
+            ((cfg.sources.dbus.enable or false) && (cfg.sources.dbus.logAllSignals or false))
             "dbus.logAllSignals can generate very high event volume")
           
           # Security warnings
           (lib.optional
-            (cfg.sources.clipboard.enable && !cfg.sources.clipboard.hashFileContent)
+            ((cfg.sources.clipboard.enable or false) && !(cfg.sources.clipboard.hashFileContent or true))
             "clipboard: file content hashing disabled - sensitive data may be stored")
           
           # Configuration completeness
           (lib.optional
-            (!fullCfg.database.autoSetup && !fullCfg.database.migration.enabled)
+            (!(fullCfg.database.autoSetup or true) && !(fullCfg.database.migration.enabled or true))
             "database auto-setup and migrations both disabled - manual setup required")
         ];
         
         recommendations = lib.flatten [
           (lib.optional
-            (cfg.sources.asciinema.enable && !cfg.sources.asciinema.autoAnnex)
+            ((cfg.sources.asciinema.enable or false) && !(cfg.sources.asciinema.autoAnnex or false))
             "consider enabling asciinema.autoAnnex for efficient storage")
           
           (lib.optional
-            (cfg.sources.kittyScrollback.enable && !cfg.sources.kittyScrollback.captureOnCommand)
+            ((cfg.sources.kittyScrollback.enable or false) && !(cfg.sources.kittyScrollback.captureOnCommand or false))
             "consider enabling kittyScrollback.captureOnCommand for better context")
         ];
       in {
@@ -158,22 +160,22 @@ rec {
   # Helper to generate collector configuration
   mkCollectorConfig = cfg: fullCfg: let
     enabledEvents = lib.flatten [
-      (lib.optional cfg.sources.atuin.enable "shell.command.executed_atuin")
-      (lib.optional cfg.sources.shellHistory.enable "shell.history.command")
-      (lib.optional cfg.sources.asciinema.enable [
+      (lib.optional (cfg.sources.atuin.enable or false) "shell.command.executed_atuin")
+      (lib.optional (cfg.sources.shellHistory.enable or false) "shell.history.command")
+      (lib.optional (cfg.sources.asciinema.enable or false) [
         "terminal.asciinema.session_started"
         "terminal.asciinema.session_ended"
       ])
-      (lib.optional cfg.sources.kittyScrollback.enable [
+      (lib.optional (cfg.sources.kittyScrollback.enable or false) [
         "terminal.scrollback.captured"
         "terminal.command_output.captured"
       ])
-      (lib.optional cfg.sources.filesystem.enable [
+      (lib.optional (cfg.sources.filesystem.enable or false) [
         "file.created"
         "file.modified"
         "file.deleted"
       ])
-      (lib.optional cfg.sources.dbus.enable [
+      (lib.optional (cfg.sources.dbus.enable or false) [
         "dbus.signal"
         "dbus.method_call" 
         "system.notification"
@@ -187,49 +189,52 @@ rec {
         "screen.saver.event"
         "storage.mount.event"
       ])
-      (lib.optional cfg.sources.clipboard.enable [
+      (lib.optional (cfg.sources.clipboard.enable or false) [
         "clipboard.content.changed"
         "clipboard.selection.changed"
       ])
     ];
 
-    # Build event configuration sections
-    eventConfig = lib.optionalAttrs cfg.sources.atuin.enable {
+    # Build event configuration sections with resolved paths
+    eventConfig = lib.optionalAttrs (cfg.sources.atuin.enable or false) {
       "event.shell_command_executed_atuin" = {
-        db_path = cfg.sources.atuin.databasePath;
+        db_path = fullCfg.pathUtils.resolvePath cfg.sources.atuin.databasePath;
         polling_interval_secs = cfg.sources.atuin.pollInterval;
         use_file_watch = true;
         batch_size = 100;
       };
-    } // lib.optionalAttrs cfg.sources.shellHistory.enable {
+    } // lib.optionalAttrs (cfg.sources.shellHistory.enable or false) {
       "event.shell_history_command" = {
-        history_files = [cfg.sources.shellHistory.zshPath cfg.sources.shellHistory.bashPath];
+        history_files = [
+          (fullCfg.pathUtils.resolvePath cfg.sources.shellHistory.zshPath)
+          (fullCfg.pathUtils.resolvePath cfg.sources.shellHistory.bashPath)
+        ];
         polling_interval_secs = 10;
         use_file_watch = true;
       };
-    } // lib.optionalAttrs cfg.sources.asciinema.enable {
+    } // lib.optionalAttrs (cfg.sources.asciinema.enable or false) {
       "event.terminal_asciinema" = {
-        recordings_dir = cfg.sources.asciinema.recordingsPath;
+        recordings_dir = fullCfg.pathUtils.resolvePath cfg.sources.asciinema.recordingsPath;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
         polling_interval_secs = 5;
         git_annex_repo = fullCfg.blobStorage.repositoryPath;
         auto_annex = cfg.sources.asciinema.autoAnnex;
       };
-    } // lib.optionalAttrs cfg.sources.kittyScrollback.enable {
+    } // lib.optionalAttrs (cfg.sources.kittyScrollback.enable or false) {
       "event.terminal_scrollback" = {
-        kitty_socket_path = cfg.sources.kittyScrollback.socketPath;
+        kitty_socket_path = cfg.sources.kittyScrollback.socketPath;  # Already absolute
         capture_interval_secs = cfg.sources.kittyScrollback.captureInterval;
         max_scrollback_lines = cfg.sources.kittyScrollback.maxScrollbackLines;
         capture_command_output = true;
         capture_on_command = cfg.sources.kittyScrollback.captureOnCommand;
         command_capture_delay_ms = cfg.sources.kittyScrollback.commandCaptureDelay;
       };
-    } // lib.optionalAttrs cfg.sources.filesystem.enable {
+    } // lib.optionalAttrs (cfg.sources.filesystem.enable or false) {
       "event.files" = {
-        watch_patterns = cfg.sources.filesystem.watchPaths;
+        watch_patterns = lib.map (path: fullCfg.pathUtils.resolvePath path) cfg.sources.filesystem.watchPaths;
         ignore_patterns = cfg.sources.filesystem.excludePatterns;
       };
-    } // lib.optionalAttrs cfg.sources.dbus.enable {
+    } // lib.optionalAttrs (cfg.sources.dbus.enable or false) {
       "event.dbus" = {
         monitor_session = cfg.sources.dbus.monitorSession;
         monitor_system = cfg.sources.dbus.monitorSystem;
@@ -245,7 +250,7 @@ rec {
         extract_screensaver = cfg.sources.dbus.extractScreensaver;
         extract_mounts = cfg.sources.dbus.extractMounts;
       };
-    } // lib.optionalAttrs cfg.sources.clipboard.enable {
+    } // lib.optionalAttrs (cfg.sources.clipboard.enable or false) {
       "event.clipboard" = {
         monitor_clipboard = cfg.sources.clipboard.monitorClipboard;
         monitor_primary = cfg.sources.clipboard.monitorPrimary;

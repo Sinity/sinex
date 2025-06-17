@@ -27,6 +27,76 @@ let
   # Helper function to escape database identifiers
   escapeDbIdentifier = str: lib.escape ["?" "&" "=" "'" "\"" " " "\\" "/"] str;
   
+  # Path resolution utilities
+  pathUtils = {
+    # Resolve tilde paths to absolute paths using target user's home directory
+    resolvePath = path: 
+      if lib.hasPrefix "~/" path then
+        "/home/${cfg.targetUser}/${lib.removePrefix "~/" path}"
+      else if path == "~" then
+        "/home/${cfg.targetUser}"
+      else if lib.hasPrefix "~" path then
+        # Handle ~username paths by extracting username
+        let
+          userAndPath = lib.removePrefix "~" path;
+          parts = lib.splitString "/" userAndPath;
+          username = lib.head parts;
+          remainingPath = lib.concatStringsSep "/" (lib.tail parts);
+        in
+          if remainingPath == "" then
+            "/home/${username}"
+          else
+            "/home/${username}/${remainingPath}"
+      else
+        path;
+    
+    # Validate that path is absolute after resolution
+    validateAbsolutePath = path:
+      let resolved = pathUtils.resolvePath path;
+      in lib.hasPrefix "/" resolved;
+    
+    # Get parent directory of resolved path
+    getParentDir = path:
+      let resolved = pathUtils.resolvePath path;
+      in builtins.dirOf resolved;
+    
+    # Check if path exists within allowed directories
+    isPathSafe = path: allowedPrefixes:
+      let 
+        resolved = pathUtils.resolvePath path;
+        normalizedPath = lib.removeSuffix "/" resolved;
+      in
+        lib.any (prefix: lib.hasPrefix (lib.removeSuffix "/" prefix) normalizedPath) allowedPrefixes;
+    
+    # Ensure state directory path is resolved
+    resolveStateDir = stateDirName:
+      "/var/lib/sinex/${stateDirName}";
+    
+    # Get all user-configured paths for validation
+    getAllUserPaths = cfg: lib.flatten [
+      (lib.optional cfg.unifiedCollector.sources.atuin.enable cfg.unifiedCollector.sources.atuin.databasePath)
+      (lib.optional cfg.unifiedCollector.sources.shellHistory.enable [
+        cfg.unifiedCollector.sources.shellHistory.zshPath
+        cfg.unifiedCollector.sources.shellHistory.bashPath
+      ])
+      (lib.optional cfg.unifiedCollector.sources.asciinema.enable cfg.unifiedCollector.sources.asciinema.recordingsPath)
+      (lib.optional cfg.unifiedCollector.sources.filesystem.enable cfg.unifiedCollector.sources.filesystem.watchPaths)
+    ];
+    
+    # Validate all user paths are safe (within home directory or explicitly allowed)
+    validateUserPathsSafety = cfg:
+      let
+        userPaths = pathUtils.getAllUserPaths cfg;
+        homeDir = "/home/${cfg.targetUser}";
+        allowedPrefixes = [ homeDir "/tmp" ] ++ (cfg.unifiedCollector.sources.filesystem.allowedExternalPaths or []);
+        unsafePaths = lib.filter (path: !(pathUtils.isPathSafe path allowedPrefixes)) userPaths;
+      in {
+        safe = (lib.length unsafePaths) == 0;
+        unsafePaths = unsafePaths;
+        allowedPrefixes = allowedPrefixes;
+      };
+  };
+  
   # Helper function to build comprehensive database URL with all options
   buildDatabaseUrl = cfg: let
     baseUrl = if cfg.database.passwordFile != null
@@ -929,8 +999,8 @@ in
 
           databasePath = mkOption {
             type = types.str;
-            default = "/home/${cfg.targetUser}/.local/share/atuin/history.db";
-            description = "Path to Atuin SQLite database";
+            default = "~/.local/share/atuin/history.db";
+            description = "Path to Atuin SQLite database (supports ~ expansion)";
           };
         };
 
@@ -943,14 +1013,14 @@ in
 
           zshPath = mkOption {
             type = types.str;
-            default = "/home/${cfg.targetUser}/.zsh_history";
-            description = "Path to zsh history file";
+            default = "~/.zsh_history";
+            description = "Path to zsh history file (supports ~ expansion)";
           };
 
           bashPath = mkOption {
             type = types.str;
-            default = "/home/${cfg.targetUser}/.bash_history";
-            description = "Path to bash history file";
+            default = "~/.bash_history";
+            description = "Path to bash history file (supports ~ expansion)";
           };
         };
 
@@ -963,8 +1033,8 @@ in
 
           recordingsPath = mkOption {
             type = types.str;
-            default = "/home/${cfg.targetUser}/.local/share/asciinema";
-            description = "Path to asciinema recordings directory";
+            default = "~/.local/share/asciinema";
+            description = "Path to asciinema recordings directory (supports ~ expansion)";
           };
 
           autoRecord = mkOption {
@@ -1028,10 +1098,10 @@ in
           watchPaths = mkOption {
             type = types.listOf types.str;
             default = [
-              "/home/${cfg.targetUser}/Documents"
-              "/home/${cfg.targetUser}/Projects"
+              "~/Documents"
+              "~/Projects"
             ];
-            description = "Paths to monitor for filesystem events";
+            description = "Paths to monitor for filesystem events (supports ~ expansion)";
           };
 
           excludePatterns = mkOption {
@@ -3125,28 +3195,35 @@ in
         message = "Blob storage repository path must be an absolute path (got '${cfg.blobStorage.repositoryPath}')";
       }
       {
-        assertion = !cfg.unifiedCollector.sources.atuin.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.atuin.databasePath;
-        message = "Atuin database path must be an absolute path (got '${cfg.unifiedCollector.sources.atuin.databasePath}')";
+        assertion = !cfg.unifiedCollector.sources.atuin.enable || pathUtils.validateAbsolutePath cfg.unifiedCollector.sources.atuin.databasePath;
+        message = "Atuin database path must resolve to an absolute path (got '${cfg.unifiedCollector.sources.atuin.databasePath}' -> '${pathUtils.resolvePath cfg.unifiedCollector.sources.atuin.databasePath}')";
       }
       {
-        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.shellHistory.zshPath;
-        message = "Zsh history path must be an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.zshPath}')";
+        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || pathUtils.validateAbsolutePath cfg.unifiedCollector.sources.shellHistory.zshPath;
+        message = "Zsh history path must resolve to an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.zshPath}' -> '${pathUtils.resolvePath cfg.unifiedCollector.sources.shellHistory.zshPath}')";
       }
       {
-        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.shellHistory.bashPath;
-        message = "Bash history path must be an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.bashPath}')";
+        assertion = !cfg.unifiedCollector.sources.shellHistory.enable || pathUtils.validateAbsolutePath cfg.unifiedCollector.sources.shellHistory.bashPath;
+        message = "Bash history path must resolve to an absolute path (got '${cfg.unifiedCollector.sources.shellHistory.bashPath}' -> '${pathUtils.resolvePath cfg.unifiedCollector.sources.shellHistory.bashPath}')";
       }
       {
-        assertion = !cfg.unifiedCollector.sources.asciinema.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.asciinema.recordingsPath;
-        message = "Asciinema recordings path must be an absolute path (got '${cfg.unifiedCollector.sources.asciinema.recordingsPath}')";
+        assertion = !cfg.unifiedCollector.sources.asciinema.enable || pathUtils.validateAbsolutePath cfg.unifiedCollector.sources.asciinema.recordingsPath;
+        message = "Asciinema recordings path must resolve to an absolute path (got '${cfg.unifiedCollector.sources.asciinema.recordingsPath}' -> '${pathUtils.resolvePath cfg.unifiedCollector.sources.asciinema.recordingsPath}')";
       }
       {
         assertion = !cfg.unifiedCollector.sources.kittyScrollback.enable || lib.hasPrefix "/" cfg.unifiedCollector.sources.kittyScrollback.socketPath;
         message = "Kitty socket path must be an absolute path (got '${cfg.unifiedCollector.sources.kittyScrollback.socketPath}')";
       }
       {
-        assertion = builtins.all (path: lib.hasPrefix "/" path) cfg.unifiedCollector.sources.filesystem.watchPaths;
-        message = "All filesystem watch paths must be absolute paths (got: ${lib.concatStringsSep ", " (builtins.filter (path: !lib.hasPrefix "/" path) cfg.unifiedCollector.sources.filesystem.watchPaths)})";
+        assertion = builtins.all pathUtils.validateAbsolutePath cfg.unifiedCollector.sources.filesystem.watchPaths;
+        message = "All filesystem watch paths must resolve to absolute paths (got: ${lib.concatStringsSep ", " (builtins.filter (path: !pathUtils.validateAbsolutePath path) cfg.unifiedCollector.sources.filesystem.watchPaths)})";
+      }
+      
+      # User path safety validation
+      {
+        assertion = (pathUtils.validateUserPathsSafety cfg).safe;
+        message = let safety = pathUtils.validateUserPathsSafety cfg; in 
+          "User-configured paths must be within safe directories. Unsafe paths: ${lib.concatStringsSep ", " safety.unsafePaths}. Allowed prefixes: ${lib.concatStringsSep ", " safety.allowedPrefixes}";
       }
 
       # SSL file validations - paths must exist if provided
@@ -4928,6 +5005,14 @@ in
       
       # Error handling fallback directory
       "d ${lib.dirOf cfg.errorHandling.fallbacks.databaseFallback.filePath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
+    ] ++ lib.flatten [
+      # Parent directories for user-configured paths (with target user ownership)
+      (lib.optional cfg.unifiedCollector.sources.atuin.enable 
+        "d ${pathUtils.getParentDir cfg.unifiedCollector.sources.atuin.databasePath} 0755 ${cfg.targetUser} users")
+      (lib.optional cfg.unifiedCollector.sources.asciinema.enable 
+        "d ${pathUtils.getParentDir cfg.unifiedCollector.sources.asciinema.recordingsPath} 0755 ${cfg.targetUser} users")
+      # Note: shell history files (.zsh_history, .bash_history) are typically in home directory root
+      # which should already exist, so we don't create parent dirs for those
     ] ++ optional cfg.blobStorage.enable 
       "d ${cfg.blobStorage.repositoryPath} ${cfg.directories.permissions.state} ${cfg.database.user} ${cfg.database.user}"
     ++ optional (cfg.errorHandling.logging.destinations.file != null)
