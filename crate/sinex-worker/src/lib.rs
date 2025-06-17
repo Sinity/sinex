@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use sinex_db::models::WorkQueueItem;
 use sqlx::PgPool;
-use prometheus::{register_counter_vec, register_histogram_vec, CounterVec, HistogramVec};
+use prometheus::{register_counter_vec, register_histogram_vec, register_gauge_vec, CounterVec, HistogramVec, GaugeVec};
 use once_cell::sync::Lazy;
 
 /// Trait for implementing agent-specific processing logic
@@ -91,6 +91,44 @@ static PROCESSING_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     .unwrap()
 });
 
+// ===== Queue Metrics =====
+
+static QUEUE_DEPTH: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "sinex_queue_depth",
+        "Number of pending items in work queue per agent",
+        &["agent_name"]
+    )
+    .unwrap()
+});
+
+static DEQUEUE_LATENCY: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "sinex_dequeue_latency_ms", 
+        "Dequeue latency in milliseconds",
+        &["agent_name", "quantile"]
+    )
+    .unwrap()
+});
+
+static AGENT_LAG: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "sinex_agent_lag_seconds",
+        "How far behind each agent is in processing",
+        &["agent_name", "stat"]
+    )
+    .unwrap()
+});
+
+static TOTAL_QUEUE_ITEMS: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "sinex_total_queue_items",
+        "Total queue items by status",
+        &["status"]
+    )
+    .unwrap()
+});
+
 /// Worker metrics for a specific agent
 pub struct WorkerMetrics {
     pub items_claimed: prometheus::Counter,
@@ -125,6 +163,112 @@ pub async fn start_metrics_server(port: u16) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
     
     Ok(())
+}
+
+/// Update queue metrics from database
+pub async fn update_queue_metrics(pool: &PgPool) -> Result<()> {
+    use sinex_db::metrics::{calculate_all_queue_metrics};
+    
+    let metrics = calculate_all_queue_metrics(pool).await?;
+    
+    // Update queue depth metrics
+    for metric in &metrics.queue_depth {
+        QUEUE_DEPTH
+            .with_label_values(&[&metric.agent_name])
+            .set(metric.queue_depth as f64);
+    }
+    
+    // Update dequeue latency metrics  
+    for metric in &metrics.dequeue_latency {
+        DEQUEUE_LATENCY
+            .with_label_values(&[&metric.agent_name, "avg"])
+            .set(metric.avg_dequeue_latency_ms);
+        DEQUEUE_LATENCY
+            .with_label_values(&[&metric.agent_name, "max"])
+            .set(metric.max_dequeue_latency_ms);
+        DEQUEUE_LATENCY
+            .with_label_values(&[&metric.agent_name, "0.5"])
+            .set(metric.p50_dequeue_latency_ms);
+        DEQUEUE_LATENCY
+            .with_label_values(&[&metric.agent_name, "0.95"])
+            .set(metric.p95_dequeue_latency_ms);
+    }
+    
+    // Update agent lag metrics
+    for metric in &metrics.agent_lag {
+        AGENT_LAG
+            .with_label_values(&[&metric.agent_name, "max"])
+            .set(metric.max_lag_seconds);
+        AGENT_LAG
+            .with_label_values(&[&metric.agent_name, "avg"])
+            .set(metric.avg_lag_seconds);
+        AGENT_LAG
+            .with_label_values(&[&metric.agent_name, "oldest_pending"])
+            .set(metric.oldest_pending_seconds);
+    }
+    
+    // Update total queue stats
+    TOTAL_QUEUE_ITEMS
+        .with_label_values(&["pending"])
+        .set(metrics.total_pending_items as f64);
+    TOTAL_QUEUE_ITEMS
+        .with_label_values(&["processing"])
+        .set(metrics.total_processing_items as f64);
+    TOTAL_QUEUE_ITEMS
+        .with_label_values(&["failed"])
+        .set(metrics.total_failed_items as f64);
+    
+    Ok(())
+}
+
+/// Start enhanced metrics server with queue metrics
+pub async fn start_queue_metrics_server(pool: PgPool, port: u16, update_interval_secs: u64) -> Result<()> {
+    use axum::{routing::get, Router};
+    use std::sync::Arc;
+    use tokio::time::{interval, Duration};
+    
+    let pool = Arc::new(pool);
+    
+    // Spawn background task to update queue metrics periodically
+    let metrics_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(update_interval_secs));
+        loop {
+            interval.tick().await;
+            if let Err(e) = update_queue_metrics(&metrics_pool).await {
+                tracing::error!("Failed to update queue metrics: {}", e);
+            }
+        }
+    });
+    
+    let app = Router::new()
+        .route("/metrics", get(enhanced_metrics_handler))
+        .with_state(pool);
+    
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    tracing::info!("Enhanced metrics server with queue metrics listening on {}", addr);
+    
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    
+    Ok(())
+}
+
+async fn enhanced_metrics_handler(
+    axum::extract::State(pool): axum::extract::State<std::sync::Arc<PgPool>>
+) -> String {
+    use prometheus::{Encoder, TextEncoder};
+    
+    // Update queue metrics on-demand for fresh data
+    if let Err(e) = update_queue_metrics(&pool).await {
+        tracing::warn!("Failed to update queue metrics for /metrics endpoint: {}", e);
+    }
+    
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    String::from_utf8(buffer).unwrap()
 }
 
 async fn metrics_handler() -> String {
