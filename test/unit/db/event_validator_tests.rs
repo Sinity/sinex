@@ -24,7 +24,7 @@ fn test_event_validator_valid_filesystem_event() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_ok(), "Valid filesystem event should pass validation");
 }
 
@@ -43,7 +43,7 @@ fn test_event_validator_valid_terminal_event() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_ok(), "Valid terminal event should pass validation");
 }
 
@@ -62,7 +62,7 @@ fn test_event_validator_valid_window_manager_event() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_ok(), "Valid window manager event should pass validation");
 }
 
@@ -76,7 +76,7 @@ fn test_event_validator_invalid_empty_source() {
         json!({"path": "/test/file.txt"})
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_err(), "Event with empty source should fail validation");
     
     let error = result.unwrap_err();
@@ -93,7 +93,7 @@ fn test_event_validator_invalid_empty_event_type() {
         json!({"path": "/test/file.txt"})
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_err(), "Event with empty event type should fail validation");
     
     let error = result.unwrap_err();
@@ -110,7 +110,7 @@ fn test_event_validator_invalid_null_payload() {
         json!(null) // Null payload
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_err(), "Event with null payload should fail validation");
 }
 
@@ -128,7 +128,7 @@ fn test_event_validator_filesystem_missing_path() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     // This might pass or fail depending on validation strictness
     // The test verifies the validator handles missing fields gracefully
     if result.is_err() {
@@ -159,7 +159,7 @@ fn test_event_validator_filesystem_invalid_path() {
             })
         ).build();
         
-        let result = validator.validate_event(&event);
+        let result = validator.validate(&event);
         // Depending on validation implementation, this might fail
         // The test ensures the validator handles invalid paths gracefully
         if result.is_err() {
@@ -183,7 +183,7 @@ fn test_event_validator_terminal_invalid_exit_code() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     // The validator should handle this gracefully, whether it passes or fails
     // This tests that extreme values don't cause panics
 }
@@ -205,7 +205,7 @@ fn test_event_validator_large_payload() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     // The validator should handle large payloads gracefully
     // This might pass or fail depending on size limits, but shouldn't panic
 }
@@ -229,7 +229,7 @@ fn test_event_validator_deeply_nested_payload() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     // Should handle deep nesting without stack overflow
 }
 
@@ -247,7 +247,7 @@ fn test_event_validator_unicode_content() {
         })
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     assert!(result.is_ok(), "Unicode content should be handled correctly");
 }
 
@@ -272,7 +272,7 @@ fn test_event_validator_concurrent_validation() {
                 })
             ).build();
             
-            validator_clone.validate_event(&event)
+            validator_clone.validate(&event)
         });
         handles.push(handle);
     }
@@ -294,7 +294,7 @@ fn test_event_validator_unknown_source() {
         json!({"data": "test"})
     ).build();
     
-    let result = validator.validate_event(&event);
+    let result = validator.validate(&event);
     // Should handle unknown sources gracefully - might pass or fail
     // depending on validation policy, but shouldn't panic
 }
@@ -317,7 +317,7 @@ fn test_event_validator_hardcoded_rules() {
     
     for (source, event_type, payload, should_pass) in test_cases {
         let event = RawEventBuilder::new(source, event_type, payload).build();
-        let result = validator.validate_event(&event);
+        let result = validator.validate(&event);
         
         if should_pass {
             // Don't assert here as validation might be lenient

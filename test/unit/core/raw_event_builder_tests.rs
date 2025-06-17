@@ -77,8 +77,9 @@ fn test_raw_event_builder_multiple_builds() {
         json!({"content": "test text"})
     );
     
-    let event1 = builder.clone().build();
-    let event2 = builder.clone().build();
+    // Create two events with same configuration
+    let event1 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
+    let event2 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
     
     // Events should have different IDs and timestamps
     assert_ne!(event1.id, event2.id);
@@ -124,8 +125,8 @@ fn test_raw_event_builder_all_fields_set() {
         event_type_constants::filesystem::FILE_MODIFIED,
         json!({"path": "/test/file.txt", "size": 2048})
     )
-    .with_original_timestamp(orig_time)
-    .with_schema_id(schema_id)
+    .with_orig_timestamp(orig_time)
+    .with_payload_schema_id(schema_id)
     .with_ingestor_version("test-1.0.0")
     .build();
     

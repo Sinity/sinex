@@ -372,19 +372,9 @@ db_test! {
         // Receive and store events
         for _ in 0..2 {
             if let Some(event) = rx.recv().await {
-                // Store in database
-                sqlx::query(
-                    "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
-                     VALUES ($1, $2, $3, $4, $5, $6)"
-                )
-                .bind(event.id.to_uuid())
-                .bind(&event.source)
-                .bind(&event.event_type)
-                .bind(event.ts_ingest)
-                .bind("test_host")
-                .bind(&event.payload)
-                .execute(&pool)
-                .await?;
+                // Store in database using proper queries that handle ts_ingest correctly
+                use sinex_db::queries::insert_event;
+                insert_event(&pool, &event).await?;
             }
         }
         

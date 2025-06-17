@@ -1,6 +1,20 @@
+//! Unit tests for core Sinex functionality
+//! 
+//! Tests the basic building blocks of the event system:
+//! - RawEventBuilder for creating events
+//! - Event constants and source identifiers
+//! - ULID generation and properties
+
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
 use serde_json::json;
 
+/// Test basic event creation with RawEventBuilder
+/// 
+/// Verifies that:
+/// - Events are created with correct source and type
+/// - Payload is properly attached
+/// - Auto-generated fields (host, ID) are populated
+/// - ULID format is correct (26 characters)
 #[test]
 fn test_raw_event_builder_basic() {
     let event = RawEventBuilder::new(
@@ -16,8 +30,13 @@ fn test_raw_event_builder_basic() {
     assert!(event.id.to_string().len() == 26); // ULID length
 }
 
-// Removed trivial constant assertion tests - they just verified that "filesystem" == "filesystem"
-
+/// Test creating multiple events with different sources
+/// 
+/// Ensures that:
+/// - Multiple events can be created independently
+/// - Each event gets a unique ULID
+/// - Different sources and types work correctly
+/// - ULIDs maintain time ordering when created in sequence
 #[test]
 fn test_multiple_event_creation() {
     let events = vec![

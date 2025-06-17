@@ -7,6 +7,10 @@ pub mod database;
 pub mod collector; 
 pub mod worker;
 pub mod event_sources;
+pub mod failure_modes;
+
+// Query interface tests
+pub mod query_interface_test;
 
 // Phase 7-9 comprehensive integration tests
 pub mod full_system_startup_test;
