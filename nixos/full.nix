@@ -18,6 +18,48 @@ let
   # Helper function to escape database identifiers
   escapeDbIdentifier = str: lib.escape ["?" "&" "=" "'" "\"" " " "\\" "/"] str;
   
+  # Helper function to build comprehensive database URL with all options
+  buildDatabaseUrl = cfg: let
+    baseUrl = if cfg.database.passwordFile != null
+      then "postgresql://${escapeDbIdentifier cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${escapeDbIdentifier cfg.database.name}"
+      else "postgresql:///${escapeDbIdentifier cfg.database.name}?host=/run/postgresql&user=${escapeDbIdentifier cfg.database.user}";
+    
+    # Build query parameters from configuration
+    queryParams = lib.flatten [
+      # Connection pool parameters
+      (lib.optional (cfg.database.connectionPool.maxConnections != 20) "pool_max_conns=${toString cfg.database.connectionPool.maxConnections}")
+      (lib.optional (cfg.database.connectionPool.minConnections != 5) "pool_min_conns=${toString cfg.database.connectionPool.minConnections}")
+      (lib.optional (cfg.database.connectionPool.connectionTimeout != 30) "connect_timeout=${toString cfg.database.connectionPool.connectionTimeout}")
+      (lib.optional (cfg.database.connectionPool.idleTimeout != 600) "pool_idle_timeout=${toString cfg.database.connectionPool.idleTimeout}")
+      (lib.optional (cfg.database.connectionPool.maxLifetime != 3600) "pool_max_lifetime=${toString cfg.database.connectionPool.maxLifetime}")
+      
+      # Performance parameters
+      (lib.optional (cfg.database.performance.statementTimeout != 60 && cfg.database.performance.statementTimeout != 0) "statement_timeout=${toString (cfg.database.performance.statementTimeout * 1000)}")
+      (lib.optional (cfg.database.performance.lockTimeout != 30 && cfg.database.performance.lockTimeout != 0) "lock_timeout=${toString (cfg.database.performance.lockTimeout * 1000)}")
+      (lib.optional (cfg.database.performance.idleInTransactionTimeout != 300 && cfg.database.performance.idleInTransactionTimeout != 0) "idle_in_transaction_session_timeout=${toString (cfg.database.performance.idleInTransactionTimeout * 1000)}")
+      (lib.optional (cfg.database.performance.defaultTransactionIsolation != "read_committed") "default_transaction_isolation=${cfg.database.performance.defaultTransactionIsolation}")
+      
+      # SSL parameters
+      (lib.optional (cfg.database.ssl.mode != "prefer") "sslmode=${cfg.database.ssl.mode}")
+      (lib.optional (cfg.database.ssl.certFile != null) "sslcert=${cfg.database.ssl.certFile}")
+      (lib.optional (cfg.database.ssl.keyFile != null) "sslkey=${cfg.database.ssl.keyFile}")
+      (lib.optional (cfg.database.ssl.caFile != null) "sslrootcert=${cfg.database.ssl.caFile}")
+      (lib.optional (cfg.database.ssl.crlFile != null) "sslcrl=${cfg.database.ssl.crlFile}")
+      
+      # Application name for connection tracking
+      "application_name=sinex-collector"
+    ];
+    
+    # Join non-empty parameters with &
+    paramString = lib.concatStringsSep "&" (lib.filter (p: p != "") queryParams);
+    
+    # Build final URL
+    finalUrl = if paramString != "" then
+      if lib.hasInfix "?" baseUrl then "${baseUrl}&${paramString}" else "${baseUrl}?${paramString}"
+    else baseUrl;
+      
+  in finalUrl;
+  
   # Database migration script with idempotent permissions
   migrateDbScript = pkgs.writeShellScript "migrate-sinex-db" ''
     set -euo pipefail
@@ -64,10 +106,21 @@ let
     
     log "Database '${escapeDbIdentifier cfg.database.name}' exists"
 
-    # Run migrations with proper error handling
-    log "Running database migrations..."
-    if ! timeout 300 ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations; then
-      log "ERROR: Database migration failed or timed out"
+    # Run migrations with configured timeout and proper error handling
+    MIGRATION_TIMEOUT=${toString cfg.database.migration.timeout}
+    log "Running database migrations with timeout of $MIGRATION_TIMEOUT seconds..."
+    
+    # Set up migration environment variables
+    export SQLX_OFFLINE=true
+    ${lib.optionalString cfg.database.migration.enableLocking ''
+      export SQLX_MIGRATION_LOCK_TIMEOUT=${toString cfg.database.migration.lockTimeout}
+    ''}
+    ${lib.optionalString cfg.database.migration.validateChecksums ''
+      export SQLX_MIGRATION_VALIDATE_CHECKSUMS=true
+    ''}
+    
+    if ! timeout $MIGRATION_TIMEOUT ${pkgs.sqlx-cli}/bin/sqlx migrate run --source ${cfg.package}/share/sinex/migrations; then
+      log "ERROR: Database migration failed or timed out after $MIGRATION_TIMEOUT seconds"
       exit 1
     fi
     
@@ -206,15 +259,270 @@ in
 
       url = mkOption {
         type = types.str;
-        default = "postgresql:///${cfg.database.name}?host=/run/postgresql&user=${cfg.database.user}";
-        defaultText = literalExpression ''"postgresql:///''${name}?host=/run/postgresql&user=''${user}"'';
-        description = "PostgreSQL connection URL using local socket authentication";
+        default = buildDatabaseUrl cfg;
+        defaultText = literalExpression ''buildDatabaseUrl cfg'';
+        description = "PostgreSQL connection URL with all configuration options applied";
       };
 
       autoSetup = mkOption {
         type = types.bool;
         default = true;
         description = "Automatically create database and run migrations";
+      };
+
+      # Connection Pool Configuration
+      connectionPool = {
+        maxConnections = mkOption {
+          type = types.int;
+          default = 20;
+          description = "Maximum number of connections in the pool";
+        };
+
+        minConnections = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Minimum number of connections to maintain in the pool";
+        };
+
+        connectionTimeout = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Connection timeout in seconds";
+        };
+
+        idleTimeout = mkOption {
+          type = types.int;
+          default = 600;
+          description = "Maximum idle time for connections in seconds";
+        };
+
+        maxLifetime = mkOption {
+          type = types.int;
+          default = 3600;
+          description = "Maximum lifetime for connections in seconds";
+        };
+      };
+
+      # Connection Retry Configuration
+      retry = {
+        maxRetries = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Maximum number of connection retry attempts";
+        };
+
+        initialDelay = mkOption {
+          type = types.int;
+          default = 1;
+          description = "Initial retry delay in seconds";
+        };
+
+        maxDelay = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Maximum retry delay in seconds";
+        };
+
+        backoffMultiplier = mkOption {
+          type = types.float;
+          default = 2.0;
+          description = "Backoff multiplier for exponential backoff";
+        };
+
+        enableJitter = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Add random jitter to retry delays";
+        };
+      };
+
+      # Performance Tuning Options
+      performance = {
+        statementTimeout = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Statement timeout in seconds (0 = disabled)";
+        };
+
+        lockTimeout = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Lock timeout in seconds (0 = disabled)";
+        };
+
+        idleInTransactionTimeout = mkOption {
+          type = types.int;
+          default = 300;
+          description = "Idle in transaction timeout in seconds (0 = disabled)";
+        };
+
+        enablePreparedStatements = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable prepared statement caching";
+        };
+
+        preparedStatementCacheSize = mkOption {
+          type = types.int;
+          default = 256;
+          description = "Maximum number of prepared statements to cache";
+        };
+
+        enableAutoCommit = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable auto-commit for connections";
+        };
+
+        defaultTransactionIsolation = mkOption {
+          type = types.enum [
+            "read_uncommitted"
+            "read_committed"
+            "repeatable_read"
+            "serializable"
+          ];
+          default = "read_committed";
+          description = "Default transaction isolation level";
+        };
+      };
+
+      # Health Check Configuration
+      healthCheck = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable database health checks";
+        };
+
+        interval = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Health check interval in seconds";
+        };
+
+        timeout = mkOption {
+          type = types.int;
+          default = 5;
+          description = "Health check timeout in seconds";
+        };
+
+        query = mkOption {
+          type = types.str;
+          default = "SELECT 1";
+          description = "Health check query to execute";
+        };
+
+        failureThreshold = mkOption {
+          type = types.int;
+          default = 3;
+          description = "Number of consecutive failures before marking unhealthy";
+        };
+
+        successThreshold = mkOption {
+          type = types.int;
+          default = 1;
+          description = "Number of consecutive successes to mark healthy again";
+        };
+      };
+
+      # Migration Configuration
+      migration = {
+        timeout = mkOption {
+          type = types.int;
+          default = 600;
+          description = "Migration timeout in seconds";
+        };
+
+        enableLocking = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable migration locking to prevent concurrent migrations";
+        };
+
+        lockTimeout = mkOption {
+          type = types.int;
+          default = 300;
+          description = "Migration lock timeout in seconds";
+        };
+
+        validateChecksums = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Validate migration file checksums";
+        };
+      };
+
+      # SSL Configuration
+      ssl = {
+        mode = mkOption {
+          type = types.enum [
+            "disable"
+            "allow"
+            "prefer"
+            "require"
+            "verify-ca"
+            "verify-full"
+          ];
+          default = "prefer";
+          description = "SSL connection mode";
+        };
+
+        certFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to client certificate file";
+        };
+
+        keyFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to client private key file";
+        };
+
+        caFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to certificate authority file";
+        };
+
+        crlFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to certificate revocation list file";
+        };
+      };
+
+      # Monitoring and Logging
+      monitoring = {
+        enableSlowQueryLog = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable slow query logging";
+        };
+
+        slowQueryThreshold = mkOption {
+          type = types.int;
+          default = 1000;
+          description = "Slow query threshold in milliseconds";
+        };
+
+        enableConnectionLogging = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable connection event logging";
+        };
+
+        enableMetrics = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable database connection metrics";
+        };
+
+        metricsInterval = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Metrics collection interval in seconds";
+        };
       };
     };
 
@@ -1047,8 +1355,38 @@ in
 
       environment = {
         RUST_LOG = cfg.unifiedCollector.logLevel;
-        DATABASE_URL = cfg.database.url;
+        DATABASE_URL = buildDatabaseUrl cfg;
         SINEX_CONFIG = collectorConfigFile;
+        
+        # Database connection configuration
+        SINEX_DB_MAX_CONNECTIONS = toString cfg.database.connectionPool.maxConnections;
+        SINEX_DB_MIN_CONNECTIONS = toString cfg.database.connectionPool.minConnections;
+        SINEX_DB_CONNECTION_TIMEOUT = toString cfg.database.connectionPool.connectionTimeout;
+        SINEX_DB_IDLE_TIMEOUT = toString cfg.database.connectionPool.idleTimeout;
+        SINEX_DB_MAX_LIFETIME = toString cfg.database.connectionPool.maxLifetime;
+        
+        # Database retry configuration
+        SINEX_DB_MAX_RETRIES = toString cfg.database.retry.maxRetries;
+        SINEX_DB_INITIAL_DELAY = toString cfg.database.retry.initialDelay;
+        SINEX_DB_MAX_DELAY = toString cfg.database.retry.maxDelay;
+        SINEX_DB_BACKOFF_MULTIPLIER = toString cfg.database.retry.backoffMultiplier;
+        SINEX_DB_ENABLE_JITTER = if cfg.database.retry.enableJitter then "true" else "false";
+        
+        # Database performance configuration
+        SINEX_DB_STATEMENT_TIMEOUT = toString cfg.database.performance.statementTimeout;
+        SINEX_DB_LOCK_TIMEOUT = toString cfg.database.performance.lockTimeout;
+        SINEX_DB_IDLE_IN_TRANSACTION_TIMEOUT = toString cfg.database.performance.idleInTransactionTimeout;
+        SINEX_DB_ENABLE_PREPARED_STATEMENTS = if cfg.database.performance.enablePreparedStatements then "true" else "false";
+        SINEX_DB_PREPARED_STATEMENT_CACHE_SIZE = toString cfg.database.performance.preparedStatementCacheSize;
+        SINEX_DB_ENABLE_AUTO_COMMIT = if cfg.database.performance.enableAutoCommit then "true" else "false";
+        SINEX_DB_DEFAULT_TRANSACTION_ISOLATION = cfg.database.performance.defaultTransactionIsolation;
+        
+        # Database monitoring configuration
+        SINEX_DB_ENABLE_SLOW_QUERY_LOG = if cfg.database.monitoring.enableSlowQueryLog then "true" else "false";
+        SINEX_DB_SLOW_QUERY_THRESHOLD = toString cfg.database.monitoring.slowQueryThreshold;
+        SINEX_DB_ENABLE_CONNECTION_LOGGING = if cfg.database.monitoring.enableConnectionLogging then "true" else "false";
+        SINEX_DB_ENABLE_METRICS = if cfg.database.monitoring.enableMetrics then "true" else "false";
+        SINEX_DB_METRICS_INTERVAL = toString cfg.database.monitoring.metricsInterval;
         
         # Queue management environment variables
         SINEX_MAX_QUEUE_DEPTH = toString cfg.queueManagement.monitoring.maxQueueDepth;
@@ -1139,7 +1477,37 @@ in
 
       environment = {
         RUST_LOG = "info";
-        DATABASE_URL = cfg.database.url;
+        DATABASE_URL = buildDatabaseUrl cfg;
+        
+        # Database connection configuration (shared with collector)
+        SINEX_DB_MAX_CONNECTIONS = toString cfg.database.connectionPool.maxConnections;
+        SINEX_DB_MIN_CONNECTIONS = toString cfg.database.connectionPool.minConnections;
+        SINEX_DB_CONNECTION_TIMEOUT = toString cfg.database.connectionPool.connectionTimeout;
+        SINEX_DB_IDLE_TIMEOUT = toString cfg.database.connectionPool.idleTimeout;
+        SINEX_DB_MAX_LIFETIME = toString cfg.database.connectionPool.maxLifetime;
+        
+        # Database retry configuration
+        SINEX_DB_MAX_RETRIES = toString cfg.database.retry.maxRetries;
+        SINEX_DB_INITIAL_DELAY = toString cfg.database.retry.initialDelay;
+        SINEX_DB_MAX_DELAY = toString cfg.database.retry.maxDelay;
+        SINEX_DB_BACKOFF_MULTIPLIER = toString cfg.database.retry.backoffMultiplier;
+        SINEX_DB_ENABLE_JITTER = if cfg.database.retry.enableJitter then "true" else "false";
+        
+        # Database performance configuration
+        SINEX_DB_STATEMENT_TIMEOUT = toString cfg.database.performance.statementTimeout;
+        SINEX_DB_LOCK_TIMEOUT = toString cfg.database.performance.lockTimeout;
+        SINEX_DB_IDLE_IN_TRANSACTION_TIMEOUT = toString cfg.database.performance.idleInTransactionTimeout;
+        SINEX_DB_ENABLE_PREPARED_STATEMENTS = if cfg.database.performance.enablePreparedStatements then "true" else "false";
+        SINEX_DB_PREPARED_STATEMENT_CACHE_SIZE = toString cfg.database.performance.preparedStatementCacheSize;
+        SINEX_DB_ENABLE_AUTO_COMMIT = if cfg.database.performance.enableAutoCommit then "true" else "false";
+        SINEX_DB_DEFAULT_TRANSACTION_ISOLATION = cfg.database.performance.defaultTransactionIsolation;
+        
+        # Database monitoring configuration
+        SINEX_DB_ENABLE_SLOW_QUERY_LOG = if cfg.database.monitoring.enableSlowQueryLog then "true" else "false";
+        SINEX_DB_SLOW_QUERY_THRESHOLD = toString cfg.database.monitoring.slowQueryThreshold;
+        SINEX_DB_ENABLE_CONNECTION_LOGGING = if cfg.database.monitoring.enableConnectionLogging then "true" else "false";
+        SINEX_DB_ENABLE_METRICS = if cfg.database.monitoring.enableMetrics then "true" else "false";
+        SINEX_DB_METRICS_INTERVAL = toString cfg.database.monitoring.metricsInterval;
         
         # Worker-specific queue management settings
         SINEX_WORKER_POLL_INTERVAL = toString cfg.promoWorker.pollInterval;
@@ -1282,6 +1650,7 @@ in
     systemd.tmpfiles.rules = [
       "d ${cfg.unifiedCollector.dlq.filePath} 0755 sinex sinex"
       "d /var/lib/sinex/monitoring 0755 sinex sinex"
+      "d /var/lib/sinex/health 0755 sinex sinex"
       "d /var/log/sinex 0755 sinex sinex"
     ] ++ optional cfg.blobStorage.enable 
       "d ${cfg.blobStorage.repositoryPath} 0755 sinex sinex";
@@ -1451,6 +1820,169 @@ in
       };
     };
 
+    # Database health check service
+    systemd.services.sinex-database-health = mkIf cfg.database.healthCheck.enable {
+      description = "Sinex Database Health Check";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" ] ++ optional cfg.database.autoSetup "sinex-migrate.service";
+      requires = [ "postgresql.service" ];
+      
+      environment = {
+        DATABASE_URL = buildDatabaseUrl cfg;
+        RUST_LOG = "warn"; # Only log warnings and errors for health checks
+      };
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        ExecStart = pkgs.writeShellScript "sinex-database-health" ''
+          set -euo pipefail
+          
+          # Health check configuration
+          HEALTH_CHECK_QUERY="${cfg.database.healthCheck.query}"
+          HEALTH_CHECK_TIMEOUT=${toString cfg.database.healthCheck.timeout}
+          FAILURE_THRESHOLD=${toString cfg.database.healthCheck.failureThreshold}
+          SUCCESS_THRESHOLD=${toString cfg.database.healthCheck.successThreshold}
+          
+          # Health state tracking files
+          STATE_DIR="/var/lib/sinex/health"
+          mkdir -p "$STATE_DIR"
+          FAILURE_COUNT_FILE="$STATE_DIR/db_failure_count"
+          SUCCESS_COUNT_FILE="$STATE_DIR/db_success_count"
+          LAST_STATUS_FILE="$STATE_DIR/db_last_status"
+          
+          # Function to get current count from file
+          get_count() {
+            local file="$1"
+            if [ -f "$file" ]; then
+              cat "$file"
+            else
+              echo "0"
+            fi
+          }
+          
+          # Function to set count in file
+          set_count() {
+            local file="$1"
+            local count="$2"
+            echo "$count" > "$file"
+          }
+          
+          # Function to reset count file
+          reset_count() {
+            local file="$1"
+            set_count "$file" "0"
+          }
+          
+          # Get current counts
+          failure_count=$(get_count "$FAILURE_COUNT_FILE")
+          success_count=$(get_count "$SUCCESS_COUNT_FILE")
+          last_status=$(get_count "$LAST_STATUS_FILE")
+          
+          echo "=== Database Health Check ==="
+          echo "Timestamp: $(date)"
+          echo "Query: $HEALTH_CHECK_QUERY"
+          echo "Timeout: $HEALTH_CHECK_TIMEOUT seconds"
+          echo "Current failure count: $failure_count (threshold: $FAILURE_THRESHOLD)"
+          echo "Current success count: $success_count (threshold: $SUCCESS_THRESHOLD)"
+          echo
+          
+          # Perform health check with timeout
+          health_check_result=0
+          if timeout "$HEALTH_CHECK_TIMEOUT" ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "$HEALTH_CHECK_QUERY" >/dev/null 2>&1; then
+            echo "✓ Database health check PASSED"
+            
+            # Increment success count, reset failure count
+            success_count=$((success_count + 1))
+            set_count "$SUCCESS_COUNT_FILE" "$success_count"
+            reset_count "$FAILURE_COUNT_FILE"
+            
+            # Check if we've reached success threshold to mark healthy
+            if [ "$success_count" -ge "$SUCCESS_THRESHOLD" ]; then
+              if [ "$last_status" != "1" ]; then
+                echo "🎉 Database marked as HEALTHY (reached success threshold)"
+                logger -t sinex-database-health "Database marked as healthy"
+              fi
+              set_count "$LAST_STATUS_FILE" "1"
+            fi
+            
+          else
+            echo "✗ Database health check FAILED"
+            health_check_result=1
+            
+            # Increment failure count, reset success count
+            failure_count=$((failure_count + 1))
+            set_count "$FAILURE_COUNT_FILE" "$failure_count"
+            reset_count "$SUCCESS_COUNT_FILE"
+            
+            # Check if we've reached failure threshold to mark unhealthy
+            if [ "$failure_count" -ge "$FAILURE_THRESHOLD" ]; then
+              if [ "$last_status" != "0" ]; then
+                echo "💀 Database marked as UNHEALTHY (reached failure threshold)" >&2
+                logger -t sinex-database-health "CRITICAL: Database marked as unhealthy"
+              fi
+              set_count "$LAST_STATUS_FILE" "0"
+            else
+              echo "⚠️  Database health check failed ($failure_count/$FAILURE_THRESHOLD failures)" >&2
+              logger -t sinex-database-health "WARNING: Database health check failed"
+            fi
+          fi
+          
+          # Additional diagnostic information on failure
+          if [ "$health_check_result" -ne 0 ]; then
+            echo
+            echo "=== Diagnostic Information ==="
+            
+            # Check PostgreSQL service status
+            if systemctl is-active postgresql >/dev/null 2>&1; then
+              echo "✓ PostgreSQL service is active"
+            else
+              echo "✗ PostgreSQL service is not active" >&2
+            fi
+            
+            # Check if PostgreSQL is accepting connections
+            if ${pkgs.postgresql}/bin/pg_isready -h /run/postgresql -q; then
+              echo "✓ PostgreSQL is accepting connections"
+            else
+              echo "✗ PostgreSQL is not accepting connections" >&2
+            fi
+            
+            # Check database existence
+            if ${pkgs.postgresql}/bin/psql -lqt | cut -d '|' -f 1 | grep -qw "${escapeDbIdentifier cfg.database.name}"; then
+              echo "✓ Database '${escapeDbIdentifier cfg.database.name}' exists"
+            else
+              echo "✗ Database '${escapeDbIdentifier cfg.database.name}' does not exist" >&2
+            fi
+            
+            # Check user permissions
+            if ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "SELECT current_user;" >/dev/null 2>&1; then
+              echo "✓ Database user has connection permissions"
+            else
+              echo "✗ Database user lacks connection permissions" >&2
+            fi
+          fi
+          
+          echo "=== End Health Check ==="
+          exit $health_check_result
+        '';
+        
+        # Timeout for the entire health check process (includes setup time)
+        TimeoutStartSec = "${toString (cfg.database.healthCheck.timeout + 10)}s";
+      };
+    };
+
+    # Timer for database health checks
+    systemd.timers.sinex-database-health = mkIf cfg.database.healthCheck.enable {
+      description = "Timer for Sinex Database Health Check";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "30s";
+        OnUnitActiveSec = "${toString cfg.database.healthCheck.interval}s";
+        Persistent = true;
+      };
+    };
+
     # Resource monitoring and alerting service
     systemd.services.sinex-resource-monitor = mkIf cfg.resourceLimits.enableResourceLimits {
       description = "Sinex Resource Usage Monitor";
@@ -1612,8 +2144,30 @@ in
             echo "✓ PostgreSQL: CONNECTED"
             
             # Test database query
-            if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${cfg.database.url}" >/dev/null 2>&1; then
+            if echo "SELECT 1;" | ${pkgs.postgresql}/bin/psql "${buildDatabaseUrl cfg}" >/dev/null 2>&1; then
               echo "✓ Sinex Database: ACCESSIBLE"
+              
+              # Check database health status if health checks are enabled
+              ${lib.optionalString cfg.database.healthCheck.enable ''
+                if [ -f "/var/lib/sinex/health/db_last_status" ]; then
+                  db_health_status=$(cat /var/lib/sinex/health/db_last_status)
+                  if [ "$db_health_status" = "1" ]; then
+                    echo "✓ Database Health: HEALTHY"
+                  else
+                    echo "⚠️  Database Health: UNHEALTHY" >&2
+                    exit_code=1
+                  fi
+                  
+                  # Show failure/success counts
+                  if [ -f "/var/lib/sinex/health/db_failure_count" ]; then
+                    failure_count=$(cat /var/lib/sinex/health/db_failure_count)
+                    success_count=$(cat /var/lib/sinex/health/db_success_count 2>/dev/null || echo "0")
+                    echo "  Health Stats: $success_count successes, $failure_count failures"
+                  fi
+                else
+                  echo "⚠️  Database Health: STATUS UNKNOWN (no health data)" >&2
+                fi
+              ''}
             else
               echo "✗ Sinex Database: QUERY FAILED" >&2
               exit_code=1
