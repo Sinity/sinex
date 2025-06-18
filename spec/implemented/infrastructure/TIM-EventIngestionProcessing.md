@@ -1,9 +1,9 @@
 # TIM-EventIngestionProcessing: Queues, Workers, Notifications
 
 ## Status Dashboard
-**Maturity Level**: L4 - Implemented
-**Implementation**: 75% (PostgreSQL queue and worker patterns working, FastCDC and advanced features missing)
-**Dependencies**: PostgreSQL, promotion_queue table, worker processes, agent manifests
+**Maturity Level**: L4 - Implemented  
+**Implementation**: 85% (PostgreSQL work queue, worker patterns, BLAKE3 hashing working, FastCDC and Redis missing)
+**Dependencies**: PostgreSQL, work_queue table, worker processes, agent manifests
 **Blocks**: Event processing pipeline, promotion workflows, downstream analysis
 
 ## MVP Specification
@@ -21,15 +21,15 @@
 - Performance monitoring and metrics
 
 ## Implementation Checklist
-- [x] promotion_queue table schema
-- [x] Worker polling and claiming logic
-- [x] Exponential backoff with jitter
-- [x] Dead letter queue handling
+- [x] work_queue table schema (renamed from promotion_queue) - `migrations/20250103120015_rename_promotion_queue_to_work_queue.sql`
+- [x] Worker polling and claiming logic - `crate/sinex-db/src/queries.rs:get_work_for_agent()`
+- [x] Exponential backoff with jitter - Retry logic with `next_retry_ts`
+- [x] Dead letter queue handling - Status tracking with max_attempts  
+- [x] BLAKE3 hashing for deduplication - `crate/sinex-annex/src/lib.rs:compute_blake3_hash()`
+- [x] Performance indexes and constraints - Multi-column indexes on status, retry timestamps
 - [ ] Content-defined chunking (FastCDC)
-- [x] BLAKE3 hashing for deduplication
-- [x] Performance indexes and constraints
 - [ ] LISTEN/NOTIFY wake-up signals
-- [ ] Redis streams integration
+- [ ] Redis streams integration  
 - [ ] Distributed worker coordination
 
 *   **Relevant ADR:** `[ADR-002-EventProcessingNotificationMechanism.md](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)`

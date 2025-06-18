@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 85% (Table defined with embeddings support, indexes created)
+**Implementation**: 95% (Full database schema, indexes, vector support, triggers - only API layer missing)
 **Dependencies**: `pgx_ulid` extension, `pgvector` extension, `raw.events` table
 **Blocks**: Annotation agents, event interpretation workflows, collaborative tagging
 
@@ -21,21 +21,20 @@
 - Temporal annotation tracking and versioning
 
 ## Implementation Checklist
-- [x] Database migration to create `event_annotations` table
-- [x] ULID primary key implementation with pgx_ulid
-- [x] Foreign key constraint to `raw.events` table
-- [x] Support for both textual and JSONB annotation content
-- [x] Actor identification and annotation type classification
-- [x] Vector embedding support with pgvector integration
-- [x] Performance indexes for annotation queries
-- [x] Full-text search indexes for textual content
-- [x] GIN indexes for JSONB content queries
-- [x] Vector similarity indexes (HNSW) for semantic search
-- [x] Trigger setup for automatic timestamp updates
+- [x] Database migration to create `event_annotations` table - `migrations/20250103120013_create_event_relations_and_annotations.sql`
+- [x] ULID primary key implementation with pgx_ulid - `gen_ulid()` default
+- [x] Foreign key constraint to `raw.events` table - CASCADE DELETE implemented
+- [x] Support for textual content and JSONB metadata - `content TEXT` + `metadata JSONB`
+- [x] Actor identification and annotation type classification - `created_by` + `annotation_type` fields
+- [x] Vector embedding support with pgvector integration - `migrations/20250103120012_create_llm_and_embeddings_tables.sql`
+- [x] Performance indexes for annotation queries - event_id, type, created_at indexes
+- [x] Full-text search indexes for textual content - GIN tsvector index
+- [x] Vector similarity indexes (IVFFLAT) for semantic search - Separate event_embeddings table
+- [x] Trigger setup for automatic timestamp updates - `set_event_annotations_updated_at` trigger
+- [ ] Rust models for event annotations in sinex-db
 - [ ] Annotation management API and validation logic
 - [ ] Automated annotation agents and workflows
 - [ ] Tests for annotation operations and searches
-- [ ] Performance optimization for large-scale annotation datasets
 
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for the `event_annotations` table. This table allows users and agents to attach flexible, evolving metadata, comments, flags, or preliminary interpretations directly to individual `raw.events` entries without altering the immutable event itself.
 *   **Source:** Derived from conceptual descriptions in Vision Document Part V.3.3.

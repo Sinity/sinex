@@ -11,28 +11,28 @@ This document defines the dependency relationships between Sinex components, org
 
 ```
 Event Storage Infrastructure
-├── PostgreSQL Database ✅ [L4 - Implemented]
-├── TimescaleDB Extension ✅ [L4 - Implemented]  
-├── ULID Primary Keys ✅ [L4 - Implemented]
-├── Basic Event Schema ✅ [L4 - Implemented]
-└── Promotion Queue System 🚧 [L3 - Ready]
+├── PostgreSQL Database 🚧 [L3 - Basic setup]
+├── TimescaleDB Extension 🚧 [L3 - Basic hypertable]  
+├── ULID Primary Keys ✅ [L4 - Working]
+├── Basic Event Schema 🚧 [L3 - Minimal validation]
+└── Promotion Queue System 🔨 [L2 - Schema only]
 
 Git Integration
-├── Git-annex Blob Storage ✅ [L4 - Implemented via sinex-annex crate]
-├── Repository State Tracking ✅ [L4 - Implemented]
-└── Blob Content Addressing ✅ [L4 - Implemented]
+├── Git-annex Blob Storage 🚧 [L3 - Basic functionality]
+├── Repository State Tracking 🔨 [L2 - Partial]
+└── Blob Content Addressing 🚧 [L3 - Basic]
 
 Core Event Sources
-├── Filesystem Events ✅ [L4 - Implemented]
-├── Terminal Events ✅ [L4 - Implemented] 
-├── Clipboard Events ✅ [L4 - Implemented]
-├── Basic Process Monitoring ✅ [L4 - Implemented]
-├── Hyprland IPC Interface ✅ [L4 - Implemented]
-└── Generic Terminal Logging ✅ [L4 - Implemented]
+├── Filesystem Events 🚧 [L3 - Basic monitoring]
+├── Terminal Events 🚧 [L3 - Some capture] 
+├── Clipboard Events 🚧 [L3 - Text only]
+├── Basic Process Monitoring 🔨 [L2 - Minimal]
+├── Hyprland IPC Interface 🚧 [L3 - Basic events]
+└── Generic Terminal Logging 🚧 [L3 - Limited]
 ```
 
-**Implementation Status:** 85% complete
-**Blocking:** Promotion queue worker completion
+**Implementation Status:** 35% complete
+**Blocking:** Core infrastructure hardening needed
 
 ---
 

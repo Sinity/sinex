@@ -1,5 +1,37 @@
 # TIM-AgentManifestManagement: Agent Manifest Schema and Management
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (Database schema, registration, heartbeats, CLI fully working, event routing implemented, JSON schema validation pending)
+**Dependencies**: PostgreSQL, ULID generation, sinex-collector, agent framework
+**Blocks**: Agent discovery, event routing, agent lifecycle management, operational monitoring
+
+## MVP Specification
+- Agent manifest database schema with runtime registration
+- Agent registration and heartbeat management
+- Event routing based on agent capabilities
+- Basic agent status tracking and monitoring
+- CLI interface for agent management
+
+## Enhanced Features
+- Static JSON manifest schema validation
+- Bundled manifest files in agent binaries
+- Advanced agent capability matching
+- Automated agent deployment and scaling
+- Comprehensive agent health monitoring
+- Agent dependency management
+
+## Implementation Checklist
+- [x] Database schema (sinex_schemas.agent_manifests) - `migrations/20250103120007_create_agent_manifests.sql`
+- [x] Agent registration with UPSERT logic - `crate/sinex-collector/src/agent.rs:register_agent()`
+- [x] Heartbeat and lifecycle management - `crate/sinex-collector/src/agent.rs:AgentLifecycle`
+- [x] Event routing to work queue - `migrations/20250103120009_create_event_router.sql`
+- [x] CLI agent management commands - `cli/exo.py:agent_list()`, `agent_status()`
+- [x] Comprehensive test suite - `test/agent/agent_manifest_tests.rs`
+- [ ] JSON schema for static manifests
+- [ ] Bundled manifest files in binaries
+- [ ] CI validation of manifest schemas
+
 *   **Relevant ADR:** (N/A directly, core infrastructure for agent framework)
 *   **Original UG Context:** Section 30
 *   **Vision Document Reference:** Part IV.1.2 (Agent Registry)

@@ -1,162 +1,171 @@
-# Sinex Exocortex: System Architecture & Document Interrelation (SADI) - v0.3
+# Sinex: System Architecture & Document Interrelation (SADI) - v0.4
 
-> **📊 IMPLEMENTATION STATUS**: Core database substrate ✅ **IMPLEMENTED**, Unified ingestion framework ✅ **IMPLEMENTED**, Distributed work processing ✅ **IMPLEMENTED**, Activity segmentation system ✅ **IMPLEMENTED**, NixOS module ⚠️ **IN DEVELOPMENT**, Advanced AI features ❌ **PLANNED** - see detailed status in architectural modules.
+> **📊 IMPLEMENTATION STATUS**: Core infrastructure 🚧 **PARTIAL** (45%), Event sources 🚧 **PARTIAL** (35%), Processing pipeline 🚧 **BASIC** (25%), NixOS module 🚧 **BASIC** (40%), Query interface 🚧 **MINIMAL** (15%), AI features ❌ **PLANNED** (0%)
 
-**(Reflecting Modular Documentation Structure)**
+**Purpose**
 
-**Preamble**
+This document serves as the central navigation hub for the Sinex project documentation. It provides:
 
-This System Architecture & Document Interrelation (SADI) guide serves as the central linking document and high-level overview for the Sinex Exocortex project. Its primary purpose is to:
+1. A map of all project documentation and their relationships
+2. Quick access to key architectural decisions and technical specifications
+3. Implementation status tracking across all components
 
-1. Articulate the overall documentation strategy and the role of each canonical document.
-2. Provide a concise summary of the core architectural pillars and key decisions (linking to detailed ADRs).
-3. Act as an index to the main project documents, including the Vision, System Technical Architecture Document (STAD), Architectural Modules, Technical Implementation Modules (TIMs), and Architectural Decision Records (ADRs).
+## 📚 Documentation Overview
 
-This document is intended for all contributors, including human maintainers who need to understand the system's structure and evolution, and AI development agents (like Claude) that require contextual guidance for implementation tasks. It helps navigate the comprehensive but modularized documentation set.
+### Core Documents
 
-This is a living document. It will be updated as major architectural decisions are refined, new components are integrated, or the documentation structure itself evolves.
+- **[VISION.md](VISION.md)** - Project philosophy and long-term goals
+- **[STAD.md](STAD.md)** - System Technical Architecture Document 
+- **[PLAN.md](PLAN.md)** - Development roadmap and phase tracking
+- **[DEPENDENCIES.md](DEPENDENCIES.md)** - Feature dependency graph
+- **[PATHWAYS.md](PATHWAYS.md)** - Contribution guide by role/interest
+- **[MATURITY.md](MATURITY.md)** - Specification maturity model
+- **[GLOSSARY.md](GLOSSARY.md)** - Project terminology reference
 
-**Part I: Core Architectural Pillars & Key Decisions (Summary)**
+### Technical Specifications
 
-*(This section provides a very brief summary of the chosen architecture, largely by referencing the SADI v0.1 content that summarized key decisions. Now, it primarily points to the standalone ADRs and the STAD for the current overview.)*
+- **`implemented/`** - Features with working code (70%+ complete)
+- **`ready/`** - Fully specified, ready to implement
+- **`planned/`** - Future features requiring design work
 
-**1. Overall System Philosophy & Goals**
+### Architecture & Design
 
-The Sinex Exocortex is conceived as a "sentient archive" – a comprehensive, user-owned cognitive habitat designed to combat digital amnesia and augment human intellect. It aims for universal capture, emergent structuring, powerful query and agentic assistance, prioritizing user agency and data sovereignty.
+- **`docs/arch_modules/`** - Domain-specific architecture deep-dives
+- **`docs/adr/`** - Architectural Decision Records
+- **`diagram/`** - Visual architecture documentation
 
-* **Primary Reference for Vision & Philosophy:** `VISION.md`
+## 🏗️ Core Architecture
 
-**2. Summary of Current Chosen Technical Stack & Key Architectural Decisions**
+### System Philosophy
+Sinex is conceived as a "sentient archive" – a comprehensive personal data system designed to combat digital amnesia and augment human intellect through universal capture, intelligent processing, and powerful query capabilities.
 
-The Exocortex is built on a local-first, robust, and extensible technical foundation, primarily targeting a single-host Linux system managed with NixOS. Key technology choices and architectural decisions include:
+### Technical Stack
 
-* **Host Environment:** NixOS for reproducible, declarative management.
-* **Primary Datastore:** PostgreSQL 15+ with extensions:
-  * **TimescaleDB:** For `raw.events` hypertable partitioning.
-  * **`pgx_ulid`:** For ULID primary keys ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md)).
-  * **`pgvector`:** For vector embeddings (HNSW index - [ADR-005](docs/adr/ADR-005-VectorIndexTypePgvector.md); CPU-first - [ADR-007](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)).
-  * **`pg_jsonschema`:** For in-database event payload validation.
-  * **`pgsodium`:** For field-level encryption.
-* **Primary Development Language (Backend/Agents):** Rust.
-* **Secrets Management:** `agenix` ([ADR-006](docs/adr/ADR-006-NixOSSecretsManagementTool.md)).
-* **Large File (Blob) Management:** `git-annex` with metadata in `core_blobs`.
-* **Core Data Flow:** UnifiedCollector -> Immutable `raw.events` -> Materialized view routing -> `work_queue` -> Agent-driven processing via `SELECT FOR UPDATE SKIP LOCKED` ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md); [ADR-014](docs/adr/0014-routing-cache.md)).
-* **Desktop Integration:** Hyprland IPC (primary), C++ Plugin (future) - [ADR-003](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md); Layered Terminal Capture (Atuin, Asciinema, Kitty RC) - [ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md).
-* **PKM Content Handling:** Database-native with Yjs CRDTs ([ADR-004](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)).
+**Foundation:**
+- **OS**: NixOS for reproducible, declarative deployment
+- **Database**: PostgreSQL 16 with extensions:
+  - TimescaleDB for time-series event storage
+  - pgx_ulid for time-ordered primary keys
+  - pg_jsonschema for event validation
+  - pgvector for semantic search (future)
+- **Language**: Rust for core system, Python for CLI tools
 
-* **For a concise architectural overview and links to detailed specifications, see:** `STAD.md`
-* **For detailed rationale on specific decisions, see the individual files in:** `docs/adr/`
+**Key Architectural Decisions:**
+- **ULID Primary Keys** - Time-ordered, globally unique ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md))
+- **Event Processing** - Work queue with `SELECT FOR UPDATE SKIP LOCKED` ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
+- **Routing Cache** - Materialized view for efficient event routing ([ADR-014](docs/adr/ADR-014-routing-cache.md))
+- **Terminal Capture** - Layered approach with multiple sources ([ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md))
+- **Clock Regression** - Handling time jumps gracefully ([ADR-011](docs/adr/ADR-011-clock-regression-handling.md))
 
-**Part II: Canonical Document Mapping & Interrelation (v0.2 Structure)**
+## 📖 Document Structure & Navigation
 
-This section clarifies the role of each primary project document in the new modular structure.
+### Vision & Strategy
+- **[VISION.md](VISION.md)** - The "Why": Philosophy, manifesto, and long-term goals
+- **[PLAN.md](PLAN.md)** - Development phases and current progress tracking
 
-1. **`VISION.md` (Refactored Vision Document - e.g., "Sinex Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty v3.0")**
-    * **Role:** The **foundational "Why" and high-level "What"** of the project. Articulates:
-        * Core philosophy, manifesto, pledges, and human-centric design context.
-        * Conceptual overview of key user-facing capabilities (Living Document, PKM, Universal Capture, Agentic Partnership, Query & Reflection concepts).
-        * The project's sustaining ethos (meta-observability, security commitments, evolution) and long-term horizons.
-        * Includes philosophical essays.
-    * It answers "Why are we building this?" and "What are we aiming for conceptually?"
-    * **Target Audience:** All stakeholders, new contributors, users seeking to understand the project's soul.
-    * **Key Change:** Technical and deep architectural details are moved out to STAD, Architectural Modules, and TIMs.
+### Architecture Documents
+- **[STAD.md](STAD.md)** - High-level system architecture overview
+- **Architecture Modules** - Domain-specific deep dives:
+  - [DataSubstrate_Architecture.md](docs/arch_modules/DataSubstrate_Architecture.md) - Database and storage layer
+  - [IngestionArchitecture_And_TelemetrySources.md](docs/arch_modules/IngestionArchitecture_And_TelemetrySources.md) - Event capture system
+  - [AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md) - AI and processing agents
+  - [UserInteraction_And_Query_Architecture.md](docs/arch_modules/UserInteraction_And_Query_Architecture.md) - Query interfaces
+  - [SystemOperations_And_Integrity_Architecture.md](docs/arch_modules/SystemOperations_And_Integrity_Architecture.md) - Operations and deployment
 
-2. **`STAD.md` (System Technical Architecture Document v1.x)**
-    * **Role:** The **high-level architectural map** of the Exocortex. It replaces the detailed, monolithic "Unified Technical Implementation Guide."
-        * Provides a top-level system overview and diagram.
-        * Briefly introduces each major architectural domain/pillar (Data Substrate, Ingestion, Agentic Ecosystem, User Interaction, System Operations).
-        * Serves as a primary index by linking directly to the more detailed Architectural Module documents for each domain.
-        * Includes appendices indexing all ADRs and TIMs.
-    * It answers "What are the major architectural components and how do they broadly fit together?"
-    * **Target Audience:** Developers needing an architectural overview, system architects, AI agents needing a starting point for technical context.
+### Implementation Specifications (TIMs)
 
-3. **`docs/arch_modules/` (Architectural Module Documents - 5 key files)**
-    * `DataSubstrate_Architecture.md`
-    * `IngestionArchitecture_And_TelemetrySources.md`
-    * `AgenticEcosystem_Architecture.md`
-    * `UserInteraction_And_Query_Architecture.md`
-    * `SystemOperations_And_Integrity_Architecture.md`
-    * **Role:** Each document provides a **comprehensive architectural deep-dive into a specific domain** of the Exocortex. They explain the "what," "why," and "how components interrelate" *within that domain*.
-        * They consolidate architectural descriptions previously in the old UG or Vision document.
-        * They contain more detailed architectural diagrams and design rationale than the STAD overviews.
-        * They link extensively to specific TIMs for implementation details and relevant ADRs for decisions.
-    * They answer "What is the detailed architecture of this specific part of the system?"
-    * **Target Audience:** Developers working within or integrating with a specific architectural domain, AI agents needing detailed context for a particular area.
+Technical Implementation Modules follow a consistent structure:
 
-4. **`implemented/` and `planned/` (Technical Implementation Modules)**
-    * **Role:** Granular, self-contained documents providing **detailed technical specifications for implementing a single component, feature, or core concern.** This is where DDLs, code examples, specific configurations, API details, and step-by-step procedures reside.
-    * They answer "Exactly how is this specific piece implemented or configured?"
-    * **Target Audience:** Developers implementing or debugging specific components, AI agents generating code or tests for a specific module.
+**Status Dashboard** (required for feature TIMs):
+```markdown
+## Status Dashboard
+**Maturity Level**: L2/L3/L4 - Ready/Implemented
+**Implementation**: X% (Verified against codebase)
+**Dependencies**: Required components
+**Blocks**: Features that depend on this TIM
+```
 
-5. **`docs/adr/` (Architectural Decision Records - Standalone files, e.g., `ADR-001-PrimaryKeyStrategy.md`)**
-    * **Role:** Each ADR documents a **single significant architectural decision**, including its context, discussed options, the decision itself, rationale, and consequences. They are the primary source for understanding *why* certain technical choices were made.
-    * They answer "Why was this specific architectural path chosen over alternatives?"
-    * **Target Audience:** All developers, architects, maintainers needing to understand design history and rationale.
+**Maturity Levels**:
+- **L2 - Ready**: Complete specification, clear implementation plan
+- **L3 - Partial**: Core functionality implemented, missing features  
+- **L4 - Complete**: Feature working with tests and documentation
 
-6. **`SADI.md` (This Document)**
-    * **Role:** As described in its preamble - the central map and high-level summary.
+**Implementation Percentages** (based on codebase verification):
+- **0-25%**: Design complete, minimal implementation
+- **25-50%**: Core infrastructure exists, missing functionality
+- **50-75%**: Major components implemented, missing integration
+- **75-90%**: Substantially complete, minor features missing
+- **90-100%**: Production-ready with comprehensive testing
 
-7. **`CDDG.md` (Claude-Driven Development Guide)**
-    * **Role:** Outlines the **methodology and best practices for using Claude (or similar AI) as an autonomous agent for TDD-based development.** Details the TDD loop, context provision, test generation strategies.
-    * It answers "How does Claude build the system defined by the Vision, STAD, Arch Modules, and TIMs?"
-    * **Key Change:** Now references the new modular document structure for providing context to Claude.
-    * **Target Audience:** Primarily the AI development agent (Claude) and human overseers of the CDD process.
+**TIM Categories**:
+- **Feature TIMs** - Implementable features by status:
+  - `implemented/` - Working features (70%+ complete)
+  - `ready/` - Fully designed, ready to build
+  - `planned/` - Future features needing design
+- **Process TIMs** - Documentation only:
+  - `docs/processes/` - Development practices
+  - `docs/operations/` - Operational procedures
+  - `docs/security/` - Security documentation
 
-8. **`GLOSSARY.md` (Project-Wide Glossary)**
-    * **Role:** Centralized definitions for all key Exocortex terms (conceptual and technical).
-    * **Target Audience:** All contributors.
+### Design Decisions
+- **[ADR Directory](docs/adr/)** - Architectural Decision Records explaining "why"
 
-9. **`docs/diagrams/` (Architectural Diagrams)**
-    * **Role:** Contains visual representations (PlantUML, Mermaid, images) of system architecture, data flows, component interactions. Referenced from STAD and Architectural Modules.
+### Development Resources
+- **[CLAUDE.md](../CLAUDE.md)** - Development workflows and patterns
+- **[PATHWAYS.md](PATHWAYS.md)** - Where to start contributing
+- **[DEPENDENCIES.md](DEPENDENCIES.md)** - Feature dependency tracking
+- **[MATURITY.md](MATURITY.md)** - Specification maturity levels
+- **[GLOSSARY.md](GLOSSARY.md)** - Project terminology
 
-**Part III: Index of Key Architectural Modules, ADRs, and TIMs**
+## 🚦 Implementation Status by Component
 
-*(This SADI acts as the master index. For brevity in this generated SADI, I will list the Architectural Modules and the ADRs. A full, detailed index of all TIMs would be very long here and is better maintained as an appendix within the STAD or as a separate TIM_INDEX.md file that this SADI could link to.)*
+### 🚧 Partially Implemented (25-70% Complete)
+- **Database Infrastructure** (45%) - PostgreSQL + TimescaleDB working, needs optimization
+- **Event Sources** (35%) - 4 sources working out of many planned
+- **NixOS Module** (40%) - Basic services work, needs polish
+- **Testing Framework** (60%) - Good test coverage but gaps remain
+- **Git-Annex Integration** (50%) - Basic blob storage works
 
-**3.1. Core Architectural Module Documents (`docs/arch_modules/`)**
+### 🔨 Basic Implementation (10-25% Complete)
+- **Processing Pipeline** (25%) - Queue works but minimal processing logic
+- **Unified Collector** (20%) - Coordinates sources but needs robustness
+- **Query Interface** (15%) - Minimal CLI, no advanced features
+- **Health Monitoring** (15%) - Very basic heartbeats only
 
-* `DataSubstrate_Architecture.md`: Details storage, events, structuring, knowledge representation.
-* `IngestionArchitecture_And_TelemetrySources.md`: Details the sensory network and data capture.
-* `AgenticEcosystem_Architecture.md`: Details intelligent agents and LLM integration.
-* `UserInteraction_And_Query_Architecture.md`: Details UIs, query mechanisms, feedback.
-* `SystemOperations_And_Integrity_Architecture.md`: Details operations, security, resilience.
+### 📋 Planned/Minimal (<10% Complete)
+- **AI Integration** (0%) - Only database schema exists
+- **Knowledge Graph** (5%) - Schema only, no implementation
+- **Promotion Workers** (10%) - Skeleton code only
+- **Advanced Event Sources** (0%) - Not started (Browser, Audio, Email)
+- **Semantic Search** (0%) - pgvector installed but unused
+- **Multi-device Sync** (0%) - Concept only
+- **Web Dashboard** (0%) - No implementation
 
-**3.2. Key Architectural Decision Records (`docs/adr/`)**
+## 🔄 Quick Links to Key Components
 
-* `[ADR-001-PrimaryKeyStrategy.md](docs/adr/ADR-001-PrimaryKeyStrategy.md)`: ULIDs via `pgx_ulid`.
-* `[ADR-002-EventProcessingNotificationMechanism.md](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)`: PG Queue Table + Polling.
-* `[ADR-003-HyprlandCompositorIntegrationPath.md](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md)`: Hyprland IPC first, C++ Plugin later.
-* `[ADR-004-PKMNoteContentManagementAndSync.md](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)`: PKM DB-Native with Yjs CRDTs.
-* `[ADR-005-VectorIndexTypePgvector.md](docs/adr/ADR-005-VectorIndexTypePgvector.md)`: HNSW index for `pgvector`.
-* `[ADR-006-NixOSSecretsManagementTool.md](docs/adr/ADR-006-NixOSSecretsManagementTool.md)`: `agenix` for NixOS secrets.
-* `[ADR-007-LargeScaleVectorSearchStrategy.md](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)`: `pgvector` CPU first, GPU DB later.
-* `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)`: Layered approach for terminal capture.
-* `[ADR-014-RoutingCache.md](docs/adr/0014-routing-cache.md)`: Materialized view routing cache for work distribution.
+### Database Schema
+- [Event Substrate DDL](implemented/infrastructure/TIM-EventSubstrateDDL.md)
+- [Event Schema Registry](implemented/infrastructure/TIM-EventSchemaRegistry.md)
+- [Knowledge Graph Schema](implemented/infrastructure/TIM-KnowledgeGraphSchema.md)
 
-**3.3. Technical Implementation Modules**
+### Event Sources
+- [Filesystem Monitoring](implemented/event-sources/TIM-FilesystemMonitoringWatchers.md)
+- [Terminal Logging](implemented/event-sources/TIM-GenericTerminalLogging.md)
+- [Clipboard Monitoring](implemented/event-sources/TIM-ClipboardMonitoring.md)
+- [Hyprland IPC](implemented/event-sources/TIM-HyprlandIPCInterface.md)
 
-TIMs are organized by implementation status and follow a consistent structure with verified implementation percentages:
+### Infrastructure
+- [Event Ingestion Processing](implemented/infrastructure/TIM-EventIngestionProcessing.md)
+- [Agent Manifest Management](implemented/infrastructure/TIM-AgentManifestManagement.md)
+- [Test Framework](implemented/infrastructure/TIM-TestFrameworkInfrastructure.md)
 
-* **`implemented/`** - Features that are working and deployed (70%+ complete)
-  * `event-sources/` - Filesystem, terminal, clipboard, Hyprland monitoring
-  * `infrastructure/` - Event substrate, ULID keys, TimescaleDB, Git Annex, knowledge graph schemas
-  * `ai/` - Basic filesystem AI analysis
+## 📝 Recent Updates
 
-* **`ready/`** - Features designed and ready for implementation (0-80% complete)
-  * `event-sources/` - AT-SPI2 accessibility, audio capture, email access
-  * `infrastructure/` - Dead letter queue, observability stack, event validation
-  * `ai/` - ASR, OCR, embeddings, hybrid search, entity resolution, LLM orchestration
+- **2025-01**: Major documentation cleanup and reorganization
+- **2024-12**: Comprehensive TIM restructuring with accurate implementation tracking
+- **2024-11**: NixOS module implementation and VM testing framework
+- **2024-10**: Unified collector architecture with hot-reload configuration
 
-* **`planned/`** - Features requiring additional design work
-  * `event-sources/` - Browser, eBPF, Wayland, advanced audio
-  * `infrastructure/` - Secrets management, backup/DR, advanced security
-  * `query/` - Advanced CLI and query tools
+---
 
-* **`docs/`** - Process and operational documentation
-  * `processes/` - Development practices, CI/CD procedures
-  * `operations/` - Disaster recovery, operational procedures
-  * `security/` - Threat models and security documentation
-
-**TIM Organization Reference:** For detailed information about TIM structure, verification methodology, and organizational principles, see `[docs/TIM_ORGANIZATION.md](docs/TIM_ORGANIZATION.md)`.
-
-This restructured SADI provides a clearer map to the now modularized documentation suite, guiding contributors to the appropriate level of detail they require.
+*This document serves as the central navigation hub for the Sinex project. For detailed information on any component, follow the links to the relevant documentation.*

@@ -1,9 +1,9 @@
 # Agentic Ecosystem Architecture: Automation, Intelligence, and Partnership in Exocortex
 
-*   **Version:** 1.0
-*   **Date:** 2024-03-11
-*   **Implementation Status:** ⚠️ **BASIC WORKER FRAMEWORK** - Agent registration ✅ **WORKING**, Worker processing ✅ **WORKING**, LLM integration ❌ **NOT IMPLEMENTED**
-*   **Purpose:** This document describes the architecture of the Sinnix Exocortex's intelligent agent framework, including agent management, Large Language Model (LLM) integration, archetypal agent roles, and how these components collaborate to provide automation, generate insights, and partner with the user.
+*   **Version:** 1.1
+*   **Date:** 2025-01-19
+*   **Implementation Status:** 🚧 **20% IMPLEMENTED** - Basic agent registry and worker processing framework, LLM integration and most agents not implemented
+*   **Purpose:** This document describes the architecture of the Sinex intelligent agent framework, including agent management, Large Language Model (LLM) integration, archetypal agent roles, and how these components collaborate to provide automation, generate insights, and partner with the user.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Part VI (Agent Manifests); Vision Document Part IV.
 
 ## 1. Introduction & Philosophy of Agentic Design (Vision IV.1.1)
@@ -27,7 +27,9 @@ This section details the core infrastructure supporting the agentic ecosystem.
 
 ### 2.1. Agent Registry (`sinex_schemas.agent_manifests`) (Vision IV.1.2)
 
-The `sinex_schemas.agent_manifests` PostgreSQL table serves as the canonical runtime registry for all Exocortex agents and ingestors.
+> **✅ IMPLEMENTATION STATUS: WORKING** - Basic agent manifest table implemented and functional
+
+The `sinex_schemas.agent_manifests` PostgreSQL table serves as the canonical runtime registry for all Sinex agents and ingestors.
 *   **Architectural Role:** Enables discovery, management, and orchestration of agents. Provides a central point for understanding agent capabilities, versions, configurations, and operational status.
 *   **Key Schema Fields Overview:**
     *   `agent_name TEXT PRIMARY KEY`: Unique identifier (e.g., `"PkmNoteEmbedderAgent_Rust_v0.1.0"`).
@@ -46,30 +48,39 @@ The `sinex_schemas.agent_manifests` PostgreSQL table serves as the canonical run
 
 ### 2.2. Agent Self-Description and Registration/Status Updates
 
+> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic registration working, heartbeats and advanced monitoring not implemented
+
 Agents are responsible for keeping their information in the registry up-to-date.
-*   **Static Manifest (`agent_manifest.json`):** Agents can bundle a static JSON file describing their core capabilities, version, and configuration schema.
-*   **Self-Registration:** On startup, an agent reads its version and static manifest (or has capabilities compiled in). It then performs an `INSERT ... ON CONFLICT DO UPDATE` into `sinex_schemas.agent_manifests` to register itself or update its entry (e.g., version, status to `'running'`).
-*   **Heartbeats:** Agents periodically emit `sinex.agent.heartbeat` events to `raw.events`. A central `AgentMonitor` service consumes these to update `agent_manifests.last_heartbeat_ts` and infer unresponsive agents.
-*   **Error Reporting & Status Changes:** Agents log significant errors as `sinex.agent.error` events and update their `status` in `agent_manifests` (e.g., to `'error_state'` on unrecoverable failure, `'stopped'` on clean shutdown).
+*   **Static Manifest (`agent_manifest.json`):** ❌ **NOT IMPLEMENTED** - Agents would bundle a static JSON file describing their core capabilities, version, and configuration schema.
+*   **Self-Registration:** ✅ **BASIC WORKING** - Basic `INSERT ... ON CONFLICT DO UPDATE` into `sinex_schemas.agent_manifests` implemented.
+*   **Heartbeats:** ❌ **NOT IMPLEMENTED** - Agents would periodically emit `sinex.agent.heartbeat` events to `raw.events`. A central `AgentMonitor` service would consume these to update `agent_manifests.last_heartbeat_ts` and infer unresponsive agents.
+*   **Error Reporting & Status Changes:** ❌ **NOT IMPLEMENTED** - Advanced error logging as `sinex.agent.error` events and status management not implemented.
 *   **Referenced TIMs:**
     *   `[TIM-AgentManifestManagement.md](docs/tims/architecture_crosscutting/TIM-AgentManifestManagement.md)` (Sections 3 & 4) for JSON schema of static manifest and details on registration/heartbeat logic.
 
 ### 2.3. Systemd Integration & Lifecycle Management (Vision IV.1.3)
 
+> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic systemd services working, advanced management not implemented
+
 Most agents run as dedicated systemd user services or timer units, managed by NixOS.
 *   **Benefits:** Standardized lifecycle (start, stop, restart policies), resource quota enforcement (CPU, memory via cgroups), logging to `journald` (ingested for meta-observability).
-*   NixOS modules define the service units, package the agent binaries, and generate their configurations.
+*   ✅ **BASIC WORKING** - Basic NixOS modules for core services implemented.
+*   ❌ **NOT IMPLEMENTED** - Advanced resource quota enforcement, comprehensive configuration generation, and full meta-observability integration.
 
 ### 2.4. Communication & Data Flow Patterns (Vision IV.1.4)
 
+> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic promotion queue working, advanced patterns not implemented
+
 *   **Primary Interaction with Data Substrate:**
-    *   **Consumption:** Agents typically poll `raw.events` or domain tables (using watermarks) or, more commonly, consume work items from `sinex_schemas.promotion_queue` (as per ADR-002).
-    *   **Production:** Agents insert new `raw.events` (e.g., for derived insights, actions taken, errors) or write structured data to domain/core tables (e.g., `core_entities`, `core_artifact_contents`).
-*   **Inter-Agent Communication (Event Chains):** Complex workflows are often achieved by one agent (A) emitting an event that another agent (B) subscribes to and processes, potentially emitting a further event (Y) for agent C. The `promotion_queue` and `agent_manifests.subscribes_to_event_types` facilitate this routing.
-*   **Agent DLQs:** If an agent fails to process an input event from `promotion_queue` after retries, the item is moved to `core.dead_letter_queue` for manual review.
+    *   **Consumption:** ✅ **BASIC WORKING** - Basic promotion queue consumption implemented. Advanced polling patterns and watermarks not implemented.
+    *   **Production:** ✅ **BASIC WORKING** - Basic event insertion to `raw.events` working. Domain/core table integration limited.
+*   **Inter-Agent Communication (Event Chains):** ❌ **NOT IMPLEMENTED** - Complex workflows with agent chains not implemented. Event routing based on `subscribes_to_event_types` not functional.
+*   **Agent DLQs:** 🚧 **PARTIAL** - Basic dead letter queue exists but advanced retry and routing logic not fully implemented.
     *   *Referenced TIMs:* `[TIM-DeadLetterQueueImplementation.md](docs/tims/data_substrate/TIM-DeadLetterQueueImplementation.md)`.
 
-## 3. LLMs in the Exocortex: Architecture of Integration (Vision IV.2)
+## 3. LLMs in the Sinex: Architecture of Integration (Vision IV.2)
+
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - LLM integration framework not developed
 
 Large Language Models are integral to many agent capabilities, acting as co-pilots for the user and engines for autonomous processes.
 
@@ -84,52 +95,48 @@ LLMs are employed for a wide range of tasks, including but not limited to:
 
 ### 3.2. Model Management & Access Architecture
 
-The Exocortex supports both local LLMs (for privacy, cost-efficiency, offline use) and remote LLM APIs (for access to state-of-the-art models).
-*   **Local LLM Management (Ollama):** Ollama is used to serve open-source models locally (e.g., Llama, Mistral). Managed as a NixOS service, with potential GPU acceleration.
-    *   *Referenced TIMs:* `[TIM-LLMResourceOrchestration.md](docs/tims/operations/TIM-LLMResourceOrchestration.md)` (Section 1) for Ollama setup.
-*   **`core_llm_models` Registry (DB Table):** This table (DDL in `TIM-LLMResourceOrchestration.md`) lists all LLMs available to the Exocortex, whether local or remote. It stores:
-    *   Unique model name (e.g., `"ollama/mistral:7b-instruct-q5_K_M"`, `"openai/gpt-4-turbo"`).
-    *   Provider details (Ollama, OpenAI, Anthropic, etc.), API endpoint.
-    *   Key capabilities (max tokens, function calling support, modalities).
-    *   Cost information (per token/image).
-    *   Access tier (e.g., local, cloud, experimental) and operational status.
-*   **LLM Router Architecture:** A conceptual centralized service or library within the Exocortex backend is responsible for routing LLM requests from agents to the most appropriate model instance.
-    *   **Routing Logic:** Considers the `target_llm_family` and `model_preferences` specified in a `core.prompts` entry, model capabilities from `core_llm_models`, cost constraints, privacy tiers configured by the user, and model availability/health.
-    *   Handles fallbacks and retries to alternative models if a preferred model fails.
+The Sinex would support both local LLMs (for privacy, cost-efficiency, offline use) and remote LLM APIs (for access to state-of-the-art models).
+*   **Local LLM Management (Ollama):** ❌ **NOT IMPLEMENTED** - Ollama would be used to serve open-source models locally (e.g., Llama, Mistral). Would be managed as a NixOS service, with potential GPU acceleration.
+*   **`core_llm_models` Registry (DB Table):** ❌ **NOT IMPLEMENTED** - This table would list all LLMs available to Sinex, whether local or remote. Would store model names, provider details, capabilities, cost information, and operational status.
+*   **LLM Router Architecture:** ❌ **NOT IMPLEMENTED** - A conceptual centralized service would be responsible for routing LLM requests from agents to the most appropriate model instance with fallbacks and retries.
     *   *Referenced TIMs:* `[TIM-LLMResourceOrchestration.md](docs/tims/operations/TIM-LLMResourceOrchestration.md)` (Section 3) for LLM Router logic and `core_llm_models` DDL.
 
 ### 3.3. Prompt Engineering & Management Architecture (`core_prompts`) (Vision IV.2.3)
 
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Prompt management system not developed
+
 Effective LLM use relies on well-engineered prompts.
-*   **`core_prompts` DB Table:** Stores versioned prompt templates, their input variable schemas (JSON Schema), descriptions, target LLM families, default LLM parameters, and performance metrics.
-    *   *Referenced TIMs:* `[TIM-LLMResourceOrchestration.md](docs/tims/operations/TIM-LLMResourceOrchestration.md)` (Section 2.1) for `core_prompts` DDL.
-*   **Git-Based Source for Prompts:** Prompt templates are authored as structured YAML files in a version-controlled repository. A CI/CD pipeline or sync agent validates these and loads them into the `core_prompts` table, which serves as the runtime source of truth for agents.
-*   **A/B Testing & Canary Deployment:** Frameworks (conceptualized as Python classes, with state in DB) allow for systematic testing of new prompt versions against existing ones (A/B testing) and gradual rollout of validated prompts (canary deployment).
-    *   *Referenced TIMs:* `[TIM-LLMResourceOrchestration.md](docs/tims/operations/TIM-LLMResourceOrchestration.md)` (Sections 2.3, 2.4) for A/B test and canary framework concepts.
-*   **Meta-Agents for Prompt Optimization:** Future agents may analyze `sinex.agent.llm_output_feedback` events (user ratings/edits of LLM outputs) to suggest or automatically apply refinements to prompts in `core_prompts`.
+*   **`core_prompts` DB Table:** ❌ **NOT IMPLEMENTED** - Would store versioned prompt templates, their input variable schemas (JSON Schema), descriptions, target LLM families, default LLM parameters, and performance metrics.
+*   **Git-Based Source for Prompts:** ❌ **NOT IMPLEMENTED** - Prompt templates would be authored as structured YAML files in a version-controlled repository. A CI/CD pipeline or sync agent would validate these and load them into the `core_prompts` table.
+*   **A/B Testing & Canary Deployment:** ❌ **NOT IMPLEMENTED** - Frameworks for systematic testing of prompt versions and gradual rollout not implemented.
+*   **Meta-Agents for Prompt Optimization:** ❌ **NOT IMPLEMENTED** - Future agents that would analyze `sinex.agent.llm_output_feedback` events for prompt refinement not implemented.
 
 ### 3.4. Cost Tracking and Budgeting Architecture (Vision IV.2.4)
 
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - LLM cost tracking not implemented
+
 Managing the cost of using remote LLM APIs is critical.
-*   **Event Logging:** All calls to external LLM APIs are logged as `sinex.agent.llm_api_call` events in `raw.events`. The payload includes `agent_name_calling`, `prompt_name_used`, `model_name_invoked`, `input_tokens`, `output_tokens`, calculated `cost_usd`, and `latency_ms`.
-*   **Agent-Level Budgeting:** Agents using LLMs can have configurable daily/monthly cost budgets (defined in their NixOS-generated config, sourced from `agent_manifests` or a dedicated config table). Agents monitor their spend against these budgets, potentially throttling requests, switching to cheaper models, or alerting the user if nearing limits.
-*   **Monitoring:** Grafana dashboards visualize LLM costs per agent, model, and prompt, based on aggregated `llm_api_call` events or derived Prometheus metrics.
+*   **Event Logging:** ❌ **NOT IMPLEMENTED** - LLM API calls would be logged as `sinex.agent.llm_api_call` events in `raw.events` with cost and performance data.
+*   **Agent-Level Budgeting:** ❌ **NOT IMPLEMENTED** - Configurable cost budgets, spend monitoring, and automatic throttling not implemented.
+*   **Monitoring:** ❌ **NOT IMPLEMENTED** - Grafana dashboards for LLM cost visualization not implemented.
 
 ### 3.5. DSPy/LangGraph Integration Architecture
 
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Advanced LLM frameworks not integrated
+
 For building more complex, stateful, and adaptable LLM-powered agentic flows.
-*   **Role:** DSPy for optimizing (compiling) few-shot prompts and LM weights. LangGraph for defining LLM agent interactions as state graphs.
-*   **Persistence:**
-    *   LangGraph checkpoints (representing `AgentState`) can be persisted to SQLite, Redis, or PostgreSQL (via a custom `AsyncCheckpointSaver`).
-    *   Optimized DSPy programs (`program.json`) and their optimization traces can be stored as `core_blobs` and referenced by agents or prompt configurations.
-*   **Debugging & Visualization:** LangGraph state history, potential integration with LangSmith, or custom D3.js/Cytoscape.js visualizations based on checkpoint data and graph structure.
-*   **Operational Considerations:** Managing state size for long contexts, retry strategies for fallible nodes, cost tracking per node, OpenTelemetry integration for tracing.
+*   **Role:** DSPy would optimize (compile) few-shot prompts and LM weights. LangGraph would define LLM agent interactions as state graphs.
+*   **Persistence:** ❌ **NOT IMPLEMENTED** - LangGraph checkpoints and DSPy programs would be persisted but integration not built.
+*   **Debugging & Visualization:** ❌ **NOT IMPLEMENTED** - State history visualization and debugging tools not implemented.
+*   **Operational Considerations:** ❌ **NOT IMPLEMENTED** - State management, retry strategies, cost tracking, and tracing not implemented.
 *   **Referenced TIMs:**
     *   `[TIM-LLMResourceOrchestration.md](docs/tims/operations/TIM-LLMResourceOrchestration.md)` (Section 4) for persistence, debugging, and operational details.
 
 ## 4. Archetypal Agents and Their Architectural Roles (Vision IV.3)
 
-The Exocortex agent ecosystem is diverse. This section provides an architectural overview of key agent archetypes and their general interactions, rather than exhaustive implementation details of each. *Specific agent implementations would typically not have their own TIM unless they are exceptionally complex or foundational; rather, their logic is implied by the TIMs for the data/services they interact with (e.g., a PKM agent's logic is related to TIMs for PKM content, embeddings, and knowledge graph).*
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Specific intelligent agents not developed
+
+The Sinex agent ecosystem is diverse. This section provides an architectural overview of key agent archetypes and their general interactions, rather than exhaustive implementation details of each. *Specific agent implementations would typically not have their own TIM unless they are exceptionally complex or foundational; rather, their logic is implied by the TIMs for the data/services they interact with (e.g., a PKM agent's logic is related to TIMs for PKM content, embeddings, and knowledge graph).*
 
 *   **4.1. Task-Oriented & Proactive Agents:**
     *   **Purpose:** Perform specific user-facing tasks or provide proactive assistance.

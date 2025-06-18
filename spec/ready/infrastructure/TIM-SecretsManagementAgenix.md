@@ -1,5 +1,38 @@
 # TIM-SecretsManagementAgenix: Secrets Management with `agenix` (NixOS)
 
+## Status Dashboard
+**Maturity Level**: L3 - Ready for Implementation
+**Implementation**: 75% (Agenix foundation and auto-discovery working, Sinex integration pending)
+**Dependencies**: NixOS agenix module, age encryption, SSH/age keys, Sinex service configurations
+**Blocks**: Secure API key management, database password encryption, service authentication
+
+## MVP Specification
+- Agenix integration with NixOS configuration
+- Encrypted secret files with proper key management
+- Automatic secret discovery and configuration
+- Environment variable export for services
+- Basic secret rotation procedures
+
+## Enhanced Features
+- Database encryption with pgsodium integration
+- Automated secret rotation and key management
+- Service-specific secret scoping and permissions
+- Secret audit logging and monitoring
+- Integration with external secret management systems
+- Backup and recovery procedures for secrets
+
+## Implementation Checklist
+- [x] Agenix flake integration and setup
+- [x] Secret file encryption and storage
+- [x] Public key management (users and systems)
+- [x] Auto-discovery of encrypted secrets
+- [x] Environment variable export
+- [x] NixOS service integration
+- [ ] Sinex-specific secret integration
+- [ ] Database password encryption
+- [ ] pgsodium master key management
+- [ ] Automated secret rotation procedures
+
 *   **Relevant ADR:** `[ADR-006-NixOSSecretsManagementTool.md](docs/adr/ADR-006-NixOSSecretsManagementTool.md)` (Decision: `agenix`)
 *   **Original UG Context:** Section 21
 
