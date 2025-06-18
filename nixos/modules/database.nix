@@ -1,5 +1,5 @@
 # Database configuration module
-{ lib, config, ... }:
+{ lib, config, pkgs, ... }:
 
 with lib;
 
@@ -90,6 +90,35 @@ in
         type = types.int;
         default = 5;
         description = "Health check timeout in seconds";
+      };
+    };
+
+    # Migration configuration
+    migration = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable automatic database migrations";
+      };
+
+      package = mkOption {
+        type = types.package;
+        default = pkgs.sqlx-cli;
+        defaultText = literalExpression "pkgs.sqlx-cli";
+        description = "SQLx CLI package for running migrations";
+      };
+
+      directory = mkOption {
+        type = types.path;
+        default = "${cfg.package}/share/sinex/migrations";
+        defaultText = literalExpression ''"''${cfg.package}/share/sinex/migrations"'';
+        description = "Directory containing migration files";
+      };
+
+      timeout = mkOption {
+        type = types.int;
+        default = 300;
+        description = "Migration timeout in seconds";
       };
     };
   };

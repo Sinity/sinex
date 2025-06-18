@@ -23,6 +23,9 @@ in
     ./blob-storage.nix
     ./monitoring.nix
   ];
+  
+  # Environment packages
+  environment.systemPackages = with pkgs; [ asciinema ];
 
   options.services.sinex = {
     enable = mkEnableOption "Sinex Exocortex event capture system";
@@ -329,7 +332,8 @@ in
       sinex-unified-collector = {
         description = "Sinex Unified Event Collector";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "network-online.target" ];
+        after = [ "postgresql.service" "network-online.target" ] 
+          ++ optional (cfg.database.autoSetup && cfg.database.migration.enable) "sinex-migrate.service";
         wants = [ "network-online.target" ];
         requires = [ "postgresql.service" ];
         
@@ -387,7 +391,8 @@ in
       sinex-promo-worker = mkIf cfg.promoWorker.enable {
         description = "Sinex Promotion Worker";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "sinex-unified-collector.service" ];
+        after = [ "postgresql.service" "sinex-unified-collector.service" ]
+          ++ optional (cfg.database.autoSetup && cfg.database.migration.enable) "sinex-migrate.service";
         
         serviceConfig = {
           Type = "simple";
@@ -541,7 +546,82 @@ in
         }
       ];
     };
+
+    # Database migration service
+    systemd.services.sinex-migrate = mkIf (cfg.database.autoSetup && cfg.database.migration.enable) {
+      description = "Run Sinex database migrations";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      before = [ "sinex-unified-collector.service" "sinex-promo-worker.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = cfg.database.user;
+        Group = cfg.database.user;
+        
+        # Timeout for migrations
+        TimeoutStartSec = "${toString cfg.database.migration.timeout}s";
+        
+        ExecStart = pkgs.writeShellScript "sinex-migrate" ''
+          set -euo pipefail
+          
+          echo "Running Sinex database migrations..."
+          
+          # Ensure database exists and is accessible
+          export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+          
+          # Wait for PostgreSQL to be ready
+          for i in {1..30}; do
+            if ${pkgs.postgresql}/bin/pg_isready -h ${cfg.database.host} -p ${toString cfg.database.port} -U ${cfg.database.user} -d ${cfg.database.name}; then
+              break
+            fi
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 1
+          done
+          
+          # Ensure required extensions
+          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" || true
+          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" || true
+          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" || true
+          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pgx_ulid;" || true
+          
+          # Run migrations
+          if [ -d "${cfg.database.migration.directory}" ]; then
+            echo "Running migrations from ${cfg.database.migration.directory}"
+            ${cfg.database.migration.package}/bin/sqlx migrate run --source "${cfg.database.migration.directory}"
+            echo "Migrations completed successfully"
+          else
+            echo "Warning: Migration directory not found: ${cfg.database.migration.directory}"
+          fi
+        '';
+      };
+    };
     
+    # Terminal auto-recording for all users
+    programs.bash.promptInit = mkIf cfg.unifiedCollector.sources.asciinema.autoRecord ''
+      # Automatic asciinema recording for Sinex
+      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+        export ASCIINEMA_REC=1
+        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
+        mkdir -p "$ASCIINEMA_DIR"
+        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
+          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+      fi
+    '';
+
+    programs.zsh.promptInit = mkIf cfg.unifiedCollector.sources.asciinema.autoRecord ''
+      # Automatic asciinema recording for Sinex
+      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+        export ASCIINEMA_REC=1
+        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
+        mkdir -p "$ASCIINEMA_DIR"
+        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
+          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+      fi
+    '';
+
     # Assertions for configuration validation
     assertions = [
       {
