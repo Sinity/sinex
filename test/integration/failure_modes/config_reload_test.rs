@@ -1,10 +1,11 @@
 use sinex_collector::{CollectorConfig, UnifiedCollector};
-use sinex_core::{EventSource, EventSourceContext, RawEvent};
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
 use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use std::time::Duration;
+use serde_json::json;
 
 /// Test configuration reload during active event processing
 #[tokio::test]
@@ -48,8 +49,8 @@ async fn test_config_reload_during_processing() {
         type Config = serde_json::Value;
         const SOURCE_NAME: &'static str = "configurable";
         
-        async fn initialize(ctx: EventSourceContext) -> Result<Self, Box<dyn std::error::Error>> {
-            let interval_ms = ctx.config()
+        async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+            let interval_ms = ctx.config
                 .get("interval_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(100);
@@ -62,7 +63,7 @@ async fn test_config_reload_during_processing() {
             })
         }
         
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), Box<dyn std::error::Error>> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             loop {
                 let event = RawEvent {
                     id: Ulid::new(),
@@ -73,13 +74,13 @@ async fn test_config_reload_during_processing() {
                     host: "test".to_string(),
                     ingestor_version: None,
                     payload_schema_id: None,
-                    payload: serde_json::json!({
+                    payload: json!({
                         "interval_ms": self.interval_ms,
                         "reloaded": self.reload_flag.load(Ordering::Relaxed)
                     }),
                 };
                 
-                tx.send(event).await?;
+                tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
                 
                 if self.reload_flag.load(Ordering::Relaxed) {
                     self.events_after.fetch_add(1, Ordering::Relaxed);
@@ -186,7 +187,7 @@ async fn test_invalid_config_reload_handling() {
     ];
     
     // Simulate config validation
-    fn validate_config(config: &serde_json::Value) -> Result<(), String> {
+    fn validate_config(config: &serde_json::Value) -> std::result::Result<(), String> {
         // Check required fields
         if !config.get("database_url").is_some() {
             return Err("Missing required field: database_url".to_string());
@@ -225,7 +226,7 @@ async fn test_invalid_config_reload_handling() {
 async fn test_config_reload_timing() {
     // Test various timing scenarios for config reload
     
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     enum ReloadScenario {
         DuringBatchProcessing,
         BetweenBatches,
@@ -233,7 +234,7 @@ async fn test_config_reload_timing() {
         DuringShutdown,
     }
     
-    async fn simulate_reload(scenario: ReloadScenario) -> Result<String, String> {
+    async fn simulate_reload(scenario: ReloadScenario) -> std::result::Result<String, String> {
         match scenario {
             ReloadScenario::DuringBatchProcessing => {
                 // Simulate processing a batch when reload occurs
@@ -263,7 +264,7 @@ async fn test_config_reload_timing() {
         ReloadScenario::DuringDatabaseWrite,
         ReloadScenario::DuringShutdown,
     ] {
-        let result = simulate_reload(scenario).await;
+        let result = simulate_reload(scenario.clone()).await;
         println!("Reload scenario {:?}: {:?}", scenario, result);
         
         match scenario {

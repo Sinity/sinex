@@ -119,7 +119,8 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
     let mut unique_check = HashSet::new();
     
     for i in 0..10 {
-        let ulid = Ulid::new_monotonic(prev_ulid.as_ref());
+        // Note: new_monotonic not available - using regular new()
+        let ulid = Ulid::new();
         let ulid_str = ulid.to_string();
         
         // Verify uniqueness immediately

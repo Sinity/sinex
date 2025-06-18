@@ -94,7 +94,7 @@ async fn test_connection_pool_exhaustion() {
     let active = active_connections.clone();
     
     handles.push(tokio::spawn(async move {
-        if let Ok(permit) = pool_clone.try_acquire() {
+        if let Ok(_permit) = pool_clone.try_acquire() {
             active.fetch_add(1, Ordering::Relaxed);
             println!("Long-running connection acquired");
             
@@ -208,7 +208,7 @@ async fn test_connection_leak_detection() {
     let good_connections = connections.clone();
     let good_next_id = next_id.clone();
     let good_actor = tokio::spawn(async move {
-        for i in 0..3 {
+        for _i in 0..3 {
             if let Some(conn) = acquire_connection(
                 "good_actor", 
                 &good_connections, 
@@ -337,6 +337,11 @@ async fn test_connection_deadlock_prevention() {
                 drop(permit2);
                 drop(permit1);
             }
+            Ok(Err(_)) => {
+                println!("Worker A: Failed to acquire second connection");
+                deadlock_a.store(true, Ordering::Relaxed);
+                drop(permit1);
+            }
             Err(_) => {
                 println!("Worker A: Timeout waiting for second connection - potential deadlock!");
                 deadlock_a.store(true, Ordering::Relaxed);
@@ -365,6 +370,11 @@ async fn test_connection_deadlock_prevention() {
                 drop(permit2);
                 drop(permit1);
             }
+            Ok(Err(_)) => {
+                println!("Worker B: Failed to acquire second connection");
+                deadlock_b.store(true, Ordering::Relaxed);
+                drop(permit1);
+            }
             Err(_) => {
                 println!("Worker B: Timeout waiting for second connection - potential deadlock!");
                 deadlock_b.store(true, Ordering::Relaxed);
@@ -377,7 +387,7 @@ async fn test_connection_deadlock_prevention() {
     // Deadlock monitor
     let pool_monitor = pool.clone();
     let monitor = tokio::spawn(async move {
-        for i in 0..10 {
+        for _i in 0..10 {
             let available = pool_monitor.available_permits();
             println!("Monitor: Available permits: {}/{}", available, POOL_SIZE);
             

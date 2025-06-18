@@ -3,8 +3,6 @@ use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio::time::timeout;
 
 /// Test orphaned worker detection and cleanup
 #[tokio::test]
@@ -47,19 +45,21 @@ async fn test_orphaned_worker_detection() {
     }
     
     // Create workers
-    let workers = vec![
-        WorkerState::new("worker-1".to_string()),
-        WorkerState::new("worker-2".to_string()),
-        WorkerState::new("worker-3".to_string()),
+    let worker1 = WorkerState::new("worker-1".to_string());
+    let worker2 = WorkerState::new("worker-2".to_string());
+    let worker3 = WorkerState::new("worker-3".to_string());
+    
+    // Keep references for monitoring
+    let workers_for_monitor = vec![
+        worker1.clone(),
+        worker2.clone(),
+        worker3.clone(),
     ];
     
     // Simulate worker lifecycle
     let mut handles = vec![];
-    
-    // Worker 1: Normal operation
-    let worker1 = workers[0].clone();
     handles.push(tokio::spawn(async move {
-        for i in 0..10 {
+        for _i in 0..10 {
             worker1.update_heartbeat().await;
             worker1.items_processing.store(1, Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -69,9 +69,8 @@ async fn test_orphaned_worker_detection() {
     }));
     
     // Worker 2: Stops heartbeating mid-process
-    let worker2 = workers[1].clone();
     handles.push(tokio::spawn(async move {
-        for i in 0..5 {
+        for _i in 0..5 {
             worker2.update_heartbeat().await;
             worker2.items_processing.store(1, Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(300)).await;
@@ -86,9 +85,8 @@ async fn test_orphaned_worker_detection() {
     }));
     
     // Worker 3: Clean shutdown
-    let worker3 = workers[2].clone();
     handles.push(tokio::spawn(async move {
-        for i in 0..3 {
+        for _i in 0..3 {
             worker3.update_heartbeat().await;
             worker3.items_processing.store(1, Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -108,7 +106,7 @@ async fn test_orphaned_worker_detection() {
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             
-            for worker in &workers {
+            for worker in &workers_for_monitor {
                 let secs_since_heartbeat = worker.seconds_since_heartbeat().await;
                 let is_alive = worker.is_alive.load(Ordering::Relaxed);
                 let has_work = worker.items_processing.load(Ordering::Relaxed) > 0;
@@ -141,14 +139,8 @@ async fn test_orphaned_worker_detection() {
     
     // Report results
     println!("\nWorker orphan test results:");
-    for worker in &workers {
-        println!("  {}: completed={}, in_progress={}, alive={}",
-            worker.id,
-            worker.items_completed.load(Ordering::Relaxed),
-            worker.items_processing.load(Ordering::Relaxed),
-            worker.is_alive.load(Ordering::Relaxed)
-        );
-    }
+    
+    // We can't access the moved workers, so just print what we know
     println!("  Orphans detected: {:?}", orphans);
     
     // Verify orphan detection worked
