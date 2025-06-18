@@ -12,66 +12,8 @@ let
   # Import configuration generation utilities
   configGen = import ../config-gen.nix { inherit lib pkgs; };
   
-  # Generate TOML configuration file (simplified approach)
-  collectorConfigFile = pkgs.writeText "collector.toml" ''
-    # Generated Sinex Collector Configuration
-    enabled_events = [
-      ${lib.concatMapStringsSep "\n  " (event: ''"${event}",''') (
-        lib.flatten [
-          (lib.optional (cfg.unifiedCollector.sources.filesystem.enable or false) [
-            "file.created" "file.modified" "file.deleted"
-          ])
-          (lib.optional (cfg.unifiedCollector.sources.atuin.enable or false) [
-            "shell.command.executed_atuin"
-          ])
-          (lib.optional (cfg.unifiedCollector.sources.dbus.enable or false) [
-            "dbus.signal" "system.notification" "media.playback.changed"
-          ])
-          (lib.optional (cfg.unifiedCollector.sources.clipboard.enable or false) [
-            "clipboard.changed"
-          ])
-          (lib.optional (cfg.unifiedCollector.sources.kittyScrollback.enable or false) [
-            "terminal.scrollback.captured"
-          ])
-        ]
-      )}
-    ]
-    
-    # Global git-annex repository for large content storage
-    ${lib.optionalString (cfg.blobStorage.enable or false) ''
-    annex_repo_path = "${cfg.blobStorage.repositoryPath}"
-    ''}
-    
-    [output]
-    database = true
-    logging = ${if cfg.unifiedCollector.logLevel == "debug" then "true" else "false"}
-    
-    [logging]
-    level = "${cfg.unifiedCollector.logLevel}"
-    format = "pretty"
-    
-    ${lib.optionalString (cfg.unifiedCollector.sources.filesystem.enable or false) ''
-    [event.files]
-    watch_patterns = [${lib.concatMapStringsSep ", " (path: ''"${path}"'') (cfg.unifiedCollector.sources.filesystem.watchPaths or ["~/Documents"])}]
-    ignore_patterns = [${lib.concatMapStringsSep ", " (pattern: ''"${pattern}"'') (cfg.unifiedCollector.sources.filesystem.excludePatterns._allExcludePatterns or [])}]
-    debounce_ms = 100
-    ''}
-    
-    ${lib.optionalString (cfg.unifiedCollector.sources.atuin.enable or false) ''
-    [event.shell_command_executed_atuin]
-    db_path = "${cfg.unifiedCollector.sources.atuin.databasePath or "~/.local/share/atuin/history.db"}"
-    polling_interval_secs = ${toString (cfg.unifiedCollector.sources.atuin.pollInterval or 5)}
-    batch_size = 100
-    ''}
-    
-    ${lib.optionalString (cfg.unifiedCollector.sources.dbus.enable or false) ''
-    [event.dbus]
-    monitor_session = true
-    monitor_system = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractAll or false)}
-    extract_notifications = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractNotifications or true)}
-    extract_media = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractMedia or true)}
-    ''}
-  '';
+  # Generate TOML configuration file using config-gen utilities with validation
+  collectorConfigFile = configGen.mkCollectorConfigFile cfg.unifiedCollector cfg;
   
 in
 {

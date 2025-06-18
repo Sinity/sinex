@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{PgPool, Row};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Instant;
 use tracing::{debug, info};
 use sinex_ulid::Ulid;
 
@@ -36,6 +39,7 @@ impl BlobManager {
     /// Ingest a file into the blob management system
     pub async fn ingest_file(&self, file_path: &Path, original_filename: Option<&str>) -> Result<BlobMetadata> {
         info!("Ingesting file: {:?}", file_path);
+        let start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = GitAnnex::compute_blake3_hash(file_path).await?;
@@ -49,6 +53,9 @@ impl BlobManager {
             if let Some(filename) = original_filename {
                 self.add_original_filename(&existing.blob_id, filename).await?;
             }
+            
+            // Emit deduplication metric
+            self.emit_operation_metric("ingest", "deduplicated", existing.size_bytes, start.elapsed().as_millis() as i64).await?;
             
             return Ok(existing);
         }
@@ -77,7 +84,7 @@ impl BlobManager {
             annex_key: annex_key.key.clone(),
             original_filename: filename.to_string(),
             size_bytes,
-            mime_type: Some(mime_type),
+            mime_type: Some(mime_type.clone()),
             checksum_sha256: annex_key.hash.clone(),
             checksum_blake3: Some(blake3_hash),
             storage_backend: "git-annex".to_string(),
@@ -86,16 +93,23 @@ impl BlobManager {
 
         self.insert_blob(&blob_metadata).await?;
         info!("Successfully ingested blob: {}", blob_id);
+        
+        // Emit ingest success metric
+        self.emit_operation_metric("ingest", "success", size_bytes, start.elapsed().as_millis() as i64).await?;
 
         Ok(blob_metadata)
     }
 
     /// Retrieve a blob's content path
     pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<PathBuf> {
+        let start = Instant::now();
         let blob = self.get_blob_metadata(blob_id).await?;
         
         // Ensure content is available locally
         self.annex.get_content(&blob.annex_key).await?;
+        
+        // Emit retrieval metric
+        self.emit_operation_metric("retrieve", "success", blob.size_bytes, start.elapsed().as_millis() as i64).await?;
         
         // Find the symlink path in the repository
         self.find_symlink_path(&blob.annex_key).await
@@ -103,7 +117,8 @@ impl BlobManager {
 
     /// Verify blob integrity
     pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
-        let _blob = self.get_blob_metadata(blob_id).await?;
+        let start = Instant::now();
+        let blob = self.get_blob_metadata(blob_id).await?;
         
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;
@@ -114,6 +129,10 @@ impl BlobManager {
         // Update verification status in database
         let status = if is_verified { "verified" } else { "corrupted" };
         self.update_verification_status(blob_id, status).await?;
+        
+        // Emit verification metric
+        let result = if is_verified { "success" } else { "failure" };
+        self.emit_operation_metric("verify", result, blob.size_bytes, start.elapsed().as_millis() as i64).await?;
         
         Ok(is_verified)
     }
@@ -274,6 +293,99 @@ impl BlobManager {
         };
 
         Ok(mime_type.to_string())
+    }
+    
+    /// Emit operation metrics as events
+    async fn emit_operation_metric(&self, operation: &str, result: &str, size_bytes: i64, duration_ms: i64) -> Result<()> {
+        let event = json!({
+            "id": Ulid::new().to_string(),
+            "source": "blob_storage",
+            "event_type": "metrics.blob_storage.operation",
+            "ts_ingest": Utc::now(),
+            "ts_orig": Utc::now(),
+            "host": gethostname::gethostname().to_string_lossy().to_string(),
+            "payload": {
+                "operation": operation,
+                "result": result,
+                "size_bytes": size_bytes,
+                "duration_ms": duration_ms,
+            }
+        });
+        
+        // Insert metric event into raw.events
+        sqlx::query(
+            r#"
+            INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#
+        )
+        .bind(event["id"].as_str().unwrap())
+        .bind(event["source"].as_str().unwrap())
+        .bind(event["event_type"].as_str().unwrap())
+        .bind(event["ts_ingest"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["ts_orig"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["host"].as_str().unwrap())
+        .bind(&event["payload"])
+        .execute(&self.db_pool)
+        .await
+        .context("Failed to emit blob operation metric")?;
+        
+        Ok(())
+    }
+    
+    /// Emit storage statistics (called periodically by background task)
+    pub async fn emit_storage_stats(&self) -> Result<()> {
+        // Query aggregate statistics
+        let stats = sqlx::query(
+            r#"
+            SELECT 
+                COUNT(*) as blob_count,
+                SUM(size_bytes) as total_size,
+                COUNT(CASE WHEN verification_status = 'failed' THEN 1 END) as failed_count
+            FROM core.blobs
+            "#
+        )
+        .fetch_one(&self.db_pool)
+        .await?;
+        
+        let blob_count: i64 = stats.get("blob_count");
+        let total_size: Option<i64> = stats.get("total_size");
+        let failed_count: i64 = stats.get("failed_count");
+        
+        let event = json!({
+            "id": Ulid::new().to_string(),
+            "source": "blob_storage",
+            "event_type": "metrics.blob_storage.statistics",
+            "ts_ingest": Utc::now(),
+            "ts_orig": Utc::now(),
+            "host": gethostname::gethostname().to_string_lossy().to_string(),
+            "payload": {
+                "total_blobs": blob_count,
+                "total_size_bytes": total_size.unwrap_or(0),
+                "failed_verifications": failed_count,
+                "storage_backend": "git-annex",
+            }
+        });
+        
+        // Insert metric event
+        sqlx::query(
+            r#"
+            INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#
+        )
+        .bind(event["id"].as_str().unwrap())
+        .bind(event["source"].as_str().unwrap())
+        .bind(event["event_type"].as_str().unwrap())
+        .bind(event["ts_ingest"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["ts_orig"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["host"].as_str().unwrap())
+        .bind(&event["payload"])
+        .execute(&self.db_pool)
+        .await
+        .context("Failed to emit blob storage statistics")?;
+        
+        Ok(())
     }
 }
 

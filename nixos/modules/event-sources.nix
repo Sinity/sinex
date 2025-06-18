@@ -22,47 +22,6 @@ let
         description = "Enable ${name} event source";
       };
 
-      # Every event source can have custom heartbeat settings
-      heartbeat = {
-        interval = mkOption {
-          type = types.int;
-          default = 60;
-          description = "Heartbeat interval in seconds for ${name}";
-        };
-
-        timeout = mkOption {
-          type = types.int;
-          default = 30;
-          description = "Heartbeat timeout in seconds for ${name}";
-        };
-
-        enableHealthMetrics = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable health metrics collection for ${name}";
-        };
-      };
-
-      # Circuit breaker settings per event source
-      circuitBreaker = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable circuit breaker for ${name}";
-        };
-
-        threshold = mkOption {
-          type = types.int;
-          default = 5;
-          description = "Failure threshold before circuit breaker opens for ${name}";
-        };
-
-        timeout = mkOption {
-          type = types.str;
-          default = "60s";
-          description = "Circuit breaker timeout before retry for ${name}";
-        };
-      };
     }
     // optionalAttrs (defaultPollInterval != null) {
       pollInterval = mkOption {
@@ -287,6 +246,12 @@ in
           description = "Monitor system bus";
         };
 
+        logAllSignals = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Log all D-Bus signals (generates high volume)";
+        };
+
         # Group extraction options
         extractAll = mkOption {
           type = types.bool;
@@ -395,6 +360,18 @@ in
           type = types.int;
           default = 1000;
           description = "Maximum history entries to keep";
+        };
+
+        hashFileContent = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Include file content hashes";
+        };
+
+        maxContentSize = mkOption {
+          type = types.int;
+          default = 10485760; # 10MB
+          description = "Maximum content size to capture (bytes)";
         };
       };
     };

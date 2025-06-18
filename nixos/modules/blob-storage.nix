@@ -169,6 +169,16 @@ in
           RandomizedDelaySec = "2h";
         };
       };
+      
+      sinex-blob-storage-metrics = mkIf cfg.monitoring.enable {
+        description = "Emit Sinex Blob Storage Metrics";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "5m";
+          OnUnitActiveSec = "30s";
+          AccuracySec = "5s";
+        };
+      };
     };
 
     systemd.services = {
@@ -203,6 +213,30 @@ in
             echo "Starting git-annex file system check..."
             ${pkgs.git-annex}/bin/git annex fsck --fast
             echo "File system check completed"
+          '';
+        };
+      };
+      
+      sinex-blob-storage-metrics = mkIf cfg.monitoring.enable {
+        description = "Emit Sinex Blob Storage Metrics";
+        serviceConfig = {
+          Type = "oneshot";
+          User = cfg.database.user;
+          Group = cfg.database.user;
+          WorkingDirectory = cfg.blobStorage.repositoryPath;
+          
+          # This is a placeholder - in reality, you'd call a Rust binary that uses BlobManager::emit_storage_stats
+          ExecStart = pkgs.writeShellScript "sinex-blob-metrics" ''
+            set -euo pipefail
+            
+            # For now, just log that metrics would be emitted
+            # In production, this would call a Rust tool that uses BlobManager::emit_storage_stats()
+            echo "Blob storage metrics emission placeholder - implement sinex-blob-metrics binary"
+            
+            # Could also gather basic stats via git-annex info and emit them
+            if [ -d "${cfg.blobStorage.repositoryPath}/.git/annex" ]; then
+              ${pkgs.git-annex}/bin/git annex info --fast || true
+            fi
           '';
         };
       };

@@ -4,6 +4,17 @@
 with lib;
 
 rec {
+  # Path resolution utilities (matches full.nix)
+  pathUtils = {
+    resolvePath = path:
+      if lib.hasPrefix "~/" path then
+        "\${HOME}/" + lib.removePrefix "~/" path
+      else
+        path;
+    
+    validateAbsolutePath = path:
+      lib.hasPrefix "/" path || lib.hasPrefix "~/" path;
+  };
   # Configuration validation utilities
   validation = {
     # Validate TOML syntax by attempting to parse
@@ -117,7 +128,7 @@ rec {
           
           # Path existence checks - use path resolution utilities from fullCfg
           (lib.optional
-            ((cfg.sources.atuin.enable or false) && !(fullCfg.pathUtils.validateAbsolutePath (cfg.sources.atuin.databasePath or "")))
+            ((cfg.sources.atuin.enable or false) && !(pathUtils.validateAbsolutePath (cfg.sources.atuin.databasePath or "")))
             "atuin.databasePath must be an absolute path after resolution (got '${cfg.sources.atuin.databasePath or ""}')")
           
           (lib.optional
@@ -180,15 +191,7 @@ rec {
             "database auto-setup and migrations both disabled - manual setup required")
         ];
         
-        recommendations = lib.flatten [
-          (lib.optional
-            ((cfg.sources.asciinema.enable or false) && !(cfg.sources.asciinema.autoAnnex or false))
-            "consider enabling asciinema.autoAnnex for efficient storage")
-          
-          (lib.optional
-            ((cfg.sources.kittyScrollback.enable or false) && !(cfg.sources.kittyScrollback.captureOnCommand or false))
-            "consider enabling kittyScrollback.captureOnCommand for better context")
-        ];
+        recommendations = [];
       in {
         warnings = warnings;
         recommendations = recommendations;
@@ -235,7 +238,7 @@ rec {
     # Build event configuration sections with resolved paths
     eventConfig = lib.optionalAttrs (cfg.sources.atuin.enable or false) {
       "event.shell_command_executed_atuin" = {
-        db_path = fullCfg.pathUtils.resolvePath cfg.sources.atuin.databasePath;
+        db_path = pathUtils.resolvePath cfg.sources.atuin.databasePath;
         polling_interval_secs = cfg.sources.atuin.pollInterval;
         use_file_watch = true;
         batch_size = 100;
@@ -243,15 +246,15 @@ rec {
     } // lib.optionalAttrs (cfg.sources.shellHistory.enable or false) {
       "event.shell_history_command" = {
         history_files = [
-          (fullCfg.pathUtils.resolvePath cfg.sources.shellHistory.zshPath)
-          (fullCfg.pathUtils.resolvePath cfg.sources.shellHistory.bashPath)
+          (pathUtils.resolvePath cfg.sources.shellHistory.zshPath)
+          (pathUtils.resolvePath cfg.sources.shellHistory.bashPath)
         ];
         polling_interval_secs = 10;
         use_file_watch = true;
       };
     } // lib.optionalAttrs (cfg.sources.asciinema.enable or false) {
       "event.terminal_asciinema" = {
-        recordings_dir = fullCfg.pathUtils.resolvePath cfg.sources.asciinema.recordingsPath;
+        recordings_dir = pathUtils.resolvePath cfg.sources.asciinema.recordingsPath;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
         polling_interval_secs = 5;
         git_annex_repo = fullCfg.blobStorage.repositoryPath;
@@ -268,8 +271,8 @@ rec {
       };
     } // lib.optionalAttrs (cfg.sources.filesystem.enable or false) {
       "event.files" = {
-        watch_patterns = lib.map (path: fullCfg.pathUtils.resolvePath path) cfg.sources.filesystem.watchPaths;
-        ignore_patterns = cfg.sources.filesystem.excludePatterns;
+        watch_patterns = lib.map (path: pathUtils.resolvePath path) cfg.sources.filesystem.watchPaths;
+        ignore_patterns = cfg.sources.filesystem._allExcludePatterns or [];
       };
     } // lib.optionalAttrs (cfg.sources.dbus.enable or false) {
       "event.dbus" = {
@@ -297,6 +300,7 @@ rec {
         max_preview_length = cfg.sources.clipboard.maxPreviewLength;
         enable_history = cfg.sources.clipboard.enableHistory;
         max_history_entries = cfg.sources.clipboard.maxHistoryEntries;
+        max_content_size = cfg.sources.clipboard.maxContentSize;
       };
     };
 
@@ -312,6 +316,8 @@ rec {
       logging = {
         level = cfg.logLevel;
       };
+    } // lib.optionalAttrs (fullCfg.blobStorage.enable or false) {
+      annex_repo_path = fullCfg.blobStorage.repositoryPath;
     } // eventConfig;
   in
     tomlConfig;
@@ -335,7 +341,6 @@ rec {
         valid = eventValidation.valid && depValidation.valid;
         errors = depValidation.errors;
         warnings = completenessCheck.warnings;
-        recommendations = completenessCheck.recommendations;
         unknownEvents = eventValidation.unknownEvents;
         malformedEvents = eventValidation.malformedEvents;
       };
@@ -381,120 +386,6 @@ rec {
     in
       pkgs.writeText "unified-collector.toml" (builtins.readFile tomlContent);
   
-  # Generate configuration with dry-run validation
-  mkCollectorConfigDryRun = cfg: fullCfg:
-    let
-      validatedResult = mkValidatedCollectorConfig cfg fullCfg;
-    in {
-      inherit (validatedResult) config validationReport;
-      
-      # Generate summary report
-      summary = {
-        valid = validatedResult.validationReport.valid;
-        enabledEvents = lib.length validatedResult.config.enabled_events;
-        enabledSources = lib.length (lib.filter (source: 
-          cfg.sources.${source}.enable or false
-        ) [ "atuin" "shellHistory" "asciinema" "kittyScrollback" "filesystem" "dbus" "clipboard" ]);
-        
-        configSections = lib.length (lib.attrNames validatedResult.config) - 2; # minus enabled_events and output
-        
-        hasErrors = (lib.length validatedResult.validationReport.errors) > 0;
-        hasWarnings = (lib.length validatedResult.validationReport.warnings) > 0;
-        hasRecommendations = (lib.length validatedResult.validationReport.recommendations) > 0;
-      };
-    };
   
-  # Configuration migration helpers
-  migration = {
-    # Migrate old configuration format to new
-    migrateConfig = oldConfig: 
-      let
-        # Map old event names to new names
-        eventNameMap = {
-          "command_executed" = "command.executed";
-          "file_created" = "file.created";
-          "file_modified" = "file.modified";
-          "file_deleted" = "file.deleted";
-          "window_focused" = "window.focused";
-          "workspace_changed" = "workspace.changed";
-        };
-        
-        migratedEvents = map (event:
-          eventNameMap.${event} or event
-        ) (oldConfig.enabled_events or []);
-      in
-        oldConfig // {
-          enabled_events = migratedEvents;
-        };
-    
-    # Check if configuration needs migration
-    needsMigration = config:
-      let
-        oldEventNames = [ "command_executed" "file_created" "file_modified" "file_deleted" "window_focused" "workspace_changed" ];
-        hasOldEvents = lib.any (event: lib.elem event (config.enabled_events or [])) oldEventNames;
-      in
-        hasOldEvents;
-  };
   
-  # Configuration optimization suggestions
-  optimization = {
-    # Suggest performance optimizations
-    getPerformanceSuggestions = cfg: fullCfg:
-      let
-        suggestions = lib.flatten [
-          (lib.optional
-            (cfg.sources.filesystem.enable && (lib.length cfg.sources.filesystem.watchPaths) > 5)
-            {
-              type = "performance";
-              component = "filesystem";
-              suggestion = "Consider reducing watched paths or using more specific patterns";
-              impact = "high";
-            })
-          
-          (lib.optional
-            (cfg.sources.atuin.enable && cfg.sources.atuin.pollInterval < 5)
-            {
-              type = "performance";
-              component = "atuin";
-              suggestion = "Poll interval < 5s may cause high CPU usage";
-              impact = "medium";
-            })
-          
-          (lib.optional
-            (cfg.sources.dbus.enable && cfg.sources.dbus.logAllSignals && cfg.sources.dbus.monitorSystem)
-            {
-              type = "performance";
-              component = "dbus";
-              suggestion = "Logging all system bus signals can generate very high volume";
-              impact = "high";
-            })
-        ];
-      in
-        suggestions;
-    
-    # Suggest security improvements
-    getSecuritySuggestions = cfg: fullCfg:
-      let
-        suggestions = lib.flatten [
-          (lib.optional
-            (cfg.sources.clipboard.enable && !cfg.sources.clipboard.hashFileContent)
-            {
-              type = "security";
-              component = "clipboard";
-              suggestion = "Enable file content hashing to avoid storing sensitive data";
-              impact = "medium";
-            })
-          
-          (lib.optional
-            (!fullCfg.database.ssl.mode or fullCfg.database.ssl.mode == "disable")
-            {
-              type = "security";
-              component = "database";
-              suggestion = "Consider enabling SSL for database connections";
-              impact = "high";
-            })
-        ];
-      in
-        suggestions;
-  };
 }
