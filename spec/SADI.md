@@ -83,7 +83,7 @@ This section clarifies the role of each primary project document in the new modu
     * They answer "What is the detailed architecture of this specific part of the system?"
     * **Target Audience:** Developers working within or integrating with a specific architectural domain, AI agents needing detailed context for a particular area.
 
-4. **`docs/tims/` (Technical Implementation Modules - Numerous files)**
+4. **`implemented/` and `planned/` (Technical Implementation Modules)**
     * **Role:** Granular, self-contained documents providing **detailed technical specifications for implementing a single component, feature, or core concern.** This is where DDLs, code examples, specific configurations, API details, and step-by-step procedures reside.
     * They answer "Exactly how is this specific piece implemented or configured?"
     * **Target Audience:** Developers implementing or debugging specific components, AI agents generating code or tests for a specific module.
@@ -133,9 +133,19 @@ This section clarifies the role of each primary project document in the new modu
 * `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)`: Layered approach for terminal capture.
 * `[ADR-014-RoutingCache.md](docs/adr/0014-routing-cache.md)`: Materialized view routing cache for work distribution.
 
-**3.3. Technical Implementation Modules (`docs/tims/`)**
-A comprehensive suite of TIMs provides detailed implementation specifications for individual components and features. These are organized into subdirectories corresponding to the architectural modules (e.g., `data_substrate/`, `ingestors/`, `operations/`).
+**3.3. Technical Implementation Modules**
 
-* **Refer to `STAD.md Appendix B` or a dedicated `docs/TIM_INDEX.md` for a full, categorized list of TIMs.**
+TIMs are organized by implementation status:
+
+* **`implemented/`** - Features that are working and deployed
+  * `event-sources/` - Filesystem, terminal, clipboard, Hyprland monitoring
+  * `infrastructure/` - Event substrate, ULID keys, TimescaleDB, Git Annex
+  * `ai/` - Basic filesystem AI analysis
+
+* **`planned/`** - Features designed and ready for implementation  
+  * `event-sources/` - Browser, eBPF, Wayland, audio capture
+  * `infrastructure/` - Secrets management, backup/DR, observability
+  * `ai/` - ASR, OCR, embeddings, hybrid search
+  * `query/` - Advanced CLI and query tools
 
 This restructured SADI provides a clearer map to the now modularized documentation suite, guiding contributors to the appropriate level of detail they require.
