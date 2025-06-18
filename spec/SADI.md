@@ -135,17 +135,28 @@ This section clarifies the role of each primary project document in the new modu
 
 **3.3. Technical Implementation Modules**
 
-TIMs are organized by implementation status:
+TIMs are organized by implementation status and follow a consistent structure with verified implementation percentages:
 
-* **`implemented/`** - Features that are working and deployed
+* **`implemented/`** - Features that are working and deployed (70%+ complete)
   * `event-sources/` - Filesystem, terminal, clipboard, Hyprland monitoring
-  * `infrastructure/` - Event substrate, ULID keys, TimescaleDB, Git Annex
+  * `infrastructure/` - Event substrate, ULID keys, TimescaleDB, Git Annex, knowledge graph schemas
   * `ai/` - Basic filesystem AI analysis
 
-* **`planned/`** - Features designed and ready for implementation  
-  * `event-sources/` - Browser, eBPF, Wayland, audio capture
-  * `infrastructure/` - Secrets management, backup/DR, observability
-  * `ai/` - ASR, OCR, embeddings, hybrid search
+* **`ready/`** - Features designed and ready for implementation (0-80% complete)
+  * `event-sources/` - AT-SPI2 accessibility, audio capture, email access
+  * `infrastructure/` - Dead letter queue, observability stack, event validation
+  * `ai/` - ASR, OCR, embeddings, hybrid search, entity resolution, LLM orchestration
+
+* **`planned/`** - Features requiring additional design work
+  * `event-sources/` - Browser, eBPF, Wayland, advanced audio
+  * `infrastructure/` - Secrets management, backup/DR, advanced security
   * `query/` - Advanced CLI and query tools
+
+* **`docs/`** - Process and operational documentation
+  * `processes/` - Development practices, CI/CD procedures
+  * `operations/` - Disaster recovery, operational procedures
+  * `security/` - Threat models and security documentation
+
+**TIM Organization Reference:** For detailed information about TIM structure, verification methodology, and organizational principles, see `[docs/TIM_ORGANIZATION.md](docs/TIM_ORGANIZATION.md)`.
 
 This restructured SADI provides a clearer map to the now modularized documentation suite, guiding contributors to the appropriate level of detail they require.

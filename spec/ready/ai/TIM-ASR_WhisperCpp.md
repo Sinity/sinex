@@ -1,5 +1,37 @@
 # TIM-ASR_WhisperCpp: Content Analysis - ASR with Whisper.cpp
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 5% (Database infrastructure exists, Whisper integration needed)
+**Dependencies**: Whisper.cpp binary, audio processing libraries, worker infrastructure, model downloads
+**Blocks**: Audio transcription, voice note processing, meeting transcription, accessibility features
+
+## MVP Specification
+- Whisper.cpp installation and model management
+- Basic audio file transcription pipeline
+- Integration with blob storage for audio files
+- Worker-based transcription processing
+- Simple transcription result storage
+
+## Enhanced Features
+- Real-time audio stream transcription
+- Multiple model support and auto-selection
+- GPU acceleration for faster processing
+- Advanced audio preprocessing and enhancement
+- Speaker identification and diarization
+- Custom vocabulary and fine-tuning support
+
+## Implementation Checklist
+- [ ] Whisper.cpp installation and configuration
+- [ ] Audio transcription worker implementation
+- [ ] Model download and management system
+- [ ] Integration with audio capture pipeline
+- [ ] Transcription result storage and indexing
+- [ ] Performance optimization and GPU support
+- [ ] Quality assessment and confidence scoring
+- [ ] Batch processing for audio archives
+- [ ] Real-time transcription capabilities
+
 *   **Relevant ADR:** (N/A directly, core for audio processing)
 *   **Original UG Context:** Section 18.2
 
