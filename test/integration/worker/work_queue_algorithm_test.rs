@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use tokio::time::{sleep, interval};
 use futures::future::join_all;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
@@ -201,8 +202,8 @@ impl SelectForUpdateWorker {
                     "UPDATE sinex_schemas.work_queue 
                      SET status = 'succeeded', 
                          processed_at = NOW()
-                     WHERE queue_id = $1",
-                    item.queue_id
+                     WHERE queue_id = $1::uuid::ulid",
+                    item.queue_id.to_uuid()
                 )
                 .execute(&self.pool)
                 .await;
@@ -283,7 +284,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
             sqlx::query!(
                 "INSERT INTO sinex_schemas.work_queue 
                  (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-                 VALUES ($1, $2, $3, 3, 'pending')",
+                 VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
                 queue_id.to_uuid(),
                 event.id.to_uuid(),
                 create_agent
@@ -481,7 +482,7 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, 3, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name
@@ -623,7 +624,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, 3, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name
@@ -660,7 +661,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
         .await?;
 
         if let Some(item) = next_item {
-            let queue_ulid = Ulid::from_string(&item.queue_id).unwrap();
+            let queue_ulid = Ulid::from_str(&item.queue_id).unwrap();
             actual_order.push(queue_ulid);
             
             // Process this item
@@ -704,7 +705,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, 3, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name
@@ -799,7 +800,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, $4, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name,
@@ -822,7 +823,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
                  SET status = 'processing', 
                      attempts = $2,
                      last_attempt_ts = NOW()
-                 WHERE queue_id = $1
+                 WHERE queue_id = $1::uuid::ulid
                  RETURNING attempts",
                 queue_id.to_uuid(),
                 attempt as i32
@@ -837,7 +838,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
                 sqlx::query!(
                     "UPDATE sinex_schemas.work_queue 
                      SET status = 'pending'
-                     WHERE queue_id = $1",
+                     WHERE queue_id = $1::uuid::ulid",
                     queue_id.to_uuid()
                 )
                 .execute(&pool)
@@ -846,7 +847,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
                 // Verify item is available for retry
                 let available = sqlx::query!(
                     "SELECT queue_id::text FROM sinex_schemas.work_queue 
-                     WHERE queue_id = $1 
+                     WHERE queue_id = $1::uuid::ulid 
                        AND status = 'pending' 
                        AND attempts < max_attempts",
                     queue_id.to_uuid()
@@ -860,7 +861,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
                 sqlx::query!(
                     "UPDATE sinex_schemas.work_queue 
                      SET status = 'failed'
-                     WHERE queue_id = $1",
+                     WHERE queue_id = $1::uuid::ulid",
                     queue_id.to_uuid()
                 )
                 .execute(&pool)
@@ -869,7 +870,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
                 // Verify item is no longer available
                 let available = sqlx::query!(
                     "SELECT queue_id::text FROM sinex_schemas.work_queue 
-                     WHERE queue_id = $1 
+                     WHERE queue_id = $1::uuid::ulid 
                        AND status = 'pending' 
                        AND attempts < max_attempts",
                     queue_id.to_uuid()
@@ -899,7 +900,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
     sqlx::query!(
         "INSERT INTO sinex_schemas.work_queue 
          (queue_id, raw_event_id, target_agent_name, max_attempts, status, attempts) 
-         VALUES ($1, $2, $3, 2, 'pending', 2)",
+         VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 2, 'pending', 2)",
         test_queue_id.to_uuid(),
         event.id.to_uuid(),
         agent_name
@@ -910,13 +911,13 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
     // Try to claim with SELECT FOR UPDATE SKIP LOCKED
     let skipped_item = sqlx::query!(
         "UPDATE sinex_schemas.work_queue 
-         SET status = 'InProgress', 
+         SET status = 'processing', 
              attempts = attempts + 1,
-             last_attempt_at = NOW()
+             last_attempt_ts = NOW()
          WHERE queue_id = (
              SELECT queue_id 
              FROM sinex_schemas.work_queue 
-             WHERE status = 'Pending' 
+             WHERE status = 'pending' 
                AND target_agent_name = $1
                AND attempts < max_attempts
              ORDER BY created_at

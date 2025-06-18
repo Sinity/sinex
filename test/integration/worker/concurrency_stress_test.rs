@@ -351,7 +351,7 @@ impl StressTestWorker {
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '1 second'
-                 WHERE queue_id = $1",
+                 WHERE queue_id = $1::uuid::ulid",
                 queue_id
             )
             .execute(&self.pool)
@@ -366,7 +366,7 @@ impl StressTestWorker {
              SET status = 'succeeded', 
                  processed_at = NOW(),
                  processing_worker_id = $2
-             WHERE queue_id = $1",
+             WHERE queue_id = $1::uuid::ulid",
             queue_id,
             self.worker_id
         )
@@ -449,7 +449,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
             sqlx::query!(
                 "INSERT INTO sinex_schemas.work_queue 
                  (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-                 VALUES ($1, $2, $3, 5, 'pending')",
+                 VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 5, 'pending')",
                 queue_id.to_uuid(),
                 event.id.to_uuid(),
                 create_agent
@@ -689,7 +689,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, 3, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name
@@ -948,7 +948,7 @@ async fn test_race_condition_detection() -> Result<()> {
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue 
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
-             VALUES ($1, $2, $3, 3, 'pending')",
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event.id.to_uuid(),
             agent_name
