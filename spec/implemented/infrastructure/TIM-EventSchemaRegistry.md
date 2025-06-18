@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 80% (Schema registry table and basic management in place, CI/CD integration pending)
+**Implementation**: 70% (Schema registry table and basic management in place, automation features missing)
 **Dependencies**: PostgreSQL, JSONB support, ULID generation, Git repository
 **Blocks**: Event validation, schema evolution, type safety, code generation
 

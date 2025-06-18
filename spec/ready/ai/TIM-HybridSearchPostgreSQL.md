@@ -1,5 +1,37 @@
 # TIM-HybridSearchPostgreSQL: Hybrid Search (Vector + Full-Text) in PostgreSQL
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 0% (Design complete, implementation not started)
+**Dependencies**: PostgreSQL pgvector extension, FTS configuration, embedding models, RRF algorithm
+**Blocks**: Semantic search, content discovery, query processing, knowledge retrieval
+
+## MVP Specification
+- pgvector extension setup and vector storage
+- PostgreSQL full-text search (FTS) configuration
+- Basic hybrid search combining vector and keyword results
+- Reciprocal Rank Fusion (RRF) for result combination
+- Simple search API interface
+
+## Enhanced Features
+- Advanced ranking algorithms and tuning
+- Query expansion and rewriting
+- Search result personalization
+- Performance optimization with specialized indexes
+- Advanced analytics and search insights
+- Multi-modal search support
+
+## Implementation Checklist
+- [ ] pgvector extension setup
+- [ ] FTS index configuration
+- [ ] Vector similarity search functions
+- [ ] Keyword search optimization
+- [ ] RRF ranking implementation
+- [ ] Combined search query interface
+- [ ] Performance benchmarking
+- [ ] Search relevance tuning
+- [ ] API endpoint development
+
 *   **Relevant ADRs:** `[ADR-005-VectorIndexTypePgvector.md](docs/adr/ADR-005-VectorIndexTypePgvector.md)` (HNSW for `pgvector`), `[ADR-007-LargeScaleVectorSearchStrategy.md](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)` (`pgvector` CPU first)
 *   **Original UG Context:** Section 17
 *   **Vision Document Reference:** Part V.2

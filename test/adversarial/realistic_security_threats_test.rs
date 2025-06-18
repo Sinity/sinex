@@ -81,7 +81,7 @@ async fn test_filesystem_path_traversal_protection() -> Result<()> {
     }
 
     println!("\nPath Traversal Attack Test Results:");
-    println!("  Attack patterns tested: {}", total_attack_patterns);
+    println!("  Attack patterns tested: {}", attack_paths.len());
     println!("  Successful traversals: {}", traversal_attempts.len());
 
     for violation in &traversal_attempts {
@@ -168,8 +168,8 @@ async fn test_sql_injection_protection() -> Result<()> {
             Ok(event) => {
                 // Check if injection was executed or just stored as data
                 let stored_source: String = sqlx::query_scalar!(
-                    "SELECT source FROM raw.events WHERE id = $1",
-                    event.id.as_uuid()
+                    "SELECT source FROM raw.events WHERE id = $1::uuid::ulid",
+                    event.id.to_uuid()
                 )
                 .fetch_one(&pool)
                 .await?;
@@ -683,8 +683,8 @@ async fn test_malicious_payload_sanitization() -> Result<()> {
                 
                 // Retrieve stored payload and check for sanitization
                 let stored_payload: serde_json::Value = sqlx::query_scalar!(
-                    "SELECT payload FROM raw.events WHERE id = $1",
-                    event.id.as_uuid()
+                    "SELECT payload FROM raw.events WHERE id = $1::uuid::ulid",
+                    event.id.to_uuid()
                 )
                 .fetch_one(&pool)
                 .await?;

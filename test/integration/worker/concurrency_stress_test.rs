@@ -323,8 +323,8 @@ impl StressTestWorker {
                 }
 
                 Ok(Some(WorkItem {
-                    queue_id: item.queue_id,
-                    raw_event_id: item.raw_event_id,
+                    queue_id: item.queue_id.ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
+                    raw_event_id: item.raw_event_id.ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
                     attempts: item.attempts,
                 }))
             }
@@ -352,7 +352,7 @@ impl StressTestWorker {
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '1 second'
                  WHERE queue_id = $1::uuid::ulid",
-                queue_id
+                queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
             )
             .execute(&self.pool)
             .await?;
@@ -367,7 +367,7 @@ impl StressTestWorker {
                  processed_at = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = $1::uuid::ulid",
-            queue_id,
+            queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
             self.worker_id
         )
         .execute(&self.pool)
@@ -506,6 +506,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
             )
             .fetch_one(&monitor_pool)
             .await
+            .unwrap_or(Some(0))
             .unwrap_or(0);
 
             if stuck_items > 0 {
@@ -541,6 +542,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
             )
             .fetch_one(&monitor_pool)
             .await
+            .unwrap_or(Some(0))
             .unwrap_or(0);
 
             let processing_count: i64 = sqlx::query_scalar!(
@@ -550,6 +552,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
             )
             .fetch_one(&monitor_pool)
             .await
+            .unwrap_or(Some(0))
             .unwrap_or(0);
 
             println!("Monitor: pending={}, processing={}, stuck_detected={}", 

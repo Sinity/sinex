@@ -92,8 +92,8 @@ async fn test_event_source_validation() -> Result<()> {
             Ok(event) => {
                 // Check what was actually stored
                 let stored_source: String = sqlx::query_scalar!(
-                    "SELECT source FROM raw.events WHERE id = $1",
-                    event.id.as_uuid()
+                    "SELECT source FROM raw.events WHERE id = $1::uuid::ulid",
+                    event.id.to_uuid()
                 )
                 .fetch_one(&pool)
                 .await?;
@@ -272,8 +272,8 @@ async fn test_json_payload_validation() -> Result<()> {
             Ok(Ok(event)) => {
                 // Retrieve and analyze stored payload
                 let stored_payload: serde_json::Value = sqlx::query_scalar!(
-                    "SELECT payload FROM raw.events WHERE id = $1",
-                    event.id.as_uuid()
+                    "SELECT payload FROM raw.events WHERE id = $1::uuid::ulid",
+                    event.id.to_uuid()
                 )
                 .fetch_one(&pool)
                 .await?;

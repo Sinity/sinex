@@ -489,8 +489,8 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
             for i in 0..1000 {
                 sqlx::query!(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 
-                     VALUES ($1, $2, $3, $4, $5)",
-                    Ulid::new().as_uuid(),
+                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                    Ulid::new().to_uuid(),
                     "exhaustion.test",
                     "large_transaction",
                     "localhost",
@@ -544,8 +544,8 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
                     for j in 0..10 {
                         sqlx::query!(
                             "INSERT INTO raw.events (id, source, event_type, host, payload) 
-                             VALUES ($1, $2, $3, $4, $5)",
-                            Ulid::new().as_uuid(),
+                             VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                            Ulid::new().to_uuid(),
                             format!("concurrent.tx.{}", i),
                             "concurrent_test",
                             "localhost",

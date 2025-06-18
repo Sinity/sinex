@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 90% (PostgreSQL queue and worker patterns fully working, Redis streams deferred)
+**Implementation**: 75% (PostgreSQL queue and worker patterns working, FastCDC and advanced features missing)
 **Dependencies**: PostgreSQL, promotion_queue table, worker processes, agent manifests
 **Blocks**: Event processing pipeline, promotion workflows, downstream analysis
 
@@ -25,7 +25,7 @@
 - [x] Worker polling and claiming logic
 - [x] Exponential backoff with jitter
 - [x] Dead letter queue handling
-- [x] Content-defined chunking (FastCDC)
+- [ ] Content-defined chunking (FastCDC)
 - [x] BLAKE3 hashing for deduplication
 - [x] Performance indexes and constraints
 - [ ] LISTEN/NOTIFY wake-up signals

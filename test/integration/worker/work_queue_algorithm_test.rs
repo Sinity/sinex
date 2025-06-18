@@ -198,12 +198,14 @@ impl SelectForUpdateWorker {
                 sleep(self.processing_delay).await;
 
                 // Mark as completed
+                let queue_id_str = item.queue_id.clone().ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?;
+                let queue_id_ulid = queue_id_str.parse::<sinex_ulid::Ulid>()?;
                 let completion_result = sqlx::query!(
                     "UPDATE sinex_schemas.work_queue 
                      SET status = 'succeeded', 
                          processed_at = NOW()
                      WHERE queue_id = $1::uuid::ulid",
-                    item.queue_id.to_uuid()
+                    queue_id_ulid.to_uuid()
                 )
                 .execute(&self.pool)
                 .await;
@@ -212,7 +214,7 @@ impl SelectForUpdateWorker {
                 self.metrics.record_item_processed(&self.worker_id, processing_time);
 
                 if completion_result.is_err() {
-                    println!("Worker {} failed to mark item {} as completed", self.worker_id, item.queue_id);
+                    println!("Worker {} failed to mark item {:?} as completed", self.worker_id, item.queue_id);
                 }
 
                 Ok(true)
@@ -336,6 +338,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
             )
             .fetch_one(&monitor_pool)
             .await
+            .unwrap_or(Some(0))
             .unwrap_or(0);
 
             let in_progress_count: i64 = sqlx::query_scalar!(
@@ -345,6 +348,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
             )
             .fetch_one(&monitor_pool)
             .await
+            .unwrap_or(Some(0))
             .unwrap_or(0);
 
             samples.push((pending_count, in_progress_count));
@@ -377,7 +381,8 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue 
@@ -385,7 +390,8 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     println!("\nAlgorithm Fairness Test Results:");
     println!("  Work items created: {}", work_items_to_create);
@@ -545,7 +551,8 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     println!("\nContention Test Results:");
     println!("  Workers: {}", high_contention_worker_count);
@@ -661,7 +668,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
         .await?;
 
         if let Some(item) = next_item {
-            let queue_ulid = Ulid::from_str(&item.queue_id).unwrap();
+            let queue_ulid = Ulid::from_str(&item.queue_id.unwrap()).unwrap();
             actual_order.push(queue_ulid);
             
             // Process this item

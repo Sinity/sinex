@@ -246,8 +246,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                 // Start transaction with some work
                 sqlx::query!(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 
-                     VALUES ($1, $2, $3, $4, $5)",
-                    Ulid::new().as_uuid(),
+                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                    Ulid::new().to_uuid(),
                     "shutdown.test",
                     "active_transaction",
                     "localhost",
