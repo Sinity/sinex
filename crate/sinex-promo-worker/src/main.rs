@@ -9,10 +9,10 @@ use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
 use sqlx::PgPool;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::{signal, task, time::sleep};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
@@ -208,6 +208,10 @@ async fn main() -> Result<()> {
 async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
     info!("Running in scanner mode");
     
+    // Set up graceful shutdown
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+    
     // Create scanner with configuration
     let config = ScannerConfig {
         batch_size: args.scanner_batch_size,
@@ -218,10 +222,24 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
     
     // Start heartbeat emission task
     let heartbeat_pool = pool.clone();
-    task::spawn(async move {
+    let heartbeat_shutdown = shutdown.clone();
+    let heartbeat_handle = task::spawn(async move {
         use sinex_core::HeartbeatEmitter;
         let emitter = HeartbeatEmitter::new(heartbeat_pool, "promo-worker-scanner".to_string(), 45);
-        emitter.run().await;
+        
+        // Run heartbeat until shutdown
+        tokio::select! {
+            _ = emitter.run() => {
+                warn!("Heartbeat emitter stopped unexpectedly");
+            }
+            _ = async {
+                while !heartbeat_shutdown.load(Ordering::Relaxed) {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            } => {
+                info!("Heartbeat emitter shutting down gracefully");
+            }
+        }
     });
     info!("Started heartbeat emission for promo-worker-scanner");
     
@@ -232,32 +250,91 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
         }
     });
     
+    // Notify systemd that we're ready
+    match sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
+        Ok(_) => info!("Notified systemd: ready"),
+        Err(e) => info!("Running without systemd integration: {}", e),
+    }
+    
+    // Set up signal handlers
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    
     // Main scanner loop
+    let mut shutdown_requested = false;
     loop {
-        match scan_and_promote(&pool, &mut scanner).await {
-            Ok(count) => {
-                if count == 0 {
-                    // No new events, sleep before next scan
-                    sleep(Duration::from_secs(args.poll_interval)).await;
-                }
+        // Check for shutdown signals
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+                shutdown_requested = true;
             }
-            Err(e) => {
-                error!(error = %e, "Scanner error, retrying in 5s");
-                sleep(Duration::from_secs(5)).await;
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, initiating graceful shutdown");
+                shutdown_requested = true;
+            }
+            result = scan_and_promote(&pool, &mut scanner) => {
+                match result {
+                    Ok(count) => {
+                        if count == 0 {
+                            // No new events, sleep before next scan
+                            tokio::select! {
+                                _ = sleep(Duration::from_secs(args.poll_interval)) => {},
+                                _ = signal::ctrl_c() => {
+                                    info!("Received SIGINT during sleep");
+                                    shutdown_requested = true;
+                                }
+                                _ = sigterm.recv() => {
+                                    info!("Received SIGTERM during sleep");
+                                    shutdown_requested = true;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Scanner error, retrying in 5s");
+                        let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Scanner error, retrying".into())]);
+                        
+                        tokio::select! {
+                            _ = sleep(Duration::from_secs(5)) => {},
+                            _ = signal::ctrl_c() => {
+                                info!("Received SIGINT during error retry");
+                                shutdown_requested = true;
+                            }
+                            _ = sigterm.recv() => {
+                                info!("Received SIGTERM during error retry");
+                                shutdown_requested = true;
+                            }
+                        }
+                    }
+                }
             }
         }
         
-        // Check for shutdown signal
-        if tokio::select! {
-            _ = signal::ctrl_c() => true,
-            else => false,
-        } {
-            info!("Shutdown signal received");
-            metrics_handle.abort();
+        if shutdown_requested {
             break;
         }
     }
     
+    // Notify systemd we're stopping
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    
+    // Signal shutdown to all tasks
+    shutdown_clone.store(true, Ordering::Relaxed);
+    
+    // Wait for tasks to complete
+    info!("Waiting for tasks to complete...");
+    
+    // Wait for heartbeat task
+    match tokio::time::timeout(tokio::time::Duration::from_secs(5), heartbeat_handle).await {
+        Ok(Ok(_)) => info!("Heartbeat task completed"),
+        Ok(Err(e)) => warn!("Heartbeat task failed: {}", e),
+        Err(_) => warn!("Heartbeat task timed out"),
+    }
+    
+    // Abort metrics server
+    metrics_handle.abort();
+    
+    info!("Scanner shutdown complete");
     Ok(())
 }
 
@@ -314,6 +391,10 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
 async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode");
 
+    // Set up graceful shutdown
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+
     // Create shared state for tracking events processed
     let events_processed = Arc::new(AtomicU64::new(0));
     let start_time = std::time::Instant::now();
@@ -327,7 +408,8 @@ async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result
     // Start unified component heartbeat emission task with metrics
     let heartbeat_pool = pool.clone();
     let heartbeat_agent_name = agent_name.clone();
-    task::spawn(async move {
+    let heartbeat_shutdown = shutdown.clone();
+    let heartbeat_handle = task::spawn(async move {
         use sinex_core::HeartbeatEmitter;
         let emitter = HeartbeatEmitter::with_metrics_provider(
             heartbeat_pool, 
@@ -335,7 +417,20 @@ async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result
             45, 
             metrics
         );
-        emitter.run().await;
+        
+        // Run heartbeat until shutdown
+        tokio::select! {
+            _ = emitter.run() => {
+                warn!("Heartbeat emitter stopped unexpectedly");
+            }
+            _ = async {
+                while !heartbeat_shutdown.load(Ordering::Relaxed) {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            } => {
+                info!("Heartbeat emitter shutting down gracefully");
+            }
+        }
     });
     info!(agent = %agent_name, "Started component heartbeat emission with metrics");
 
@@ -365,20 +460,55 @@ async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result
     
     let worker = Worker::new(pool, processor, worker_id);
 
+    // Notify systemd that we're ready
+    match sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
+        Ok(_) => info!("Notified systemd: ready"),
+        Err(e) => info!("Running without systemd integration: {}", e),
+    }
+
+    // Set up signal handlers
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     // Run worker until shutdown signal
     let worker_handle = task::spawn(async move {
         if let Err(e) = worker.run().await {
             error!(error = %e, "Worker failed");
+            let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Worker failed".into())]);
         }
     });
 
     // Wait for shutdown signal
-    signal::ctrl_c().await?;
-    info!("Shutdown signal received");
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+        }
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, initiating graceful shutdown");
+        }
+    }
 
-    // Cancel tasks (they should handle cancellation gracefully)
+    // Notify systemd we're stopping
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    
+    // Signal shutdown to all tasks
+    shutdown_clone.store(true, Ordering::Relaxed);
+
+    // Cancel worker task
     worker_handle.abort();
+    
+    // Wait for tasks to complete
+    info!("Waiting for tasks to complete...");
+    
+    // Wait for heartbeat task
+    match tokio::time::timeout(tokio::time::Duration::from_secs(5), heartbeat_handle).await {
+        Ok(Ok(_)) => info!("Heartbeat task completed"),
+        Ok(Err(e)) => warn!("Heartbeat task failed: {}", e),
+        Err(_) => warn!("Heartbeat task timed out"),
+    }
+
+    // Abort metrics server
     metrics_handle.abort();
 
+    info!("Worker shutdown complete");
     Ok(())
 }

@@ -1,6 +1,37 @@
 # TIM-EventRelations: Event Traceability System
 
-*   **Status:** Current implementation
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 85% (Core relationship tables and clustering implemented, advanced pattern recognition pending)
+**Dependencies**: PostgreSQL, ULID generation, raw.events table
+**Blocks**: Context-aware suggestions, workflow reconstruction, cross-source correlation
+
+## MVP Specification
+- Core event_relations table with typed relationships
+- Event clustering system for workflow grouping
+- Basic temporal and causal relationship detection
+- Confidence scoring for relationship certainty
+- Recursive query support for chain traversal
+
+## Enhanced Features
+- ML-driven pattern recognition for automatic relationship discovery
+- Advanced workflow classification and labeling
+- Cross-domain event correlation
+- Performance-optimized materialized views
+- User annotation and feedback integration
+
+## Implementation Checklist
+- [x] Core relationship schema (event_relations, event_clusters, event_cluster_members)
+- [x] Basic relationship types (causal, temporal, contextual, hierarchical)
+- [x] Manual relationship creation API
+- [x] Cluster management functions
+- [x] Recursive query patterns
+- [x] Performance indexes
+- [ ] Automatic relationship discovery agents
+- [ ] ML pattern recognition
+- [ ] Materialized view optimization
+- [ ] User annotation interface
+
 *   **Relevant Tables:** `core.event_relations`, `core.event_clusters`, `core.event_cluster_members`
 *   **Vision Document Reference:** Part I.3, Principle 4 (Context is Continuous) - implemented via post-hoc event linking
 

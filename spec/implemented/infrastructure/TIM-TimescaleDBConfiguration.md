@@ -1,5 +1,37 @@
 # TIM-TimescaleDBConfiguration: `raw.events` Hypertable
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (TimescaleDB hypertable creation and basic configuration working)
+**Dependencies**: TimescaleDB PostgreSQL extension, NixOS PostgreSQL configuration
+**Blocks**: Time-series event storage, efficient time-based queries, data compression
+
+## MVP Specification
+- TimescaleDB extension installation and activation
+- raw.events hypertable creation with ts_ingest partitioning
+- Basic chunk interval configuration (1 day)
+- Automatic data migration support
+- Core time-series query optimization
+
+## Enhanced Features
+- Adaptive chunk sizing based on data volume
+- Native compression for older chunks
+- Automated retention policies
+- Advanced time-series analytics functions
+- Parallel query optimization
+
+## Implementation Checklist
+- [x] TimescaleDB extension available in NixOS
+- [x] Database extension activation
+- [x] Hypertable creation for raw.events
+- [x] Time-based partitioning configuration
+- [x] Basic chunk interval setup
+- [x] Data migration support
+- [ ] Adaptive chunk sizing
+- [ ] Native compression setup
+- [ ] Automated retention policies
+- [ ] Advanced analytics functions
+
 *   **Relevant ADR:** (Implicitly supported by choice of TimescaleDB in Vision Doc III.3.1.2)
 *   **Original UG Context:** Section 1.2
 

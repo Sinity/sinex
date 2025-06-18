@@ -178,6 +178,39 @@ in
       '';
     };
 
+    # Update configuration
+    update = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable coordinated update process";
+      };
+
+      gracePeriod = mkOption {
+        type = types.int;
+        default = 30;
+        description = "Grace period in seconds for services to complete work before update";
+      };
+
+      healthCheckTimeout = mkOption {
+        type = types.int;
+        default = 60;
+        description = "Maximum time to wait for health checks after update";
+      };
+
+      rollbackOnFailure = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Automatically rollback if health checks fail";
+      };
+
+      preserveData = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Preserve DLQ and failure data during updates";
+      };
+    };
+
   };
 
   config = mkIf cfg.enable {
@@ -332,21 +365,134 @@ in
       sinex-unified-collector = {
         description = "Sinex Unified Event Collector";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "network-online.target" ] 
-          ++ optional (cfg.database.autoSetup && cfg.database.migration.enable) "sinex-migrate.service";
+        after = [ "postgresql.service" "network-online.target" ];
         wants = [ "network-online.target" ];
         requires = [ "postgresql.service" ];
         
         serviceConfig = {
-          Type = "simple";
+          Type = "notify";  # Changed to notify for proper startup coordination
           User = cfg.database.user;
           Group = cfg.database.user;
+          
+          # Pre-start validation and migration
+          ExecStartPre = mkIf (cfg.database.autoSetup && cfg.database.migration.enable) (
+            pkgs.writeShellScript "sinex-collector-pre-start" ''
+              set -euo pipefail
+              
+              echo "Preparing Sinex collector startup..."
+              
+              # Setup database URL
+              export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+              
+              # Wait for PostgreSQL
+              echo "Waiting for PostgreSQL..."
+              for i in {1..30}; do
+                if ${pkgs.postgresql}/bin/pg_isready -h ${cfg.database.host} -p ${toString cfg.database.port} -U ${cfg.database.user} -d ${cfg.database.name}; then
+                  break
+                fi
+                sleep 1
+              done
+              
+              # Ensure extensions exist
+              echo "Ensuring database extensions..."
+              ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" || true
+              ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" || true
+              ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" || true
+              ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pgx_ulid;" || true
+              
+              # Check current schema version
+              CURRENT_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM _sqlx_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
+              echo "Current schema version: $CURRENT_VERSION"
+              
+              # Run migrations
+              if [ -d "${cfg.database.migration.directory}" ]; then
+                echo "Running database migrations..."
+                if ! ${cfg.database.migration.package}/bin/sqlx migrate run --source "${cfg.database.migration.directory}"; then
+                  echo "ERROR: Database migration failed!" >&2
+                  exit 1
+                fi
+                
+                # Verify new version
+                NEW_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM _sqlx_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
+                echo "New schema version: $NEW_VERSION"
+              fi
+              
+              # Test database connectivity with actual query
+              echo "Testing database connectivity..."
+              if ! ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "SELECT 1 FROM pg_tables WHERE schemaname = 'raw' LIMIT 1;" >/dev/null 2>&1; then
+                echo "ERROR: Database schema validation failed!" >&2
+                exit 1
+              fi
+              
+              echo "Pre-start validation completed successfully"
+            ''
+          );
+          
+          # Post-start health check
+          ExecStartPost = pkgs.writeShellScript "sinex-collector-post-start" ''
+            set -euo pipefail
+            
+            echo "Validating Sinex collector startup..."
+            
+            # Wait for service to be ready (systemd notify)
+            for i in {1..30}; do
+              if systemctl show -p SubState --value sinex-unified-collector | grep -q "running"; then
+                echo "✓ Service is running"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "ERROR: Service failed to reach running state" >&2
+                exit 1
+              fi
+              sleep 1
+            done
+            
+            # Check database connectivity from the service
+            export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+            
+            # Verify we can insert a test event
+            TEST_ID=$(${pkgs.util-linux}/bin/uuidgen)
+            if ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "
+              INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload) 
+              VALUES ('$TEST_ID', 'sinex.health', 'startup.test', NOW(), NOW(), '$(hostname)', '{\"test\": true}'::jsonb);
+              DELETE FROM raw.events WHERE id = '$TEST_ID';
+            " >/dev/null 2>&1; then
+              echo "✓ Database write test passed"
+            else
+              echo "ERROR: Database write test failed!" >&2
+              exit 1
+            fi
+            
+            # Wait for heartbeat to appear
+            echo "Waiting for heartbeat..."
+            for i in {1..10}; do
+              if ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
+                SELECT COUNT(*) FROM component_heartbeats 
+                WHERE component_name = 'unified-collector' 
+                AND timestamp > NOW() - INTERVAL '1 minute'
+              " | grep -q "[1-9]"; then
+                echo "✓ Heartbeat detected"
+                break
+              fi
+              if [ $i -eq 10 ]; then
+                echo "WARNING: No heartbeat detected (non-fatal)" >&2
+              fi
+              sleep 1
+            done
+            
+            echo "Collector startup validation completed successfully"
+          '';
           
           # Restart policy with rate limiting
           Restart = cfg.unifiedCollector.restart.policy;
           RestartSec = cfg.unifiedCollector.restart.baseDelay;
-          StartLimitIntervalSec = "60s";
+          StartLimitIntervalSec = 300;  # 5 minutes
           StartLimitBurst = 3;
+          
+          # Graceful shutdown
+          KillMode = "mixed";
+          KillSignal = "SIGTERM";
+          TimeoutStopSec = 30;  # Give time for graceful shutdown
           
           # Resource limits
           MemoryMax = "1G";
@@ -391,13 +537,32 @@ in
       sinex-promo-worker = mkIf cfg.promoWorker.enable {
         description = "Sinex Promotion Worker";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "sinex-unified-collector.service" ]
-          ++ optional (cfg.database.autoSetup && cfg.database.migration.enable) "sinex-migrate.service";
+        after = [ "postgresql.service" "sinex-unified-collector.service" ];
+        requires = [ "postgresql.service" ];
         
         serviceConfig = {
-          Type = "simple";
+          Type = "notify";
           User = cfg.database.user;
           Group = cfg.database.user;
+          
+          # Pre-start validation
+          ExecStartPre = pkgs.writeShellScript "sinex-worker-pre-start" ''
+            set -euo pipefail
+            
+            echo "Preparing Sinex worker startup..."
+            
+            # Setup database URL
+            export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+            
+            # Wait for PostgreSQL and verify schema
+            echo "Verifying database schema..."
+            if ! ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "SELECT 1 FROM pg_tables WHERE schemaname = 'sinex_schemas' AND tablename = 'promotion_queue' LIMIT 1;" >/dev/null 2>&1; then
+              echo "ERROR: Promotion queue table not found!" >&2
+              exit 1
+            fi
+            
+            echo "Pre-start validation completed successfully"
+          '';
           
           # Restart policy with rate limiting
           Restart = "on-failure";
@@ -508,6 +673,188 @@ in
       };
     };
 
+    # Coordinated update service
+    systemd.services.sinex-update = mkIf cfg.update.enable {
+      description = "Sinex Coordinated Update";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        
+        ExecStart = pkgs.writeShellScript "sinex-update" ''
+          set -euo pipefail
+          
+          echo "$(date): Starting Sinex coordinated update..."
+          
+          # Function to check service health
+          check_health() {
+            local service=$1
+            
+            # Check if service is active
+            if ! systemctl is-active "$service" >/dev/null 2>&1; then
+              return 1
+            fi
+            
+            # Check for recent heartbeats (if database is available)
+            if systemctl is-active postgresql >/dev/null 2>&1; then
+              export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+              
+              local component_name=""
+              case "$service" in
+                sinex-unified-collector) component_name="unified-collector" ;;
+                sinex-promo-worker) component_name="default-worker" ;;
+              esac
+              
+              if [ -n "$component_name" ]; then
+                local heartbeat_count=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
+                  SELECT COUNT(*) FROM component_heartbeats 
+                  WHERE component_name = '$component_name' 
+                  AND timestamp > NOW() - INTERVAL '2 minutes'
+                  AND status != 'failed'
+                " 2>/dev/null || echo "0")
+                
+                if [ "$heartbeat_count" -eq 0 ]; then
+                  echo "WARNING: No recent healthy heartbeats for $component_name"
+                  return 1
+                fi
+              fi
+            fi
+            
+            return 0
+          }
+          
+          # Save current state
+          echo "Saving current state..."
+          COLLECTOR_WAS_ACTIVE=false
+          WORKER_WAS_ACTIVE=false
+          
+          if systemctl is-active sinex-unified-collector >/dev/null 2>&1; then
+            COLLECTOR_WAS_ACTIVE=true
+          fi
+          
+          if systemctl is-active sinex-promo-worker >/dev/null 2>&1; then
+            WORKER_WAS_ACTIVE=true
+          fi
+          
+          # Preserve data if requested
+          if [ "${toString cfg.update.preserveData}" = "1" ] && [ -d "${cfg.unifiedCollector.dlq.failureStoragePath}" ]; then
+            echo "Preserving DLQ data..."
+            BACKUP_DIR="${cfg.unifiedCollector.dlq.failureStoragePath}.backup-$(date +%Y%m%d-%H%M%S)"
+            cp -a "${cfg.unifiedCollector.dlq.failureStoragePath}" "$BACKUP_DIR" || true
+          fi
+          
+          # Graceful shutdown
+          echo "Initiating graceful shutdown..."
+          
+          # Stop worker first (processes events)
+          if [ "$WORKER_WAS_ACTIVE" = "true" ]; then
+            echo "Stopping promotion worker..."
+            systemctl stop sinex-promo-worker
+          fi
+          
+          # Give worker time to finish processing
+          sleep 5
+          
+          # Stop collector
+          if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
+            echo "Stopping collector with ${cfg.update.gracePeriod}s grace period..."
+            systemctl stop sinex-unified-collector
+            
+            # Wait for graceful shutdown
+            sleep ${toString cfg.update.gracePeriod}
+          fi
+          
+          # Perform updates (migrations were already run in ExecStartPre)
+          echo "Updates applied via service ExecStartPre hooks"
+          
+          # Restart services in order
+          echo "Starting services..."
+          
+          if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
+            echo "Starting collector..."
+            if ! systemctl start sinex-unified-collector; then
+              echo "ERROR: Failed to start collector!" >&2
+              exit 1
+            fi
+            
+            # Wait for collector to be ready
+            sleep 5
+          fi
+          
+          if [ "$WORKER_WAS_ACTIVE" = "true" ]; then
+            echo "Starting promotion worker..."
+            if ! systemctl start sinex-promo-worker; then
+              echo "ERROR: Failed to start worker!" >&2
+              # Stop collector if worker fails
+              [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-unified-collector
+              exit 1
+            fi
+          fi
+          
+          # Health check with timeout
+          echo "Performing health checks (timeout: ${toString cfg.update.healthCheckTimeout}s)..."
+          
+          HEALTH_CHECK_PASSED=true
+          START_TIME=$(date +%s)
+          
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            
+            if [ $ELAPSED -gt ${toString cfg.update.healthCheckTimeout} ]; then
+              echo "ERROR: Health check timeout exceeded!" >&2
+              HEALTH_CHECK_PASSED=false
+              break
+            fi
+            
+            ALL_HEALTHY=true
+            
+            if [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && ! check_health sinex-unified-collector; then
+              ALL_HEALTHY=false
+            fi
+            
+            if [ "$WORKER_WAS_ACTIVE" = "true" ] && ! check_health sinex-promo-worker; then
+              ALL_HEALTHY=false
+            fi
+            
+            if [ "$ALL_HEALTHY" = "true" ]; then
+              echo "✓ All services healthy"
+              break
+            fi
+            
+            echo "Waiting for services to become healthy... ($ELAPSED/${toString cfg.update.healthCheckTimeout}s)"
+            sleep 5
+          done
+          
+          # Handle rollback if needed
+          if [ "$HEALTH_CHECK_PASSED" = "false" ] && [ "${toString cfg.update.rollbackOnFailure}" = "1" ]; then
+            echo "Initiating rollback due to health check failure..."
+            
+            # Stop failed services
+            [ "$WORKER_WAS_ACTIVE" = "true" ] && systemctl stop sinex-promo-worker || true
+            [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-unified-collector || true
+            
+            # Restore data if preserved
+            if [ -n "''${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
+              echo "Restoring DLQ data..."
+              rm -rf "${cfg.unifiedCollector.dlq.failureStoragePath}"
+              mv "$BACKUP_DIR" "${cfg.unifiedCollector.dlq.failureStoragePath}"
+            fi
+            
+            echo "ERROR: Update failed and was rolled back" >&2
+            exit 1
+          fi
+          
+          # Cleanup backup if successful
+          if [ -n "''${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
+            echo "Cleaning up backup..."
+            rm -rf "$BACKUP_DIR"
+          fi
+          
+          echo "$(date): Sinex update completed successfully"
+        '';
+      };
+    };
+
 
     # User and group creation
     users.users.${cfg.database.user} = {
@@ -547,57 +894,6 @@ in
       ];
     };
 
-    # Database migration service
-    systemd.services.sinex-migrate = mkIf (cfg.database.autoSetup && cfg.database.migration.enable) {
-      description = "Run Sinex database migrations";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" ];
-      requires = [ "postgresql.service" ];
-      before = [ "sinex-unified-collector.service" "sinex-promo-worker.service" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = cfg.database.user;
-        Group = cfg.database.user;
-        
-        # Timeout for migrations
-        TimeoutStartSec = "${toString cfg.database.migration.timeout}s";
-        
-        ExecStart = pkgs.writeShellScript "sinex-migrate" ''
-          set -euo pipefail
-          
-          echo "Running Sinex database migrations..."
-          
-          # Ensure database exists and is accessible
-          export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
-          
-          # Wait for PostgreSQL to be ready
-          for i in {1..30}; do
-            if ${pkgs.postgresql}/bin/pg_isready -h ${cfg.database.host} -p ${toString cfg.database.port} -U ${cfg.database.user} -d ${cfg.database.name}; then
-              break
-            fi
-            echo "Waiting for PostgreSQL to be ready..."
-            sleep 1
-          done
-          
-          # Ensure required extensions
-          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" || true
-          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" || true
-          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" || true
-          ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pgx_ulid;" || true
-          
-          # Run migrations
-          if [ -d "${cfg.database.migration.directory}" ]; then
-            echo "Running migrations from ${cfg.database.migration.directory}"
-            ${cfg.database.migration.package}/bin/sqlx migrate run --source "${cfg.database.migration.directory}"
-            echo "Migrations completed successfully"
-          else
-            echo "Warning: Migration directory not found: ${cfg.database.migration.directory}"
-          fi
-        '';
-      };
-    };
     
     # Terminal auto-recording for all users
     programs.bash.promptInit = mkIf cfg.unifiedCollector.sources.asciinema.autoRecord ''

@@ -1,5 +1,35 @@
 # TIM-KittyTerminalIntegration: Kitty Terminal Specific Integration
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 70% (Socket discovery and basic window listing working, command extraction limited)
+**Dependencies**: kitty terminal, unix sockets, kitty @ remote control, EventSource trait
+**Blocks**: Rich terminal context, command completion tracking, pane-level monitoring
+
+## MVP Specification
+- Kitty socket discovery and connection
+- Window and tab enumeration
+- Basic command polling
+- Remote control integration
+- Terminal state querying
+
+## Enhanced Features
+- Real-time command execution tracking
+- Scrollback content analysis
+- OSC escape sequence monitoring
+- Advanced pane management
+- Terminal performance metrics
+
+## Implementation Checklist
+- [x] Socket discovery mechanism
+- [x] Remote control connection
+- [x] Window/tab listing
+- [x] Basic polling infrastructure
+- [ ] Command execution detection
+- [ ] Scrollback content access
+- [ ] OSC sequence monitoring
+- [ ] Real-time event streaming
+
 *   **Relevant ADR:** `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)` (Kitty RC is part of layered strategy)
 *   **Original UG Context:** Section 8.1
 

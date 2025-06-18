@@ -1,5 +1,36 @@
 # TIM-EventSchemaRegistry: `sinex_schemas.event_payload_schemas`
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 80% (Schema registry table and basic management in place, CI/CD integration pending)
+**Dependencies**: PostgreSQL, JSONB support, ULID generation, Git repository
+**Blocks**: Event validation, schema evolution, type safety, code generation
+
+## MVP Specification
+- Central schema registry table with ULID keys
+- JSON Schema storage and versioning
+- Schema activation/deactivation mechanism
+- Basic validation and linking to raw.events
+- Schema change eventification
+
+## Enhanced Features
+- GitOps-based schema management
+- Automated CI/CD pipeline for schema validation
+- Backward compatibility checking
+- Code generation from schemas
+- Advanced schema evolution policies
+
+## Implementation Checklist
+- [x] event_payload_schemas table schema
+- [x] Schema versioning and activation flags
+- [x] Foreign key links to raw.events
+- [x] Schema change trigger and eventification
+- [x] Basic schema management functions
+- [ ] GitOps CI/CD pipeline
+- [ ] Backward compatibility validation
+- [ ] Schema diffing and migration tools
+- [ ] Code generation from schemas
+
 *   **Relevant ADR:** (N/A directly, core infrastructure)
 *   **Original UG Context:** Section 2.1
 

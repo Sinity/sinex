@@ -3,7 +3,9 @@ use clap::Parser;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::{create_pool, validation::EventValidator};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::{info, warn, error};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Sinex unified event collector")]
@@ -139,30 +141,96 @@ async fn main() -> Result<()> {
     // Create and run the collector
     let mut collector = UnifiedCollector::new(config, output_config, db_pool.clone(), validator);
     
+    // Set up graceful shutdown
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = shutdown.clone();
+    
     // Spawn heartbeat emission task if database is available
-    if let Some(ref pool) = db_pool {
+    let heartbeat_handle = if let Some(ref pool) = db_pool {
         let heartbeat_pool = pool.clone();
-        tokio::spawn(async move {
+        let heartbeat_shutdown = shutdown.clone();
+        let handle = tokio::spawn(async move {
             use sinex_core::HeartbeatEmitter;
             let emitter = HeartbeatEmitter::new(heartbeat_pool, "unified-collector".to_string(), 30);
-            emitter.run().await;
+            
+            // Create an interval for checking shutdown
+            let mut shutdown_check = tokio::time::interval(tokio::time::Duration::from_secs(1));
+            
+            // Run heartbeat loop with shutdown check
+            tokio::select! {
+                _ = emitter.run() => {
+                    warn!("Heartbeat emitter stopped unexpectedly");
+                }
+                _ = async {
+                    loop {
+                        shutdown_check.tick().await;
+                        if heartbeat_shutdown.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                } => {
+                    info!("Heartbeat emitter shutting down gracefully");
+                }
+            }
         });
         
         info!("Started heartbeat emission for unified-collector");
+        Some(handle)
+    } else {
+        None
+    };
+    
+    // Notify systemd that we're ready
+    match sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
+        Ok(_) => info!("Notified systemd: ready"),
+        Err(e) => info!("Running without systemd integration: {}", e),
     }
+    
+    // Set up signal handlers
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     
     // Run until shutdown signal
     tokio::select! {
         result = collector.run() => {
             if let Err(e) = result {
-                tracing::error!("Collector failed: {}", e);
+                error!("Collector failed: {}", e);
+                
+                // Notify systemd of failure
+                let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Failed".into())]);
+                
+                // Signal shutdown to other tasks
+                shutdown.store(true, Ordering::Relaxed);
                 return Err(e);
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            info!("Received shutdown signal");
+            info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+        }
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, initiating graceful shutdown");
         }
     }
+    
+    // Notify systemd we're stopping
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    
+    // Signal shutdown to all tasks
+    shutdown_clone.store(true, Ordering::Relaxed);
+    
+    // Give tasks time to complete gracefully
+    info!("Waiting for tasks to complete...");
+    
+    // Wait for heartbeat task to complete
+    if let Some(handle) = heartbeat_handle {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await {
+            Ok(Ok(_)) => info!("Heartbeat task completed"),
+            Ok(Err(e)) => warn!("Heartbeat task failed: {}", e),
+            Err(_) => warn!("Heartbeat task timed out"),
+        }
+    }
+    
+    // Give collector time to flush any pending events
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     
     info!("Collector shutdown complete");
     Ok(())

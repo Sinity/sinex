@@ -1,5 +1,37 @@
 # TIM-EventIngestionProcessing: Queues, Workers, Notifications
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (PostgreSQL queue and worker patterns fully working, Redis streams deferred)
+**Dependencies**: PostgreSQL, promotion_queue table, worker processes, agent manifests
+**Blocks**: Event processing pipeline, promotion workflows, downstream analysis
+
+## MVP Specification
+- PostgreSQL-based promotion queue with transactional processing
+- Worker polling with FOR UPDATE SKIP LOCKED
+- Exponential backoff retry mechanism
+- Dead letter queue for failed items
+- Content deduplication with FastCDC and BLAKE3
+
+## Enhanced Features
+- Redis streams for high-throughput scenarios
+- LISTEN/NOTIFY wake-up optimization
+- Distributed worker coordination
+- Advanced retry policies
+- Performance monitoring and metrics
+
+## Implementation Checklist
+- [x] promotion_queue table schema
+- [x] Worker polling and claiming logic
+- [x] Exponential backoff with jitter
+- [x] Dead letter queue handling
+- [x] Content-defined chunking (FastCDC)
+- [x] BLAKE3 hashing for deduplication
+- [x] Performance indexes and constraints
+- [ ] LISTEN/NOTIFY wake-up signals
+- [ ] Redis streams integration
+- [ ] Distributed worker coordination
+
 *   **Relevant ADR:** `[ADR-002-EventProcessingNotificationMechanism.md](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)`
 *   **Original UG Context:** Section 3 (specifically 3.1, 3.2, 3.3)
 
