@@ -40,7 +40,7 @@
           gitRev = self.rev or self.dirtyRev or "unknown";
           gitShortRev = builtins.substring 0 8 gitRev;
           version = "0.1.0"; # TODO: Extract from workspace
-          buildTime = toString builtins.currentTime;
+          buildTime = "unknown"; # builtins.currentTime not available in pure mode
 
           # Helper to build Rust packages with common configuration
           buildRustPackage = package: pkgs.rustPlatform.buildRustPackage {
@@ -67,7 +67,7 @@
               pub const GIT_HASH: &str = "${gitRev}";
               pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
               pub const BUILD_TIME: &str = "${buildTime}";
-              pub const BUILD_HOST: &str = "${builtins.currentSystem}";
+              pub const BUILD_HOST: &str = "${system}";
               EOF
             '';
             postInstall = ''
@@ -178,6 +178,19 @@
           # NixOS VM tests
           checks = {
             sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
+              pg_jsonschema = self.packages.${system}.pg_jsonschema;
+            };
+            
+            # Advanced testing capabilities
+            sinex-vm-chaos = pkgs.callPackage ./test/nixos-vm/chaos-engineering.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
+              pg_jsonschema = self.packages.${system}.pg_jsonschema;
+            };
+            
+            sinex-vm-production = pkgs.callPackage ./test/nixos-vm/production-scale.nix { 
               sinex-collector = self.packages.${system}.unifiedCollector;
               sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
               pg_jsonschema = self.packages.${system}.pg_jsonschema;

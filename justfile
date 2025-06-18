@@ -24,6 +24,28 @@ test-vm:
 test-vm-interactive:
     nix build .#checks.x86_64-linux.sinex-vm-basic -L --keep-failed
 
+# Advanced VM tests
+test-vm-chaos:
+    nix build .#checks.x86_64-linux.sinex-vm-chaos -L
+
+test-vm-production:
+    nix build .#checks.x86_64-linux.sinex-vm-production -L
+
+test-vm-advanced:
+    echo "🧪 Running advanced VM tests..."
+    just test-vm-chaos
+    echo "✅ Chaos engineering tests completed"
+    just test-vm-production  
+    echo "✅ Production scale tests completed"
+    echo "🎉 Advanced VM tests passed!"
+
+test-vm-all:
+    echo "🧪 Running all VM tests..."
+    just test-vm
+    just test-vm-chaos
+    just test-vm-production
+    echo "🎉 All VM tests passed!"
+
 test-e2e:
     cargo test --test integration system::end_to_end:: -- --nocapture
 
@@ -42,7 +64,7 @@ test-cli-integration:
 test-cli-all:
     python3 -m pytest test/cli/ -v
 
-# New test categories from reorganization
+# Focused test categories
 test-core:
     cargo test --lib --workspace
 
@@ -58,7 +80,7 @@ test-worker:
 test-regression:
     cargo test --test integration system::regression::
 
-# Phase 7-9 comprehensive integration tests
+# System integration tests
 test-system-startup:
     cargo test --test integration integration::full_system_startup_test:: -- --nocapture
 
@@ -93,18 +115,20 @@ test-all:
     echo "🧪 Running comprehensive test suite..."
     just test
     echo "✅ Rust tests completed"
-    nix develop --command python3 -m pytest test/cli/test_exo_cli.py -v
-    echo "✅ CLI unit tests completed"
+    just test-cli
+    echo "✅ CLI tests completed"
     just test-e2e-dry-run
-    echo "✅ E2E dry-run tests completed"
+    echo "✅ E2E tests completed"
     echo "🎉 All core tests passed!"
 
-test-all-comprehensive:
-    echo "🧪 Running complete comprehensive test suite..."
+test-full:
+    echo "🧪 Running complete test suite..."
     just test-all
     echo "✅ Core test suite completed"
     just test-integration-comprehensive
-    echo "✅ Comprehensive integration tests completed"
+    echo "✅ System integration tests completed"
+    just test-vm-all
+    echo "✅ VM tests completed"
     echo "🎉 All tests passed - system fully validated!"
 
 watch:
