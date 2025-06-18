@@ -1,8 +1,8 @@
 # TIM-KnowledgeGraphSchema: DDL for Core Knowledge Graph Tables (`core_entities`, `core_entity_relations`)
 
 ## Status Dashboard
-**Maturity Level**: L3 - Ready for Implementation
-**Implementation**: 10% (DDL complete, needs entity management and graph algorithms)
+**Maturity Level**: L4 - Implemented
+**Implementation**: 85% (Tables defined with embeddings support, indexes created)
 **Dependencies**: `pgx_ulid` extension, `pgvector` extension, `core.artifacts`, `core.tags`, `raw.events` tables
 **Blocks**: Entity resolution, relationship discovery, knowledge graph queries, semantic search, AI-assisted knowledge extraction
 
@@ -22,8 +22,14 @@
 - Temporal relationship tracking with validity periods
 
 ## Implementation Checklist
-- [ ] Database migration to create `core.entities` and `core.entity_relations` tables
-- [ ] Entity embedding setup with pgvector (768-dimensional vectors)
+- [x] Database migration to create `core.entities` and `core.entity_relations` tables
+- [x] Entity embedding setup with pgvector (768-dimensional vectors)
+- [x] ULID primary key implementation with pgx_ulid
+- [x] Entity type validation and canonical labeling
+- [x] Performance indexes for entity queries and graph traversal
+- [x] Trigger setup for automatic timestamp updates
+- [x] JSONB properties support for flexible entity metadata
+- [x] Vector similarity indexes (HNSW) for semantic search
 - [ ] Foreign key constraints to `core.artifacts`, `core.tags`, `raw.events`
 - [ ] Entity management API (create, merge, link, resolve duplicates)
 - [ ] Basic graph traversal and path-finding queries

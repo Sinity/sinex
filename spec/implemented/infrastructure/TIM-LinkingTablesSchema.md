@@ -1,5 +1,39 @@
 # TIM-LinkingTablesSchema: DDL for `event_relations` and `core_artifact_links`
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (Tables defined, indexes created, triggers configured)
+**Dependencies**: `pgx_ulid` extension, `raw.events`, `core.artifacts`, `core.entities` tables
+**Blocks**: Link resolution agents, relationship discovery, cross-reference queries
+
+## MVP Specification
+- Core linking tables (`event_relations`, `core.artifact_links`) with ULID primary keys
+- Rich semantic relationship types between events, artifacts, and entities
+- Content-based link parsing and resolution for artifacts
+- Polymorphic foreign key support with application-level validation
+- Performance indexes for bidirectional relationship queries
+
+## Enhanced Features
+- Automated link extraction from artifact content (Wikilinks, URLs)
+- Link validation and resolution agents
+- Relationship confidence scoring and provenance tracking
+- Context-aware link suggestions and recommendations
+- Graph-based navigation and discovery interfaces
+
+## Implementation Checklist
+- [x] Database migration to create `event_relations` table
+- [x] Database migration to create `core.artifact_links` table
+- [x] ULID primary key implementation with pgx_ulid
+- [x] Polymorphic object reference columns with type validation
+- [x] Performance indexes for relationship queries
+- [x] Trigger setup for automatic timestamp updates
+- [x] JSONB properties support for relationship metadata
+- [ ] Foreign key constraints (pending referenced table creation)
+- [ ] Link extraction agents for automatic population
+- [ ] Link resolution and validation workflows
+- [ ] Tests for relationship operations and queries
+- [ ] Performance optimization for large-scale link traversal
+
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for tables that explicitly store links or relationships between Exocortex objects: `event_relations` (for semantic links involving `raw.events`) and `core_artifact_links` (primarily for links parsed from the content of `core.artifacts` like PKM notes).
 *   **Source:** Derived from original Vision Document Appendix A and conceptual descriptions in Vision Part V.3.1.
 *   **Dependencies:** `pgx_ulid` extension. Relies on `raw.events`, `core.artifacts`, `core.entities` tables being defined. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.

@@ -1,5 +1,42 @@
 # TIM-EventAnnotationsSchema: DDL for `event_annotations` Table
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 85% (Table defined with embeddings support, indexes created)
+**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `raw.events` table
+**Blocks**: Annotation agents, event interpretation workflows, collaborative tagging
+
+## MVP Specification
+- Core event annotations table with ULID primary keys
+- Support for both textual and structured (JSONB) annotations
+- Actor identification for annotation provenance
+- Annotation type categorization system
+- Vector embeddings for semantic search across annotations
+
+## Enhanced Features
+- Automated annotation generation by AI agents
+- Collaborative annotation workflows with conflict resolution
+- Annotation confidence scoring and validation
+- Full-text search across annotation content
+- Temporal annotation tracking and versioning
+
+## Implementation Checklist
+- [x] Database migration to create `event_annotations` table
+- [x] ULID primary key implementation with pgx_ulid
+- [x] Foreign key constraint to `raw.events` table
+- [x] Support for both textual and JSONB annotation content
+- [x] Actor identification and annotation type classification
+- [x] Vector embedding support with pgvector integration
+- [x] Performance indexes for annotation queries
+- [x] Full-text search indexes for textual content
+- [x] GIN indexes for JSONB content queries
+- [x] Vector similarity indexes (HNSW) for semantic search
+- [x] Trigger setup for automatic timestamp updates
+- [ ] Annotation management API and validation logic
+- [ ] Automated annotation agents and workflows
+- [ ] Tests for annotation operations and searches
+- [ ] Performance optimization for large-scale annotation datasets
+
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for the `event_annotations` table. This table allows users and agents to attach flexible, evolving metadata, comments, flags, or preliminary interpretations directly to individual `raw.events` entries without altering the immutable event itself.
 *   **Source:** Derived from conceptual descriptions in Vision Document Part V.3.3.
 *   **Dependencies:** `pgx_ulid` extension. Relies on `raw.events` table being defined. `pgvector` for optional annotation embeddings. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.

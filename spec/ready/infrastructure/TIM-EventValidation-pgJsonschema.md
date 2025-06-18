@@ -1,5 +1,37 @@
 # TIM-EventValidation-pgJsonschema: In-Database JSON Schema Validation
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 80% (Extension and validation infrastructure complete, monitoring pending)
+**Dependencies**: pg_jsonschema PostgreSQL extension, schema registry, event ingestion pipeline
+**Blocks**: Data integrity enforcement, payload validation, schema compliance
+
+## MVP Specification
+- pg_jsonschema extension setup and configuration
+- Basic JSON Schema validation functions
+- Integration with event ingestion pipeline
+- Validation error handling and reporting
+- Schema-based payload filtering
+
+## Enhanced Features
+- Advanced validation rules and constraints
+- Custom validation functions
+- Performance optimization for high-volume validation
+- Validation metrics and monitoring
+- Schema evolution and migration support
+- Custom error reporting and diagnostics
+
+## Implementation Checklist
+- [x] pg_jsonschema extension installation
+- [x] Database validation functions setup
+- [x] Integration with schema registry
+- [x] Validation trigger implementation
+- [x] Error handling and logging
+- [ ] Performance benchmarking
+- [ ] Validation rule configuration
+- [ ] Monitoring and metrics
+- [ ] Documentation and best practices
+
 *   **Relevant ADR:** (N/A directly, supports data integrity principle)
 *   **Original UG Context:** Section 2.2
 

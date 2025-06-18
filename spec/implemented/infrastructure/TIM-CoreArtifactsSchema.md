@@ -1,8 +1,8 @@
 # TIM-CoreArtifactsSchema: DDL for `core.artifacts` and `core.artifact_contents`
 
 ## Status Dashboard
-**Maturity Level**: L3 - Ready for Implementation
-**Implementation**: 20% (DDL complete, needs migration and artifact management systems)
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (Complete database schema with versioning, missing only API layer)
 **Dependencies**: `pgx_ulid` extension, `core.blobs` table, `core.set_updated_at_trigger_func_generic()` trigger function
 **Blocks**: PKM note management, content versioning, artifact-based workflows, content search and discovery
 
@@ -20,14 +20,14 @@
 - Artifact relationship mapping and cross-references
 
 ## Implementation Checklist
-- [ ] Database migration to create `core.artifacts` and `core.artifact_contents` tables
-- [ ] Foreign key constraints after `core.blobs` table exists
+- [x] Database migration to create `core.artifacts` and `core.artifact_contents` tables
+- [x] Foreign key constraints after `core.blobs` table exists
 - [ ] Artifact management API (create, update, version, delete)
-- [ ] Content versioning and deduplication logic
-- [ ] Basic artifact search and filtering
+- [x] Content versioning and deduplication logic
+- [x] Basic artifact search and filtering
 - [ ] PKM note Yjs integration (per ADR-004)
 - [ ] Tests for artifact operations and content versioning
-- [ ] Full-text search index setup (tsvector generation)
+- [x] Full-text search index setup (tsvector generation)
 
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for `core.artifacts` (representing conceptual documents/items like PKM notes, web pages, emails) and `core.artifact_contents` (storing their versioned textual content or references to content blobs).
 *   **Source:** Derived from original Vision Document Appendix A and Part II.2, refined by ADR-004 and specific content needs.

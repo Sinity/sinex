@@ -1,5 +1,37 @@
 # TIM-DeadLetterQueueImplementation: Central DLQ and Error Handling
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 75% (Database schema and basic infrastructure complete, CLI and automation pending)
+**Dependencies**: PostgreSQL, promotion queue system, worker infrastructure
+**Blocks**: Error recovery, system reliability, debugging workflows, operational visibility
+
+## MVP Specification
+- Central dead letter queue table in PostgreSQL
+- Automatic failed message collection from promotion queue
+- Basic retry and replay mechanisms
+- Error categorization and tracking
+- Simple management interface
+
+## Enhanced Features
+- Advanced error pattern analysis
+- Automated recovery strategies
+- Comprehensive operational dashboard
+- Integration with monitoring systems
+- Historical error trend analysis
+- Custom replay policies per error type
+
+## Implementation Checklist
+- [x] Dead letter queue table schema
+- [x] Integration with promotion queue failures
+- [ ] Retry policy configuration
+- [x] Error classification system
+- [ ] Manual replay mechanisms
+- [ ] Monitoring and alerting
+- [ ] Operational tooling
+- [ ] Performance optimization
+- [ ] Historical analysis features
+
 *   **Relevant ADR:** (N/A directly, core infrastructure for robustness)
 *   **Original UG Context:** Section 3.4
 
