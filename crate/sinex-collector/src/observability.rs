@@ -1,3 +1,4 @@
+use anyhow::Error;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -10,6 +11,7 @@ use prometheus::{
     CounterVec, GaugeVec, HistogramOpts, HistogramVec, Registry, TextEncoder,
 };
 use serde::Serialize;
+use sqlx::Row;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -453,4 +455,105 @@ impl Drop for OperationTimer {
         let duration = self.start.elapsed();
         self.instrumentation.record_processing_time(&self.operation, duration);
     }
+}
+
+/// Start the unified observability server integrating metrics and health checks
+pub async fn start_observability_server(
+    port: u16,
+    db_pool: sqlx::PgPool,
+    metrics: CollectorMetrics,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = Arc::new(Registry::new());
+    let metrics = metrics.register_with(&registry)?;
+    
+    let metrics_server = MetricsServer::new(registry.clone(), port);
+    let health_checks = metrics_server.app_state.health_checks.clone();
+    
+    // Start background task to sync database heartbeats with HTTP health endpoints
+    let db_pool_clone = db_pool.clone();
+    tokio::spawn(async move {
+        sync_database_heartbeats_to_http(db_pool_clone, health_checks).await;
+    });
+    
+    // Start system metrics collection
+    let collector_name = "unified-collector".to_string();
+    tokio::spawn(start_system_metrics_collector(metrics.clone(), collector_name));
+    
+    info!("Starting observability server on port {} with database integration", port);
+    metrics_server.start().await?;
+    
+    Ok(())
+}
+
+/// Background task to sync database heartbeats with HTTP health endpoint state
+async fn sync_database_heartbeats_to_http(
+    db_pool: sqlx::PgPool,
+    health_checks: Arc<tokio::sync::RwLock<Vec<ComponentHealth>>>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    
+    loop {
+        interval.tick().await;
+        
+        match fetch_component_health_from_db(&db_pool).await {
+            Ok(db_health_status) => {
+                let mut health_checks_guard = health_checks.write().await;
+                health_checks_guard.clear();
+                
+                for (component_name, (status, last_seen, message)) in db_health_status {
+                    let health_state = if chrono::Utc::now().signed_duration_since(last_seen).num_seconds() > 180 {
+                        HealthState::Unhealthy
+                    } else {
+                        match status.as_str() {
+                            "healthy" => HealthState::Healthy,
+                            "degraded" => HealthState::Degraded,
+                            _ => HealthState::Unhealthy,
+                        }
+                    };
+                    
+                    health_checks_guard.push(ComponentHealth {
+                        name: component_name,
+                        status: health_state,
+                        message,
+                        last_check: last_seen,
+                    });
+                }
+            }
+            Err(e) => {
+                warn!("Failed to fetch component health from database: {}", e);
+            }
+        }
+    }
+}
+
+/// Query database for latest component health from heartbeats table
+async fn fetch_component_health_from_db(
+    db_pool: &sqlx::PgPool,
+) -> Result<Vec<(String, (String, DateTime<Utc>, Option<String>))>, anyhow::Error> {
+    let query = r#"
+        SELECT DISTINCT ON (component_name)
+            component_name,
+            status,
+            timestamp,
+            last_error_message
+        FROM component_heartbeats
+        ORDER BY component_name, timestamp DESC
+    "#;
+    
+    let rows = sqlx::query(query)
+        .fetch_all(db_pool)
+        .await
+        .map_err(Error::from)?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        let component_name: String = row.get("component_name");
+        let status: String = row.get("status");
+        let timestamp: chrono::DateTime<Utc> = row.get("timestamp");
+        let error_message: Option<String> = row.get("last_error_message");
+        
+        results.push((component_name, (status, timestamp, error_message)));
+    }
+    
+    Ok(results)
 }

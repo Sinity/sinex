@@ -142,15 +142,31 @@ async fn main() -> Result<()> {
     // Create and run the collector
     let mut collector = UnifiedCollector::new(config, output_config, db_pool.clone(), validator);
     
-    // Spawn heartbeat emission task if database is available
+    // Start metrics/health server if database is available
     if let Some(ref pool) = db_pool {
+        let metrics_pool = pool.clone();
+        let metrics_port = args.metrics_port;
+        
+        tokio::spawn(async move {
+            use sinex_collector::{start_observability_server, CollectorMetrics};
+            
+            info!("Starting metrics server on port {}", metrics_port);
+            let metrics = CollectorMetrics::new().unwrap();
+            
+            if let Err(e) = start_observability_server(metrics_port, metrics_pool, metrics).await {
+                warn!("Failed to start metrics server: {}", e);
+            }
+        });
+        
+        // Spawn heartbeat emission task (integrated with metrics)
         let heartbeat_pool = pool.clone();
         tokio::spawn(async move {
             use sinex_core::HeartbeatEmitter;
             let emitter = HeartbeatEmitter::new(heartbeat_pool, "unified-collector".to_string(), 30);
             emitter.run().await;
         });
-        info!("Started heartbeat emission for unified-collector");
+        
+        info!("Started heartbeat emission and metrics server for unified-collector");
     }
     
     // Run until shutdown signal
