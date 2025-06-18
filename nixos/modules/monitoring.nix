@@ -248,7 +248,13 @@ in
         datasourceUrl = mkOption {
           type = types.str;
           default = "http://localhost:9090";
-          description = "Prometheus datasource URL for Grafana";
+          description = "Prometheus datasource URL for Grafana (deprecated - uses PostgreSQL directly now)";
+        };
+        
+        postgresqlUrl = mkOption {
+          type = types.str;
+          default = "postgresql:///${cfg.database.name}?host=/run/postgresql";
+          description = "PostgreSQL datasource URL for Grafana";
         };
       };
     };
@@ -566,11 +572,26 @@ in
             enable = true;
             datasources.settings.datasources = [
               {
+                name = "PostgreSQL-Sinex";
+                type = "postgres";
+                access = "proxy";
+                url = cfg.monitoring.dashboards.grafana.postgresqlUrl;
+                isDefault = true;
+                jsonData = {
+                  sslmode = "disable";
+                  postgresVersion = 1600;
+                  timescaledb = true;
+                };
+                secureJsonData = {
+                  password = "";  # Local socket auth, no password needed
+                };
+              }
+              {
                 name = "Prometheus-Sinex";
                 type = "prometheus";
                 access = "proxy";
                 url = "http://${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.monitoring.observabilityStack.prometheusPort}";
-                isDefault = true;
+                isDefault = false;
                 jsonData = {
                   httpMethod = "POST";
                   prometheusType = "Prometheus";
@@ -638,7 +659,8 @@ in
       mkIf (cfg.monitoring.observabilityStack.enable && cfg.monitoring.dashboards.grafana.enable)
         [
           "d /var/lib/grafana/dashboards 0755 grafana grafana"
-          "L+ /var/lib/grafana/dashboards/sinex-dashboard.json - - - - ${./sinex-dashboard.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../grafana-dashboards/sinex-overview.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../grafana-dashboards/sinex-event-analysis.json}"
         ];
 
     # Firewall for monitoring services (localhost only)
