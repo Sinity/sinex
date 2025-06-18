@@ -19,3 +19,4 @@ pub mod failure_recovery_integration_test;
 pub mod health_monitoring_integration_test;
 pub mod git_annex_full_integration_test;
 pub mod configuration_validation_integration_test;
+pub mod deployment_validation_test;

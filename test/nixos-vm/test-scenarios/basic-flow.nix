@@ -71,6 +71,9 @@ pkgs.nixosTest {
         
         # Provide package directly to avoid flake import
         package = sinex-collector;
+        
+        # Set target user for monitoring
+        targetUser = "test";
 
         # Disable promo worker for simplicity in test
         promoWorker.enable = false;
@@ -89,7 +92,7 @@ pkgs.nixosTest {
           sources.shellHistory.enable = true;
           sources.asciinema = {
             enable = true;
-            recordingsPath = "/home/test/.local/share/asciinema";
+            path = "/home/test/.local/share/asciinema";
             autoRecord = false;
           };
           sources.kittyScrollback = {

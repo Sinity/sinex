@@ -3,6 +3,8 @@ use sqlx::PgPool;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::pin::Pin;
+use std::future::Future;
 use tokio::time::timeout;
 use tokio::sync::mpsc;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
@@ -50,53 +52,90 @@ async fn test_graceful_degradation_database_failure() -> Result<()> {
     println!("  Connection pool exhausted with {} connections", held_connections.len());
 
     // Test graceful handling of no available connections
-    let degraded_operations = vec![
-        // Event insertion should timeout gracefully
-        timeout(
-            Duration::from_secs(2),
-            insert_raw_event(
-                &pool,
-                "degradation.test",
-                "connection_exhaustion",
-                "localhost",
-                json!({"test": "degraded_mode"}),
-                None,
-                Some("1.0.0"),
-                None,
-            )
-        ),
-        
-        // Health check should timeout gracefully
-        timeout(
-            Duration::from_secs(2),
-            sqlx::query_scalar!("SELECT 1")
-                .fetch_one(&pool)
-        ),
-        
-        // Agent query should timeout gracefully
-        timeout(
-            Duration::from_secs(2),
-            sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
-                .fetch_one(&pool)
-        ),
-    ];
-
+    let pool1 = pool.clone();
+    let pool2 = pool.clone();
+    let pool3 = pool.clone();
+    
+    // Define async functions for each operation
+    async fn event_test(pool: PgPool) -> Result<(), anyhow::Error> {
+        let _event = insert_raw_event(
+            &pool,
+            "degradation.test",
+            "connection_exhaustion",
+            "localhost",
+            json!({"test": "degraded_mode"}),
+            None,
+            Some("1.0.0"),
+            None,
+        ).await.map_err(anyhow::Error::from)?;
+        Ok(())
+    }
+    
+    async fn health_test(pool: PgPool) -> Result<(), anyhow::Error> {
+        let _health_check = sqlx::query_scalar!("SELECT 1")
+            .fetch_one(&pool)
+            .await
+            .map_err(anyhow::Error::from)?
+            .unwrap_or(0);
+        Ok(())
+    }
+    
+    async fn agent_test(pool: PgPool) -> Result<(), anyhow::Error> {
+        let _agent_check = sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(())
+    }
+    
     let mut graceful_timeouts = 0;
     let mut unexpected_errors = 0;
 
-    for (i, operation) in degraded_operations.into_iter().enumerate() {
-        match operation.await {
-            Ok(Ok(_)) => {
-                println!("  Operation {} succeeded unexpectedly", i);
-            }
-            Ok(Err(e)) => {
-                println!("  Operation {} failed gracefully: {}", i, e);
-                unexpected_errors += 1;
-            }
-            Err(_) => {
-                println!("  ✓ Operation {} timed out gracefully", i);
-                graceful_timeouts += 1;
-            }
+    // Test event operation
+    let operation = timeout(Duration::from_secs(2), event_test(pool1));
+    match operation.await {
+        Ok(Ok(_)) => {
+            println!("  Operation 0 succeeded unexpectedly");
+        }
+        Ok(Err(e)) => {
+            println!("  Operation 0 failed gracefully: {}", e);
+            unexpected_errors += 1;
+        }
+        Err(_) => {
+            println!("  ✓ Operation 0 timed out gracefully");
+            graceful_timeouts += 1;
+        }
+    }
+
+    // Test health operation
+    let operation = timeout(Duration::from_secs(2), health_test(pool2));
+    match operation.await {
+        Ok(Ok(_)) => {
+            println!("  Operation 1 succeeded unexpectedly");
+        }
+        Ok(Err(e)) => {
+            println!("  Operation 1 failed gracefully: {}", e);
+            unexpected_errors += 1;
+        }
+        Err(_) => {
+            println!("  ✓ Operation 1 timed out gracefully");
+            graceful_timeouts += 1;
+        }
+    }
+
+    // Test agent operation
+    let operation = timeout(Duration::from_secs(2), agent_test(pool3));
+    match operation.await {
+        Ok(Ok(_)) => {
+            println!("  Operation 2 succeeded unexpectedly");
+        }
+        Ok(Err(e)) => {
+            println!("  Operation 2 failed gracefully: {}", e);
+            unexpected_errors += 1;
+        }
+        Err(_) => {
+            println!("  ✓ Operation 2 timed out gracefully");
+            graceful_timeouts += 1;
         }
     }
 
@@ -162,7 +201,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
     // Test 1: Memory usage monitoring during high-volume operations
     let memory_test_start = Instant::now();
     let events_to_create = 1000;
-    let mut memory_usage_samples = Vec::new();
+    let memory_usage_samples = Arc::new(std::sync::Mutex::new(Vec::new()));
 
     // Monitor memory usage while creating many events
     let memory_monitoring = Arc::new(AtomicBool::new(true));
@@ -216,6 +255,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
     // Event processing task
     let processing_task = {
         let pool = pool.clone();
+        let memory_samples = memory_usage_samples.clone();
         tokio::spawn(async move {
             let mut processed = 0;
             while let Some(event_data) = rx.recv().await {
@@ -240,7 +280,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
                 // Collect memory sample every 50 events
                 if processed % 50 == 0 {
                     let memory_kb = memory_counter.load(Ordering::Relaxed);
-                    memory_usage_samples.push((processed, memory_kb));
+                    memory_samples.lock().unwrap().push((processed, memory_kb));
                     println!("  Processed {} events, memory: {}KB", processed, memory_kb);
                 }
             }
@@ -251,7 +291,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
     // Wait for completion or timeout
     let load_test_result = timeout(
         Duration::from_secs(30),
-        tokio::try_join!(generation_task, processing_task)
+        async { tokio::try_join!(generation_task, processing_task) }
     ).await;
 
     memory_monitoring.store(false, Ordering::Relaxed);
@@ -264,9 +304,10 @@ async fn test_resource_limits_monitoring() -> Result<()> {
             println!("  ✓ Load test completed: {} events in {:?}", processed_count, load_test_duration);
             
             // Analyze memory usage patterns
-            if memory_usage_samples.len() >= 2 {
-                let initial_memory = memory_usage_samples[0].1;
-                let final_memory = memory_usage_samples.last().unwrap().1;
+            let samples = memory_usage_samples.lock().unwrap();
+            if samples.len() >= 2 {
+                let initial_memory = samples[0].1;
+                let final_memory = samples.last().unwrap().1;
                 let memory_growth = final_memory.saturating_sub(initial_memory);
                 let growth_rate = memory_growth as f64 / processed_count as f64;
                 
@@ -302,12 +343,13 @@ async fn test_resource_limits_monitoring() -> Result<()> {
             let result = timeout(
                 Duration::from_secs(5),
                 async {
-                    let conn = pool.acquire().await?;
+                    let mut conn = pool.acquire().await?;
                     
                     // Perform a quick operation
                     sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                        .fetch_one(&*conn)
+                        .fetch_one(&mut *conn)
                         .await
+                        .map(|opt| opt.unwrap_or(0))
                 }
             ).await;
 
@@ -392,27 +434,26 @@ async fn test_resource_limits_monitoring() -> Result<()> {
             Duration::from_secs(2),
             async {
                 // Comprehensive health check
-                let db_health = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
+                let db_health = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?.unwrap_or(0);
                 let table_count = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM information_schema.tables 
                      WHERE table_schema IN ('raw', 'sinex_schemas')"
-                ).fetch_one(&pool).await?;
+                ).fetch_one(&pool).await?.unwrap_or(0);
                 let recent_events = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
-                ).fetch_one(&pool).await?;
+                ).fetch_one(&pool).await?.unwrap_or(0);
                 
-                Ok((db_health, table_count, recent_events))
+                Ok::<_, sqlx::Error>((db_health, table_count, recent_events))
             }
         ).await;
 
         let health_duration = health_start.elapsed();
-        health_results.push((i, health_result, health_duration));
-
+        
         if i % 5 == 0 {
             match &health_result {
                 Ok(Ok((_, table_count, event_count))) => {
                     println!("  Health check {}: OK ({} tables, {} recent events) in {:?}", 
-                            i, table_count.unwrap_or(0), event_count.unwrap_or(0), health_duration);
+                            i, table_count, event_count, health_duration);
                 }
                 Ok(Err(e)) => {
                     println!("  Health check {}: FAILED - {}", i, e);
@@ -422,6 +463,8 @@ async fn test_resource_limits_monitoring() -> Result<()> {
                 }
             }
         }
+        
+        health_results.push((i, health_result, health_duration));
 
         // Small delay between health checks
         tokio::time::sleep(Duration::from_millis(100)).await;

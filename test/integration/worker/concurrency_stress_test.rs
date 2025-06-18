@@ -598,7 +598,8 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let final_pending: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue 
@@ -606,7 +607,8 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let final_failed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue 
@@ -614,7 +616,8 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     println!("\nExtreme Concurrency Stress Test Results:");
     println!("  Workers: {}", extreme_worker_count);
@@ -753,7 +756,12 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|r| (r.queue_id, r.processing_worker_id.unwrap_or_default()))
+            .filter_map(|r| {
+                match (r.queue_id, r.processing_worker_id) {
+                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
+                    _ => None,
+                }
+            })
             .collect();
 
             // Level 2: Workers claiming but not progressing
@@ -779,6 +787,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             let total_processing: i64 = sqlx::query_scalar!(
@@ -788,6 +797,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             if !stuck_processing.is_empty() {
@@ -860,7 +870,8 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let final_abandoned: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue 
@@ -868,7 +879,8 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     println!("\nCoordinated Deadlock Scenario Results:");
     println!("  Workers: {}", problematic_worker_count);
@@ -979,6 +991,7 @@ async fn test_race_condition_detection() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             let processing_count: i64 = sqlx::query_scalar!(
@@ -988,6 +1001,7 @@ async fn test_race_condition_detection() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             // Race condition indicators
@@ -1002,6 +1016,7 @@ async fn test_race_condition_detection() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             // Check for worker ID conflicts
@@ -1018,6 +1033,7 @@ async fn test_race_condition_detection() -> Result<()> {
             )
             .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
             if duplicate_check > 0 {
@@ -1112,7 +1128,8 @@ async fn test_race_condition_detection() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let unique_completed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(DISTINCT raw_event_id) FROM sinex_schemas.work_queue 
@@ -1120,7 +1137,8 @@ async fn test_race_condition_detection() -> Result<()> {
         agent_name
     )
     .fetch_one(&pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     println!("\nRace Condition Detection Results:");
     println!("  Workers: {}", race_workers);

@@ -13,6 +13,9 @@ async fn test_event_source_validation() -> Result<()> {
     run_migrations(&pool).await?;
 
     // Test various malicious source names
+    let long_string_1000 = "A".repeat(1000);
+    let long_string_10000 = "A".repeat(10000);
+    
     let malicious_sources = vec![
         // Control characters and null bytes
         "test\x00source",
@@ -60,8 +63,8 @@ async fn test_event_source_validation() -> Result<()> {
         "*)(uid=*))(|(uid=*",
         
         // Very long strings
-        "A".repeat(1000),
-        "A".repeat(10000),
+        &long_string_1000,
+        &long_string_10000,
         
         // Empty and whitespace
         "",
@@ -99,7 +102,7 @@ async fn test_event_source_validation() -> Result<()> {
                 .await?;
 
                 let validation_result = ValidationResult {
-                    input: malicious_source.clone(),
+                    input: malicious_source.to_string(),
                     stored: stored_source.clone(),
                     accepted: true,
                     sanitized: stored_source != *malicious_source,
@@ -116,7 +119,7 @@ async fn test_event_source_validation() -> Result<()> {
             }
             Err(e) => {
                 validation_results.push(ValidationResult {
-                    input: malicious_source.clone(),
+                    input: malicious_source.to_string(),
                     stored: String::new(),
                     accepted: false,
                     sanitized: false,
@@ -398,6 +401,8 @@ async fn test_malformed_input_handling() -> Result<()> {
     run_migrations(&pool).await?;
 
     // Test agent creation with malformed names
+    let long_agent_name = "a".repeat(1000);
+    
     let malformed_agent_names = vec![
         "", // Empty
         " ", // Whitespace only
@@ -406,7 +411,7 @@ async fn test_malformed_input_handling() -> Result<()> {
         "agent\x00name", // Embedded null
         "agent\nname", // Newline
         "agent\rname", // Carriage return
-        "a".repeat(1000), // Too long
+        &long_agent_name, // Too long
         "invalid/agent", // Path separator
         "invalid\\agent", // Windows path separator
         "invalid;agent", // Command separator

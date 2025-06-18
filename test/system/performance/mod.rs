@@ -1,5 +1,7 @@
 //! Performance and load tests
 
+pub mod load_testing;
+
 use anyhow::Result;
 use sinex_db::queries;
 use sqlx::PgPool;

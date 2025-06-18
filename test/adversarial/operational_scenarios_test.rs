@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgPool, Acquire};
 use std::time::{Duration, Instant};
 use std::fs;
 use std::path::Path;
@@ -42,14 +42,16 @@ async fn test_startup_sequence_robustness() -> Result<()> {
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             let table_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM information_schema.tables 
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             Ok::<(i64, i64), anyhow::Error>((schema_count, table_count))
         }
@@ -115,13 +117,15 @@ async fn test_startup_sequence_robustness() -> Result<()> {
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             let event_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE source = 'startup.test'"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             Ok::<(i64, i64), anyhow::Error>((agent_count, event_count))
         }
@@ -175,11 +179,11 @@ async fn test_startup_sequence_robustness() -> Result<()> {
             match migration_result {
                 Ok(()) => {
                     println!("    ✓ Migrations recovered from corruption");
-                    Ok(true)
+                    Ok::<bool, anyhow::Error>(true)
                 }
                 Err(e) => {
                     println!("    Migration failed gracefully: {}", e);
-                    Ok(false)
+                    Ok::<bool, anyhow::Error>(false)
                 }
             }
         }
@@ -241,8 +245,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     // Simulate ongoing transactions
     let mut transactions = Vec::new();
     for i in 0..3 {
-        if let Some(conn) = connections.get_mut(i) {
-            if let Ok(tx) = conn.begin().await {
+        if connections.len() > i {
+            if let Ok(mut tx) = pool.begin().await {
                 // Start transaction with some work
                 sqlx::query!(
                     "INSERT INTO raw.events (id, source, event_type, host, payload) 
@@ -253,7 +257,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                     "localhost",
                     json!({"tx_id": i, "shutdown_test": true})
                 )
-                .execute(&mut &**tx)
+                .execute(&mut *tx)
                 .await
                 .ok();
                 
@@ -300,7 +304,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                 "SELECT COUNT(*) FROM raw.events WHERE source = 'shutdown.test'"
             )
             .fetch_one(&verification_pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             // Check database integrity
             let db_check = sqlx::query_scalar!("SELECT 1").fetch_one(&verification_pool).await?;
@@ -386,7 +391,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                         "SELECT COUNT(*) FROM raw.events WHERE source = 'interrupted.shutdown'"
                     )
                     .fetch_one(&pool)
-                    .await?;
+                    .await?
+                    .unwrap_or(0);
                     
                     Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
                 }
@@ -731,14 +737,20 @@ async fn test_data_migration_safety() -> Result<()> {
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
             )
             .fetch_all(&pool)
-            .await?;
+            .await?
+            .into_iter()
+            .filter_map(|s| s)
+            .collect();
             
             let tables: Vec<String> = sqlx::query_scalar!(
                 "SELECT table_name FROM information_schema.tables 
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
             .fetch_all(&pool)
-            .await?;
+            .await?
+            .into_iter()
+            .filter_map(|t| t)
+            .collect();
             
             let extensions: Vec<String> = sqlx::query_scalar!(
                 "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
@@ -793,13 +805,15 @@ async fn test_data_migration_safety() -> Result<()> {
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             let migration_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM _sqlx_migrations"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             Ok::<(i64, i64), anyhow::Error>((table_count, migration_count))
         }
@@ -861,13 +875,15 @@ async fn test_data_migration_safety() -> Result<()> {
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             let initial_event_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             println!("    Initial state: {} agents, {} events", initial_agent_count, initial_event_count);
             
@@ -879,13 +895,15 @@ async fn test_data_migration_safety() -> Result<()> {
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             let final_event_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
             )
             .fetch_one(&pool)
-            .await?;
+            .await?
+            .unwrap_or(0);
             
             // Verify data integrity
             let agent_data: Option<String> = sqlx::query_scalar!(
@@ -893,7 +911,8 @@ async fn test_data_migration_safety() -> Result<()> {
                  WHERE agent_name = 'migration_test_agent'"
             )
             .fetch_optional(&pool)
-            .await?;
+            .await?
+            .flatten();
             
             let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
                 "SELECT payload FROM raw.events WHERE source = 'migration.safety' LIMIT 1"
@@ -938,7 +957,10 @@ async fn test_data_migration_safety() -> Result<()> {
     let error_handling_test = timeout(
         Duration::from_secs(10),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = match create_test_pool(&test_db_url).await {
+                Ok(pool) => pool,
+                Err(_) => return false,
+            };
             
             // Simulate a migration error by attempting invalid operation
             let invalid_migration_result = sqlx::query!(
@@ -962,15 +984,12 @@ async fn test_data_migration_safety() -> Result<()> {
     ).await;
 
     match error_handling_test {
-        Ok(Ok(failed_gracefully)) => {
+        Ok(failed_gracefully) => {
             if failed_gracefully {
                 println!("  ✓ Migration error handling works correctly");
             } else {
                 println!("  WARNING: Migration error handling may need improvement");
             }
-        }
-        Ok(Err(e)) => {
-            println!("  Migration error handling test failed: {}", e);
         }
         Err(_) => {
             println!("  Migration error handling test timed out");

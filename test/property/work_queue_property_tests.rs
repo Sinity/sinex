@@ -289,7 +289,7 @@ proptest! {
             ).await.expect("DB operation failed");
             
             let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-            let target_queue_id = queue_item.queue_id;
+            let _target_queue_id = queue_item.queue_id;
             
             let tracker = ProcessingTracker::new();
             
