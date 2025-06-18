@@ -9,6 +9,70 @@ let
   # Import utility modules
   healthChecks = import ./health-checks.nix { inherit lib; };
   
+  # Import configuration generation utilities
+  configGen = import ../config-gen.nix { inherit lib pkgs; };
+  
+  # Generate TOML configuration file (simplified approach)
+  collectorConfigFile = pkgs.writeText "collector.toml" ''
+    # Generated Sinex Collector Configuration
+    enabled_events = [
+      ${lib.concatMapStringsSep "\n  " (event: ''"${event}",''') (
+        lib.flatten [
+          (lib.optional (cfg.unifiedCollector.sources.filesystem.enable or false) [
+            "file.created" "file.modified" "file.deleted"
+          ])
+          (lib.optional (cfg.unifiedCollector.sources.atuin.enable or false) [
+            "shell.command.executed_atuin"
+          ])
+          (lib.optional (cfg.unifiedCollector.sources.dbus.enable or false) [
+            "dbus.signal" "system.notification" "media.playback.changed"
+          ])
+          (lib.optional (cfg.unifiedCollector.sources.clipboard.enable or false) [
+            "clipboard.changed"
+          ])
+          (lib.optional (cfg.unifiedCollector.sources.kittyScrollback.enable or false) [
+            "terminal.scrollback.captured"
+          ])
+        ]
+      )}
+    ]
+    
+    # Global git-annex repository for large content storage
+    ${lib.optionalString (cfg.blobStorage.enable or false) ''
+    annex_repo_path = "${cfg.blobStorage.repositoryPath}"
+    ''}
+    
+    [output]
+    database = true
+    logging = ${if cfg.unifiedCollector.logLevel == "debug" then "true" else "false"}
+    
+    [logging]
+    level = "${cfg.unifiedCollector.logLevel}"
+    format = "pretty"
+    
+    ${lib.optionalString (cfg.unifiedCollector.sources.filesystem.enable or false) ''
+    [event.files]
+    watch_patterns = [${lib.concatMapStringsSep ", " (path: ''"${path}"'') (cfg.unifiedCollector.sources.filesystem.watchPaths or ["~/Documents"])}]
+    ignore_patterns = [${lib.concatMapStringsSep ", " (pattern: ''"${pattern}"'') (cfg.unifiedCollector.sources.filesystem.excludePatterns._allExcludePatterns or [])}]
+    debounce_ms = 100
+    ''}
+    
+    ${lib.optionalString (cfg.unifiedCollector.sources.atuin.enable or false) ''
+    [event.shell_command_executed_atuin]
+    db_path = "${cfg.unifiedCollector.sources.atuin.databasePath or "~/.local/share/atuin/history.db"}"
+    polling_interval_secs = ${toString (cfg.unifiedCollector.sources.atuin.pollInterval or 5)}
+    batch_size = 100
+    ''}
+    
+    ${lib.optionalString (cfg.unifiedCollector.sources.dbus.enable or false) ''
+    [event.dbus]
+    monitor_session = true
+    monitor_system = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractAll or false)}
+    extract_notifications = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractNotifications or true)}
+    extract_media = ${lib.boolToString (cfg.unifiedCollector.sources.dbus.extractMedia or true)}
+    ''}
+  '';
+  
 in
 {
   imports = [
@@ -373,14 +437,12 @@ in
             cfg.directories.logs
           ];
           
-          ExecStart = "${cfg.package}/bin/sinex-collector";
+          ExecStart = "${cfg.package}/bin/sinex-collector --config ${collectorConfigFile}";
           
           # Environment variables (use agenix for DATABASE_URL if needed)
           Environment = [
             "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
             "RUST_LOG=${cfg.unifiedCollector.logLevel}"
-            "SINEX_METRICS_PORT=${toString cfg.unifiedCollector.metricsPort}"
-            "SINEX_HEALTH_PORT=${toString cfg.unifiedCollector.healthCheck.port}"
           ] ++ lib.optionals cfg.unifiedCollector.dlq.enable [
             "SINEX_DLQ_BASE=${cfg.unifiedCollector.dlq.failureStoragePath}"
             "SINEX_LOG_BASE=${cfg.unifiedCollector.dlq.failureStoragePath}"
@@ -519,15 +581,20 @@ in
 
     users.groups.${cfg.database.user} = {};
 
-    # Simplified directory setup - just what we need
+    # Directory setup and configuration
     systemd.tmpfiles.rules = [
-      # Basic directories for monitoring.nix compatibility
+      # Basic directories for monitoring.nix compatibility  
       "d ${cfg.directories.state} 0755 ${cfg.database.user} ${cfg.database.user} -"
       "d ${cfg.directories.logs} 0755 ${cfg.database.user} ${cfg.database.user} -"
+      # Configuration directory
+      "d /etc/sinex 0755 root root -"
     ] ++ lib.optionals cfg.unifiedCollector.dlq.enable [
       # DLQ failure storage directory
       "d ${cfg.unifiedCollector.dlq.failureStoragePath} 0755 ${cfg.database.user} ${cfg.database.user} -"
     ];
+    
+    # Place generated configuration file in standard location
+    environment.etc."sinex/collector.toml".source = collectorConfigFile;
 
     # Database setup (if enabled)
     services.postgresql = mkIf cfg.database.autoSetup {

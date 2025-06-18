@@ -36,21 +36,58 @@ rec {
     validateEnabledEvents = enabledEvents:
       let
         knownEventTypes = [
+          # Terminal/command events
+          "command.executed"
           "shell.command.executed_atuin"
           "shell.history.command"
+          
+          # Terminal recording
           "terminal.asciinema.session_started"
           "terminal.asciinema.session_ended"
           "terminal.scrollback.captured"
           "terminal.command_output.captured"
+          
+          # File events
           "file.created"
           "file.modified"
           "file.deleted"
+          "file.moved"
+          "file.renamed"
+          
+          # Window manager events
+          "window.focused"
+          "window.unfocused"
+          "window.opened"
+          "window.closed"
+          "window.moved"
+          "window.title_changed"
+          "window.urgent"
+          "workspace.changed"
+          "workspace.created"
+          "workspace.destroyed"
+          "monitor.focused"
+          "monitor.added"
+          "monitor.removed"
+          
+          # D-Bus and system events
           "dbus.signal"
           "dbus.method_call"
           "system.notification"
           "media.playback.changed"
           "system.power.event"
           "hardware.device.event"
+          
+          # Clipboard events
+          "clipboard.changed"
+          "clipboard.selection"
+          "clipboard.primary"
+          
+          # Periodic events
+          "state.snapshot"
+          
+          # System journal
+          "system.journal.entry"
+          "system.journal.sync"
           "session.state.changed"
           "security.policykit.authorization"
           "bluetooth.device.event"
