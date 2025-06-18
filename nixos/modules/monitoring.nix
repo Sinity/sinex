@@ -532,6 +532,24 @@ in
               allow_sign_up = false;
               auto_assign_org = true;
               auto_assign_org_role = "Viewer";
+              default_theme = "dark";
+            };
+            # Dark theme and UI preferences
+            ui = {
+              default_theme = "dark";
+            };
+            # Database settings for better performance
+            database = {
+              wal = true;
+            };
+            # Session settings
+            session = {
+              cookie_secure = false;
+              cookie_samesite = "lax";
+            };
+            # Enable more features
+            feature_toggles = {
+              enable = "ngalert";
             };
           };
 
@@ -628,6 +646,10 @@ in
           "d /var/lib/grafana/dashboards 0755 grafana grafana"
           "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../../grafana-dashboards/sinex-overview.json}"
           "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../../grafana-dashboards/sinex-event-analysis.json}"
+          "L+ /var/lib/grafana/dashboards/event-pipeline.json - - - - ${../../grafana-dashboards/event-pipeline.json}"
+          "L+ /var/lib/grafana/dashboards/system-health.json - - - - ${../../grafana-dashboards/system-health.json}"
+          "L+ /var/lib/grafana/dashboards/worker-performance.json - - - - ${../../grafana-dashboards/worker-performance.json}"
+          "L+ /var/lib/grafana/dashboards/metrics-continuous-aggregates.json - - - - ${../../grafana-dashboards/metrics-continuous-aggregates.json}"
         ];
 
     # Firewall for monitoring services (localhost only)

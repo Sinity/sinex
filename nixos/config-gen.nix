@@ -39,7 +39,7 @@ rec {
     # Validate event type name format
     validateEventType = eventType:
       let
-        validPattern = "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$";
+        validPattern = "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$";
       in
         builtins.match validPattern eventType != null;
     
@@ -254,7 +254,7 @@ rec {
       };
     } // lib.optionalAttrs (cfg.sources.asciinema.enable or false) {
       "event.terminal_asciinema" = {
-        recordings_dir = pathUtils.resolvePath cfg.sources.asciinema.recordingsPath;
+        recordings_dir = pathUtils.resolvePath cfg.sources.asciinema.path;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
         polling_interval_secs = 5;
         git_annex_repo = fullCfg.blobStorage.repositoryPath;

@@ -23,9 +23,6 @@ in
     ./blob-storage.nix
     ./monitoring.nix
   ];
-  
-  # Environment packages
-  environment.systemPackages = with pkgs; [ asciinema ];
 
   options.services.sinex = {
     enable = mkEnableOption "Sinex Exocortex event capture system";
@@ -73,6 +70,12 @@ in
         type = types.enum [ "trace" "debug" "info" "warn" "error" ];
         default = "info";
         description = "Log level for the collector";
+      };
+
+      dryRun = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Enable dry-run mode (events logged but not stored in database)";
       };
 
       # Use modularized health checks
@@ -214,6 +217,9 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Environment packages
+    environment.systemPackages = with pkgs; [ asciinema ];
+
     # Apply preset configurations based on capture intensity
     services.sinex = mkMerge [
       # Lite preset - lightweight capture with minimal resources

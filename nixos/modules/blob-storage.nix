@@ -1,5 +1,5 @@
 # Git-annex blob storage configuration module
-{ lib, config, ... }:
+{ lib, config, pkgs, ... }:
 
 with lib;
 

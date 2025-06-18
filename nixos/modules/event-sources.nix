@@ -10,6 +10,7 @@ let
   mkEventSource =
     {
       name,
+      pathKey ? null,  # Optional override for path option name
       defaultPollInterval ? null,
       hasPath ? false,
       defaultPath ? null,
@@ -32,15 +33,13 @@ let
     }
     // optionalAttrs hasPath {
       ${
-        if (name == "filesystem") then
-          "watchPaths"
-        else if (name == "atuin") then
-          "databasePath"
+        if pathKey != null then
+          pathKey
         else
           "path"
       } =
         mkOption {
-          type = if (name == "filesystem") then types.listOf types.str else types.str;
+          type = if (pathKey == "watchPaths") then types.listOf types.str else types.str;
           default = defaultPath;
           description = "Path configuration for ${name} (supports ~ expansion)";
         };
@@ -53,6 +52,7 @@ in
     # Shell history sources
     atuin = mkEventSource {
       name = "Atuin shell history";
+      pathKey = "databasePath";
       defaultPollInterval = 3;
       hasPath = true;
       defaultPath = "~/.local/share/atuin/history.db";
@@ -122,12 +122,19 @@ in
           default = 500;
           description = "Delay in milliseconds after command execution before capturing";
         };
+
+        captureInterval = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Interval in seconds between automatic scrollback captures";
+        };
       };
     };
 
     # Filesystem monitoring
     filesystem = mkEventSource {
       name = "filesystem event monitoring";
+      pathKey = "watchPaths";
       hasPath = true;
       defaultPath = [ "~/" ]; # Monitor entire home directory
       extraOptions = {
