@@ -1,4 +1,5 @@
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
 use sinex_ulid::Ulid;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use std::collections::HashSet;
@@ -513,8 +514,9 @@ mod unit_tests {
     
     #[test]
     fn test_ulid_sequence_generator() {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
         let sequence = arb_ulid_sequence(3, 5)
-            .new_tree(&mut proptest::test_runner::TestRunner::deterministic())
+            .new_tree(&mut runner)
             .unwrap()
             .current();
         
@@ -531,8 +533,9 @@ mod unit_tests {
         let start = Utc::now() - ChronoDuration::hours(1);
         let end = Utc::now();
         
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
         let ulid = arb_ulid_from_time_range(start, end)
-            .new_tree(&mut proptest::test_runner::TestRunner::deterministic())
+            .new_tree(&mut runner)
             .unwrap()
             .current();
         

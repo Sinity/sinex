@@ -117,12 +117,19 @@ SELECT add_continuous_aggregate_policy('event_counts_5min',
     end_offset => INTERVAL '5 minutes',
     schedule_interval => INTERVAL '5 minutes');
 
--- Retention policies (keep high-res data for shorter periods)
-SELECT add_retention_policy('metrics_1min', INTERVAL '7 days');
-SELECT add_retention_policy('metrics_5min', INTERVAL '30 days');
-SELECT add_retention_policy('metrics_1h', INTERVAL '1 year');
-SELECT add_retention_policy('event_counts_1min', INTERVAL '3 days');
-SELECT add_retention_policy('event_counts_5min', INTERVAL '14 days');
+-- Retention policies for CONTINUOUS AGGREGATES ONLY
+-- These remove old data from the aggregated views, NOT from raw.events
+-- Raw events are preserved indefinitely (or according to separate retention policy)
+SELECT add_retention_policy('metrics_1min', INTERVAL '30 days');
+SELECT add_retention_policy('metrics_5min', INTERVAL '180 days');  -- 6 months
+SELECT add_retention_policy('metrics_1h', INTERVAL '5 years');
+SELECT add_retention_policy('event_counts_1min', INTERVAL '14 days');
+SELECT add_retention_policy('event_counts_5min', INTERVAL '90 days');
+
+-- Note: raw.events retention is managed separately and should be much longer
+-- or indefinite for a personal exocortex system. To add retention to raw events:
+-- SELECT add_retention_policy('raw.events', INTERVAL '10 years');
+-- But for personal data, you probably want to keep events forever!
 
 -- Helper function to extract time series data from metrics
 CREATE OR REPLACE FUNCTION extract_metrics_timeseries(

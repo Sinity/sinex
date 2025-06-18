@@ -95,8 +95,8 @@ in
     # Simplified target user configuration
     targetUser = mkOption {
       type = types.str;
-      default = "sinity";
       description = "Username whose files to monitor for events";
+      example = "myuser";
     };
 
     # Simplified directories - monitoring.nix compatibility
@@ -122,11 +122,7 @@ in
         description = "Enable the unified event collector";
       };
 
-      metricsPort = mkOption {
-        type = types.port;
-        default = 2112;
-        description = "Port for Prometheus metrics endpoint";
-      };
+      # Metrics are now emitted as events, not via HTTP endpoint
 
       logLevel = mkOption {
         type = types.enum [ "trace" "debug" "info" "warn" "error" ];
@@ -203,11 +199,7 @@ in
         description = "Enable the promotion worker";
       };
 
-      metricsPort = mkOption {
-        type = types.port;
-        default = 2113;
-        description = "Port for Prometheus metrics endpoint";
-      };
+      # Metrics are now emitted as events, not via HTTP endpoint
 
       pollInterval = mkOption {
         type = types.int;
@@ -607,5 +599,21 @@ in
         }
       ];
     };
+    
+    # Assertions for configuration validation
+    assertions = [
+      {
+        assertion = cfg.enable -> cfg.targetUser != "";
+        message = "services.sinex.targetUser must be set when Sinex is enabled";
+      }
+      {
+        assertion = cfg.monitoring.observabilityStack.enable -> cfg.database.autoSetup || config.services.postgresql.enable;
+        message = "PostgreSQL must be enabled for Sinex observability stack";
+      }
+      {
+        assertion = cfg.monitoring.dashboards.grafana.enable -> cfg.monitoring.observabilityStack.enable;
+        message = "Grafana dashboards require the observability stack to be enabled";
+      }
+    ];
   };
 }

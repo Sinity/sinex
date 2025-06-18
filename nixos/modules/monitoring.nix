@@ -59,11 +59,8 @@ in
 
         endpoints = mkOption {
           type = types.listOf types.str;
-          default = [
-            "localhost:${toString cfg.unifiedCollector.metricsPort}/metrics"
-            "localhost:${toString cfg.promoWorker.metricsPort}/metrics"
-          ];
-          description = "List of metrics endpoints to aggregate";
+          default = [];
+          description = "List of metrics endpoints to aggregate (deprecated - metrics are now events)";
         };
       };
     };
@@ -245,12 +242,6 @@ in
           description = "Enable Grafana dashboard provisioning";
         };
 
-        datasourceUrl = mkOption {
-          type = types.str;
-          default = "http://localhost:9090";
-          description = "Prometheus datasource URL for Grafana (deprecated - uses PostgreSQL directly now)";
-        };
-        
         postgresqlUrl = mkOption {
           type = types.str;
           default = "postgresql:///${cfg.database.name}?host=/run/postgresql";
@@ -497,31 +488,7 @@ in
           job_name = "postgres_exporter";
           static_configs = [ { targets = [ "${cfg.monitoring.observabilityStack.listenAddress}:9187" ]; } ];
         }
-        # Sinex services
-        {
-          job_name = "sinex_unified_collector";
-          metrics_path = "/metrics";
-          static_configs = [
-            {
-              targets = [
-                "${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.unifiedCollector.metricsPort}"
-              ];
-            }
-          ];
-          scrape_interval = "15s";
-        }
-        {
-          job_name = "sinex_promo_worker";
-          metrics_path = "/metrics";
-          static_configs = [
-            {
-              targets = [
-                "${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.promoWorker.metricsPort}"
-              ];
-            }
-          ];
-          scrape_interval = "15s";
-        }
+        # Sinex services - metrics are now emitted as events, not scraped
       ];
 
       exporters = {
@@ -659,8 +626,8 @@ in
       mkIf (cfg.monitoring.observabilityStack.enable && cfg.monitoring.dashboards.grafana.enable)
         [
           "d /var/lib/grafana/dashboards 0755 grafana grafana"
-          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../grafana-dashboards/sinex-overview.json}"
-          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../grafana-dashboards/sinex-event-analysis.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../../grafana-dashboards/sinex-overview.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../../grafana-dashboards/sinex-event-analysis.json}"
         ];
 
     # Firewall for monitoring services (localhost only)
