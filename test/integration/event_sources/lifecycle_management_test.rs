@@ -1,5 +1,4 @@
 use anyhow::Result;
-use async_trait::async_trait;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_events::{
     filesystem::FilesystemMonitor,

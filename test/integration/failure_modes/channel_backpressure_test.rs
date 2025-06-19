@@ -1,4 +1,4 @@
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result, EventOutput};
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
 use sinex_ulid::Ulid;
 use tokio::sync::mpsc;
 use std::sync::atomic::{AtomicU64, Ordering};

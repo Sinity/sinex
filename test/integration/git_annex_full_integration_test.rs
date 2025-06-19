@@ -9,7 +9,7 @@ use sinex_core::RawEventBuilder;
 use sinex_db::{create_test_pool, queries};
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -325,7 +325,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
         event_ids.push(event_id);
         
         // Add to promotion queue for processing
-        queries::add_to_promotion_queue(pool, event_id, "annex-test-agent", 3).await?;
+        queries::add_to_work_queue(pool, event_id, "annex-test-agent", 3).await?;
     }
     
     // Simulate worker processing events with git-annex content retrieval
@@ -348,7 +348,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
         let event = crate::common::get_event_by_id(pool, *event_id).await?;
         
         // Extract git-annex key and retrieve content
-        if let Some(annex_key) = event.payload["git_annex_key"].as_str() {
+        if let Some(_annex_key) = event.payload["git_annex_key"].as_str() {
             let file_name = match event.source.as_str() {
                 "document_processor" => "document.txt",
                 "image_processor" => "image.jpg",
@@ -379,7 +379,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
         }
         
         // Complete processing
-        queries::complete_promotion_queue_item(pool, queue_item.queue_id).await?;
+        queries::complete_work_queue_item(pool, queue_item.queue_id).await?;
     }
     
     // Verify all events were processed successfully
@@ -424,7 +424,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
         ).build();
         
         let event_id = queries::insert_event(pool, &event).await?.id;
-        queries::add_to_promotion_queue(pool, event_id, "concurrent-test-agent", 3).await?;
+        queries::add_to_work_queue(pool, event_id, "concurrent-test-agent", 3).await?;
         event_ids.push(event_id);
     }
     
@@ -477,7 +477,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
                                                 file_count_processed.fetch_add(1, Ordering::SeqCst);
                                                 
                                                 // Complete successfully
-                                                let _ = queries::complete_promotion_queue_item(&pool, item.queue_id).await;
+                                                let _ = queries::complete_work_queue_item(&pool, item.queue_id).await;
                                                 success_count.fetch_add(1, Ordering::SeqCst);
                                             } else {
                                                 failure_count.fetch_add(1, Ordering::SeqCst);
@@ -584,7 +584,7 @@ async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo:
     
     for event in &all_document_events {
         if let Some(filename) = event.payload["filename"].as_str() {
-            if let Some(key) = event.payload["git_annex_key"].as_str() {
+            if let Some(_key) = event.payload["git_annex_key"].as_str() {
                 // Retrieve content from git-annex
                 match annex_repo.get_file_content(filename).await {
                     Ok(content) => {

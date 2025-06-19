@@ -1,8 +1,6 @@
 use anyhow::Result;
-use sqlx::{PgPool, Acquire};
 use std::time::{Duration, Instant};
 use std::fs;
-use std::path::Path;
 use tokio::time::timeout;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use sinex_ulid::Ulid;

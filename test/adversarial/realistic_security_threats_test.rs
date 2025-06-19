@@ -1,6 +1,4 @@
 use anyhow::Result;
-use sqlx::PgPool;
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::time::Duration;
 use tokio::time::timeout;

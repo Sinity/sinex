@@ -114,7 +114,7 @@ async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dy
 #[sqlx::test]
 async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Generate multiple ULIDs rapidly to test monotonic behavior
-    let mut prev_ulid = None;
+    let mut _prev_ulid = None;
     let mut ulids = Vec::new();
     let mut unique_check = HashSet::new();
     
@@ -128,7 +128,7 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
             "Generated non-unique ULID: {}", ulid_str);
         
         ulids.push(ulid_str.clone());
-        prev_ulid = Some(ulid);
+        _prev_ulid = Some(ulid);
         
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 

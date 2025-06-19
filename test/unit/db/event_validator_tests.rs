@@ -4,7 +4,7 @@ use serde_json::json;
 
 #[test]
 fn test_event_validator_creation() {
-    let validator = EventValidator::new();
+    let _validator = EventValidator::new();
     // Validator should be created successfully
     // This test ensures the constructor doesn't panic
 }
@@ -183,7 +183,7 @@ fn test_event_validator_terminal_invalid_exit_code() {
         })
     ).build();
     
-    let result = validator.validate(&event);
+    let _result = validator.validate(&event);
     // The validator should handle this gracefully, whether it passes or fails
     // This tests that extreme values don't cause panics
 }
@@ -205,7 +205,7 @@ fn test_event_validator_large_payload() {
         })
     ).build();
     
-    let result = validator.validate(&event);
+    let _result = validator.validate(&event);
     // The validator should handle large payloads gracefully
     // This might pass or fail depending on size limits, but shouldn't panic
 }
@@ -229,7 +229,7 @@ fn test_event_validator_deeply_nested_payload() {
         })
     ).build();
     
-    let result = validator.validate(&event);
+    let _result = validator.validate(&event);
     // Should handle deep nesting without stack overflow
 }
 
@@ -294,7 +294,7 @@ fn test_event_validator_unknown_source() {
         json!({"data": "test"})
     ).build();
     
-    let result = validator.validate(&event);
+    let _result = validator.validate(&event);
     // Should handle unknown sources gracefully - might pass or fail
     // depending on validation policy, but shouldn't panic
 }
@@ -317,7 +317,7 @@ fn test_event_validator_hardcoded_rules() {
     
     for (source, event_type, payload, should_pass) in test_cases {
         let event = RawEventBuilder::new(source, event_type, payload).build();
-        let result = validator.validate(&event);
+        let _result = validator.validate(&event);
         
         if should_pass {
             // Don't assert here as validation might be lenient

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use sqlx::PgPool;
 use std::time::Duration;
 use tokio::time::timeout;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};

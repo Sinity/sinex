@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
 use tokio::time::{sleep, interval};
 use futures::future::join_all;

@@ -152,7 +152,7 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
     
     // Fast producer: 5000 events/sec
-    let mut fast_producer = HighFrequencyEventSource::new(5000)
+    let fast_producer = HighFrequencyEventSource::new(5000)
         .with_max_events(15_000); // More than channel capacity
 
     // Slow consumer: 100ms per event = 10 events/sec
@@ -222,7 +222,7 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
     // Test that the channel properly handles saturation without losing events
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100); // Smaller channel for easier testing
     
-    let mut producer = HighFrequencyEventSource::new(10_000) // Very fast
+    let producer = HighFrequencyEventSource::new(10_000) // Very fast
         .with_max_events(150); // More than channel capacity
 
     // Start producer
@@ -337,7 +337,7 @@ async fn test_channel_close_during_backpressure() -> Result<()> {
     // Test what happens when the channel is closed while producer is backpressured
     let (tx, rx) = mpsc::channel::<RawEvent>(10);
     
-    let mut producer = HighFrequencyEventSource::new(10_000).with_max_events(1000);
+    let producer = HighFrequencyEventSource::new(10_000).with_max_events(1000);
 
     // Start producer
     let mut producer_clone = producer.clone();
@@ -375,7 +375,7 @@ async fn test_backpressure_recovery() -> Result<()> {
     // Test that the system recovers properly when backpressure is relieved
     let (tx, mut rx) = mpsc::channel::<RawEvent>(50);
     
-    let mut producer = HighFrequencyEventSource::new(5000).with_max_events(200);
+    let producer = HighFrequencyEventSource::new(5000).with_max_events(200);
 
     // Start producer
     let mut producer_clone = producer.clone();
@@ -434,7 +434,7 @@ async fn test_memory_pressure_during_backpressure() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Create events with larger payloads to test memory pressure
-    let mut producer = HighFrequencyEventSource::new(2000).with_max_events(2000);
+    let mut _producer = HighFrequencyEventSource::new(2000).with_max_events(2000);
 
     let producer_handle = tokio::spawn(async move {
         // Override the stream_events to create larger payloads

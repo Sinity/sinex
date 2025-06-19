@@ -218,7 +218,7 @@ async fn test_connection_pool_timeout_resilience() {
 #[tokio::test]
 async fn test_retry_with_backoff() {
     // Track retry behavior
-    let attempt_count = Arc::new(AtomicU64::new(0));
+    let _attempt_count = Arc::new(AtomicU64::new(0));
     let success_after_retry = Arc::new(AtomicU64::new(0));
     
     /// Simulate operation that fails initially then succeeds
@@ -250,7 +250,7 @@ async fn test_retry_with_backoff() {
         for attempt in 0..=max_retries {
             match operation().await {
                 Ok(result) => return Ok(result),
-                Err(e) if attempt < max_retries => {
+                Err(_e) if attempt < max_retries => {
                     eprintln!("Attempt {} failed, retrying in {}ms", attempt + 1, delay);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                     delay = (delay * 2).min(5000); // Cap at 5 seconds

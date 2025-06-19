@@ -2,7 +2,6 @@ use anyhow::Result;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::time::timeout;
 use futures::future::join_all;
 
 #[tokio::test]
@@ -38,7 +37,7 @@ async fn test_connection_pool_max_connections() -> Result<()> {
     
     // First 5 should succeed quickly
     let mut succeeded = 0;
-    let mut timed_out = 0;
+    let mut _timed_out = 0;
     
     for result in results {
         match result? {
@@ -48,7 +47,7 @@ async fn test_connection_pool_max_connections() -> Result<()> {
                 assert!(elapsed < Duration::from_secs(3));
             }
             Err((_, _)) => {
-                timed_out += 1;
+                _timed_out += 1;
             }
         }
     }

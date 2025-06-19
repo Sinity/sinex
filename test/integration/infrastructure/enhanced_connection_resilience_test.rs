@@ -155,7 +155,7 @@ impl ResilientDbWorker {
     }
 
     async fn run_simple_query(&self) -> Result<()> {
-        let active = self.metrics.add_active_connection();
+        let _active = self.metrics.add_active_connection();
         
         let result = timeout(
             Duration::from_millis(500),
@@ -173,7 +173,7 @@ impl ResilientDbWorker {
     }
 
     async fn run_read_write_query(&self, iteration: usize) -> Result<()> {
-        let active = self.metrics.add_active_connection();
+        let _active = self.metrics.add_active_connection();
 
         // Create temporary table if it doesn't exist
         let setup_result = sqlx::query(&format!(
@@ -220,7 +220,7 @@ impl ResilientDbWorker {
     }
 
     async fn run_transaction_query(&self, iteration: usize) -> Result<()> {
-        let active = self.metrics.add_active_connection();
+        let _active = self.metrics.add_active_connection();
 
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
@@ -285,7 +285,7 @@ impl ResilientDbWorker {
     }
 
     async fn run_streaming_query(&self) -> Result<()> {
-        let active = self.metrics.add_active_connection();
+        let _active = self.metrics.add_active_connection();
 
         // Generate a series to stream
         let mut stream = sqlx::query("SELECT generate_series(1, 100) as num")
@@ -312,7 +312,7 @@ impl ResilientDbWorker {
     }
 
     async fn run_prepared_query(&self, iteration: usize) -> Result<()> {
-        let active = self.metrics.add_active_connection();
+        let _active = self.metrics.add_active_connection();
 
         // Use the same prepared statement repeatedly
         let result = sqlx::query_scalar::<_, i32>("SELECT $1::int + $2::int")

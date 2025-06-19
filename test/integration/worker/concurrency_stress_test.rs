@@ -3,9 +3,9 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tokio::time::{sleep, interval, timeout};
-use tokio::sync::{Semaphore, RwLock, Barrier};
+use tokio::sync::{RwLock, Barrier};
 use futures::future::join_all;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use sinex_ulid::Ulid;
@@ -314,7 +314,7 @@ impl StressTestWorker {
             Ok(Some(item)) => {
                 // Check for race condition: if we're getting work items too frequently,
                 // it might indicate a race condition in work distribution
-                let current_time = Instant::now();
+                let _current_time = Instant::now();
                 
                 // Simple race condition detection: if we're claiming work very rapidly,
                 // it might indicate duplicate processing
@@ -431,7 +431,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     // Create work items continuously during the test
     let create_pool = pool.clone();
     let create_agent = agent_name.clone();
-    let create_metrics = metrics.clone();
+    let _create_metrics = metrics.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
             let event = insert_raw_event(

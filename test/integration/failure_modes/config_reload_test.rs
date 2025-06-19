@@ -1,4 +1,3 @@
-use sinex_collector::{CollectorConfig, UnifiedCollector};
 use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
 use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -16,7 +15,7 @@ async fn test_config_reload_during_processing() {
     let reload_triggered = Arc::new(AtomicBool::new(false));
     
     // Simulate config change that affects event processing
-    let initial_config = serde_json::json!({
+    let _initial_config = serde_json::json!({
         "database_url": "postgresql:///sinex_dev",
         "event_sources": {
             "test_source": {
@@ -26,7 +25,7 @@ async fn test_config_reload_during_processing() {
         }
     });
     
-    let updated_config = serde_json::json!({
+    let _updated_config = serde_json::json!({
         "database_url": "postgresql:///sinex_dev", 
         "event_sources": {
             "test_source": {

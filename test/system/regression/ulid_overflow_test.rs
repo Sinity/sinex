@@ -23,14 +23,14 @@ fn test_monotonic_ulid_overflow() {
 fn test_monotonic_ulid_rapid_generation() {
     // Generate many ULIDs in the same millisecond
     let mut ulids = Vec::new();
-    let mut prev: Option<Ulid> = None;
+    let mut _prev: Option<Ulid> = None;
     
     // Generate 1000 ULIDs as fast as possible
     for _ in 0..1000 {
         // Note: new_monotonic not available - using regular new()
         let ulid = Ulid::new();
         ulids.push(ulid);
-        prev = Some(ulid);
+        _prev = Some(ulid);
     }
     
     // Check all are unique and monotonic

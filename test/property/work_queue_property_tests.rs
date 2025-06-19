@@ -263,7 +263,7 @@ proptest! {
     fn test_work_queue_consistency_under_high_contention(
         num_workers in 5..=15usize,
         items_per_batch in 1..=3usize,
-        seed in any::<u64>(),
+        _seed in any::<u64>(),
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {

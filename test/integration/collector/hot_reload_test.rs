@@ -82,7 +82,6 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
         ..Default::default()
     };
     
-    use std::fs::File;
     let config_str = toml::to_string(&initial_config)?;
     config_file.as_file().write_all(config_str.as_bytes())?;
     config_file.as_file().sync_all()?;
@@ -129,8 +128,8 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
     drop(tx);
     
     // Wait for tasks to complete
-    stream_task.await?;
-    receiver_task.await?;
+    let _ = stream_task.await?;
+    let _ = receiver_task.await?;
     
     // Verify results
     let events = received_events.lock().await;

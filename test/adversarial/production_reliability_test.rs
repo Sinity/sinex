@@ -3,8 +3,6 @@ use sqlx::PgPool;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::pin::Pin;
-use std::future::Future;
 use tokio::time::timeout;
 use tokio::sync::mpsc;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
