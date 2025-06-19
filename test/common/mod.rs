@@ -1,3 +1,8 @@
+//! Common test utilities and helpers
+
+#![allow(dead_code)] // Test utilities may not all be used
+#![allow(unused_variables)] // Test patterns
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use sinex_core::{RawEventBuilder, sources, event_type_constants};

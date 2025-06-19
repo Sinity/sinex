@@ -41,22 +41,42 @@ fn test_ulid_timestamp_conversion_overflow_bug() {
 }
 
 #[test]
-#[ignore = "MonotonicUlidGenerator not available in current implementation"]
-fn test_monotonic_ulid_counter_wraparound_bug() {
-    // BUG 2: In crate/sinex-ulid/src/monotonic.rs line 57
-    // Counter can reach u32::MAX but we don't handle wraparound properly
+fn test_ulid_high_frequency_ordering_limitation() {
+    // Test: Demonstrate that standard ULIDs can violate ordering under high frequency
+    // This documents why MonotonicUlidGenerator might be needed for high-throughput scenarios
     
-    // NOTE: MonotonicUlidGenerator is not available in the current sinex_ulid implementation
-    // This test is kept as documentation of a potential issue if monotonic generation
-    // is added in the future.
+    let mut ulids = Vec::new();
+    let mut ordering_violations = 0;
     
-    // The bug would manifest if:
-    // 1. A monotonic counter reaches u32::MAX
-    // 2. The next increment causes wraparound to 0
-    // 3. This breaks the monotonic ordering guarantee
+    // Generate ULIDs as fast as possible to stress-test ordering
+    for _ in 0..10000 {
+        ulids.push(Ulid::new());
+    }
     
-    // In production code, this could happen with very high throughput
-    // generating many ULIDs within the same millisecond
+    // Check for ordering violations
+    for i in 1..ulids.len() {
+        if ulids[i] < ulids[i-1] {
+            ordering_violations += 1;
+            if ordering_violations <= 3 { // Log first few violations
+                println!("Ordering violation #{} at index {}: {} < {}", 
+                        ordering_violations, i, ulids[i], ulids[i-1]);
+            }
+        }
+    }
+    
+    println!("Generated {} ULIDs with {} ordering violations ({:.2}%)", 
+             ulids.len(), ordering_violations, 
+             (ordering_violations as f64 / ulids.len() as f64) * 100.0);
+    
+    // This test documents the limitation rather than asserting perfect ordering
+    // For Sinex's use case, occasional ordering violations may be acceptable
+    // If strict ordering is required, this justifies implementing MonotonicUlidGenerator
+    
+    if ordering_violations == 0 {
+        println!("✅ Standard ULID generation maintained perfect ordering - MonotonicUlidGenerator may not be needed");
+    } else {
+        println!("⚠️  Standard ULID generation has ordering violations - MonotonicUlidGenerator would be beneficial for strict ordering");
+    }
 }
 
 #[test]

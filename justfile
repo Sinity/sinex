@@ -239,6 +239,12 @@ coverage-report: coverage-html
     @echo "📊 Opening coverage report..."
     xdg-open target/llvm-cov/html/index.html 2>/dev/null || echo "💡 Open target/llvm-cov/html/index.html in your browser"
 
+# Fun / Analysis
+fun:
+    echo "🎯 Running entropy analysis and other fun tests..."
+    cargo test ulid::analysis::entropy_analysis -- --ignored --nocapture
+    echo "🎉 Analysis complete! Check the output above for mathematical insights."
+
 # Aliases
 alias c := check
 alias t := test

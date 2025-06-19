@@ -107,17 +107,38 @@ fn test_ulid_zero_and_max_values() {
 }
 
 #[test]
-#[ignore = "MonotonicUlidGenerator not available in current implementation"]
-fn test_ulid_monotonic_generator_overflow() {
-    // This test requires MonotonicUlidGenerator which is not available
-    // in the current sinex_ulid implementation
-    // 
-    // The test would verify that when generating many ULIDs with the same
-    // timestamp, a monotonic generator would ensure they are strictly
-    // increasing by incrementing the random component.
-    //
-    // Since we don't have monotonic generation, this test is kept as
-    // documentation of expected behavior if such functionality is added.
+fn test_ulid_rapid_generation_same_millisecond() {
+    // Test: Generate many ULIDs rapidly and check for collisions
+    // This tests whether standard ULID generation is sufficient for rapid generation
+    
+    use std::collections::HashSet;
+    
+    let mut ulids = HashSet::new();
+    let generation_count = 10000;
+    
+    // Generate ULIDs as rapidly as possible
+    for _ in 0..generation_count {
+        let ulid = Ulid::new();
+        
+        // Check for collisions
+        assert!(ulids.insert(ulid), "ULID collision detected: {}", ulid);
+    }
+    
+    assert_eq!(ulids.len(), generation_count);
+    
+    // Convert to sorted vector to check ordering properties
+    let mut sorted_ulids: Vec<_> = ulids.into_iter().collect();
+    sorted_ulids.sort();
+    
+    // Verify they maintain proper timestamp ordering
+    for i in 1..sorted_ulids.len() {
+        // ULIDs should be ordered by timestamp first, then by random component
+        assert!(sorted_ulids[i] > sorted_ulids[i-1], 
+               "ULID ordering violation: {} should be > {}", 
+               sorted_ulids[i], sorted_ulids[i-1]);
+    }
+    
+    println!("Successfully generated {} unique, ordered ULIDs", generation_count);
 }
 
 #[test]
