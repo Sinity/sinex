@@ -141,6 +141,10 @@
               btop
               jq
 
+              # VM testing tools (Agent Alpha)
+              qemu
+              qemu_kvm
+
               # Build dependencies
               openssl
               pkg-config
