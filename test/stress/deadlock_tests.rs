@@ -8,9 +8,11 @@ use std::collections::HashSet;
 use tokio::time::{sleep, interval};
 use tokio::sync::Barrier;
 use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
+use sinex_db::{create_test_pool, run_migrations};
 use sinex_ulid::Ulid;
 use serde_json::json;
+use rand::Rng;
+use std::str::FromStr;
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<()> {
@@ -20,11 +22,13 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
-         VALUES ($1, $2, $3)",
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+         VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
-        "Coordinated deadlock scenario test"
+        "Coordinated deadlock scenario test",
+        "generic",
+        "running"
     )
     .execute(&pool)
     .await?;
@@ -34,16 +38,15 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
     let deadlock_work_items = 20;
     
     for i in 0..deadlock_work_items {
-        let event = insert_raw_event(
-            &pool,
+        let event_id = Ulid::new();
+        sqlx::query!(
+            "INSERT INTO raw.events (id, source, event_type, payload) 
+             VALUES ($1::uuid::ulid, $2, $3, $4)",
+            event_id.to_uuid(),
             "stress.deadlock_scenario",
             "deadlock_item",
-            "localhost",
-            json!({"deadlock_item": i}),
-            None,
-            Some("1.0.0"),
-            None,
-        ).await?;
+            json!({"deadlock_item": i})
+        ).execute(&pool).await?;
 
         let queue_id = Ulid::new();
         sqlx::query!(
@@ -51,7 +54,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
-            event.id.to_uuid(),
+            event_id.to_uuid(),
             agent_name
         )
         .execute(&pool)

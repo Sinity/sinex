@@ -1,13 +1,9 @@
 use anyhow::Result;
 use sqlx::PgPool;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-use std::collections::HashSet;
-use tokio::time::{sleep, interval, timeout};
-use tokio::sync::{RwLock, Barrier};
-use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
+use tokio::sync::RwLock;
+use sinex_db::{create_test_pool, run_migrations};
 use sinex_ulid::Ulid;
 use serde_json::json;
 
@@ -102,11 +98,7 @@ impl ConcurrencyStressMetrics {
     }
 
     pub async fn report(&self) -> String {
-        let cycle_times = if let Ok(times) = self.worker_cycle_times.read().await {
-            times.clone()
-        } else {
-            Vec::new()
-        };
+        let cycle_times = self.worker_cycle_times.read().await.clone();
 
         let avg_cycle_time = if !cycle_times.is_empty() {
             cycle_times.iter().sum::<Duration>() / cycle_times.len() as u32
@@ -157,11 +149,12 @@ impl StressTestUtils {
         // Register the test agent
         sqlx::query!(
             "INSERT INTO sinex_schemas.agent_manifests (
-                agent_name, version, description
-            ) VALUES ($1, '1.0.0', $2)
+                agent_name, version, description, agent_type, status
+            ) VALUES ($1, '1.0.0', $2, 'generic', 'running')
             ON CONFLICT (agent_name) 
             DO UPDATE SET 
-                version = '1.0.0'",
+                version = '1.0.0',
+                status = 'running'",
             agent_name,
             format!("Stress test agent for {}", source_prefix)
         ).execute(&pool).await?;

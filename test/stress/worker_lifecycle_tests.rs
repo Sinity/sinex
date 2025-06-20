@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 use tokio::time::{sleep, interval};
 use tokio::sync::Barrier;
 use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
+use sinex_db::{create_test_pool, run_migrations};
 use sinex_ulid::Ulid;
 use serde_json::json;
+use rand::Rng;
+use std::str::FromStr;
 
 /// Specialized worker for testing race conditions and competitive scenarios
 struct RaceConditionWorker {
@@ -157,8 +159,8 @@ impl RaceConditionWorker {
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '500 milliseconds'
-                 WHERE queue_id = $1::uuid::ulid",
-                queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
+                 WHERE queue_id = $1",
+                Ulid::from_str(queue_id)?
             )
             .execute(&self.pool)
             .await?;
@@ -171,8 +173,8 @@ impl RaceConditionWorker {
              SET status = 'succeeded', 
                  processed_at = NOW(),
                  processing_worker_id = $2
-             WHERE queue_id = $1::uuid::ulid",
-            queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
+             WHERE queue_id = $1",
+            Ulid::from_str(queue_id)?,
             self.worker_id
         )
         .execute(&self.pool)
@@ -205,11 +207,13 @@ async fn test_race_condition_detection() -> Result<()> {
     let agent_name = format!("race_condition_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
-         VALUES ($1, $2, $3)",
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+         VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
-        "Race condition detection test"
+        "Race condition detection test",
+        "generic",
+        "running"
     )
     .execute(&pool)
     .await?;
@@ -220,16 +224,15 @@ async fn test_race_condition_detection() -> Result<()> {
     let race_workers = 15;
 
     for i in 0..race_work_items {
-        let event = insert_raw_event(
-            &pool,
+        let event_id = Ulid::new();
+        sqlx::query!(
+            "INSERT INTO raw.events (id, source, event_type, payload) 
+             VALUES ($1::uuid::ulid, $2, $3, $4)",
+            event_id.to_uuid(),
             "stress.race_condition",
             "race_item",
-            "localhost",
-            json!({"race_item": i}),
-            None,
-            Some("1.0.0"),
-            None,
-        ).await?;
+            json!({"race_item": i})
+        ).execute(&pool).await?;
 
         let queue_id = Ulid::new();
         sqlx::query!(
@@ -237,7 +240,7 @@ async fn test_race_condition_detection() -> Result<()> {
              (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
-            event.id.to_uuid(),
+            event_id.to_uuid(),
             agent_name
         )
         .execute(&pool)

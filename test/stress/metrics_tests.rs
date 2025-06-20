@@ -6,9 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::{sleep, interval};
 use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
+use sinex_db::{create_test_pool, run_migrations};
 use sinex_ulid::Ulid;
 use serde_json::json;
+use std::str::FromStr;
+use rand::Rng;
 
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {
@@ -194,7 +196,7 @@ impl StressTestWorker {
         let processing_time = if self.aggressive_claiming {
             Duration::from_millis(50)
         } else {
-            Duration::from_millis(100 + rand::random::<u64>() % 200)
+            Duration::from_millis(100 + (rand::random::<u8>() as u64 * 200 / 255))
         };
 
         sleep(processing_time).await;
@@ -263,11 +265,13 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     let test_duration = Duration::from_secs(30);
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
-         VALUES ($1, $2, $3)",
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+         VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
-        "Extreme concurrency stress test"
+        "Extreme concurrency stress test",
+        "generic",
+        "running"
     )
     .execute(&pool)
     .await?;
@@ -278,16 +282,15 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
-            let event = insert_raw_event(
-                &create_pool,
+            let event_id = Ulid::new();
+            sqlx::query!(
+                "INSERT INTO raw.events (id, source, event_type, payload) 
+                 VALUES ($1::uuid::ulid, $2, $3, $4)",
+                event_id.to_uuid(),
                 "stress.extreme_concurrency",
                 "stress_item",
-                "localhost",
-                json!({"stress_item": i, "batch": "extreme"}),
-                None,
-                Some("1.0.0"),
-                None,
-            ).await.expect("Event creation failed");
+                json!({"stress_item": i, "batch": "extreme"})
+            ).execute(&create_pool).await.expect("Event creation failed");
 
             let queue_id = Ulid::new();
             sqlx::query!(
@@ -295,7 +298,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
                  (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
                  VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 5, 'pending')",
                 queue_id.to_uuid(),
-                event.id.to_uuid(),
+                event_id.to_uuid(),
                 create_agent
             )
             .execute(&create_pool)
