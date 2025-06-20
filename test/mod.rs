@@ -24,6 +24,10 @@ mod property_tests;
 #[cfg(test)]
 mod property;
 
+// Stress tests
+#[cfg(test)]
+mod stress;
+
 // Legacy organization (being migrated)
 #[cfg(test)]
 mod agent {

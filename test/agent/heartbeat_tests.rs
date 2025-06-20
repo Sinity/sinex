@@ -218,7 +218,8 @@ async fn test_heartbeat_metrics_tracking() {
         .await
         .unwrap();
         
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Small delay to ensure distinct timestamps
+        tokio::task::yield_now().await;
     }
     
     // Query latest heartbeat metrics

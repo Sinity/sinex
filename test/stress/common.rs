@@ -157,16 +157,13 @@ impl StressTestUtils {
         // Register the test agent
         sqlx::query!(
             "INSERT INTO sinex_schemas.agent_manifests (
-                agent_name, version, capabilities, event_sources, 
-                last_heartbeat, status
-            ) VALUES ($1, '1.0.0', $2, $3, NOW(), 'active')
+                agent_name, version, description
+            ) VALUES ($1, '1.0.0', $2)
             ON CONFLICT (agent_name) 
             DO UPDATE SET 
-                last_heartbeat = NOW(),
-                status = 'active'",
+                version = '1.0.0'",
             agent_name,
-            serde_json::json!(["work_processing", "stress_testing"]),
-            serde_json::json!([format!("{}.stress", source_prefix)])
+            format!("Stress test agent for {}", source_prefix)
         ).execute(&pool).await?;
 
         Ok(pool)
@@ -195,7 +192,7 @@ impl StressTestUtils {
         let mut event_ids = Vec::new();
         
         for i in 0..count {
-            let event_id = Ulid::new().to_string();
+            let event_id = Ulid::new();
             let payload = json!({
                 "sequence": i,
                 "stress_test": true,
@@ -203,15 +200,15 @@ impl StressTestUtils {
             });
 
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload, captured_at) 
-                 VALUES ($1, $2, $3, $4, NOW())",
-                event_id,
+                "INSERT INTO raw.events (id, source, event_type, payload) 
+                 VALUES ($1::uuid::ulid, $2, $3, $4)",
+                event_id.to_uuid(),
                 source,
                 event_type,
                 payload
             ).execute(pool).await?;
 
-            event_ids.push(event_id);
+            event_ids.push(event_id.to_string());
         }
 
         Ok(event_ids)

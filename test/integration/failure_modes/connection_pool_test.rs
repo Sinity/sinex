@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, RwLock};
 use tokio::time::timeout;
+use crate::common::timing_optimization::EventCounter;
 
 /// Test connection pool exhaustion scenarios
 #[tokio::test]
@@ -16,6 +17,9 @@ async fn test_connection_pool_exhaustion() {
     let rejected_requests = Arc::new(AtomicU64::new(0));
     let wait_times = Arc::new(RwLock::new(Vec::new()));
     
+    // Coordinate between patterns  
+    let burst_coordinator = EventCounter::new(50);
+    
     // Simulate various workload patterns
     let mut handles = vec![];
     
@@ -25,6 +29,7 @@ async fn test_connection_pool_exhaustion() {
         let active = active_connections.clone();
         let rejected = rejected_requests.clone();
         let waits = wait_times.clone();
+        let coordinator = burst_coordinator.clone();
         
         handles.push(tokio::spawn(async move {
             for j in 0..10 {
@@ -41,6 +46,7 @@ async fn test_connection_pool_exhaustion() {
                         tokio::time::sleep(Duration::from_millis(50 + (i * 10) as u64)).await;
                         
                         active.fetch_sub(1, Ordering::Relaxed);
+                        coordinator.increment();
                         drop(permit);
                     }
                     Err(_) => {
@@ -49,7 +55,7 @@ async fn test_connection_pool_exhaustion() {
                     }
                 }
                 
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         }));
     }
@@ -59,9 +65,11 @@ async fn test_connection_pool_exhaustion() {
     let active = active_connections.clone();
     let rejected = rejected_requests.clone();
     
+    let burst_counter = burst_coordinator.clone();
+    
     handles.push(tokio::spawn(async move {
-        // Wait then burst
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Wait for some steady operations to complete first
+        let _ = burst_counter.wait_for_target(Duration::from_secs(5)).await;
         
         // Try to acquire many connections at once
         let mut permits = vec![];
