@@ -1,5 +1,37 @@
 # TIM-EmbeddingGenerationModels: Embedding Generation, Models, Storage
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 0% (Design complete, implementation not started)
+**Dependencies**: PostgreSQL pgvector extension, SentenceTransformers library, model downloads
+**Blocks**: Semantic search, content similarity, LLM context augmentation
+
+## MVP Specification
+- Local CPU-based embedding model deployment
+- Basic text chunking for long documents
+- Vector storage in PostgreSQL with pgvector
+- Batch processing pipeline for existing content
+- Simple embedding API interface
+
+## Enhanced Features
+- GPU acceleration support
+- Advanced chunking strategies (semantic, sliding window)
+- Multiple embedding model support
+- Fine-tuning on user data
+- Performance optimization and caching
+- Multilingual embedding support
+
+## Implementation Checklist
+- [ ] Model selection and evaluation framework
+- [ ] SentenceTransformers integration
+- [ ] PostgreSQL pgvector setup
+- [ ] Text chunking pipeline
+- [ ] Embedding storage schema
+- [ ] Batch processing for backfill
+- [ ] Real-time embedding generation
+- [ ] Performance benchmarking
+- [ ] Model management and updates
+
 *   **Relevant ADR:** `[ADR-005-VectorIndexTypePgvector.md](docs/adr/ADR-005-VectorIndexTypePgvector.md)` (HNSW for `pgvector`), `[ADR-007-LargeScaleVectorSearchStrategy.md](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)` (`pgvector` CPU first)
 *   **Original UG Context:** Section 16
 *   **Vision Document Reference:** Part III.3.6

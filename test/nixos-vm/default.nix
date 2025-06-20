@@ -13,4 +13,11 @@
   
   # Performance validation and load testing
   performance = import ./test-scenarios/performance.nix { inherit pkgs; };
+  
+  # Advanced testing capabilities
+  # Chaos engineering - tests system resilience under failure conditions
+  chaos-engineering = import ./chaos-engineering.nix { inherit pkgs; };
+  
+  # Production scale - tests system performance at production workloads  
+  production-scale = import ./production-scale.nix { inherit pkgs; };
 }

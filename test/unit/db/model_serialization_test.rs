@@ -1,7 +1,7 @@
 use sinex_db::models::{RawEvent, WorkQueueItem, QueueStatus, AgentManifest};
 use sinex_ulid::Ulid;
 use chrono::{Utc, Duration};
-use serde_json::{json, Value};
+use serde_json::json;
 use uuid::Uuid;
 
 #[test]

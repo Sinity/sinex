@@ -10,6 +10,7 @@ let
   mkEventSource =
     {
       name,
+      pathKey ? null,  # Optional override for path option name
       defaultPollInterval ? null,
       hasPath ? false,
       defaultPath ? null,
@@ -22,47 +23,6 @@ let
         description = "Enable ${name} event source";
       };
 
-      # Every event source can have custom heartbeat settings
-      heartbeat = {
-        interval = mkOption {
-          type = types.int;
-          default = 60;
-          description = "Heartbeat interval in seconds for ${name}";
-        };
-
-        timeout = mkOption {
-          type = types.int;
-          default = 30;
-          description = "Heartbeat timeout in seconds for ${name}";
-        };
-
-        enableHealthMetrics = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable health metrics collection for ${name}";
-        };
-      };
-
-      # Circuit breaker settings per event source
-      circuitBreaker = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable circuit breaker for ${name}";
-        };
-
-        threshold = mkOption {
-          type = types.int;
-          default = 5;
-          description = "Failure threshold before circuit breaker opens for ${name}";
-        };
-
-        timeout = mkOption {
-          type = types.str;
-          default = "60s";
-          description = "Circuit breaker timeout before retry for ${name}";
-        };
-      };
     }
     // optionalAttrs (defaultPollInterval != null) {
       pollInterval = mkOption {
@@ -73,15 +33,13 @@ let
     }
     // optionalAttrs hasPath {
       ${
-        if (name == "filesystem") then
-          "watchPaths"
-        else if (name == "atuin") then
-          "databasePath"
+        if pathKey != null then
+          pathKey
         else
           "path"
       } =
         mkOption {
-          type = if (name == "filesystem") then types.listOf types.str else types.str;
+          type = if (pathKey == "watchPaths") then types.listOf types.str else types.str;
           default = defaultPath;
           description = "Path configuration for ${name} (supports ~ expansion)";
         };
@@ -94,6 +52,7 @@ in
     # Shell history sources
     atuin = mkEventSource {
       name = "Atuin shell history";
+      pathKey = "databasePath";
       defaultPollInterval = 3;
       hasPath = true;
       defaultPath = "~/.local/share/atuin/history.db";
@@ -163,12 +122,19 @@ in
           default = 500;
           description = "Delay in milliseconds after command execution before capturing";
         };
+
+        captureInterval = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Interval in seconds between automatic scrollback captures";
+        };
       };
     };
 
     # Filesystem monitoring
     filesystem = mkEventSource {
       name = "filesystem event monitoring";
+      pathKey = "watchPaths";
       hasPath = true;
       defaultPath = [ "~/" ]; # Monitor entire home directory
       extraOptions = {
@@ -287,6 +253,12 @@ in
           description = "Monitor system bus";
         };
 
+        logAllSignals = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Log all D-Bus signals (generates high volume)";
+        };
+
         # Group extraction options
         extractAll = mkOption {
           type = types.bool;
@@ -395,6 +367,18 @@ in
           type = types.int;
           default = 1000;
           description = "Maximum history entries to keep";
+        };
+
+        hashFileContent = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Include file content hashes";
+        };
+
+        maxContentSize = mkOption {
+          type = types.int;
+          default = 10485760; # 10MB
+          description = "Maximum content size to capture (bytes)";
         };
       };
     };

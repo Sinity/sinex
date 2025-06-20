@@ -60,7 +60,6 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::models::{RawEvent, WorkQueueItem, QueueStatus};
     use sinex_ulid::Ulid;
     use chrono::Utc;

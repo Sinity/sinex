@@ -1,5 +1,37 @@
 # TIM-ATSPI2Integration: GUI Accessibility Framework (AT-SPI2)
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 0% (Design complete, implementation not started)
+**Dependencies**: AT-SPI2 libraries, D-Bus integration, EventSource trait, accessibility bus
+**Blocks**: UI semantic capture, accessibility event monitoring, GUI context analysis
+
+## MVP Specification
+- AT-SPI2 D-Bus connection and accessibility bus integration
+- Basic UI element discovery and enumeration
+- Focus change and window activation event capture
+- Widget property extraction (name, role, value, state)
+- Integration with EventSource pattern
+
+## Enhanced Features
+- Advanced UI hierarchy traversal
+- Text content extraction from UI elements
+- Coordinate-based UI element lookup
+- Performance-optimized event filtering
+- Cross-application UI relationship mapping
+- Privacy-aware sensitive UI filtering
+
+## Implementation Checklist
+- [ ] AT-SPI2 library bindings and D-Bus integration
+- [ ] Accessibility bus connection management
+- [ ] EventSource trait implementation
+- [ ] UI element discovery and enumeration
+- [ ] Focus and activation event monitoring
+- [ ] Widget property extraction pipeline
+- [ ] Event filtering and privacy controls
+- [ ] Performance optimization and caching
+- [ ] Integration testing with common applications
+
 *   **Relevant ADR:** (N/A directly, core ingestor for UI semantics)
 *   **Original UG Context:** Section 5
 

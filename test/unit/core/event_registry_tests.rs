@@ -1,6 +1,4 @@
-use sinex_core::{EventRegistry, EventType, create_registry};
-use sinex_events::*;
-use serde_json::json;
+use sinex_core::create_registry;
 
 #[test]
 fn test_event_registry_creation() {

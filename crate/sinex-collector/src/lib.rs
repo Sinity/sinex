@@ -1,12 +1,14 @@
 pub mod agent;
 pub mod collector;
 pub mod config;
+pub mod metrics;
 pub mod observability;
 pub mod recovery;
 
 pub use agent::*;
 pub use collector::*;
 pub use config::*;
+pub use metrics::CollectorMetrics as MetricsCollector;
 pub use observability::*;
 pub use recovery::*;
 

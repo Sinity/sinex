@@ -1,5 +1,4 @@
 use serde_json::json;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use sinex_db::validation::EventValidator;
 

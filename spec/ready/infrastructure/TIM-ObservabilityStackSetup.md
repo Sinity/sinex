@@ -1,5 +1,37 @@
 # TIM-ObservabilityStackSetup: Prometheus, Grafana, Loki
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 70% (Prometheus and Grafana fully configured, Loki/Promtail pending)
+**Dependencies**: NixOS services, Prometheus exporters, Grafana configuration, Loki setup
+**Blocks**: System monitoring, performance analysis, debugging, operational visibility
+
+## MVP Specification
+- Prometheus metrics collection setup
+- Basic Grafana dashboards for system health
+- Loki log aggregation configuration
+- Promtail log collection agents
+- Essential system and application metrics
+
+## Enhanced Features
+- Advanced dashboard customization
+- Alerting and notification systems
+- Log analysis and pattern detection
+- Performance trend analysis
+- Custom metrics and exporters
+- Multi-host monitoring coordination
+
+## Implementation Checklist
+- [x] Prometheus server configuration
+- [x] Node exporter setup for system metrics
+- [x] Grafana installation and initial dashboards
+- [ ] Loki server configuration
+- [ ] Promtail log collection setup
+- [x] Application metrics integration
+- [x] Alert rule configuration
+- [x] Dashboard template development
+- [x] Monitoring best practices documentation
+
 *   **Relevant ADR:** (N/A directly, core operational infrastructure)
 *   **Original UG Context:** Section 24
 *   **Vision Document Reference:** Part VI.1

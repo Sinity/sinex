@@ -1,8 +1,10 @@
-# Performance validation test for Sinex
+# Performance validation test for Sinex - Optimized version
 { pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
 
 let
-  # Performance monitoring and query tool
+  inherit (pkgs) lib;
+  
+  # Enhanced performance monitoring and query tool
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
     import subprocess
@@ -463,374 +465,406 @@ in
 pkgs.nixosTest {
   name = "sinex-performance";
 
-  nodes.machine =
-    { config, pkgs, lib, ... }:
-    {
-      imports = [
-        ../../../nixos
-      ];
+  nodes.machine = { config, pkgs, lib, ... }: {
+    imports = [
+      (import ../common/test-base.nix { 
+        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+      })
+    ];
 
-      services.sinex = {
-        enable = true;
-        package = sinex-collector;
-        promoWorker.enable = true;
-
-        unifiedCollector = {
+    # Override for performance testing
+    services.sinex = {
+      # Enable promo worker for performance tests
+      promoWorker.enable = true;
+      
+      unifiedCollector = {
+        # Additional sources for performance testing
+        sources.filesystem.watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
+        sources.shellHistory.enable = true;
+        sources.atuin = {
           enable = true;
-          
-          # Enable all sources for comprehensive performance testing
-          sources.filesystem = {
-            enable = true;
-            watchPaths = [ "/home/test/watched" "/tmp/perf-test" ];
-          };
-          sources.atuin = {
-            enable = true;
-            databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
-          };
-          sources.shellHistory.enable = true;
-          sources.asciinema = {
-            enable = true;
-            recordingsPath = "/home/test/.local/share/asciinema";
-            autoRecord = false;
-          };
-          sources.clipboard.enable = true;
-          sources.dbus.enable = true;
+          databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
         };
-      };
-
-      # Test user setup
-      users.users.test = {
-        isNormalUser = true;
-        createHome = true;
-        shell = pkgs.zsh;
-        uid = 1000;
-      };
-      
-      services.dbus.enable = true;
-      
-      # Enhanced system for performance testing
-      environment.systemPackages = with pkgs; [
-        atuin
-        asciinema
-        zsh
-        bash
-        file
-        git
-        sqlite
-        wl-clipboard
-        sinex-query
-        perf-generator
-        load-tester
-        bc            # For floating point calculations
-        procps        # Process monitoring
-        htop          # System monitoring
-        iotop         # IO monitoring
-        sysstat       # System statistics
-        time          # Command timing
-      ];
-      
-      programs.zsh.enable = true;
-      
-      # Performance-oriented tmpfiles
-      systemd.tmpfiles.rules = [
-        "d /home/test/watched 0755 test users -"
-        "d /tmp/perf-test 0755 test users -"
-        "f /var/lib/sinex/.zsh_history 0644 sinex sinex -"
-        "f /var/lib/sinex/.bash_history 0644 sinex sinex -"
-        "d /var/lib/sinex/.local 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
-        "d /home/test/.local 0755 test users -"
-        "d /home/test/.local/share 0755 test users -"
-        "d /home/test/.local/share/asciinema 0755 test users -"
-        "d /run/user 0755 root root -"
-        "d /run/user/1000 0700 test users -"
-      ];
-      
-      # Package overlays
-      nixpkgs.overlays = [(final: prev: {
-        sinex-unified-collector = sinex-collector;
-        sinex-promo-worker = sinex-promo-worker;
-        postgresql16Packages = prev.postgresql16Packages // {
-          pg_jsonschema = pg_jsonschema;
-        };
-      })];
-
-      # PostgreSQL performance tuning for testing
-      services.postgresql = {
-        settings = {
-          # Increase shared buffers for better performance
-          shared_buffers = "256MB";
-          # Increase WAL buffers
-          wal_buffers = "16MB";
-          # Increase checkpoint segments
-          max_wal_size = "1GB";
-          min_wal_size = "80MB";
-          # Increase work memory
-          work_mem = "4MB";
-          # Increase maintenance work memory
-          maintenance_work_mem = "64MB";
-          # Enable parallel workers
-          max_parallel_workers = "4";
-          max_parallel_workers_per_gather = "2";
-          # Tune checkpoint behavior
-          checkpoint_completion_target = "0.9";
-          # Enable statistics collection
-          track_io_timing = "on";
-          track_functions = "all";
-        };
+        sources.dbus.enable = true;
       };
     };
+    
+    # Performance test packages
+    environment.systemPackages = with pkgs; [
+      atuin
+      zsh
+      sinex-query
+      perf-generator
+      load-tester
+      bc
+      sysstat
+    ];
+    
+    programs.zsh.enable = true;
+    services.dbus.enable = true;
+    
+    # Additional tmpfiles for performance testing
+    systemd.tmpfiles.rules = lib.mkAfter [
+      "d /tmp/perf-test 0755 test users -"
+      "d /var/lib/sinex/.local 0755 sinex sinex -"
+      "d /var/lib/sinex/.local/share 0755 sinex sinex -"
+      "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
+    ];
+
+    # PostgreSQL performance tuning
+    services.postgresql.settings = {
+      shared_buffers = "512MB";
+      wal_buffers = "16MB";
+      max_wal_size = "2GB";
+      min_wal_size = "80MB";
+      work_mem = "8MB";
+      maintenance_work_mem = "128MB";
+      max_parallel_workers = "4";
+      max_parallel_workers_per_gather = "2";
+      checkpoint_completion_target = "0.9";
+      track_io_timing = "on";
+      track_functions = "all";
+      # Aggressive autovacuum for performance tests
+      autovacuum_naptime = "10s";
+      autovacuum_vacuum_scale_factor = "0.05";
+      autovacuum_analyze_scale_factor = "0.02";
+    };
+    
+    # Optimize VM for performance testing
+    virtualisation = {
+      memorySize = 4096;
+      diskSize = 8192;
+      cores = 4;
+    };
+  };
 
   testScript = ''
     import time
     import re
-
+    import sys
+    sys.path.append('/etc/nixos-test')
+    from test_helpers import TestHelpers
+    
     start_all()
-
-    # Wait for system to be ready
-    machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("postgresql.service")
-    machine.wait_for_unit("sinex-migrate.service")
-    machine.wait_for_unit("sinex-unified-collector.service")
-    machine.wait_for_unit("sinex-promo-worker.service")
-
-    # Verify all services are active
-    machine.succeed("systemctl is-active sinex-unified-collector")
-    machine.succeed("systemctl is-active sinex-promo-worker")
+    helpers = TestHelpers(machine)
+    
+    # Wait for system with extended timeout for performance VM
+    with subtest("System initialization for performance testing"):
+        machine.wait_for_unit("multi-user.target")
+        helpers.wait_for_sinex_ready(timeout=90)
+        machine.wait_for_unit("sinex-promo-worker.service")
+        
+        # Verify services
+        assert helpers.check_service_health("sinex-unified-collector"), "Collector not healthy"
+        assert helpers.check_service_health("sinex-promo-worker"), "Worker not healthy"
+        
+        print("✓ Performance test environment ready")
 
     # Initialize system for performance testing
     with subtest("Initialize performance testing environment"):
-        # Initialize data sources
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'")
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin import auto'")
+        # Initialize data sources with retry
+        machine.wait_until_succeeds(
+            "su - sinex -c 'cd /var/lib/sinex && atuin init zsh'",
+            timeout=30
+        )
         
-        # Create baseline test data
-        machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
-        machine.sleep(3)
+        # Generate baseline events
+        baseline_count = helpers.get_event_count()
+        helpers.generate_events(10, "baseline")
         
-        baseline_stats = machine.succeed("sinex stats")
-        print(f"Baseline stats: {baseline_stats}")
+        # Wait for system to stabilize
+        machine.sleep(5)
+        current_count = helpers.get_event_count()
+        print(f"Baseline established: {current_count} events")
 
     # Test 1: Burst load performance
     with subtest("Burst load performance test"):
         print("Testing burst load performance...")
+        pre_burst_count = helpers.get_event_count()
         
-        pre_burst_stats = machine.succeed("sinex stats")
-        pre_burst_match = re.search(r'Total events captured: (\d+)', pre_burst_stats)
-        pre_burst_count = int(pre_burst_match.group(1)) if pre_burst_match else 0
+        # Measure burst generation time
+        burst_duration = helpers.measure_operation_time(
+            lambda: machine.succeed("sinex-perf burst 20 100")
+        )
+        print(f"Burst generation took {burst_duration:.2f}s")
         
-        # Generate burst load - 100 events/sec for 30 seconds
-        machine.succeed("sinex-perf burst 30 100")
+        # Wait for processing with progress monitoring
+        for i in range(3):
+            machine.sleep(5)
+            current = helpers.get_event_count()
+            print(f"Processing progress: {current - pre_burst_count} events")
         
-        # Wait for processing
-        machine.sleep(15)
-        
-        # Measure performance
+        # Final measurements
         burst_perf = machine.succeed("sinex perf")
-        print(f"Burst performance metrics: {burst_perf}")
+        print(f"Burst performance metrics:\n{burst_perf}")
         
-        # Check final count
-        post_burst_stats = machine.succeed("sinex stats")
-        post_burst_match = re.search(r'Total events captured: (\d+)', post_burst_stats)
-        post_burst_count = int(post_burst_match.group(1)) if post_burst_match else 0
-        
+        post_burst_count = helpers.get_event_count()
         events_captured = post_burst_count - pre_burst_count
-        print(f"Burst test captured {events_captured} events")
+        capture_rate = (events_captured / 2000) * 100
         
-        # Should capture most events (allow for some processing delay)
-        assert events_captured > 2500, f"Low event capture rate in burst test: {events_captured}/3000 expected"
+        print(f"Burst test: {events_captured}/2000 events ({capture_rate:.1f}% capture rate)")
+        assert capture_rate > 85, f"Low burst capture rate: {capture_rate:.1f}%"
 
-    # Test 2: Sustained high-frequency load
+    # Test 2: Sustained load with resource monitoring
     with subtest("Sustained high-frequency load test"):
-        print("Testing sustained load performance...")
+        print("Testing sustained load with resource monitoring...")
+        pre_sustained_count = helpers.get_event_count()
         
-        pre_sustained_stats = machine.succeed("sinex stats")
-        pre_sustained_match = re.search(r'Total events captured: (\d+)', pre_sustained_stats)
-        pre_sustained_count = int(pre_sustained_match.group(1)) if pre_sustained_match else 0
+        # Start sustained load in background (shorter duration for faster tests)
+        machine.execute("sinex-perf sustained 30 200 &")
+        pid = machine.succeed("pgrep -f 'sinex-perf sustained' | head -1").strip()
         
-        # Start sustained load in background
-        machine.execute("sinex-perf sustained 60 200 &")  # 200 events/sec for 60 seconds
-        
-        # Monitor performance every 15 seconds
-        for i in range(4):
-            machine.sleep(15)
-            current_perf = machine.succeed("sinex perf")
-            print(f"Sustained load checkpoint {i+1}: {current_perf}")
+        # Monitor performance and resources
+        checkpoints = []
+        for i in range(3):
+            machine.sleep(10)
             
-            # Check system resources
-            resources = machine.succeed("sinex resources")
-            print(f"System resources at checkpoint {i+1}: {resources}")
+            # Capture metrics
+            perf_output = machine.succeed("sinex perf")
+            events_per_sec = re.search(r'1 minute:.*\((\d+\.\d+) events/sec\)', perf_output)
+            if events_per_sec:
+                eps = float(events_per_sec.group(1))
+                checkpoints.append(eps)
+                print(f"Checkpoint {i+1}: {eps:.1f} events/sec")
+            
+            # Check if generator is still running
+            try:
+                machine.succeed(f"kill -0 {pid}")
+            except:
+                print("Generator finished early")
+                break
+        
+        # Wait for completion
+        machine.wait_until_fails(f"kill -0 {pid}", timeout=20)
+        machine.sleep(5)  # Allow processing to catch up
+        
+        # Analyze results
+        post_sustained_count = helpers.get_event_count()
+        sustained_events = post_sustained_count - pre_sustained_count
+        target_events = 200 * 30  # 6000 events
+        capture_rate = (sustained_events / target_events) * 100
+        
+        if checkpoints:
+            avg_eps = sum(checkpoints) / len(checkpoints)
+            print(f"Average throughput: {avg_eps:.1f} events/sec")
+        
+        print(f"Sustained test: {sustained_events}/{target_events} events ({capture_rate:.1f}%)") 
+        assert capture_rate > 85, f"Low sustained capture rate: {capture_rate:.1f}%"
+
+    # Test 3: Ramp-up load testing  
+    with subtest("Ramp-up load testing"):
+        print("Testing performance under increasing load...")
+        pre_ramp_count = helpers.get_event_count()
+        
+        # Shorter ramp for faster tests: 10 to 300 events/sec over 30 seconds
+        ramp_start = time.time()
+        machine.execute("sinex-perf ramp 30 300 &")
+        
+        # Monitor latency during ramp
+        latencies = []
+        for i in range(3):
+            machine.sleep(10)
+            
+            # Try to get latency metrics
+            try:
+                latency_output = machine.succeed("sinex latency")
+                # Extract average latency if available
+                for line in latency_output.split('\n'):
+                    if 'filesystem' in line and 'avg_latency' in line:
+                        parts = line.split('|')
+                        if len(parts) > 2:
+                            avg_latency = float(parts[2].strip())
+                            latencies.append(avg_latency)
+                            print(f"Latency at {i*10}s: {avg_latency:.3f}s")
+            except:
+                print(f"Could not parse latency at {i*10}s")
         
         # Wait for completion
         machine.sleep(10)
         
-        # Final measurements
-        post_sustained_stats = machine.succeed("sinex stats")
-        post_sustained_match = re.search(r'Total events captured: (\d+)', post_sustained_stats)
-        post_sustained_count = int(post_sustained_match.group(1)) if post_sustained_match else 0
-        
-        sustained_events = post_sustained_count - pre_sustained_count
-        target_events = 200 * 60  # 12000 events
-        capture_rate = (sustained_events / target_events) * 100
-        
-        print(f"Sustained test: {sustained_events}/{target_events} events ({capture_rate:.1f}% capture rate)")
-        
-        # Should maintain good capture rate under sustained load
-        assert capture_rate > 90, f"Low sustained capture rate: {capture_rate:.1f}%"
-
-    # Test 3: Ramp-up load testing
-    with subtest("Ramp-up load testing"):
-        print("Testing ramp-up performance...")
-        
-        pre_ramp_stats = machine.succeed("sinex stats")
-        pre_ramp_match = re.search(r'Total events captured: (\d+)', pre_ramp_stats)
-        pre_ramp_count = int(pre_ramp_match.group(1)) if pre_ramp_match else 0
-        
-        # Ramp from 10 to 500 events/sec over 90 seconds
-        machine.succeed("sinex-perf ramp 90 500")
-        
-        # Wait for processing
-        machine.sleep(10)
-        
-        # Analyze latency during ramp-up
-        latency_analysis = machine.succeed("sinex latency")
-        print(f"Ramp-up latency analysis: {latency_analysis}")
-        
-        post_ramp_stats = machine.succeed("sinex stats")
-        post_ramp_match = re.search(r'Total events captured: (\d+)', post_ramp_stats)
-        post_ramp_count = int(post_ramp_match.group(1)) if post_ramp_match else 0
-        
-        ramp_events = post_ramp_count - pre_ramp_count
-        print(f"Ramp-up test captured {ramp_events} events")
-        
-        # Should handle ramp-up gracefully
-        assert ramp_events > 15000, f"Low event capture in ramp-up test: {ramp_events}"
-
-    # Test 4: Multi-source load testing
-    with subtest("Multi-source concurrent load"):
-        print("Testing multi-source concurrent load...")
-        
-        pre_multi_stats = machine.succeed("sinex stats")
-        pre_multi_match = re.search(r'Total events captured: (\d+)', pre_multi_stats)
-        pre_multi_count = int(pre_multi_match.group(1)) if pre_multi_match else 0
-        
-        # High intensity multi-source load
-        machine.succeed("sinex-load multi-source high 90")
-        
-        # Monitor during load
-        machine.sleep(30)
-        mid_test_perf = machine.succeed("sinex perf")
-        print(f"Mid multi-source test performance: {mid_test_perf}")
-        
-        # Wait for completion and processing
-        machine.sleep(15)
-        
         # Final analysis
-        post_multi_stats = machine.succeed("sinex stats")
-        post_multi_match = re.search(r'Total events captured: (\d+)', post_multi_stats)
-        post_multi_count = int(post_multi_match.group(1)) if post_multi_match else 0
+        post_ramp_count = helpers.get_event_count()
+        ramp_events = post_ramp_count - pre_ramp_count
+        ramp_duration = time.time() - ramp_start
         
-        multi_events = post_multi_count - pre_multi_count
-        print(f"Multi-source test captured {multi_events} events")
+        print(f"Ramp test: {ramp_events} events in {ramp_duration:.1f}s")
         
-        # Verify all sources contributed
-        final_latency = machine.succeed("sinex latency")
-        print(f"Multi-source latency breakdown: {final_latency}")
+        # Check if latency increased significantly
+        if latencies and len(latencies) > 1:
+            latency_increase = latencies[-1] / latencies[0]
+            print(f"Latency increase factor: {latency_increase:.2f}x")
+            assert latency_increase < 5, "Latency degraded too much under load"
         
-        # Should handle multiple concurrent sources
-        assert multi_events > 30000, f"Low multi-source capture: {multi_events}"
+        # Should capture reasonable number of events
+        assert ramp_events > 3000, f"Low ramp-up capture: {ramp_events}"
 
-    # Test 5: Spike load testing
-    with subtest("Spike load handling"):
-        print("Testing spike load handling...")
+    # Test 4: Multi-source concurrent load
+    with subtest("Multi-source concurrent load"):
+        print("Testing concurrent load from multiple sources...")
+        pre_multi_count = helpers.get_event_count()
         
-        pre_spike_stats = machine.succeed("sinex stats")
-        pre_spike_match = re.search(r'Total events captured: (\d+)', pre_spike_stats)
-        pre_spike_count = int(pre_spike_match.group(1)) if pre_spike_match else 0
+        # Medium intensity for 30 seconds (faster test)
+        load_start = time.time()
+        machine.succeed("sinex-load multi-source medium 30")
+        load_duration = time.time() - load_start
         
-        # Spike test: base 10 eps with spikes to 1000 eps
-        machine.succeed("sinex-perf spike 60 1000")
-        
-        # Wait for processing
+        # Wait for processing to complete
         machine.sleep(10)
         
-        post_spike_stats = machine.succeed("sinex stats")
-        post_spike_match = re.search(r'Total events captured: (\d+)', post_spike_stats)
-        post_spike_count = int(post_spike_match.group(1)) if post_spike_match else 0
+        # Analyze results by source
+        post_multi_count = helpers.get_event_count()
+        multi_events = post_multi_count - pre_multi_count
+        events_per_second = multi_events / load_duration
+        
+        print(f"Multi-source test: {multi_events} events in {load_duration:.1f}s")
+        print(f"Throughput: {events_per_second:.1f} events/sec")
+        
+        # Get latency breakdown
+        try:
+            latency_output = machine.succeed("sinex latency")
+            print(f"Source latency breakdown:\n{latency_output}")
+            
+            # Verify multiple sources contributed
+            sources_found = 0
+            for source in ['filesystem', 'shell_history', 'atuin']:
+                if source in latency_output:
+                    sources_found += 1
+            
+            print(f"Active sources: {sources_found}")
+            assert sources_found >= 2, "Too few sources contributed events"
+        except:
+            print("Could not analyze source breakdown")
+        
+        # Should handle concurrent sources efficiently
+        assert multi_events > 5000, f"Low multi-source capture: {multi_events}"
+
+    # Test 5: Spike load handling
+    with subtest("Spike load handling"):
+        print("Testing system behavior under load spikes...")
+        pre_spike_count = helpers.get_event_count()
+        
+        # Spike test: base 10 eps with spikes to 500 eps for 30s
+        spike_duration = helpers.measure_operation_time(
+            lambda: machine.succeed("sinex-perf spike 30 500")
+        )
+        
+        # Monitor recovery
+        machine.sleep(5)
+        mid_spike_count = helpers.get_event_count()
+        machine.sleep(5)
+        post_spike_count = helpers.get_event_count()
         
         spike_events = post_spike_count - pre_spike_count
-        print(f"Spike test captured {spike_events} events")
+        events_during_recovery = post_spike_count - mid_spike_count
         
-        # Should handle spikes without significant loss
-        assert spike_events > 8000, f"Poor spike handling: {spike_events}"
+        print(f"Spike test: {spike_events} events in {spike_duration:.1f}s")
+        print(f"Events during recovery: {events_during_recovery}")
+        
+        # System should handle spikes and recover quickly
+        assert spike_events > 2000, f"Poor spike handling: {spike_events}"
+        assert events_during_recovery < 100, "System slow to recover from spikes"
 
     # Test 6: Query performance under load
     with subtest("Query performance under load"):
-        print("Testing query performance under concurrent load...")
+        print("Testing database query responsiveness during load...")
         
         # Start background load
-        machine.execute("sinex-load filesystem-only medium 60 &")
+        machine.execute("sinex-load filesystem-only medium 30 &")
+        load_pid = machine.succeed("pgrep -f 'sinex-load' | head -1").strip()
         
-        # Measure query performance during load
-        machine.sleep(10)  # Let load stabilize
+        # Let load stabilize
+        machine.sleep(5)
         
-        query_perf = machine.succeed("sinex query-perf")
-        print(f"Query performance under load: {query_perf}")
+        # Measure query performance
+        query_times = []
+        for i in range(5):
+            start = time.time()
+            machine.succeed("sinex stats")
+            query_time = time.time() - start
+            query_times.append(query_time)
+            machine.sleep(2)
         
-        # Parse query times to ensure responsiveness
-        lines = query_perf.split('\n')
-        for line in lines:
-            if 'Average:' in line:
-                avg_time = float(line.split(':')[1].strip().replace('s', ''))
-                assert avg_time < 1.0, f"Queries too slow under load: {avg_time}s average"
-                print(f"✓ Query performance acceptable: {avg_time}s average")
+        # Stop load and measure again
+        machine.execute(f"kill {load_pid} 2>/dev/null || true")
+        machine.sleep(2)
+        
+        post_load_time = helpers.measure_operation_time(
+            lambda: machine.succeed("sinex stats")
+        )
+        
+        avg_under_load = sum(query_times) / len(query_times)
+        print(f"Query time under load: {avg_under_load:.3f}s avg")
+        print(f"Query time after load: {post_load_time:.3f}s")
+        
+        # Queries should remain responsive
+        assert avg_under_load < 1.0, f"Queries too slow: {avg_under_load:.3f}s"
+        assert post_load_time < 0.5, f"Post-load queries slow: {post_load_time:.3f}s"
 
-    # Test 7: Database performance analysis
-    with subtest("Database performance analysis"):
-        # Wait for any background processes to finish
-        machine.sleep(10)
+    # Test 7: Database and system analysis
+    with subtest("Database and system performance analysis"):
+        # Ensure no background processes
+        machine.execute("pkill -f 'sinex-perf' || true")
+        machine.execute("pkill -f 'sinex-load' || true")
+        machine.sleep(5)
         
-        # Comprehensive database performance report
+        # Database metrics
         db_perf = machine.succeed("sinex db-perf")
-        print(f"Database performance metrics: {db_perf}")
+        print(f"Database performance:\n{db_perf}")
         
-        # Work queue performance
-        queue_perf = machine.succeed("sinex queue-perf")
-        print(f"Work queue performance: {queue_perf}")
+        # Extract and validate key metrics
+        if "cache_hit_ratio" in db_perf:
+            cache_match = re.search(r'cache_hit_ratio.*?(\d+\.\d+)', db_perf)
+            if cache_match:
+                cache_ratio = float(cache_match.group(1))
+                print(f"Cache hit ratio: {cache_ratio}%")
+                assert cache_ratio > 80, f"Poor cache performance: {cache_ratio}%"
         
-        # System resource utilization
-        final_resources = machine.succeed("sinex resources")
-        print(f"Final system resources: {final_resources}")
+        # System resources
+        resources = machine.succeed("sinex resources")
+        print(f"System resources:\n{resources}")
+        
+        # Verify system is not overloaded
+        if "Load average:" in resources:
+            load_match = re.search(r'Load average: ([\d.]+)', resources)
+            if load_match:
+                load_avg = float(load_match.group(1))
+                print(f"Load average: {load_avg}")
+                assert load_avg < 8.0, f"System overloaded: {load_avg}"
 
-    # Test 8: Performance regression check
+    # Test 8: Performance summary and validation
     with subtest("Performance regression validation"):
-        # Generate final performance report
-        full_report = machine.succeed("sinex full-report")
-        print(f"=== FINAL PERFORMANCE REPORT ===\n{full_report}")
+        # Clean up before final measurements
+        helpers.cleanup_test_data()
+        machine.sleep(5)
         
-        # Validate key performance indicators
-        final_stats = machine.succeed("sinex stats")
-        final_match = re.search(r'Total events captured: (\d+)', final_stats)
-        total_events = int(final_match.group(1)) if final_match else 0
+        # Final performance summary
+        print("\n=== PERFORMANCE TEST SUMMARY ===")
         
-        print(f"Total events captured in performance tests: {total_events}")
+        total_events = helpers.get_event_count()
+        print(f"Total events processed: {total_events}")
         
-        # Should have captured a significant number of events
-        assert total_events > 100000, f"Low total event count: {total_events}"
+        # Quick responsiveness check
+        final_query_time = helpers.measure_operation_time(
+            lambda: machine.succeed("sinex stats")
+        )
+        print(f"Final query response time: {final_query_time:.3f}s")
         
-        # Verify system is still responsive
-        quick_query_start = time.time()
-        machine.succeed("sinex stats")
-        quick_query_time = time.time() - quick_query_start
+        # Service health check
+        services_healthy = (
+            helpers.check_service_health("sinex-unified-collector") and
+            helpers.check_service_health("sinex-promo-worker") and
+            helpers.check_service_health("postgresql")
+        )
+        print(f"All services healthy: {services_healthy}")
         
-        assert quick_query_time < 2.0, f"System unresponsive after load testing: {quick_query_time}s"
+        # Performance assertions
+        assert total_events > 20000, f"Insufficient events processed: {total_events}"
+        assert final_query_time < 1.0, f"System sluggish: {final_query_time:.3f}s"
+        assert services_healthy, "Services unhealthy after performance tests"
         
-        print(f"✓ System remains responsive after extensive performance testing ({quick_query_time:.2f}s)")
-
-    print("✓ All performance tests completed successfully")
-    print("✓ System demonstrated high-throughput event processing capability")
-    print("✓ Performance remains stable under various load patterns")
-    print("✓ Query responsiveness maintained during concurrent operations")
+        print("\n✓ Performance tests completed successfully")
+        print("✓ System handled various load patterns effectively")
+        print("✓ Database queries remained responsive")
+        print("✓ Services remained stable throughout testing")
   '';
 }

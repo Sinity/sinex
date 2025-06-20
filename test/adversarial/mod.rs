@@ -14,3 +14,7 @@ mod query_interface_exploits_test;
 mod event_type_specific_test;
 mod worker_coordination_test;
 mod numeric_overflow_bugs_test;
+mod realistic_security_threats_test;
+mod input_validation_test;
+mod production_reliability_test;
+mod operational_scenarios_test;

@@ -216,24 +216,28 @@ Provides deep Exocortex integration within Neovim.
 
 ## 5. Mobile, Wearable & IoT Context Ingestion (Vision III.2.2.E)
 
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Mobile/IoT integration not developed
+
 Extends capture beyond the desktop.
 *   **Architectural Approach:**
-    *   Companion apps (Android: Termux/Tasker/Custom App; iOS: Shortcuts/HealthKit) send data via secure protocols (MQTT preferred for low power/bandwidth, or HTTPS POST) to a host Exocortex ingest endpoint/agent.
-    *   IoT devices (e.g., ESP32) use MQTT. Device-side logic includes offline buffering, power management, ULID generation with appropriate entropy.
+    *   Companion apps (Android: Termux/Tasker/Custom App; iOS: Shortcuts/HealthKit) would send data via secure protocols (MQTT preferred for low power/bandwidth, or HTTPS POST) to a host Sinex ingest endpoint/agent.
+    *   IoT devices (e.g., ESP32) would use MQTT. Device-side logic would include offline buffering, power management, ULID generation with appropriate entropy.
 *   **Key Data Captured:**
-    *   **Mobile:** Notifications, call/SMS metadata, app usage, device state (screen, battery, network), location (opt-in), sensor data (steps, heart rate via synced phone).
-    *   **IoT:** Environmental sensor readings (temp, humidity, light, CO2), presence detection (BLE beacons).
+    *   **Mobile:** Would capture notifications, call/SMS metadata, app usage, device state (screen, battery, network), location (opt-in), sensor data (steps, heart rate via synced phone).
+    *   **IoT:** Would capture environmental sensor readings (temp, humidity, light, CO2), presence detection (BLE beacons).
 *   **Referenced TIMs:**
     *   `[TIM-MobileIoTImplementation_ESP32.md](docs/tims/operations/TIM-MobileIoTImplementation_ESP32.md)` (focuses on ESP32 as reference IoT, MQTT, offline buffering).
 
 ## 6. Meta-Cognitive & Subjective Ingestion (Vision III.2.2.F)
 
+> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Subjective logging system not developed
+
 Captures the user's internal states, reflections, and plans.
-*   **Architectural Approach:** Primarily user-initiated logging via standardized interfaces:
-    *   `exo log <meta_type> ...` CLI commands.
-    *   Neovim commands (e.g., `:ExoLogFriction`).
+*   **Architectural Approach:** Would be primarily user-initiated logging via standardized interfaces:
+    *   `exo log <meta_type> ...` CLI commands (not implemented).
+    *   Neovim commands (e.g., `:ExoLogFriction`) (not implemented).
     *   Future TUI/GUI forms.
-    *   Commands within the Living Document (e.g., `/insight ...`, `/plan ...`).
+    *   Commands within the Living Document (e.g., `/insight ...`, `/plan ...`) (Living Document not implemented).
 *   **Key Event Types & Payloads (Structured JSONB in `raw.events`):**
     *   `meta.friction_logged`: `{ description, perceived_cause, intensity, linked_task_ids, resolution_status }`
     *   `meta.insight_captured`: `{ description, confidence, related_project_id, trigger_event_ids, actionable_steps }`

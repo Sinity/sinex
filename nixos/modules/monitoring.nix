@@ -59,11 +59,8 @@ in
 
         endpoints = mkOption {
           type = types.listOf types.str;
-          default = [
-            "localhost:${toString cfg.unifiedCollector.metricsPort}/metrics"
-            "localhost:${toString cfg.promoWorker.metricsPort}/metrics"
-          ];
-          description = "List of metrics endpoints to aggregate";
+          default = [];
+          description = "List of metrics endpoints to aggregate (deprecated - metrics are now events)";
         };
       };
     };
@@ -245,10 +242,10 @@ in
           description = "Enable Grafana dashboard provisioning";
         };
 
-        datasourceUrl = mkOption {
+        postgresqlUrl = mkOption {
           type = types.str;
-          default = "http://localhost:9090";
-          description = "Prometheus datasource URL for Grafana";
+          default = "postgresql:///${cfg.database.name}?host=/run/postgresql";
+          description = "PostgreSQL datasource URL for Grafana";
         };
       };
     };
@@ -491,31 +488,7 @@ in
           job_name = "postgres_exporter";
           static_configs = [ { targets = [ "${cfg.monitoring.observabilityStack.listenAddress}:9187" ]; } ];
         }
-        # Sinex services
-        {
-          job_name = "sinex_unified_collector";
-          metrics_path = "/metrics";
-          static_configs = [
-            {
-              targets = [
-                "${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.unifiedCollector.metricsPort}"
-              ];
-            }
-          ];
-          scrape_interval = "15s";
-        }
-        {
-          job_name = "sinex_promo_worker";
-          metrics_path = "/metrics";
-          static_configs = [
-            {
-              targets = [
-                "${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.promoWorker.metricsPort}"
-              ];
-            }
-          ];
-          scrape_interval = "15s";
-        }
+        # Sinex services - metrics are now emitted as events, not scraped
       ];
 
       exporters = {
@@ -559,6 +532,24 @@ in
               allow_sign_up = false;
               auto_assign_org = true;
               auto_assign_org_role = "Viewer";
+              default_theme = "dark";
+            };
+            # Dark theme and UI preferences
+            ui = {
+              default_theme = "dark";
+            };
+            # Database settings for better performance
+            database = {
+              wal = true;
+            };
+            # Session settings
+            session = {
+              cookie_secure = false;
+              cookie_samesite = "lax";
+            };
+            # Enable more features
+            feature_toggles = {
+              enable = "ngalert";
             };
           };
 
@@ -566,11 +557,26 @@ in
             enable = true;
             datasources.settings.datasources = [
               {
+                name = "PostgreSQL-Sinex";
+                type = "postgres";
+                access = "proxy";
+                url = cfg.monitoring.dashboards.grafana.postgresqlUrl;
+                isDefault = true;
+                jsonData = {
+                  sslmode = "disable";
+                  postgresVersion = 1600;
+                  timescaledb = true;
+                };
+                secureJsonData = {
+                  password = "";  # Local socket auth, no password needed
+                };
+              }
+              {
                 name = "Prometheus-Sinex";
                 type = "prometheus";
                 access = "proxy";
                 url = "http://${cfg.monitoring.observabilityStack.listenAddress}:${toString cfg.monitoring.observabilityStack.prometheusPort}";
-                isDefault = true;
+                isDefault = false;
                 jsonData = {
                   httpMethod = "POST";
                   prometheusType = "Prometheus";
@@ -638,7 +644,12 @@ in
       mkIf (cfg.monitoring.observabilityStack.enable && cfg.monitoring.dashboards.grafana.enable)
         [
           "d /var/lib/grafana/dashboards 0755 grafana grafana"
-          "L+ /var/lib/grafana/dashboards/sinex-dashboard.json - - - - ${./sinex-dashboard.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../grafana-dashboards/sinex-overview.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../grafana-dashboards/sinex-event-analysis.json}"
+          "L+ /var/lib/grafana/dashboards/event-pipeline.json - - - - ${../grafana-dashboards/event-pipeline.json}"
+          "L+ /var/lib/grafana/dashboards/system-health.json - - - - ${../grafana-dashboards/system-health.json}"
+          "L+ /var/lib/grafana/dashboards/worker-performance.json - - - - ${../grafana-dashboards/worker-performance.json}"
+          "L+ /var/lib/grafana/dashboards/metrics-continuous-aggregates.json - - - - ${../grafana-dashboards/metrics-continuous-aggregates.json}"
         ];
 
     # Firewall for monitoring services (localhost only)

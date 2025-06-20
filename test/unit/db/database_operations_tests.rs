@@ -1,8 +1,6 @@
-use sinex_db::{queries, models::RawEvent, create_test_pool};
+use sinex_db::{queries, create_test_pool};
 use sinex_core::RawEventBuilder;
-use sinex_ulid::Ulid;
 use serde_json::json;
-use chrono::Utc;
 
 async fn setup_test_db() -> sqlx::PgPool {
     let database_url = std::env::var("DATABASE_URL")
@@ -146,7 +144,7 @@ async fn test_work_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     let inserted_event = queries::insert_event(&pool, &event).await?;
     
     // Add to work queue with limited retries
-    let queue_item = queries::add_to_work_queue(
+    let _queue_item = queries::add_to_work_queue(
         &pool,
         inserted_event.id,
         "retry_agent",
@@ -212,7 +210,7 @@ async fn test_event_validation(pool: sqlx::PgPool) -> Result<(), Box<dyn std::er
     
     // Depending on validation implementation, this might succeed or fail
     // For now, just test that it doesn't panic
-    let result = queries::insert_event(&pool, &invalid_event).await;
+    let _result = queries::insert_event(&pool, &invalid_event).await;
     // Result can be Ok or Err - we're testing that it handles it gracefully
     
     Ok(())
@@ -281,7 +279,7 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
     }
     
     // Query events ordered by ID (ULID)
-    let ordered_events = queries::get_recent_events(&pool, 10).await?;
+    let _ordered_events = queries::get_recent_events(&pool, 10).await?;
     
     // Verify ULID ordering matches insertion order
     for i in 1..events.len() {

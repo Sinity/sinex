@@ -3,9 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::TempDir;
-use tokio::time::timeout;
 
 /// Test disk full scenarios during event capture
 #[tokio::test]
@@ -366,7 +364,7 @@ async fn test_rapid_filesystem_changes() {
         let missed = events_missed.clone();
         async move {
             for _ in 0..10 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 
                 match fs::read_dir(&path) {
                     Ok(entries) => {

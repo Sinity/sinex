@@ -17,12 +17,67 @@ test-system:
 test-dlq:
     cargo test --test integration ingestor::dlq_tests
 
-# NixOS VM tests
+# NixOS VM tests with enhanced runner
 test-vm:
-    nix build .#checks.x86_64-linux.sinex-vm-basic -L
+    ./test/nixos-vm/run-vm-tests.sh -c smoke
 
 test-vm-interactive:
-    nix build .#checks.x86_64-linux.sinex-vm-basic -L --keep-failed
+    ./test/nixos-vm/run-vm-tests.sh -d basic-flow
+
+test-vm-quick:
+    ./test/nixos-vm/run-vm-tests.sh basic-flow
+
+# VM Snapshot Testing (Agent Alpha)
+vm-snapshot-init:
+    echo "🔧 Initializing VM snapshots for fast parallel testing..."
+    ./test/nixos-vm/vm-snapshot-manager.sh create-base basic-flow standard
+    echo "✅ Base VM image created"
+
+vm-snapshot-create NAME TEST="basic-flow":
+    ./test/nixos-vm/vm-snapshot-manager.sh create-snapshot "snapshots/{{TEST}}-base.qcow2" "{{NAME}}"
+
+vm-snapshot-list TEST="basic-flow":
+    ./test/nixos-vm/vm-snapshot-manager.sh list-snapshots "snapshots/{{TEST}}-base.qcow2"
+
+vm-parallel-test *TESTS:
+    echo "🚀 Running VM tests in parallel with snapshots..."
+    ./test/nixos-vm/vm-parallel-runner.sh {{TESTS}}
+
+vm-parallel-test-all:
+    echo "🚀 Running all VM tests in parallel (up to 10 VMs)..."
+    ./test/nixos-vm/vm-parallel-runner.sh -p 10 basic-flow multi-source performance chaos-engineering
+
+vm-parallel-test-quick:
+    echo "🚀 Running quick VM tests in parallel..."
+    ./test/nixos-vm/vm-parallel-runner.sh -p 5 basic-flow
+
+vm-snapshot-cleanup:
+    ./test/nixos-vm/vm-snapshot-manager.sh clean-pool
+
+
+# Advanced VM tests
+test-vm-chaos:
+    nix build .#checks.x86_64-linux.sinex-vm-chaos -L
+
+test-vm-production:
+    nix build .#checks.x86_64-linux.sinex-vm-production -L
+
+test-vm-advanced:
+    echo "🧪 Running advanced VM tests..."
+    just test-vm-chaos
+    echo "✅ Chaos engineering tests completed"
+    just test-vm-production  
+    echo "✅ Production scale tests completed"
+    echo "🎉 Advanced VM tests passed!"
+
+test-vm-all:
+    ./test/nixos-vm/run-vm-tests.sh -c all
+
+test-vm-parallel:
+    ./test/nixos-vm/run-vm-tests.sh -c all -p
+
+test-vm-debug TEST="basic-flow":
+    ./test/nixos-vm/run-vm-tests.sh -d {{TEST}}
 
 test-e2e:
     cargo test --test integration system::end_to_end:: -- --nocapture
@@ -42,7 +97,7 @@ test-cli-integration:
 test-cli-all:
     python3 -m pytest test/cli/ -v
 
-# New test categories from reorganization
+# Focused test categories
 test-core:
     cargo test --lib --workspace
 
@@ -58,7 +113,7 @@ test-worker:
 test-regression:
     cargo test --test integration system::regression::
 
-# Phase 7-9 comprehensive integration tests
+# System integration tests
 test-system-startup:
     cargo test --test integration integration::full_system_startup_test:: -- --nocapture
 
@@ -93,18 +148,20 @@ test-all:
     echo "🧪 Running comprehensive test suite..."
     just test
     echo "✅ Rust tests completed"
-    nix develop --command python3 -m pytest test/cli/test_exo_cli.py -v
-    echo "✅ CLI unit tests completed"
+    just test-cli
+    echo "✅ CLI tests completed"
     just test-e2e-dry-run
-    echo "✅ E2E dry-run tests completed"
+    echo "✅ E2E tests completed"
     echo "🎉 All core tests passed!"
 
-test-all-comprehensive:
-    echo "🧪 Running complete comprehensive test suite..."
+test-full:
+    echo "🧪 Running complete test suite..."
     just test-all
     echo "✅ Core test suite completed"
     just test-integration-comprehensive
-    echo "✅ Comprehensive integration tests completed"
+    echo "✅ System integration tests completed"
+    just test-vm-all
+    echo "✅ VM tests completed"
     echo "🎉 All tests passed - system fully validated!"
 
 watch:
@@ -214,6 +271,12 @@ coverage-lcov:
 coverage-report: coverage-html
     @echo "📊 Opening coverage report..."
     xdg-open target/llvm-cov/html/index.html 2>/dev/null || echo "💡 Open target/llvm-cov/html/index.html in your browser"
+
+# Fun / Analysis
+fun:
+    echo "🎯 Running entropy analysis and other fun tests..."
+    cargo test ulid::analysis::entropy_analysis -- --ignored --nocapture
+    echo "🎉 Analysis complete! Check the output above for mathematical insights."
 
 # Aliases
 alias c := check

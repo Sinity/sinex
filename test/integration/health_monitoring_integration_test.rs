@@ -10,7 +10,7 @@ use sinex_db::{create_test_pool, queries};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 
@@ -396,7 +396,7 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
     monitor.update_component_health("clipboard_source", HealthStatus::Degraded, 
         Some("Clipboard tools not available".to_string())).await;
     
-    let one_degraded = monitor.is_system_healthy().await;
+    let _one_degraded = monitor.is_system_healthy().await;
     // Note: Degraded components might still allow system to be considered healthy
     // depending on implementation - this tests current behavior
     
@@ -529,7 +529,7 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
             // Simulate worker processing
             if i % 10 == 0 {
                 // Add some events to promotion queue
-                let _ = queries::add_to_promotion_queue(&workload_pool, event.id, "health-test-agent", 3).await;
+                let _ = queries::add_to_work_queue(&workload_pool, event.id, "health-test-agent", 3).await;
                 
                 // Try to claim work
                 match queries::claim_work_queue_items(&workload_pool, "health-test-agent", "health-worker", 1).await {
@@ -538,7 +538,7 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
                         
                         // Complete the work
                         for item in items {
-                            let _ = queries::complete_promotion_queue_item(&workload_pool, item.queue_id).await;
+                            let _ = queries::complete_work_queue_item(&workload_pool, item.queue_id).await;
                         }
                     }
                     Err(e) => {

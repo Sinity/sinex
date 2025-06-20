@@ -1,5 +1,37 @@
 # TIM-EventIngestionProcessing: Queues, Workers, Notifications
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented  
+**Implementation**: 85% (PostgreSQL work queue, worker patterns, BLAKE3 hashing working, FastCDC and Redis missing)
+**Dependencies**: PostgreSQL, work_queue table, worker processes, agent manifests
+**Blocks**: Event processing pipeline, promotion workflows, downstream analysis
+
+## MVP Specification
+- PostgreSQL-based promotion queue with transactional processing
+- Worker polling with FOR UPDATE SKIP LOCKED
+- Exponential backoff retry mechanism
+- Dead letter queue for failed items
+- Content deduplication with FastCDC and BLAKE3
+
+## Enhanced Features
+- Redis streams for high-throughput scenarios
+- LISTEN/NOTIFY wake-up optimization
+- Distributed worker coordination
+- Advanced retry policies
+- Performance monitoring and metrics
+
+## Implementation Checklist
+- [x] work_queue table schema (renamed from promotion_queue) - `migrations/20250103120015_rename_promotion_queue_to_work_queue.sql`
+- [x] Worker polling and claiming logic - `crate/sinex-db/src/queries.rs:get_work_for_agent()`
+- [x] Exponential backoff with jitter - Retry logic with `next_retry_ts`
+- [x] Dead letter queue handling - Status tracking with max_attempts  
+- [x] BLAKE3 hashing for deduplication - `crate/sinex-annex/src/lib.rs:compute_blake3_hash()`
+- [x] Performance indexes and constraints - Multi-column indexes on status, retry timestamps
+- [ ] Content-defined chunking (FastCDC)
+- [ ] LISTEN/NOTIFY wake-up signals
+- [ ] Redis streams integration  
+- [ ] Distributed worker coordination
+
 *   **Relevant ADR:** `[ADR-002-EventProcessingNotificationMechanism.md](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)`
 *   **Original UG Context:** Section 3 (specifically 3.1, 3.2, 3.3)
 

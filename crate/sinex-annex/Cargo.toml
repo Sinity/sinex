@@ -14,6 +14,8 @@ blake3.workspace = true
 tempfile.workspace = true
 which.workspace = true
 sqlx.workspace = true
+chrono.workspace = true
+gethostname.workspace = true
 
 # Internal dependencies
 sinex-core = { path = "../sinex-core" }

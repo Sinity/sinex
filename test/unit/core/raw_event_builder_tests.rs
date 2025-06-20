@@ -71,7 +71,7 @@ fn test_raw_event_builder_empty_payload() {
 
 #[test]
 fn test_raw_event_builder_multiple_builds() {
-    let builder = RawEventBuilder::new(
+    let _builder = RawEventBuilder::new(
         sources::CLIPBOARD,
         "content.copied",
         json!({"content": "test text"})

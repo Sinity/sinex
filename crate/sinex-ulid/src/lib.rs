@@ -2,9 +2,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Mutex;
 use thiserror::Error;
 use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
+use lazy_static::lazy_static;
 
 #[derive(Error, Debug)]
 pub enum UlidError {
@@ -15,6 +17,20 @@ pub enum UlidError {
 }
 
 pub type Error = UlidError;
+
+/// Global monotonic ULID generator state
+#[derive(Debug)]
+struct MonotonicState {
+    last_timestamp: u64,
+    last_random: u128,
+}
+
+lazy_static! {
+    static ref MONOTONIC_STATE: Mutex<MonotonicState> = Mutex::new(MonotonicState {
+        last_timestamp: 0,
+        last_random: 0,
+    });
+}
 
 /// A wrapper around ULID that provides PostgreSQL compatibility via UUID
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -28,10 +44,62 @@ impl fmt::Debug for Ulid {
 }
 
 impl Ulid {
-    /// Generate a new ULID
+    /// Generate a new ULID with monotonic ordering guarantee
+    /// 
+    /// ULIDs generated within the same millisecond will have their random component
+    /// incremented to ensure strict ordering. This prevents ordering violations
+    /// that can occur during high-frequency generation.
     pub fn new() -> Self {
-        Self(InnerUlid::new())
+        use rand::Rng;
+        
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+            
+        let mut state = MONOTONIC_STATE.lock().unwrap();
+        
+        let random_part = if now_ms == state.last_timestamp {
+            // Same millisecond: increment the random component to maintain ordering
+            state.last_random = state.last_random.wrapping_add(1);
+            state.last_random
+        } else if now_ms > state.last_timestamp {
+            // New millisecond: generate fresh random component
+            let mut rng = rand::thread_rng();
+            let new_random = rng.gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF; // 80 bits max
+            state.last_timestamp = now_ms;
+            state.last_random = new_random;
+            new_random
+        } else {
+            // Clock went backwards: use incremented random from last timestamp
+            // This handles clock adjustments gracefully
+            state.last_random = state.last_random.wrapping_add(1);
+            state.last_random
+        };
+        
+        drop(state); // Release the lock early
+        
+        // Build ULID with timestamp and monotonic random component
+        let timestamp_ms = std::cmp::min(now_ms, (1u64 << 48) - 1); // Cap at 48-bit max
+            
+        // Create ULID from datetime and controlled random
+        let mut bytes = [0u8; 16];
+        
+        // Timestamp (first 6 bytes, big-endian)
+        bytes[0] = (timestamp_ms >> 40) as u8;
+        bytes[1] = (timestamp_ms >> 32) as u8;
+        bytes[2] = (timestamp_ms >> 24) as u8;
+        bytes[3] = (timestamp_ms >> 16) as u8;
+        bytes[4] = (timestamp_ms >> 8) as u8;
+        bytes[5] = timestamp_ms as u8;
+        
+        // Random component (last 10 bytes, big-endian)
+        let random_bytes = random_part.to_be_bytes();
+        bytes[6..16].copy_from_slice(&random_bytes[6..16]); // Use lower 80 bits
+        
+        Self(InnerUlid::from_bytes(bytes))
     }
+    
 
     /// Create from a timestamp
     pub fn from_datetime(datetime: DateTime<Utc>) -> Self {

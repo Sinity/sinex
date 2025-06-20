@@ -263,7 +263,7 @@ proptest! {
     fn test_work_queue_consistency_under_high_contention(
         num_workers in 5..=15usize,
         items_per_batch in 1..=3usize,
-        seed in any::<u64>(),
+        _seed in any::<u64>(),
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
@@ -289,7 +289,7 @@ proptest! {
             ).await.expect("DB operation failed");
             
             let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-            let target_queue_id = queue_item.queue_id;
+            let _target_queue_id = queue_item.queue_id;
             
             let tracker = ProcessingTracker::new();
             
