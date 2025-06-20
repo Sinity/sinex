@@ -200,8 +200,8 @@ async fn test_event_source_runtime_error() -> Result<()> {
         source.stream_events(tx).await
     });
     
-    // Let it send some events
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Wait for some events to be generated
+    tokio::task::yield_now().await;
     
     // Trigger error
     should_error.store(true, Ordering::SeqCst);

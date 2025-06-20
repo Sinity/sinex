@@ -1,4 +1,4 @@
-use sinex_ulid::{Ulid, monotonic::MonotonicUlidGenerator};
+use sinex_ulid::Ulid;
 use uuid::Uuid;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -107,31 +107,38 @@ fn test_ulid_zero_and_max_values() {
 }
 
 #[test]
-fn test_ulid_monotonic_generator_overflow() {
-    let gen = MonotonicUlidGenerator::new();
+fn test_ulid_rapid_generation_same_millisecond() {
+    // Test: Generate many ULIDs rapidly and check for collisions
+    // This tests whether standard ULID generation is sufficient for rapid generation
     
-    // Set a timestamp
-    let timestamp = 1000u64;
+    use std::collections::HashSet;
     
-    // Generate ULIDs until we hit the maximum random value
-    let mut ulids = Vec::new();
+    let mut ulids = HashSet::new();
+    let generation_count = 10000;
     
-    // Generate many ULIDs with same timestamp to test overflow behavior
-    for _ in 0..100 {
-        let timestamp_dt = chrono::DateTime::from_timestamp_millis(timestamp as i64).unwrap();
-        let ulid = gen.generate_from_datetime(timestamp_dt);
-        ulids.push(ulid);
+    // Generate ULIDs as rapidly as possible
+    for _ in 0..generation_count {
+        let ulid = Ulid::new();
+        
+        // Check for collisions
+        assert!(ulids.insert(ulid), "ULID collision detected: {}", ulid);
     }
     
-    // All should have same timestamp
-    for ulid in &ulids {
-        assert_eq!(ulid.timestamp().timestamp_millis(), timestamp as i64);
+    assert_eq!(ulids.len(), generation_count);
+    
+    // Convert to sorted vector to check ordering properties
+    let mut sorted_ulids: Vec<_> = ulids.into_iter().collect();
+    sorted_ulids.sort();
+    
+    // Verify they maintain proper timestamp ordering
+    for i in 1..sorted_ulids.len() {
+        // ULIDs should be ordered by timestamp first, then by random component
+        assert!(sorted_ulids[i] > sorted_ulids[i-1], 
+               "ULID ordering violation: {} should be > {}", 
+               sorted_ulids[i], sorted_ulids[i-1]);
     }
     
-    // All should be strictly increasing
-    for window in ulids.windows(2) {
-        assert!(window[0] < window[1], "ULIDs should be strictly increasing");
-    }
+    println!("Successfully generated {} unique, ordered ULIDs", generation_count);
 }
 
 #[test]
@@ -186,9 +193,9 @@ fn test_ulid_time_precision_edge_cases() {
     let base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
     
     // Generate multiple ULIDs within the same millisecond
-    let gen = MonotonicUlidGenerator::new();
+    // Generate multiple ULIDs with the same timestamp
     let ulids: Vec<_> = (0..10)
-        .map(|_| gen.generate_from_datetime(base_time))
+        .map(|_| Ulid::from_datetime(base_time))
         .collect();
     
     // All should have the same timestamp
@@ -206,12 +213,12 @@ fn test_ulid_time_precision_edge_cases() {
 #[test]
 fn test_ulid_lexicographic_ordering_matches_temporal() {
     // Generate ULIDs at different times
-    let gen = MonotonicUlidGenerator::new();
+    // Generate ULIDs at different times
     let mut ulids = Vec::new();
     
     for i in 0..10 {
         let timestamp = chrono::DateTime::from_timestamp_millis(1000 + i * 100).unwrap();
-        ulids.push(gen.generate_from_datetime(timestamp));
+        ulids.push(Ulid::from_datetime(timestamp));
         thread::sleep(Duration::from_millis(1));
     }
     

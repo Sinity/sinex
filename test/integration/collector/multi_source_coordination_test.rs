@@ -217,7 +217,7 @@ async fn test_source_startup_synchronization() -> Result<()> {
                 "event_delay_ms": 50,
             }));
             
-            let mut source = TestCoordinatedSource::initialize(ctx).await?;
+            let mut _source = TestCoordinatedSource::initialize(ctx).await?;
             
             // Wait for all sources to initialize
             barrier_clone.wait().await;

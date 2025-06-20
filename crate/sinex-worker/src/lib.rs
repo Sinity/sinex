@@ -305,6 +305,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn with_failure(mut self) -> Self {
             self.should_fail = true;
             self

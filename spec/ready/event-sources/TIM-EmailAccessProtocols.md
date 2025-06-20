@@ -1,5 +1,37 @@
 # TIM-EmailAccessProtocols: Email Access (IMAP / Gmail API)
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 0% (Design complete, implementation not started)
+**Dependencies**: Gmail API credentials, OAuth2 flow, IMAP libraries, email parsing
+**Blocks**: Email content ingestion, communication analysis, attachment processing
+
+## MVP Specification
+- Gmail API OAuth2 authentication
+- Basic email metadata ingestion
+- Email content extraction and storage
+- Rate limiting and quota management
+- Incremental sync with change detection
+
+## Enhanced Features
+- IMAP protocol support for non-Gmail providers
+- Advanced attachment processing
+- Email thread reconstruction
+- Contact relationship mapping
+- Advanced filtering and categorization
+- Multi-account support
+
+## Implementation Checklist
+- [ ] Gmail API OAuth2 setup
+- [ ] Email metadata extraction
+- [ ] Content parsing and storage
+- [ ] Rate limiting implementation
+- [ ] Incremental sync mechanism
+- [ ] Error handling and recovery
+- [ ] IMAP fallback implementation
+- [ ] Attachment handling pipeline
+- [ ] Contact extraction and linking
+
 *   **Relevant ADR:** (N/A directly, core ingestor for email data)
 *   **Original UG Context:** Section 14
 

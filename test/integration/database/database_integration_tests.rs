@@ -1,3 +1,14 @@
+//! Database integration tests
+//! 
+//! These tests verify core database operations work correctly:
+//! - Event insertion and retrieval
+//! - Batch operations
+//! - Query performance
+//! - Schema validation
+//! - Concurrent access patterns
+//!
+//! Uses #[sqlx::test] for automatic transaction isolation
+
 use crate::common;
 use sinex_core::event_type_constants;
 use std::time::Duration;
@@ -6,7 +17,14 @@ use common::{
     events, assertions, generators
 };
 
-/// Test that we can insert events and they actually show up in the database
+/// Test basic event lifecycle: insert → retrieve → verify
+/// 
+/// This is the most fundamental test - if this fails, nothing else works.
+/// Verifies:
+/// - Events can be inserted into raw.events table
+/// - ULID primary keys are properly handled
+/// - Event retrieval by ID works
+/// - All fields round-trip correctly
 #[sqlx::test]
 async fn test_insert_and_retrieve_event(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Create a test event using our utilities

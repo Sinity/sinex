@@ -1,20 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
-};
-use chrono::{DateTime, Utc};
 use prometheus::{
-    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Registry, TextEncoder,
+    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Registry,
 };
-use serde::Serialize;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::recovery::CollectorError;
 
@@ -101,7 +90,7 @@ impl CollectorMetrics {
             config_reloads: CounterVec::new(
                 prometheus::Opts::new(
                     "sinex_config_reloads_total",
-                    "Total number of configuration reloads"
+                    "Number of configuration reloads"
                 ),
                 &["collector", "status"]
             )?,
@@ -118,33 +107,8 @@ impl CollectorMetrics {
         registry.register(Box::new(self.event_lag.clone()))?;
         registry.register(Box::new(self.sources_active.clone()))?;
         registry.register(Box::new(self.config_reloads.clone()))?;
+        
         Ok(Arc::new(self))
-    }
-}
-
-/// Tracing context for operations
-#[derive(Debug, Clone)]
-pub struct TraceContext {
-    pub trace_id: String,
-    pub span_id: String,
-    pub parent_span_id: Option<String>,
-}
-
-impl TraceContext {
-    pub fn new() -> Self {
-        Self {
-            trace_id: uuid::Uuid::new_v4().to_string(),
-            span_id: uuid::Uuid::new_v4().to_string(),
-            parent_span_id: None,
-        }
-    }
-    
-    pub fn child(&self) -> Self {
-        Self {
-            trace_id: self.trace_id.clone(),
-            span_id: uuid::Uuid::new_v4().to_string(),
-            parent_span_id: Some(self.span_id.clone()),
-        }
     }
 }
 
@@ -230,149 +194,6 @@ impl EventInstrumentation {
             .config_reloads
             .with_label_values(&[&self.collector, status])
             .inc();
-    }
-}
-
-/// Health check endpoint data
-#[derive(Debug, Serialize)]
-pub struct HealthStatus {
-    pub status: HealthState,
-    pub version: String,
-    pub uptime_seconds: u64,
-    pub components: Vec<ComponentHealth>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HealthState {
-    Healthy,
-    Degraded,
-    Unhealthy,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ComponentHealth {
-    pub name: String,
-    pub status: HealthState,
-    pub message: Option<String>,
-    pub last_check: DateTime<Utc>,
-}
-
-/// Application state for web server
-#[derive(Clone)]
-pub struct AppState {
-    pub registry: Arc<Registry>,
-    pub start_time: Instant,
-    pub health_checks: Arc<tokio::sync::RwLock<Vec<ComponentHealth>>>,
-}
-
-/// Metrics server for Prometheus scraping and health checks
-pub struct MetricsServer {
-    app_state: AppState,
-    port: u16,
-}
-
-impl MetricsServer {
-    pub fn new(registry: Arc<Registry>, port: u16) -> Self {
-        let app_state = AppState {
-            registry,
-            start_time: Instant::now(),
-            health_checks: Arc::new(tokio::sync::RwLock::new(Vec::new())),
-        };
-        
-        Self { app_state, port }
-    }
-    
-    pub async fn start(self) -> Result<(), Box<dyn std::error::Error>> {
-        let app = Router::new()
-            .route("/metrics", get(metrics_handler))
-            .route("/health", get(health_handler))
-            .route("/ready", get(ready_handler))
-            .with_state(self.app_state);
-        
-        let addr = SocketAddr::from(([0, 0, 0, 0], self.port));
-        let listener = TcpListener::bind(addr).await?;
-        
-        info!("Metrics server listening on {}", addr);
-        
-        axum::serve(listener, app).await?;
-        Ok(())
-    }
-    
-    /// Update health status for a component
-    pub async fn update_component_health(
-        &self,
-        name: String,
-        status: HealthState,
-        message: Option<String>,
-    ) {
-        let mut health_checks = self.app_state.health_checks.write().await;
-        
-        // Remove existing entry for this component
-        health_checks.retain(|c| c.name != name);
-        
-        // Add updated entry
-        health_checks.push(ComponentHealth {
-            name,
-            status,
-            message,
-            last_check: Utc::now(),
-        });
-    }
-}
-
-/// Prometheus metrics endpoint
-async fn metrics_handler(State(state): State<AppState>) -> Response {
-    let encoder = TextEncoder::new();
-    let metric_families = state.registry.gather();
-    
-    match encoder.encode_to_string(&metric_families) {
-        Ok(output) => (StatusCode::OK, output).into_response(),
-        Err(e) => {
-            warn!("Failed to encode metrics: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to encode metrics").into_response()
-        }
-    }
-}
-
-/// Health check endpoint
-async fn health_handler(State(state): State<AppState>) -> Response {
-    let health_checks = state.health_checks.read().await;
-    
-    let overall_status = if health_checks.iter().any(|c| matches!(c.status, HealthState::Unhealthy)) {
-        HealthState::Unhealthy
-    } else if health_checks.iter().any(|c| matches!(c.status, HealthState::Degraded)) {
-        HealthState::Degraded
-    } else {
-        HealthState::Healthy
-    };
-    
-    let health_status = HealthStatus {
-        status: overall_status,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: state.start_time.elapsed().as_secs(),
-        components: health_checks.clone(),
-    };
-    
-    let status_code = match health_status.status {
-        HealthState::Healthy => StatusCode::OK,
-        HealthState::Degraded => StatusCode::OK,
-        HealthState::Unhealthy => StatusCode::SERVICE_UNAVAILABLE,
-    };
-    
-    (status_code, axum::Json(health_status)).into_response()
-}
-
-/// Readiness check endpoint (simpler than health)
-async fn ready_handler(State(state): State<AppState>) -> Response {
-    let health_checks = state.health_checks.read().await;
-    
-    let is_ready = !health_checks.iter().any(|c| matches!(c.status, HealthState::Unhealthy));
-    
-    if is_ready {
-        (StatusCode::OK, "Ready").into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "Not Ready").into_response()
     }
 }
 

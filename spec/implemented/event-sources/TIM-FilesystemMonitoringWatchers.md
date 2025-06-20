@@ -1,5 +1,36 @@
 # TIM-FilesystemMonitoringWatchers: Platform-Specific Filesystem Watchers
 
+## Status Dashboard
+**Maturity Level**: L4 - Implemented
+**Implementation**: 90% (Linux inotify fully working, cross-platform abstraction in place)
+**Dependencies**: notify-rs crate, inotify on Linux, FSEvents on macOS
+**Blocks**: Real-time content analysis, PKM document change detection
+
+## MVP Specification
+- Recursive directory monitoring via notify-rs
+- inotify-based event detection on Linux
+- Basic event filtering (create, modify, delete, rename)
+- Configuration-driven watch paths
+- Event debouncing for rapid changes
+
+## Enhanced Features
+- Advanced event filtering and throttling
+- Symlink and mount point handling
+- Performance monitoring and metrics
+- Cross-platform optimization
+- Large directory tree handling
+
+## Implementation Checklist
+- [x] Basic notify-rs integration
+- [x] inotify Linux implementation
+- [x] Recursive directory watching
+- [x] Event filtering and debouncing
+- [x] Configuration-driven paths
+- [ ] Advanced throttling algorithms
+- [ ] Symlink handling
+- [ ] Performance metrics
+- [ ] Cross-platform testing
+
 *   **Relevant ADR:** (N/A directly, core for filesystem ingestor)
 *   **Original UG Context:** Section 12.1
 

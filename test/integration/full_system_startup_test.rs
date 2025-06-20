@@ -5,16 +5,14 @@
 //! git-annex integration, and comprehensive error handling.
 
 use anyhow::Result;
-use sinex_core::{EventSourceContext, EventSource};
+use sinex_core::EventSourceContext;
 use sinex_db::{create_test_pool, queries};
-use sinex_collector::config::{CollectorConfig, ValidationReport};
-use serde_json::json;
+use sinex_collector::config::CollectorConfig;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Barrier};
+use tokio::sync::mpsc;
 use tempfile::TempDir;
-use uuid::Uuid;
 
 /// Test helper to create a comprehensive collector configuration
 fn create_comprehensive_config() -> CollectorConfig {
@@ -80,10 +78,27 @@ async fn test_system_startup_with_all_configurations() -> Result<()> {
     assert!(monitoring_active, "Monitoring system should be active");
     
     let startup_duration = startup_start.elapsed();
+    
+    // Basic timeout assertion  
     assert!(startup_duration < Duration::from_secs(60), 
            "System startup should complete within 60 seconds, took {:?}", startup_duration);
     
-    println!("✅ Full system startup completed in {:?}", startup_duration);
+    // Performance regression detection assertions (generous safety margins)
+    // Normal startup should be much faster than timeout
+    assert!(startup_duration < Duration::from_secs(30), 
+           "Startup performance regression: should complete <30s, took {:?}", startup_duration);
+    
+    // For development environments, startup should be reasonably fast
+    if startup_duration > Duration::from_secs(15) {
+        println!("⚠️  Slower startup detected: {:?} (may indicate performance regression)", startup_duration);
+    }
+    
+    // Optimal startup time tracking for future regression detection
+    let startup_ms = startup_duration.as_millis();
+    assert!(startup_ms < 20_000, // 20 second threshold with safety margin
+           "Startup time regression: expected <20s, got {}ms", startup_ms);
+    
+    println!("✅ Full system startup completed in {:?} (performance validated)", startup_duration);
     Ok(())
 }
 
@@ -153,8 +168,8 @@ async fn test_git_annex_startup(annex_path: &std::path::Path) -> Result<bool> {
 }
 
 async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
-    let (tx, mut rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
-    let mut source_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    let (_tx, _rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
+    let source_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let healthy_sources = Arc::new(AtomicBool::new(true));
     
     // Test that each configured event source can initialize
@@ -293,7 +308,6 @@ async fn test_clipboard_source_health() -> Result<bool> {
 
 async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     // Test that worker system can initialize and claim work
-    use sinex_db::models::*;
     
     // Insert test work items
     let test_event = crate::common::create_test_event("worker_startup_test", "system.health_check");
@@ -313,12 +327,12 @@ async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     assert!(!claimed_items.is_empty(), "Worker should be able to claim items on startup");
     
     // Clean up
-    queries::complete_promotion_queue_item(pool, claimed_items[0].queue_id).await?;
+    queries::complete_work_queue_item(pool, claimed_items[0].queue_id).await?;
     
     Ok(true)
 }
 
-async fn test_monitoring_system_startup(config: &CollectorConfig) -> Result<bool> {
+async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<bool> {
     // Test that monitoring system can track health metrics
     let start_time = Instant::now();
     
@@ -531,11 +545,9 @@ async fn test_health_check_failure_detection() -> Result<bool> {
 async fn test_health_check_recovery_detection() -> Result<bool> {
     // Test that health check system can detect component recovery
     
-    let mut component_healthy = false;
-    
     // Simulate component becoming healthy again
     tokio::time::sleep(Duration::from_millis(10)).await;
-    component_healthy = true;
+    let component_healthy = true;
     
     // Should detect recovery
     assert!(component_healthy, "Should detect component recovery");
@@ -614,7 +626,6 @@ async fn test_event_source_error_handling() -> Result<bool> {
 }
 
 async fn test_worker_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
-    use sinex_db::models::*;
     
     // Test that worker errors are contained and don't affect other workers
     
@@ -637,7 +648,7 @@ async fn test_worker_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
     assert!(!claimed_items2.is_empty(), "Worker2 should claim an item");
     
     // Worker1 completes successfully
-    queries::complete_promotion_queue_item(pool, claimed_items1[0].queue_id).await?;
+    queries::complete_work_queue_item(pool, claimed_items1[0].queue_id).await?;
     
     // Worker2 simulates failure by not completing
     // (In real scenario, this would timeout and be reclaimed)

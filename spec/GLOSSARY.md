@@ -1,6 +1,6 @@
-# Sinnix Exocortex: Project Glossary
+# Sinex: Project Glossary
 
-This glossary provides definitions for key terms used throughout the Sinnix Exocortex documentation.
+This glossary provides definitions for key terms used throughout the Sinex project documentation.
 
 ## A
 
@@ -23,7 +23,6 @@ This glossary provides definitions for key terms used throughout the Sinnix Exoc
 
 ## C
 
-*   **CDDG (Claude-Driven Development Guide):** The document outlining the methodology for using an AI agent (like Claude) for Test-Driven Development of the Exocortex.
 *   **CDP (Chrome DevTools Protocol):** A protocol allowing programmatic interaction with Chromium-based browsers, used for advanced web archiving and page interaction.
 *   **Cognitive Habitat:** (Original Vision term, now generally "empowering digital environment for thought") The Exocortex conceptualized as an active, adaptive digital environment supporting and extending user cognition.
 *   **Content-Addressing:** Storing data based on a cryptographic hash of its content, providing inherent integrity checking and deduplication (e.g., `git-annex`).

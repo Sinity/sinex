@@ -1,84 +1,204 @@
-# Sinex Exocortex: System Technical Architecture Document (STAD) v1.2
+# Sinex: System Technical Architecture Document (STAD) v1.3
 
-> **📊 CURRENT IMPLEMENTATION MATURITY**:
+> **📊 IMPLEMENTATION STATUS**:
 >
-> - 🏗️ **Foundation Phase** (~35% of vision complete)
-> - ✅ **Event substrate operational** - PostgreSQL + TimescaleDB + ULID
-> - ✅ **Unified ingestion framework** - UnifiedCollector managing all sources
-> - ✅ **Distributed work processing** - work_queue + worker agents with metrics
-> - ✅ **Schema validation active** - pg_jsonschema enforcing event structure
-> - ✅ **Segmentation system** - Activity segment candidates + final resolution
-> - ⚠️ **NixOS module in development** - Service configuration framework
-> - ❌ **Missing major components** - PKM, full AI/LLM integration, semantic search, web UI
+> - 🚧 **Core Infrastructure** (45%) - Basic PostgreSQL + TimescaleDB working, needs hardening
+> - 🚧 **Event Sources** (35%) - Four sources operational, many more planned
+> - 🔨 **Processing Pipeline** (25%) - Basic queue works, minimal processing logic
+> - 🚧 **NixOS Module** (40%) - Basic services, needs production features
+> - 🔨 **Query Interface** (15%) - Minimal CLI only
+> - ❌ **AI/LLM Integration** (0%) - Schema only, no implementation
+> - ❌ **Knowledge Graph** (5%) - Schema only, no population logic
 
-**(A High-Level Architectural Map linking to detailed Architectural Modules, TIMs, and ADRs)**
+## Purpose
 
-## Preamble
+This System Technical Architecture Document provides a high-level map of Sinex's architecture. It introduces major architectural domains and links to detailed specifications in Architectural Modules, Technical Implementation Modules (TIMs), and Architectural Decision Records (ADRs).
 
-- **Purpose:** This System Technical Architecture Document (STAD) provides a concise, high-level map of the Sinnix Exocortex system's architecture. It introduces the major architectural domains and directs readers to dedicated Architectural Module documents for comprehensive details, and to Technical Implementation Modules (TIMs) and Architectural Decision Records (ADRs) for specific implementation specifications and design choices.
-- **Scope:** This STAD focuses on orienting the reader to the overall structure and key architectural pillars.
-- **Relationship to Other Canonical Documents:**
-  - **Vision/Charter (`VISION.md`):** The "Why" and high-level "What."
-  - **SADI (`SADI.md`):** The central meta-document linking all documentation.
-  - **Architectural Modules (`docs/arch_modules/`):** The primary detailed architectural descriptions for each domain.
-  - **ADRs (`docs/adr/`):** The "Why these choices were made."
-  - **TIMs (`docs/tims/`):** The "How to build specific parts."
-- **Conventions:** Links guide to deeper information.
+### Document Relationships
+- **[VISION.md](VISION.md)** - Project philosophy and long-term goals
+- **[SADI.md](SADI.md)** - Central documentation navigation hub
+- **[Architectural Modules](docs/arch_modules/)** - Domain-specific deep dives
+- **[ADRs](docs/adr/)** - Architectural decision rationale
+- **[TIMs](implemented/)** - Implementation specifications
 
-## 1. Exocortex System Overview
+## 1. System Overview
 
-### 1.1. Mission and Core Architectural Goals
+### Mission
+Sinex is a "sentient archive" that augments human intellect by comprehensively capturing digital experiences, structuring data intelligently, and enabling powerful query and analysis capabilities while maintaining complete user control.
 
-The Sinnix Exocortex aims to be a "sentient archive," augmenting human intellect by comprehensively capturing digital experiences and subjective states, structuring this data emergently, and enabling powerful query, analysis, and agentic assistance, all while prioritizing user agency and data sovereignty.
+### Architecture Diagram
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        User Interfaces                           │
+│         CLI (exo.py)    │    Future: Web UI    │   Neovim       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+┌────────────────────────┴────────────────────────────────────────┐
+│                     Query & Analysis Layer                       │
+│         SQL    │    Query DSL    │    Future: AI/LLM            │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+┌────────────────────────┴────────────────────────────────────────┐
+│                    Processing Pipeline                           │
+│    Work Queue    │    Workers    │    Event Routing             │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+┌────────────────────────┴────────────────────────────────────────┐
+│                      Data Substrate                              │
+│    PostgreSQL + TimescaleDB    │    Git-Annex Blobs             │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+┌────────────────────────┴────────────────────────────────────────┐
+│                    Event Collection                              │
+│  Unified Collector  │  Event Sources  │  Schema Validation       │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-- **Full Vision:** `VISION_OR_CHARTER.md`, `SADI.md`.
+### Key Architectural Principles
+- **Immutable Event Log** - All data preserved in `raw.events`
+- **Time-Ordered Keys** - ULID primary keys for natural ordering
+- **Schema Validation** - JSON Schema enforcement on all events
+- **Distributed Processing** - Lock-free work queue distribution
+- **Local-First** - Complete functionality without cloud dependencies
+- **User Agency** - Full control over data collection and processing
 
-### 1.2. High-Level Architectural Diagram
+## 2. Data Substrate Architecture
 
-*(Imagine a C4 Level 1/2 diagram here, or refer to one in SADI.md, showing: Data Substrate, Ingestion & Telemetry, Agentic Ecosystem, User Interaction & Query, System Operations & Integrity).*
-The system is built on these five interconnected architectural domains.
+The foundation of Sinex built on PostgreSQL with specialized extensions.
 
-### 1.3. Key Architectural Principles
+### Core Components
+- **PostgreSQL 16** with extensions:
+  - **TimescaleDB** - Time-series optimization for events
+  - **pgx_ulid** - Time-ordered primary keys ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md))
+  - **pg_jsonschema** - Event payload validation
+  - **pgvector** - Future semantic search capabilities
 
-Core principles include Universal Capture, Emergent Structure, User Agency, Continuous Context, Feedback as Fuel, Meta-Observability, Local-First, and Security by Design.
+### Event Storage
+- **Immutable Event Log** (`raw.events`) - Source of truth for all captured data
+- **Schema Registry** (`event_payload_schemas`) - Versioned JSON schemas
+- **Work Queue** (`work_queue`) - Distributed event processing ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
+- **Routing Cache** - Materialized view for efficient distribution ([ADR-014](docs/adr/ADR-014-routing-cache.md))
 
-- **Details:** `VISION_OR_CHARTER.md` (Part I), `SADI.md` (Part I).
+### Knowledge Representation (Future)
+- **Knowledge Graph** (`core.entities`, `core.entity_relations`)
+- **Artifacts** (`core.artifacts`) - Documents, notes, media
+- **Embeddings** (`artifact_embeddings`) - Semantic search vectors
+- **Blob Storage** - Git-annex for large files
 
-## 2. Core Data Substrate Architecture
+**Detailed Architecture:** [DataSubstrate_Architecture.md](docs/arch_modules/DataSubstrate_Architecture.md)
 
-The Data Substrate is the Exocortex's foundation, built on PostgreSQL (enhanced by TimescaleDB, `pgx_ulid` ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md)), `pgvector`, `pg_jsonschema`)). It features an immutable event log (`raw.events`) as the source of truth, with versioned JSON Schemas for payload validation (`sinex_schemas.event_payload_schemas`). A distributed work queue system (`work_queue`) with materialized view routing ([ADR-014](docs/adr/0014-routing-cache.md)) manages event distribution to workers via `SELECT FOR UPDATE SKIP LOCKED` polling ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)), supported by a Dead Letter Queue (`work_queue_dlq`) for failed processing. Activity segmentation uses a candidate/final flow where agents emit overlapping `activity.segment_candidate` events that are resolved into non-conflicting `activity.segment_final` events with provenance tracking. Structured knowledge emerges in `core_entities` and `core_entity_relations` (the Knowledge Graph), versioned `core_artifacts` (with Yjs CRDTs for PKM notes - [ADR-004](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)), universal `core_tags`, and semantic `artifact_embeddings` (HNSW index - [ADR-005](docs/adr/ADR-005-VectorIndexTypePgvector.md), CPU-first - [ADR-007](docs/adr/ADR-007-LargeScaleVectorSearchStrategy.md)). Large binary blobs are managed by `git-annex` with metadata in `core_blobs`.
+## 3. Event Collection Architecture
 
-- **Detailed Architecture:** `[DataSubstrate_Architecture.md](docs/arch_modules/DataSubstrate_Architecture.md)`
-- **Key Implementation Details:** `TIM-PrimaryKeyImplementation.md`, `TIM-TimescaleDBConfiguration.md`, `TIM-EventSchemaRegistry.md`, `TIM-EventIngestionProcessing.md`, `TIM-GitAnnexLargeFileMgmt.md`.
+Unified event collection system managing multiple data sources.
 
-## 3. Ingestion & Telemetry Architecture
+### Unified Collector
+- **Single Binary** (`sinex-collector`) - Coordinates all event sources
+- **EventSource Trait** - Common interface for all sources
+- **Hot-Reload Config** - Dynamic source management without restart
+- **Schema Validation** - All events validated before storage
 
-The Ingestion Layer is unified under a single long-running `UnifiedCollector` binary that coordinates multiple event sources via the `EventSource` trait. Data streams are captured into `raw.events` based on principles of layered fidelity and ambient capture. The collector manages Chrome history monitoring, Hyprland focus tracking, clipboard changes, terminal activity, filesystem events, and other sources as configurable plugins. Each event is validated by `pg_jsonschema` before insertion. Data is captured from the Desktop Environment (Hyprland IPC/Plugin - [ADR-003](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md); AT-SPI2; `evdev`; Clipboard), specific Applications (Browser extension + native host; Terminal via Atuin, Asciinema, Kitty RC - [ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md); Neovim plugin; Email), the Filesystem (watchers + `git-annex` integration), user's PKM (DB-native with Yjs - [ADR-004](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)), Audio/Visual streams (PipeWire), Mobile/IoT devices (MQTT, ESP32 reference), and user-logged Meta-Cognitive/Subjective states.
+### Implemented Event Sources
+- **Filesystem** - File creation, modification, deletion monitoring
+- **Terminal** - Command history via Atuin, session recording via Asciinema
+- **Clipboard** - Text and image capture with deduplication
+- **Hyprland IPC** - Window focus and workspace events ([ADR-003](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md))
 
-- **Detailed Architecture:** `[IngestionArchitecture_And_TelemetrySources.md](docs/arch_modules/IngestionArchitecture_And_TelemetrySources.md)`
-- **Key Implementation Details:** TIMs in `docs/tims/ingestors/`.
+### Planned Sources
+- **Browser** - History and activity via extension
+- **Audio** - PipeWire capture and transcription
+- **Email** - IMAP/Exchange integration
+- **Accessibility** - AT-SPI2 UI event capture
 
-## 4. Agentic Ecosystem & AI Integration Architecture
+**Detailed Architecture:** [IngestionArchitecture_And_TelemetrySources.md](docs/arch_modules/IngestionArchitecture_And_TelemetrySources.md)
 
-The Agentic Ecosystem drives intelligent processing and automation. Agents are modular, event-driven, and user-controllable, registered in `sinex_schemas.agent_manifests` and consume work via the distributed queue system. Each agent polls for events using `SELECT FOR UPDATE SKIP LOCKED` from `work_queue` tables. Worker processes export Prometheus metrics including queue depth, dequeue latency, and processing lag. LLM integration is central, supporting local (Ollama) and remote models registered in `core_llm_models`. A Prompt Registry (`core_prompts`) manages versioned prompt templates (sourced from Git YAMLs), with frameworks for A/B testing and canary deployments. An LLM Router directs requests based on prompt needs, model capabilities, cost, and privacy. Complex agentic flows can be built using DSPy/LangGraph, with persistence for their states. Archetypal agents handle tasks like data processing, analysis, integration, system maintenance, and activity segmentation resolution.
+## 4. Processing Pipeline
 
-- **Detailed Architecture:** `[AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md)`
-- **Key Implementation Details:** `TIM-AgentManifestManagement.md`, `TIM-LLMResourceOrchestration.md`.
+Event-driven processing system with distributed workers.
 
-## 5. User Interaction, Query & Feedback Architecture
+### Work Queue System
+- **Lock-Free Distribution** - `SELECT FOR UPDATE SKIP LOCKED` pattern
+- **Agent Registration** - Manifests define capabilities and routing
+- **Dead Letter Queue** - Failed event handling and retry logic
+- **Metrics Export** - Prometheus metrics for monitoring
 
-This domain defines how users engage with the Exocortex. Primary interaction channels include a Neovim plugin (`sinnix-nvim` with LSP/RPC backend communication and Yjs for PKM - [ADR-004](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)), the `exo.py` CLI, and Grafana dashboards with Prometheus metrics (future Web UI). An "Inbox Workflow" helps triage actionable items. Query capabilities are layered: direct SQL, a simplified `exo` syntax, and hybrid search (combining `pgvector` semantic search with PostgreSQL FTS, using Reciprocal Rank Fusion). Understanding is woven through explicit data relations (`event_relations`, `core_entity_relations`), agent-driven narratives (`meta.narrative_generated`), and flexible `event_annotations`. The system supports cognitive feedback loops and self-modeling by making actions and subjective states queryable. Activity timeline visualization is provided through resolved `activity.segment_final` events which represent deduplicated, non-overlapping time segments derived from potentially conflicting agent-generated candidates.
+### Current Workers
+- **Promotion Worker** - Transforms raw events to structured data
+- **Health Monitor** - Agent heartbeat tracking
 
-- **Detailed Architecture:** `[UserInteraction_And_Query_Architecture.md](docs/arch_modules/UserInteraction_And_Query_Architecture.md)`
-- **Key Implementation Details:** `TIM-NeovimPluginIntegration.md`, `TIM-HybridSearchPostgreSQL.md`.
+### Future AI Integration
+- **LLM Integration** - Local (Ollama) and remote models
+- **Prompt Registry** - Versioned prompt management
+- **Entity Resolution** - Identify and link entities across events
+- **Context Synthesis** - Generate meaningful summaries
 
-## 6. System Operations, Integrity & Evolution Architecture
+**Detailed Architecture:** [AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md)
 
-This domain ensures the Exocortex is robust, secure, and maintainable. Meta-Observability treats system operational data as first-class Exocortex events, monitored via Prometheus/Grafana with exported metrics from workers (queue depth, processing latency, agent lag). A comprehensive NixOS module (`services.sinex`) provides declarative service configuration including database setup, collector configuration, worker parallelism, and routing cache refresh intervals. Security includes layered access control (PG roles, systemd users), encryption (at-rest LUKS/`git-annex`/`pgsodium`; in-transit TLS; secrets via `agenix` - [ADR-006](docs/adr/ADR-006-NixOSSecretsManagementTool.md)), user consent mechanisms, and process sandboxing (`seccomp-bpf`, AppArmor). Backup and Disaster Recovery rely on `pgBackRest` for PostgreSQL (PITR, automated test restores) and `git-annex` multi-remote strategies for blobs, with NixOS configuration versioned in Git. Data integrity is maintained via DB constraints, `pg_jsonschema`, and link/orphan checks. Performance and scalability use materialized view routing cache with batch refresh patterns, `SELECT FOR UPDATE SKIP LOCKED` for lock-free worker coordination, and nightly TTL cleanup jobs. Schema evolution is managed through versioned SQL migrations. Multi-device coherence (future) will use local-first principles with tools like LiteFS/Syncthing and CRDTs. Release Engineering uses Nix Flakes for reproducible builds and GitHub Actions for CI/CD (checks, tests, security scans, artifact publishing to Cachix).
+## 5. User Interfaces & Query
 
-- **Detailed Architecture:** `[SystemOperations_And_Integrity_Architecture.md](docs/arch_modules/SystemOperations_And_Integrity_Architecture.md)`
-- **Key Implementation Details:** `TIM-ObservabilityStackSetup.md`, `TIM-SecretsManagementAgenix.md`, `TIM-PostgreSQLSecurityEncryption.md`, `TIM-ProcessSandboxing.md`, `TIM-PostgreSQLBackupDR_pgBackRest.md`, `TIM-ReleaseEngineeringCICD.md`, `TIM-MultiDeviceSyncArchitecture.md`.
+Multiple interfaces for data access and exploration.
 
-## 7. Conclusion: Synthesized Technical Strategy
+### Current Interfaces
+- **CLI** (`exo.py`) - Query events, manage schemas, monitor agents
+- **Direct SQL** - Full database access for power users
+- **Configuration** - TOML-based collector configuration
 
-The Sinnix Exocortex architecture provides a modular, PostgreSQL-centric, local-first platform for comprehensive data capture and intelligent processing. It integrates a multi-modal ingestion layer, a robust data substrate with advanced knowledge representation, an AI-powered agentic ecosystem, and rich user interaction capabilities. Operationalized with NixOS, it emphasizes user agency, data integrity, and security, aiming to create a resilient and evolvable "sentient archive" for lifelong cognitive augmentation. Detailed specifications are found in the linked Architectural Modules, TIMs, and ADRs.
+### Planned Interfaces
+- **Web Dashboard** - Visual exploration and analytics
+- **Neovim Plugin** - Integrated development environment
+- **Query DSL** - Simplified query language
+- **Grafana Dashboards** - Metrics and monitoring
+
+### Query Capabilities (Future)
+- **Semantic Search** - Vector similarity with pgvector
+- **Hybrid Search** - Combined keyword and semantic
+- **Activity Timeline** - Temporal event visualization
+- **Knowledge Graph** - Entity relationship exploration
+
+**Detailed Architecture:** [UserInteraction_And_Query_Architecture.md](docs/arch_modules/UserInteraction_And_Query_Architecture.md)
+
+## 6. System Operations & Deployment
+
+Infrastructure for reliable, secure operation.
+
+### NixOS Integration
+- **Declarative Module** (`services.sinex`) - Complete system configuration
+- **Systemd Services** - Collector, workers, maintenance jobs
+- **Database Setup** - Automatic migrations and extensions
+- **VM Testing** - Comprehensive integration tests
+
+### Monitoring & Observability
+- **Prometheus Metrics** - Queue depth, processing latency
+- **Health Checks** - Agent heartbeats and status
+- **Structured Logging** - JSON logs for analysis
+- **Performance Tracking** - Resource usage monitoring
+
+### Security & Privacy
+- **Access Control** - PostgreSQL roles, systemd users
+- **Process Isolation** - Sandboxed services
+- **Secrets Management** - Agenix for sensitive data ([ADR-006](docs/adr/ADR-006-NixOSSecretsManagementTool.md))
+- **User Consent** - Configurable data collection
+
+### Backup & Recovery (Planned)
+- **pgBackRest** - PostgreSQL point-in-time recovery
+- **Git-Annex** - Distributed blob backup
+- **Configuration** - Version-controlled NixOS
+
+**Detailed Architecture:** [SystemOperations_And_Integrity_Architecture.md](docs/arch_modules/SystemOperations_And_Integrity_Architecture.md)
+
+## 7. Summary & Next Steps
+
+### Current State
+Sinex has a solid foundation with working event collection, storage, and processing infrastructure. The system successfully captures filesystem, terminal, clipboard, and window manager events, storing them reliably in a time-series optimized PostgreSQL database.
+
+### Near-Term Priorities
+1. **Complete Promotion Worker** - Transform raw events to structured data
+2. **Enhance Query Interface** - Build advanced query capabilities
+3. **Add Event Sources** - Browser history, audio capture
+4. **Performance Optimization** - Database indexing and query tuning
+
+### Long-Term Vision
+Build towards the full "sentient archive" vision with AI-powered analysis, semantic search, knowledge graph construction, and multi-device synchronization. The modular architecture ensures each component can evolve independently while maintaining system coherence.
+
+---
+
+*For detailed specifications, see the linked Architectural Modules, TIMs, and ADRs. For the philosophical foundation, see [VISION.md](VISION.md).*

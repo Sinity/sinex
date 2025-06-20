@@ -1,5 +1,37 @@
 # TIM-EntityResolutionTechniques: Entity Resolution in Exocortex
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 15% (Database schema exists, algorithm implementation needed)
+**Dependencies**: PostgreSQL pg_trgm extension, entity tables, NLP libraries, embedding models
+**Blocks**: Knowledge graph construction, entity linking, content understanding, automated relationships
+
+## MVP Specification
+- Named Entity Recognition (NER) for common entity types
+- Fuzzy string matching using PostgreSQL pg_trgm
+- Basic entity linking to canonical entries
+- Simple disambiguation and confidence scoring
+- Integration with knowledge graph tables
+
+## Enhanced Features
+- Advanced NER models and custom entity types
+- Sophisticated disambiguation algorithms
+- Cross-reference validation and relationship inference
+- Temporal entity resolution and tracking
+- Multi-modal entity extraction (text, images, audio)
+- Active learning and user feedback integration
+
+## Implementation Checklist
+- [ ] PostgreSQL pg_trgm extension setup
+- [ ] NER pipeline implementation
+- [ ] Fuzzy matching and candidate generation
+- [ ] Entity linking and disambiguation algorithms
+- [ ] Integration with core.entities tables
+- [ ] Confidence scoring and validation
+- [ ] Performance optimization for large datasets
+- [ ] Cross-reference relationship inference
+- [ ] User feedback and correction mechanisms
+
 *   **Relevant ADR:** (N/A directly, implements core knowledge graph building)
 *   **Original UG Context:** Section 19
 *   **Vision Document Reference:** Part I.3 Principle 6 (NER implied), Part III.3.5 (Knowledge Graph)

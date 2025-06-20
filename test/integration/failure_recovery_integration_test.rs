@@ -11,8 +11,8 @@ use sinex_db::{create_test_pool, queries};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Barrier, Mutex};
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -84,9 +84,9 @@ async fn test_database_connection_recovery(pool: &sqlx::PgPool) -> Result<bool> 
 async fn test_event_buffering_during_outage(pool: &sqlx::PgPool) -> Result<bool> {
     // Test that events are properly buffered when database is unavailable
     
-    let (event_tx, mut event_rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
+    let (_event_tx, mut _event_rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
     let buffered_events = Arc::new(Mutex::new(Vec::new()));
-    let events_processed = Arc::new(AtomicU32::new(0));
+    let _events_processed = Arc::new(AtomicU32::new(0));
     
     // Simulate event producer continuing during database issues
     let producer_events = buffered_events.clone();
@@ -362,7 +362,6 @@ async fn test_worker_failure_and_retry() -> Result<()> {
 }
 
 async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
-    use sinex_db::models::*;
     
     // Create test event and add to promotion queue
     let test_event = RawEventBuilder::new(
@@ -375,7 +374,7 @@ async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
     ).build();
     
     let event_id = queries::insert_event(pool, &test_event).await?.id;
-    queries::add_to_promotion_queue(pool, event_id, "test-agent", 3).await?;
+    queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
     
     // Phase 1: Worker claims and simulates failure
     let claimed_items = queries::claim_work_queue_items(pool, "test-agent", "retry-worker", 1).await?;
@@ -407,7 +406,6 @@ async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
 }
 
 async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
-    use sinex_db::models::*;
     
     // Create test event that will exhaust retries
     let test_event = RawEventBuilder::new(
@@ -420,7 +418,7 @@ async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
     ).build();
     
     let event_id = queries::insert_event(pool, &test_event).await?.id;
-    queries::add_to_promotion_queue(pool, event_id, "test-agent", 2).await?; // Only 2 max retries
+    queries::add_to_work_queue(pool, event_id, "test-agent", 2).await?; // Only 2 max retries
     
     // Exhaust retries
     for retry in 0..3 {
@@ -448,7 +446,6 @@ async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
 }
 
 async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
-    use sinex_db::models::*;
     
     // Create multiple test events
     let mut event_ids = Vec::new();
@@ -463,7 +460,7 @@ async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
         ).build();
         
         let event_id = queries::insert_event(pool, &test_event).await?.id;
-        queries::add_to_promotion_queue(pool, event_id, "test-agent", 3).await?;
+        queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
         event_ids.push(event_id);
     }
     
@@ -592,7 +589,7 @@ async fn test_memory_pressure_recovery() -> Result<bool> {
         processed
     });
     
-    let producer_result = producer.await?;
+    let _producer_result = producer.await?;
     let processed_count = consumer.await?;
     
     // System should either handle the load or apply backpressure gracefully
@@ -678,7 +675,7 @@ async fn test_file_handle_exhaustion_recovery() -> Result<bool> {
     
     // Phase 2: Try to open one more (should fail gracefully)
     let extra_file_path = temp_dir.path().join("extra_file.txt");
-    let extra_file_result = std::fs::File::create(&extra_file_path);
+    let _extra_file_result = std::fs::File::create(&extra_file_path);
     
     // Phase 3: Close some files and verify recovery
     open_files.truncate(opened_count / 2); // Close half the files

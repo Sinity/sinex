@@ -1,5 +1,37 @@
 # TIM-AudioIngestionPipeWire: Audio Capture via PipeWire
 
+## Status Dashboard
+**Maturity Level**: L2 - Ready for Implementation
+**Implementation**: 0% (Design complete, implementation not started)
+**Dependencies**: PipeWire system service, audio libraries, EventSource trait, file storage
+**Blocks**: Audio data capture, voice recordings, system audio monitoring, multimedia analysis
+
+## MVP Specification
+- PipeWire audio source detection and enumeration
+- Basic audio stream capture (microphone input)
+- System audio loopback recording
+- Audio file storage and metadata
+- Integration with EventSource pattern
+
+## Enhanced Features
+- Advanced audio processing and filtering
+- Real-time audio analysis and transcription
+- Multiple simultaneous audio source capture
+- Audio quality optimization
+- Automatic gain control and noise reduction
+- Integration with speech recognition systems
+
+## Implementation Checklist
+- [ ] PipeWire API integration
+- [ ] Audio source enumeration
+- [ ] Stream capture implementation
+- [ ] Audio file format handling
+- [ ] EventSource trait implementation
+- [ ] Metadata extraction and storage
+- [ ] Configuration management
+- [ ] Error handling and recovery
+- [ ] Performance optimization
+
 * **Relevant ADR:** (N/A directly, core ingestor for audio modality)
 * **Original UG Context:** Section 9.2
 

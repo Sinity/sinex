@@ -63,6 +63,7 @@ proptest.workspace = true
 tempfile = "3"
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-events = { path = "crate/sinex-events" }
+criterion.workspace = true
 
 [workspace.package]
 version = "0.4.2"

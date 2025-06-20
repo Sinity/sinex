@@ -20,7 +20,9 @@ use tokio::task::JoinHandle;
 use tracing::{info, error};
 
 use crate::config::CollectorConfig;
+use crate::metrics::CollectorMetrics;
 use crate::OutputConfig;
+use std::sync::Arc;
 
 /// Convert TOML value to JSON value
 fn toml_to_json(toml_val: toml::Value) -> serde_json::Value {
@@ -52,6 +54,7 @@ pub struct UnifiedCollector {
     db_pool: Option<PgPool>,
     validator: Option<EventValidator>,
     event_log_file: Option<tokio::fs::File>,
+    metrics: Arc<CollectorMetrics>,
 }
 
 impl UnifiedCollector {
@@ -72,6 +75,7 @@ impl UnifiedCollector {
             db_pool,
             validator,
             event_log_file: None,
+            metrics: Arc::new(CollectorMetrics::new()),
         }
     }
     
@@ -82,11 +86,32 @@ impl UnifiedCollector {
         // Create channel for events
         let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(10000);
         
+        // Start metrics collection
+        self.metrics.clone().start(event_tx.clone(), self.db_pool.clone()).await;
+        info!("Started high-resolution metrics collection");
+        
         // Start event sources
         let source_handles = self.start_sources(event_tx).await?;
         
         // Process events
         while let Some(event) = event_rx.recv().await {
+            // Record metrics for non-metrics events
+            if !event.source.starts_with("sinex.metrics.") {
+                self.metrics.record_event(&event.source);
+                
+                // Update source-specific metrics
+                let source = event.source.clone();
+                let event_size = event.payload.to_string().len() as u64;
+                let metrics = self.metrics.clone();
+                tokio::spawn(async move {
+                    metrics.update_source_metrics(&source, |m| {
+                        m.events_total += 1;
+                        m.bytes_processed += event_size;
+                        m.last_event_time = Some(chrono::Utc::now());
+                    }).await;
+                });
+            }
+            
             if let Err(e) = crate::output_event(
                 &event,
                 &self.output_config,
@@ -95,6 +120,7 @@ impl UnifiedCollector {
                 &mut self.event_log_file,
             ).await {
                 error!("Failed to output event: {}", e);
+                self.metrics.record_error(&event.source);
             }
         }
         

@@ -1,10 +1,10 @@
-# Data Substrate Architecture: The Foundation of the Exocortex
+# Data Substrate Architecture: The Foundation of Sinex
 
-*   **Version:** 1.0
-*   **Date:** 2024-03-11
-*   **Implementation Status:** ✅ **LARGELY IMPLEMENTED** - Core components operational, validation partial
-*   **Purpose:** This document provides a comprehensive architectural understanding of the Sinnix Exocortex's core data storage, event logging, fundamental data structuring mechanisms, and knowledge representation. It details the "what" and "why" of the data layer, linking to specific Technical Implementation Modules (TIMs) for detailed implementation specifications and Architectural Decision Records (ADRs) for key design choices.
-*   **Primary Sources:** STAD (System Technical Architecture Document) Part I; Vision Document Part III.1, III.3, III.4.
+*   **Version:** 1.1
+*   **Date:** 2025-01-19
+*   **Implementation Status:** 🚧 **45% IMPLEMENTED** - Basic infrastructure working, needs optimization and features
+*   **Purpose:** This document provides a comprehensive architectural understanding of Sinex's core data storage, event logging, fundamental data structuring mechanisms, and knowledge representation. It details the "what" and "why" of the data layer, linking to specific Technical Implementation Modules (TIMs) for detailed implementation specifications and Architectural Decision Records (ADRs) for key design choices.
+*   **Current State:** Basic PostgreSQL + TimescaleDB setup, ULID keys functional, minimal validation, basic work queue
 
 ## 1. Introduction & Philosophy
 

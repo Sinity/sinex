@@ -92,8 +92,6 @@ pub enum QueueStatus {
     Succeeded,       // New: Successfully processed
     Failed,          // New: Permanently failed
     FailedRetryable,
-    #[deprecated(note = "Use Succeeded instead")]
-    Completed,       // Legacy, maps to Succeeded
 }
 
 impl QueueStatus {
@@ -104,8 +102,6 @@ impl QueueStatus {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::FailedRetryable => "failed_retryable",
-            #[allow(deprecated)]
-            Self::Completed => "succeeded", // Map legacy to succeeded
         }
     }
 }

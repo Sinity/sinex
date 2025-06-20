@@ -1,9 +1,10 @@
-use sinex_core::{EventSource, EventSourceContext, RawEvent};
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
 use sinex_ulid::Ulid;
 use tokio::sync::mpsc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use serde_json::json;
 
 /// Test what happens when event channel fills up
 #[tokio::test]
@@ -28,13 +29,13 @@ async fn test_channel_backpressure_handling() {
                 host: "test".to_string(),
                 ingestor_version: None,
                 payload_schema_id: None,
-                payload: serde_json::json!({"seq": i}),
+                payload: json!({"seq": i}),
             };
             
             gen_count.fetch_add(1, Ordering::Relaxed);
             
             // Try send with timeout to avoid blocking forever
-            match tx.send_timeout(event, Duration::from_millis(10)).await {
+            match tx.try_send(event) {
                 Ok(_) => {},
                 Err(e) => {
                     drop_count.fetch_add(1, Ordering::Relaxed);
@@ -77,8 +78,7 @@ async fn test_channel_backpressure_handling() {
     producer.abort();
     let _ = producer.await;
     
-    // Drain remaining
-    drop(tx);
+    // Wait for consumer to finish (tx was dropped when producer ended)
     consumer.await.unwrap();
     
     let generated = events_generated.load(Ordering::Relaxed);
@@ -91,8 +91,20 @@ async fn test_channel_backpressure_handling() {
     println!("  Consumed: {}", consumed_count);
     println!("  Drop rate: {:.1}%", dropped as f64 / generated as f64 * 100.0);
     
-    // Verify some events were dropped due to backpressure
-    assert!(dropped > 0, "Expected some events to be dropped");
+    // Verify backpressure behavior - with small buffer and sleep asymmetry, drops are expected
+    assert!(
+        dropped > 0, 
+        "Expected backpressure to cause drops with 100-item buffer and slow consumer, but got 0 drops"
+    );
+    
+    // Verify reasonable drop rate (should be significant but not total)
+    let drop_rate = dropped as f64 / generated as f64;
+    assert!(
+        drop_rate > 0.5 && drop_rate < 0.95,
+        "Drop rate {:.1}% outside expected range (50-95%)", 
+        drop_rate * 100.0
+    );
+    
     assert!(consumed_count > 0, "Expected some events to be consumed");
     assert!(consumed_count + dropped <= generated, "Accounting error");
 }
@@ -183,14 +195,14 @@ async fn test_event_source_crash_recovery() {
         type Config = ();
         const SOURCE_NAME: &'static str = "crashing_source";
         
-        async fn initialize(_ctx: EventSourceContext) -> Result<Self, Box<dyn std::error::Error>> {
+        async fn initialize(_ctx: EventSourceContext) -> Result<Self> {
             Ok(Self {
                 crash_after: 50,
                 events_sent: Arc::new(AtomicU64::new(0)),
             })
         }
         
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), Box<dyn std::error::Error>> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             for i in 0..100 {
                 let event = RawEvent {
                     id: Ulid::new(),
@@ -201,10 +213,10 @@ async fn test_event_source_crash_recovery() {
                     host: "test".to_string(),
                     ingestor_version: None,
                     payload_schema_id: None,
-                    payload: serde_json::json!({"seq": i}),
+                    payload: json!({"seq": i}),
                 };
                 
-                tx.send(event).await?;
+                tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
                 self.events_sent.fetch_add(1, Ordering::Relaxed);
                 
                 if i == self.crash_after {
@@ -220,11 +232,13 @@ async fn test_event_source_crash_recovery() {
     
     // Test automatic restart behavior
     let (tx, mut rx) = mpsc::channel(100);
-    let mut source = CrashingEventSource::initialize(EventSourceContext::new(serde_json::Value::Null))
+    let ctx = EventSourceContext::for_test();
+    let mut source = CrashingEventSource::initialize(ctx)
         .await
         .unwrap();
     
     let sent_count = source.events_sent.clone();
+    let sent_count_for_print = sent_count.clone();
     
     // Run source in supervised task
     let source_handle = tokio::spawn(async move {
@@ -257,7 +271,7 @@ async fn test_event_source_crash_recovery() {
     source_handle.abort();
     
     println!("Source crash test results:");
-    println!("  Events sent: {}", sent_count.load(Ordering::Relaxed));
+    println!("  Events sent: {}", sent_count_for_print.load(Ordering::Relaxed));
     println!("  Events received: {}", received.len());
     println!("  Last sequence: {:?}", received.last());
     
@@ -266,8 +280,8 @@ async fn test_event_source_crash_recovery() {
 }
 
 fn get_current_memory_usage() -> u64 {
-    // Simple approximation - in real code use /proc/self/status or similar
-    std::alloc::System.into().used_memory()
+    // This is a stub - real implementation would read from /proc/self/status
+    0
 }
 
 // Placeholder for memory tracking
