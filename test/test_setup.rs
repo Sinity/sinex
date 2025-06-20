@@ -95,7 +95,7 @@ async fn create_high_performance_test_pool(database_url: &str) -> Result<PgPool,
     
     let connect_options = PgConnectOptions::from_str(database_url)?
         .statement_cache_capacity(1000)  // Larger statement cache
-        .log_statements(log::LevelFilter::Debug);
+        .log_statements(tracing::metadata::LevelFilter::DEBUG);
     
     PgPoolOptions::new()
         .max_connections(50)  // Higher connection limit for concurrent tests

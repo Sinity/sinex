@@ -445,111 +445,6 @@ pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: V
     RawEventBuilder::new(source, event_type, payload).build()
 }
 
-/// EventSource testing harness for consistent testing patterns
-#[allow(dead_code)]
-pub mod event_source_harness {
-    use super::*;
-    use sinex_core::{EventSource, EventSourceContext};
-    use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
-    use std::collections::VecDeque;
-
-    /// Test harness for any EventSource implementation
-    pub struct EventSourceTestHarness<T: EventSource> {
-        source: Option<T>,
-        events_received: VecDeque<sinex_core::RawEvent>,
-        config: T::Config,
-        context: EventSourceContext,
-    }
-
-    impl<T: EventSource> EventSourceTestHarness<T> {
-        /// Create a new test harness with given config
-        pub async fn new(config: T::Config) -> Result<Self> {
-            let context = EventSourceContext {
-                config: serde_json::to_value(&config)?,
-                shutdown: tokio_util::sync::CancellationToken::new(),
-            };
-
-            Ok(Self {
-                source: None,
-                events_received: VecDeque::new(),
-                config,
-                context,
-            })
-        }
-
-        /// Initialize the EventSource
-        pub async fn initialize(&mut self) -> Result<()> {
-            self.source = Some(T::initialize(self.context.clone()).await?);
-            Ok(())
-        }
-
-        /// Collect events for a specified duration
-        pub async fn collect_events(&mut self, duration: Duration) -> Result<Vec<sinex_core::RawEvent>> {
-            let source = self.source.as_mut().ok_or_else(|| anyhow::anyhow!("EventSource not initialized"))?;
-            
-            let (tx, mut rx) = mpsc::channel(1000);
-            
-            let stream_task = {
-                let mut source_clone = std::mem::replace(source, unsafe { std::mem::zeroed() });
-                tokio::spawn(async move {
-                    source_clone.stream_events(tx).await
-                })
-            };
-
-            let collect_task = tokio::spawn(async move {
-                let mut events = Vec::new();
-                while let Some(event) = rx.recv().await {
-                    events.push(event);
-                }
-                events
-            });
-
-            tokio::time::sleep(duration).await;
-            self.context.shutdown.cancel();
-            
-            let _ = stream_task.await;
-            timeout(Duration::from_secs(1), collect_task).await??
-        }
-
-        /// Wait for a specific number of events with timeout
-        pub async fn wait_for_events(&mut self, count: usize, timeout_duration: Duration) -> Result<Vec<sinex_core::RawEvent>> {
-            let source = self.source.as_mut().ok_or_else(|| anyhow::anyhow!("EventSource not initialized"))?;
-            
-            let (tx, mut rx) = mpsc::channel(1000);
-            
-            let stream_task = {
-                tokio::spawn(async move {
-                    if let Some(mut src) = self.source.take() {
-                        let _ = src.stream_events(tx).await;
-                    }
-                })
-            };
-
-            let result = timeout(timeout_duration, async {
-                let mut events = Vec::new();
-                while events.len() < count {
-                    if let Some(event) = rx.recv().await {
-                        events.push(event);
-                    } else {
-                        break;
-                    }
-                }
-                events
-            }).await?;
-
-            self.context.shutdown.cancel();
-            let _ = stream_task.await;
-            
-            Ok(result)
-        }
-
-        /// Shutdown the EventSource
-        pub async fn shutdown(&mut self) {
-            self.context.shutdown.cancel();
-        }
-    }
-}
 
 /// Database state builder for complex test scenarios
 #[allow(dead_code)]
@@ -956,3 +851,81 @@ size_threshold_bytes = 1024000
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
+/// Timing optimization utilities to reduce test flakiness
+pub mod timing_optimization;
+
+/// Test parallelization utilities
+#[allow(dead_code)]
+pub mod parallelization {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::task::JoinSet;
+
+    /// Parallel test executor for independent test operations
+    pub struct ParallelTestExecutor {
+        max_concurrent: usize,
+    }
+
+    impl ParallelTestExecutor {
+        /// Create a new parallel executor with concurrency limit
+        pub fn new(max_concurrent: usize) -> Self {
+            Self { max_concurrent }
+        }
+
+        /// Execute database operations in parallel with shared pool
+        pub async fn execute_db_parallel<F, T, Fut>(
+            &self,
+            pool: Arc<PgPool>,
+            operations: Vec<F>,
+        ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
+        where
+            F: FnOnce(Arc<PgPool>) -> Fut + Send + 'static,
+            Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
+            T: Send + 'static,
+        {
+            let mut join_set = JoinSet::new();
+            let mut results = Vec::new();
+            let mut pending = operations.into_iter();
+
+            // Start initial batch
+            for _ in 0..self.max_concurrent {
+                if let Some(op) = pending.next() {
+                    let pool_clone = pool.clone();
+                    join_set.spawn(async move { op(pool_clone).await });
+                }
+            }
+
+            // Process results and start new tasks
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(op_result) => results.push(op_result),
+                    Err(join_error) => results.push(Err(Box::new(join_error) as Box<dyn std::error::Error + Send + Sync>)),
+                }
+
+                // Start next operation if available
+                if let Some(op) = pending.next() {
+                    let pool_clone = pool.clone();
+                    join_set.spawn(async move { op(pool_clone).await });
+                }
+            }
+
+            results
+        }
+    }
+
+    /// Utility for running tests with shared resources safely
+    pub async fn run_tests_with_shared_pool<F, T, Fut>(
+        pool: Arc<PgPool>,
+        operations: Vec<F>,
+        max_concurrent: usize,
+    ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
+    where
+        F: FnOnce(Arc<PgPool>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
+        T: Send + 'static,
+    {
+        ParallelTestExecutor::new(max_concurrent)
+            .execute_db_parallel(pool, operations)
+            .await
+    }
+}

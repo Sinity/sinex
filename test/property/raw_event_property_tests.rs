@@ -3,7 +3,6 @@ use sinex_core::event::{RawEvent, RawEventBuilder};
 use sinex_ulid::Ulid;
 use chrono::{DateTime, Utc, Duration as ChronoDuration};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 /// Generate arbitrary JSON values for payloads
 fn arb_json_value() -> impl Strategy<Value = Value> {
@@ -248,7 +247,7 @@ proptest! {
             json!(0),
             json!(false),
             json!({"nested": {"deep": {"very": {"deeply": {"nested": "value"}}}}}),
-            json!(vec![1, 2, 3, 4, 5; 100]), // Large array
+            json!((0..100).collect::<Vec<i32>>()), // Large array
             json!({"key": "x".repeat(1000)}), // Large string
         ];
         

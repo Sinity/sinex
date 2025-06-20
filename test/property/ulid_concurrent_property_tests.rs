@@ -4,7 +4,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration as ChronoDuration};
+use chrono::{Utc, Duration as ChronoDuration};
 
 /// Test concurrent ULID generation properties
 /// This extends the existing ULID tests with concurrent scenarios
@@ -97,7 +97,7 @@ proptest! {
         // Within each millisecond, ULIDs should be sortable by their full value
         for (ts_ms, mut group_ulids) in timestamp_groups {
             if group_ulids.len() > 1 {
-                let original = group_ulids.clone();
+                let _original = group_ulids.clone();
                 group_ulids.sort();
                 
                 // ULIDs in the same millisecond should have different random parts
@@ -122,7 +122,7 @@ proptest! {
         let test_end = Utc::now();
         
         // All ULID timestamps should be within the test timeframe
-        for (_, ulid, generation_instant) in ulids {
+        for (_, ulid, _generation_instant) in ulids {
             let ulid_timestamp = ulid.timestamp();
             
             // ULID timestamp should be reasonable (within test window + some tolerance)
@@ -164,12 +164,12 @@ proptest! {
     ) {
         let mut all_ulids = Vec::new();
         
-        for burst in 0..num_bursts {
+        for _burst in 0..num_bursts {
             // Generate many ULIDs in rapid succession
             let barrier = Arc::new(Barrier::new(burst_size));
             let mut handles = Vec::new();
             
-            for i in 0..burst_size {
+            for _i in 0..burst_size {
                 let barrier = Arc::clone(&barrier);
                 let handle = thread::spawn(move || {
                     barrier.wait();
@@ -249,7 +249,7 @@ mod stress_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut handles = Vec::new();
         
-        for thread_id in 0..NUM_THREADS {
+        for _thread_id in 0..NUM_THREADS {
             let barrier = Arc::clone(&barrier);
             let counter = Arc::clone(&counter);
             
