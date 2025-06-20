@@ -133,6 +133,13 @@ async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
     assert!(total_inserted >= (num_workers * events_per_worker * 95 / 100), "Too few events inserted");
     assert!(db_count as u64 >= (total_inserted * 95 / 100), "Database count mismatch");
     
+    // Performance assertion - expect at least 1K events/sec with safety margin
+    assert!(
+        insertion_rate > 1_000.0,
+        "Event insertion performance regression: {:.0}/sec is below 1K/sec threshold",
+        insertion_rate
+    );
+    
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'concurrent_load_test'")
         .execute(&pool).await?;

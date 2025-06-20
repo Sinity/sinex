@@ -632,9 +632,22 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     println!("  Race conditions: {}", total_race_conditions);
     println!("{}", metrics.report().await);
 
+    // Calculate processing rate
+    let elapsed_secs = test_duration.as_secs_f64();
+    let processing_rate = total_processed as f64 / elapsed_secs;
+    println!("  Processing rate: {:.2} items/sec", processing_rate);
+
     // Stress test success criteria
     assert!(total_processed > 0, "Should have processed some work items under extreme stress");
     assert_eq!(final_succeeded, total_processed as i64, "Succeeded count should match processed");
+    
+    // Performance assertion - even under extreme stress, should maintain minimum throughput
+    // With 128 workers and deadlock recovery, expect at least 100 items/sec
+    assert!(
+        processing_rate > 100.0,
+        "Work queue performance regression under stress: {:.0}/sec is below 100/sec threshold",
+        processing_rate
+    );
     
     // Under extreme stress, some deadlocks are expected but should be recoverable
     if total_deadlocks > 0 || total_deadlocks_detected > 0 {

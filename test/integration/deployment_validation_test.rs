@@ -7,25 +7,86 @@ use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
-    // This test would normally run in a systemd environment
-    // For now, we verify the notification code paths exist
+    use mock_types::{SystemdNotifier, SystemdEvent};
     
-    // Verify service can send ready notification
+    // Test normal service lifecycle with proper notification sequence
     let notifier = SystemdNotifier::new();
     
-    // Test ready notification
-    notifier.notify_ready()?;
-    
-    // Test watchdog ping
-    notifier.notify_watchdog()?;
-    
-    // Test status updates
+    // Simulate service startup sequence
     notifier.notify_status("Starting event collection")?;
+    notifier.notify_ready()?;
+    notifier.notify_watchdog()?;
     notifier.notify_status("Processing events")?;
-    
-    // Test stopping notification
+    notifier.notify_watchdog()?;
     notifier.notify_stopping()?;
     
+    // Verify the notification sequence was correct
+    let expected_sequence = vec![
+        SystemdEvent::Status("Starting event collection".to_string()),
+        SystemdEvent::Ready,
+        SystemdEvent::Watchdog,
+        SystemdEvent::Status("Processing events".to_string()),
+        SystemdEvent::Watchdog,
+        SystemdEvent::Stopping,
+    ];
+    
+    notifier.verify_sequence(&expected_sequence)
+        .map_err(|e| anyhow::anyhow!("SystemD notification sequence validation failed: {}", e))?;
+    
+    let events = notifier.get_events();
+    assert_eq!(events.len(), 6, "Should have recorded all 6 systemd events");
+    
+    // Verify timing - all events should be within last few seconds
+    let now = std::time::Instant::now();
+    for (_, timestamp) in &events {
+        assert!(now.duration_since(*timestamp).as_secs() < 5, 
+               "All events should be recent");
+    }
+    
+    println!("✅ SystemD notification protocol test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
+    use mock_types::{SystemdNotifier, SystemdEvent};
+    
+    // Test service behavior when watchdog fails
+    let notifier = SystemdNotifier::new();
+    
+    // Normal startup
+    notifier.notify_status("Starting service")?;
+    notifier.notify_ready()?;
+    
+    // First watchdog succeeds
+    notifier.notify_watchdog()?;
+    
+    // Simulate watchdog failure
+    notifier.simulate_watchdog_failure();
+    
+    // Subsequent watchdog should fail
+    let watchdog_result = notifier.notify_watchdog();
+    assert!(watchdog_result.is_err(), "Watchdog should fail after simulated failure");
+    
+    // Service should still be able to send other notifications
+    notifier.notify_status("Handling watchdog failure")?;
+    
+    // Verify the sequence includes the failure scenario
+    let events = notifier.get_events();
+    assert_eq!(events.len(), 4, "Should have 4 recorded events (failed watchdog not recorded)");
+    
+    // Verify sequence up to the failure
+    let expected_sequence = vec![
+        SystemdEvent::Status("Starting service".to_string()),
+        SystemdEvent::Ready,
+        SystemdEvent::Watchdog,
+        SystemdEvent::Status("Handling watchdog failure".to_string()),
+    ];
+    
+    notifier.verify_sequence(&expected_sequence)
+        .map_err(|e| anyhow::anyhow!("Watchdog failure test sequence failed: {}", e))?;
+    
+    println!("✅ SystemD watchdog failure test passed");
     Ok(())
 }
 
@@ -380,15 +441,86 @@ async fn test_deployment_checklist_automation() -> anyhow::Result<()> {
 
 // Mock types for testing - these would normally come from the actual codebase
 mod mock_types {
-    #[derive(Default)]
-    pub struct SystemdNotifier;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    #[derive(Clone, Debug)]
+    pub enum SystemdEvent {
+        Ready,
+        Watchdog,
+        Status(String),
+        Stopping,
+    }
+
+    #[derive(Clone)]
+    pub struct SystemdNotifier {
+        events: Arc<Mutex<Vec<(SystemdEvent, Instant)>>>,
+        fail_watchdog: Arc<Mutex<bool>>,
+    }
+    
+    impl Default for SystemdNotifier {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
     
     impl SystemdNotifier {
-        pub fn new() -> Self { Self }
-        pub fn notify_ready(&self) -> Result<(), anyhow::Error> { Ok(()) }
-        pub fn notify_watchdog(&self) -> Result<(), anyhow::Error> { Ok(()) }
-        pub fn notify_status(&self, _: &str) -> Result<(), anyhow::Error> { Ok(()) }
-        pub fn notify_stopping(&self) -> Result<(), anyhow::Error> { Ok(()) }
+        pub fn new() -> Self { 
+            Self {
+                events: Arc::new(Mutex::new(Vec::new())),
+                fail_watchdog: Arc::new(Mutex::new(false)),
+            }
+        }
+        
+        pub fn simulate_watchdog_failure(&self) {
+            *self.fail_watchdog.lock().unwrap() = true;
+        }
+        
+        pub fn get_events(&self) -> Vec<(SystemdEvent, Instant)> {
+            self.events.lock().unwrap().clone()
+        }
+        
+        pub fn verify_sequence(&self, expected: &[SystemdEvent]) -> Result<(), String> {
+            let events = self.events.lock().unwrap();
+            if events.len() < expected.len() {
+                return Err(format!("Expected {} events, got {}", expected.len(), events.len()));
+            }
+            
+            for (i, expected_event) in expected.iter().enumerate() {
+                match (&events[i].0, expected_event) {
+                    (SystemdEvent::Ready, SystemdEvent::Ready) => {},
+                    (SystemdEvent::Watchdog, SystemdEvent::Watchdog) => {},
+                    (SystemdEvent::Status(a), SystemdEvent::Status(b)) if a == b => {},
+                    (SystemdEvent::Stopping, SystemdEvent::Stopping) => {},
+                    _ => return Err(format!("Event {} mismatch: expected {:?}, got {:?}", 
+                                         i, expected_event, events[i].0)),
+                }
+            }
+            Ok(())
+        }
+        
+        pub fn notify_ready(&self) -> Result<(), anyhow::Error> { 
+            self.events.lock().unwrap().push((SystemdEvent::Ready, Instant::now()));
+            Ok(()) 
+        }
+        
+        pub fn notify_watchdog(&self) -> Result<(), anyhow::Error> { 
+            if *self.fail_watchdog.lock().unwrap() {
+                return Err(anyhow::anyhow!("Simulated watchdog failure"));
+            }
+            self.events.lock().unwrap().push((SystemdEvent::Watchdog, Instant::now()));
+            Ok(()) 
+        }
+        
+        pub fn notify_status(&self, status: &str) -> Result<(), anyhow::Error> { 
+            self.events.lock().unwrap().push((SystemdEvent::Status(status.to_string()), Instant::now()));
+            Ok(()) 
+        }
+        
+        pub fn notify_stopping(&self) -> Result<(), anyhow::Error> { 
+            self.events.lock().unwrap().push((SystemdEvent::Stopping, Instant::now()));
+            Ok(()) 
+        }
     }
     
     #[derive(Clone)]

@@ -91,12 +91,19 @@ async fn test_channel_backpressure_handling() {
     println!("  Consumed: {}", consumed_count);
     println!("  Drop rate: {:.1}%", dropped as f64 / generated as f64 * 100.0);
     
-    // Verify test behavior - note that drop behavior depends on timing
-    if dropped > 0 {
-        println!("Backpressure successfully caused {} events to be dropped", dropped);
-    } else {
-        println!("No events dropped - consumer kept up with producer");
-    }
+    // Verify backpressure behavior - with small buffer and sleep asymmetry, drops are expected
+    assert!(
+        dropped > 0, 
+        "Expected backpressure to cause drops with 100-item buffer and slow consumer, but got 0 drops"
+    );
+    
+    // Verify reasonable drop rate (should be significant but not total)
+    let drop_rate = dropped as f64 / generated as f64;
+    assert!(
+        drop_rate > 0.5 && drop_rate < 0.95,
+        "Drop rate {:.1}% outside expected range (50-95%)", 
+        drop_rate * 100.0
+    );
     
     assert!(consumed_count > 0, "Expected some events to be consumed");
     assert!(consumed_count + dropped <= generated, "Accounting error");
