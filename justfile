@@ -27,6 +27,34 @@ test-vm-interactive:
 test-vm-quick:
     ./test/nixos-vm/run-vm-tests.sh basic-flow
 
+# VM Snapshot Testing (Agent Alpha)
+vm-snapshot-init:
+    echo "🔧 Initializing VM snapshots for fast parallel testing..."
+    ./test/nixos-vm/vm-snapshot-manager.sh create-base basic-flow standard
+    echo "✅ Base VM image created"
+
+vm-snapshot-create NAME TEST="basic-flow":
+    ./test/nixos-vm/vm-snapshot-manager.sh create-snapshot "snapshots/{{TEST}}-base.qcow2" "{{NAME}}"
+
+vm-snapshot-list TEST="basic-flow":
+    ./test/nixos-vm/vm-snapshot-manager.sh list-snapshots "snapshots/{{TEST}}-base.qcow2"
+
+vm-parallel-test *TESTS:
+    echo "🚀 Running VM tests in parallel with snapshots..."
+    ./test/nixos-vm/vm-parallel-runner.sh {{TESTS}}
+
+vm-parallel-test-all:
+    echo "🚀 Running all VM tests in parallel (up to 10 VMs)..."
+    ./test/nixos-vm/vm-parallel-runner.sh -p 10 basic-flow multi-source performance chaos-engineering
+
+vm-parallel-test-quick:
+    echo "🚀 Running quick VM tests in parallel..."
+    ./test/nixos-vm/vm-parallel-runner.sh -p 5 basic-flow
+
+vm-snapshot-cleanup:
+    ./test/nixos-vm/vm-snapshot-manager.sh clean-pool
+
+
 # Advanced VM tests
 test-vm-chaos:
     nix build .#checks.x86_64-linux.sinex-vm-chaos -L

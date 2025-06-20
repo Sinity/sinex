@@ -124,6 +124,16 @@ in
     {
       # Additional test-specific settings
       vmProfile = lib.mkDefault "standard";
+      
+      # Enable qcow2 disk format for snapshot support
+      qemu.options = [
+        "-enable-kvm"
+        "-cpu host"
+      ];
+      
+      # Use qcow2 format by default (enables snapshots)
+      # This will be used by the snapshot infrastructure
+      diskImage = lib.mkDefault "./sinex-test-vm.qcow2";
     }
   ];
 

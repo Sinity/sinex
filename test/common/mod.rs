@@ -175,7 +175,7 @@ pub mod assertions {
     }
 }
 
-/// Test data generation utilities
+/// Enhanced test data generation with realistic patterns
 #[allow(dead_code)]
 pub mod generators {
     use super::*;
@@ -205,6 +205,100 @@ pub mod generators {
     /// Generate multiple test events
     pub fn test_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
         (0..count).map(test_event).collect()
+    }
+
+    /// Generate realistic filesystem events with proper paths
+    pub fn realistic_filesystem_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
+        let realistic_paths = vec![
+            "/home/user/Documents/report.pdf",
+            "/home/user/Code/project/src/main.rs",
+            "/tmp/cache/session_data.json",
+            "/var/log/system.log",
+            "/home/user/.config/app/settings.toml",
+            "/home/user/Downloads/image.png",
+        ];
+        
+        let event_types = vec![
+            event_type_constants::filesystem::FILE_CREATED,
+            event_type_constants::filesystem::FILE_MODIFIED,
+            event_type_constants::filesystem::FILE_DELETED,
+        ];
+        
+        (0..count).map(|i| {
+            let path = realistic_paths[i % realistic_paths.len()];
+            let event_type = event_types[i % event_types.len()];
+            events::filesystem_event(event_type, path)
+        }).collect()
+    }
+
+    /// Generate realistic terminal command events
+    pub fn realistic_terminal_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
+        let realistic_commands = vec![
+            "git status",
+            "cargo build --release",
+            "ls -la /home/user",
+            "cd ~/Projects/sinex",
+            "vim src/main.rs",
+            "grep -r 'TODO' .",
+            "find . -name '*.rs' -exec wc -l {} +",
+            "docker ps -a",
+            "systemctl status postgresql",
+            "nix develop",
+        ];
+        
+        (0..count).map(|i| {
+            let command = realistic_commands[i % realistic_commands.len()];
+            events::kitty_event(command)
+        }).collect()
+    }
+
+    /// Generate events with realistic time distribution
+    pub fn time_distributed_events(
+        count: usize, 
+        start_time: chrono::DateTime<chrono::Utc>,
+        interval_secs: i64
+    ) -> Vec<sinex_db::models::RawEvent> {
+        (0..count).map(|i| {
+            let mut event = test_event(i);
+            event.ts_orig = Some(start_time + chrono::Duration::seconds(interval_secs * i as i64));
+            event
+        }).collect()
+    }
+
+    /// Generate events simulating burst patterns
+    pub fn burst_pattern_events(burst_count: usize, burst_size: usize) -> Vec<sinex_db::models::RawEvent> {
+        let mut events = Vec::new();
+        let base_time = chrono::Utc::now();
+        
+        for burst in 0..burst_count {
+            let burst_start = base_time + chrono::Duration::minutes(burst as i64 * 10);
+            
+            for i in 0..burst_size {
+                let mut event = test_event(burst * burst_size + i);
+                event.ts_orig = Some(burst_start + chrono::Duration::milliseconds(i as i64 * 100));
+                events.push(event);
+            }
+        }
+        
+        events
+    }
+
+    /// Generate events with realistic payload sizes
+    pub fn variable_payload_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
+        (0..count).map(|i| {
+            let payload = match i % 4 {
+                0 => json!({"small": "data"}), // Small payload
+                1 => json!({"medium": "data", "details": vec![1, 2, 3, 4, 5]}), // Medium payload
+                2 => json!({"large": "data".repeat(100), "metadata": {"tags": vec!["tag1", "tag2", "tag3"]}}), // Large payload
+                _ => json!({"binary_data": "a".repeat(1000)}), // Very large payload
+            };
+            
+            create_test_event_with_payload(
+                sources::FILESYSTEM,
+                event_type_constants::filesystem::FILE_MODIFIED,
+                payload
+            )
+        }).collect()
     }
 
     /// Generate test agent manifest
@@ -349,6 +443,389 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::Ra
 /// Helper for creating test events with specific payload
 pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
     RawEventBuilder::new(source, event_type, payload).build()
+}
+
+/// EventSource testing harness for consistent testing patterns
+#[allow(dead_code)]
+pub mod event_source_harness {
+    use super::*;
+    use sinex_core::{EventSource, EventSourceContext};
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+    use std::collections::VecDeque;
+
+    /// Test harness for any EventSource implementation
+    pub struct EventSourceTestHarness<T: EventSource> {
+        source: Option<T>,
+        events_received: VecDeque<sinex_core::RawEvent>,
+        config: T::Config,
+        context: EventSourceContext,
+    }
+
+    impl<T: EventSource> EventSourceTestHarness<T> {
+        /// Create a new test harness with given config
+        pub async fn new(config: T::Config) -> Result<Self> {
+            let context = EventSourceContext {
+                config: serde_json::to_value(&config)?,
+                shutdown: tokio_util::sync::CancellationToken::new(),
+            };
+
+            Ok(Self {
+                source: None,
+                events_received: VecDeque::new(),
+                config,
+                context,
+            })
+        }
+
+        /// Initialize the EventSource
+        pub async fn initialize(&mut self) -> Result<()> {
+            self.source = Some(T::initialize(self.context.clone()).await?);
+            Ok(())
+        }
+
+        /// Collect events for a specified duration
+        pub async fn collect_events(&mut self, duration: Duration) -> Result<Vec<sinex_core::RawEvent>> {
+            let source = self.source.as_mut().ok_or_else(|| anyhow::anyhow!("EventSource not initialized"))?;
+            
+            let (tx, mut rx) = mpsc::channel(1000);
+            
+            let stream_task = {
+                let mut source_clone = std::mem::replace(source, unsafe { std::mem::zeroed() });
+                tokio::spawn(async move {
+                    source_clone.stream_events(tx).await
+                })
+            };
+
+            let collect_task = tokio::spawn(async move {
+                let mut events = Vec::new();
+                while let Some(event) = rx.recv().await {
+                    events.push(event);
+                }
+                events
+            });
+
+            tokio::time::sleep(duration).await;
+            self.context.shutdown.cancel();
+            
+            let _ = stream_task.await;
+            timeout(Duration::from_secs(1), collect_task).await??
+        }
+
+        /// Wait for a specific number of events with timeout
+        pub async fn wait_for_events(&mut self, count: usize, timeout_duration: Duration) -> Result<Vec<sinex_core::RawEvent>> {
+            let source = self.source.as_mut().ok_or_else(|| anyhow::anyhow!("EventSource not initialized"))?;
+            
+            let (tx, mut rx) = mpsc::channel(1000);
+            
+            let stream_task = {
+                tokio::spawn(async move {
+                    if let Some(mut src) = self.source.take() {
+                        let _ = src.stream_events(tx).await;
+                    }
+                })
+            };
+
+            let result = timeout(timeout_duration, async {
+                let mut events = Vec::new();
+                while events.len() < count {
+                    if let Some(event) = rx.recv().await {
+                        events.push(event);
+                    } else {
+                        break;
+                    }
+                }
+                events
+            }).await?;
+
+            self.context.shutdown.cancel();
+            let _ = stream_task.await;
+            
+            Ok(result)
+        }
+
+        /// Shutdown the EventSource
+        pub async fn shutdown(&mut self) {
+            self.context.shutdown.cancel();
+        }
+    }
+}
+
+/// Database state builder for complex test scenarios
+#[allow(dead_code)]
+pub mod database_builder {
+    use super::*;
+    use sinex_db::models::{RawEvent, AgentManifest};
+    use chrono::{DateTime, Utc};
+
+    /// Builder for setting up complex database states in tests
+    pub struct DatabaseStateBuilder {
+        pool: PgPool,
+        events: Vec<RawEvent>,
+        manifests: Vec<AgentManifest>,
+        schemas: Vec<(String, serde_json::Value)>,
+    }
+
+    impl DatabaseStateBuilder {
+        /// Create a new database state builder
+        pub fn new(pool: PgPool) -> Self {
+            Self {
+                pool,
+                events: Vec::new(),
+                manifests: Vec::new(),
+                schemas: Vec::new(),
+            }
+        }
+
+        /// Add events to be inserted
+        pub fn with_events(mut self, events: Vec<RawEvent>) -> Self {
+            self.events.extend(events);
+            self
+        }
+
+        /// Add a single event
+        pub fn with_event(mut self, event: RawEvent) -> Self {
+            self.events.push(event);
+            self
+        }
+
+        /// Add events from a generator function
+        pub fn with_generated_events<F>(mut self, count: usize, generator: F) -> Self 
+        where
+            F: Fn(usize) -> RawEvent,
+        {
+            for i in 0..count {
+                self.events.push(generator(i));
+            }
+            self
+        }
+
+        /// Add events with time distribution
+        pub fn with_time_distributed_events(
+            mut self, 
+            count: usize, 
+            start_time: DateTime<Utc>, 
+            interval: chrono::Duration
+        ) -> Self {
+            for i in 0..count {
+                let mut event = generators::test_event(i);
+                event.ts_orig = Some(start_time + interval * i as i32);
+                self.events.push(event);
+            }
+            self
+        }
+
+        /// Add agent manifests
+        pub fn with_manifests(mut self, manifests: Vec<AgentManifest>) -> Self {
+            self.manifests.extend(manifests);
+            self
+        }
+
+        /// Add JSON schemas
+        pub fn with_schema(mut self, name: String, schema: serde_json::Value) -> Self {
+            self.schemas.push((name, schema));
+            self
+        }
+
+        /// Build the database state
+        pub async fn build(self) -> Result<DatabaseState> {
+            // Insert all events
+            let mut event_ids = Vec::new();
+            for event in &self.events {
+                let inserted = queries::insert_event(&self.pool, event).await?;
+                event_ids.push(inserted.id);
+            }
+
+            // Insert all manifests
+            for manifest in &self.manifests {
+                queries::upsert_agent_manifest(
+                    &self.pool,
+                    &manifest.agent_name,
+                    manifest.description.as_deref().unwrap_or(""),
+                    &manifest.version,
+                    &manifest.status,
+                    Some(&manifest.agent_type),
+                    manifest.config_template_json.clone(),
+                    manifest.produces_event_types.clone(),
+                ).await?;
+            }
+
+            // Insert schemas if any
+            for (name, schema) in &self.schemas {
+                // Insert schema logic here when available
+                // For now, just validate the schema
+                let _ = serde_json::to_string(schema)?;
+            }
+
+            Ok(DatabaseState {
+                pool: self.pool,
+                event_ids,
+                manifest_names: self.manifests.into_iter().map(|m| m.agent_name).collect(),
+                schema_names: self.schemas.into_iter().map(|(name, _)| name).collect(),
+            })
+        }
+    }
+
+    /// Represents a built database state for testing
+    pub struct DatabaseState {
+        pub pool: PgPool,
+        pub event_ids: Vec<Ulid>,
+        pub manifest_names: Vec<String>,
+        pub schema_names: Vec<String>,
+    }
+
+    impl DatabaseState {
+        /// Verify all events were inserted correctly
+        pub async fn verify_events(&self) -> Result<()> {
+            for event_id in &self.event_ids {
+                let exists = super::event_exists(&self.pool, *event_id).await?;
+                assert!(exists, "Event {} was not found in database", event_id);
+            }
+            Ok(())
+        }
+
+        /// Get event count in database
+        pub async fn event_count(&self) -> Result<i64> {
+            super::get_event_count(&self.pool).await
+        }
+
+        /// Clean up all inserted data
+        pub async fn cleanup(&self) -> Result<()> {
+            super::cleanup::truncate_all_tables(&self.pool).await
+        }
+    }
+}
+
+/// Enhanced assertion helpers
+#[allow(dead_code)]
+pub mod enhanced_assertions {
+    use super::*;
+    use sinex_db::models::RawEvent;
+    use chrono::{DateTime, Utc};
+
+    /// Assert events are in chronological order
+    pub fn assert_events_in_order(events: &[RawEvent]) {
+        for window in events.windows(2) {
+            let (prev, curr) = (&window[0], &window[1]);
+            assert!(
+                prev.ts_ingest <= curr.ts_ingest,
+                "Events not in chronological order: {} > {}",
+                prev.ts_ingest,
+                curr.ts_ingest
+            );
+        }
+    }
+
+    /// Assert events are in ULID order (which implies time order)
+    pub fn assert_events_in_ulid_order(events: &[RawEvent]) {
+        for window in events.windows(2) {
+            let (prev, curr) = (&window[0], &window[1]);
+            assert!(
+                prev.id.timestamp() <= curr.id.timestamp(),
+                "Events not in ULID time order: {} > {}",
+                prev.id,
+                curr.id
+            );
+        }
+    }
+
+    /// Assert that worker processed expected number of events
+    pub async fn assert_worker_processed(
+        pool: &PgPool,
+        worker_name: &str,
+        expected_count: i64,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        let start = std::time::Instant::now();
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+
+        loop {
+            // Check if worker has processed expected events
+            let processed_count = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM raw.events WHERE payload->>'processed_by' = $1",
+                worker_name
+            )
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+
+            if processed_count >= expected_count {
+                return Ok(());
+            }
+
+            if start.elapsed() > timeout_duration {
+                anyhow::bail!(
+                    "Worker {} processed {} events, expected {}, after {} seconds",
+                    worker_name,
+                    processed_count,
+                    expected_count,
+                    timeout_secs
+                );
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Assert events match expected pattern
+    pub fn assert_events_match_pattern<F>(events: &[RawEvent], pattern: F) 
+    where
+        F: Fn(&RawEvent) -> bool,
+    {
+        for (i, event) in events.iter().enumerate() {
+            assert!(
+                pattern(event),
+                "Event at index {} does not match expected pattern: {:?}",
+                i,
+                event
+            );
+        }
+    }
+
+    /// Assert events are from expected sources
+    pub fn assert_events_from_sources(events: &[RawEvent], expected_sources: &[&str]) {
+        let unique_sources: std::collections::HashSet<_> = events.iter().map(|e| e.source.as_str()).collect();
+        let expected_set: std::collections::HashSet<_> = expected_sources.iter().copied().collect();
+        
+        assert_eq!(
+            unique_sources, expected_set,
+            "Events from unexpected sources. Expected: {:?}, Found: {:?}",
+            expected_sources,
+            unique_sources
+        );
+    }
+
+    /// Assert no duplicate events (by ULID)
+    pub fn assert_no_duplicate_events(events: &[RawEvent]) {
+        let mut seen_ids = std::collections::HashSet::new();
+        for (i, event) in events.iter().enumerate() {
+            assert!(
+                seen_ids.insert(event.id),
+                "Duplicate event ULID found at index {}: {}",
+                i,
+                event.id
+            );
+        }
+    }
+
+    /// Assert events contain expected payload fields
+    pub fn assert_events_have_fields(events: &[RawEvent], required_fields: &[&str]) {
+        for (i, event) in events.iter().enumerate() {
+            if let serde_json::Value::Object(payload) = &event.payload {
+                for field in required_fields {
+                    assert!(
+                        payload.contains_key(*field),
+                        "Event at index {} missing required field '{}': {:?}",
+                        i,
+                        field,
+                        event.payload
+                    );
+                }
+            } else {
+                panic!("Event at index {} has non-object payload: {:?}", i, event.payload);
+            }
+        }
+    }
 }
 
 /// Health check utilities for integration tests
