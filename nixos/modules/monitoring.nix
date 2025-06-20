@@ -644,12 +644,12 @@ in
       mkIf (cfg.monitoring.observabilityStack.enable && cfg.monitoring.dashboards.grafana.enable)
         [
           "d /var/lib/grafana/dashboards 0755 grafana grafana"
-          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../../grafana-dashboards/sinex-overview.json}"
-          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../../grafana-dashboards/sinex-event-analysis.json}"
-          "L+ /var/lib/grafana/dashboards/event-pipeline.json - - - - ${../../grafana-dashboards/event-pipeline.json}"
-          "L+ /var/lib/grafana/dashboards/system-health.json - - - - ${../../grafana-dashboards/system-health.json}"
-          "L+ /var/lib/grafana/dashboards/worker-performance.json - - - - ${../../grafana-dashboards/worker-performance.json}"
-          "L+ /var/lib/grafana/dashboards/metrics-continuous-aggregates.json - - - - ${../../grafana-dashboards/metrics-continuous-aggregates.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-overview.json - - - - ${../grafana-dashboards/sinex-overview.json}"
+          "L+ /var/lib/grafana/dashboards/sinex-event-analysis.json - - - - ${../grafana-dashboards/sinex-event-analysis.json}"
+          "L+ /var/lib/grafana/dashboards/event-pipeline.json - - - - ${../grafana-dashboards/event-pipeline.json}"
+          "L+ /var/lib/grafana/dashboards/system-health.json - - - - ${../grafana-dashboards/system-health.json}"
+          "L+ /var/lib/grafana/dashboards/worker-performance.json - - - - ${../grafana-dashboards/worker-performance.json}"
+          "L+ /var/lib/grafana/dashboards/metrics-continuous-aggregates.json - - - - ${../grafana-dashboards/metrics-continuous-aggregates.json}"
         ];
 
     # Firewall for monitoring services (localhost only)

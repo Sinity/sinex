@@ -144,7 +144,6 @@ in
         # Logging for monitoring
         log_statement = mkDefault "mod";
         log_duration = mkDefault true;
-        log_slow_statements = mkDefault true;
         log_min_duration_statement = mkDefault "1000ms";
         
         # Connection limits

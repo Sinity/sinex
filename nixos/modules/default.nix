@@ -762,7 +762,7 @@ in
           
           # Stop collector
           if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
-            echo "Stopping collector with ${cfg.update.gracePeriod}s grace period..."
+            echo "Stopping collector with ${toString cfg.update.gracePeriod}s grace period..."
             systemctl stop sinex-unified-collector
             
             # Wait for graceful shutdown
@@ -832,7 +832,7 @@ in
           done
           
           # Handle rollback if needed
-          if [ "$HEALTH_CHECK_PASSED" = "false" ] && [ "${toString cfg.update.rollbackOnFailure}" = "1" ]; then
+          if [ "$HEALTH_CHECK_PASSED" = "false" ] && [ "${toString cfg.update.rollbackOnFailure}" = "true" ]; then
             echo "Initiating rollback due to health check failure..."
             
             # Stop failed services

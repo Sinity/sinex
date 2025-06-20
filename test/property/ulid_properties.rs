@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 use chrono::{DateTime, Utc, Duration};
-use ulid::Ulid;
+use sinex_ulid::Ulid;
 
 // Property tests for ULID generation and ordering
 // Agent Alpha - VM Infrastructure (adding quick property test example)
@@ -96,7 +96,7 @@ mod ulid_ordering_properties {
 #[cfg(test)]
 mod event_ulid_properties {
     use super::*;
-    use crate::test::common::generators;
+    use crate::common::generators;
 
     #[test]
     fn test_event_ulids_maintain_ingestion_order() {

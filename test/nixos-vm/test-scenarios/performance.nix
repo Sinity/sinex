@@ -467,7 +467,9 @@ pkgs.nixosTest {
 
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
-      ../common/test-base.nix
+      (import ../common/test-base.nix { 
+        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+      })
     ];
 
     # Override for performance testing

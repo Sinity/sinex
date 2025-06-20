@@ -1,16 +1,11 @@
 # Minimal base configuration for VM tests
 { config, pkgs, lib, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
-
-let
-  vmConfigs = import ./vm-configs.nix { inherit lib; };
-in
 {
   imports = [
     ./test-helpers.nix
     ./health-checks.nix
     ../../../nixos  # Import Sinex NixOS module
-  ] ++ lib.optional (config.virtualisation ? vmProfile) 
-    (lib.mkMerge [ vmConfigs.${config.virtualisation.vmProfile} ]);
+  ];
 
   # Basic Sinex configuration
   services.sinex = {
@@ -118,24 +113,24 @@ in
     };
   })];
 
-  # Default to standard VM profile (can be overridden)
-  virtualisation = lib.mkMerge [
-    vmConfigs.standard
-    {
-      # Additional test-specific settings
-      vmProfile = lib.mkDefault "standard";
-      
-      # Enable qcow2 disk format for snapshot support
-      qemu.options = [
-        "-enable-kvm"
-        "-cpu host"
-      ];
-      
-      # Use qcow2 format by default (enables snapshots)
-      # This will be used by the snapshot infrastructure
-      diskImage = lib.mkDefault "./sinex-test-vm.qcow2";
-    }
-  ];
+  # Default VM configuration (standard profile)
+  virtualisation = {
+    # Base configuration from standard profile
+    memorySize = lib.mkDefault 2048;
+    diskSize = lib.mkDefault 4096;
+    cores = lib.mkDefault 2;
+    graphics = false;
+    writableStoreUseTmpfs = false;
+    
+    # Enable qcow2 disk format for snapshot support
+    qemu.options = [
+      "-enable-kvm"
+      "-cpu host"
+    ];
+    
+    # Use qcow2 format by default (enables snapshots)
+    diskImage = lib.mkDefault "./sinex-test-vm.qcow2";
+  };
 
   # Faster boot
   boot.loader.timeout = lib.mkDefault 0;
