@@ -17,12 +17,15 @@ test-system:
 test-dlq:
     cargo test --test integration ingestor::dlq_tests
 
-# NixOS VM tests
+# NixOS VM tests with enhanced runner
 test-vm:
-    nix build .#checks.x86_64-linux.sinex-vm-basic -L
+    ./test/nixos-vm/run-vm-tests.sh -c smoke
 
 test-vm-interactive:
-    nix build .#checks.x86_64-linux.sinex-vm-basic -L --keep-failed
+    ./test/nixos-vm/run-vm-tests.sh -d basic-flow
+
+test-vm-quick:
+    ./test/nixos-vm/run-vm-tests.sh basic-flow
 
 # Advanced VM tests
 test-vm-chaos:
@@ -40,11 +43,13 @@ test-vm-advanced:
     echo "🎉 Advanced VM tests passed!"
 
 test-vm-all:
-    echo "🧪 Running all VM tests..."
-    just test-vm
-    just test-vm-chaos
-    just test-vm-production
-    echo "🎉 All VM tests passed!"
+    ./test/nixos-vm/run-vm-tests.sh -c all
+
+test-vm-parallel:
+    ./test/nixos-vm/run-vm-tests.sh -c all -p
+
+test-vm-debug TEST="basic-flow":
+    ./test/nixos-vm/run-vm-tests.sh -d {{TEST}}
 
 test-e2e:
     cargo test --test integration system::end_to_end:: -- --nocapture
