@@ -14,9 +14,9 @@ async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
     let view_exists = sqlx::query!(
         r#"
         SELECT COUNT(*) as count 
-        FROM information_schema.tables 
-        WHERE table_schema = 'sinex_schemas' 
-        AND table_name = 'routing_cache'
+        FROM pg_matviews 
+        WHERE schemaname = 'sinex_schemas' 
+        AND matviewname = 'routing_cache'
         "#
     )
     .fetch_one(&pool)
@@ -29,13 +29,19 @@ async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
 db_test! {
 async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     // Test that routing_cache has the correct columns (event_type, agent_id)
+    // For materialized views, we need to query pg_attribute directly
     let columns = sqlx::query!(
         r#"
-        SELECT column_name, data_type 
-        FROM information_schema.columns 
-        WHERE table_schema = 'sinex_schemas' 
-        AND table_name = 'routing_cache'
-        ORDER BY ordinal_position
+        SELECT a.attname AS column_name, t.typname AS data_type 
+        FROM pg_attribute a 
+        JOIN pg_type t ON a.atttypid = t.oid 
+        JOIN pg_class c ON a.attrelid = c.oid 
+        JOIN pg_namespace n ON c.relnamespace = n.oid 
+        WHERE n.nspname = 'sinex_schemas' 
+        AND c.relname = 'routing_cache' 
+        AND a.attnum > 0 
+        AND NOT a.attisdropped 
+        ORDER BY a.attnum
         "#
     )
     .fetch_all(&pool)
@@ -44,12 +50,12 @@ async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
     
     let event_type_col = &columns[0];
-    assert_eq!(event_type_col.column_name.as_ref(), Some(&"event_type".to_string()));
-    assert_eq!(event_type_col.data_type.as_ref(), Some(&"text".to_string()));
+    assert_eq!(event_type_col.column_name, "event_type");
+    assert_eq!(event_type_col.data_type, "text");
     
     let agent_id_col = &columns[1];
-    assert_eq!(agent_id_col.column_name.as_ref(), Some(&"agent_id".to_string()));
-    assert_eq!(agent_id_col.data_type.as_ref(), Some(&"text".to_string()));
+    assert_eq!(agent_id_col.column_name, "agent_id");
+    assert_eq!(agent_id_col.data_type, "text");
     
     Ok(())
 }}
