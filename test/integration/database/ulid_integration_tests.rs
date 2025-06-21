@@ -2,6 +2,7 @@ use sinex_ulid::Ulid;
 use std::str::FromStr;
 use std::collections::HashSet;
 use crate::common::{events, insert_test_event_raw};
+use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 
 #[sqlx::test]
@@ -143,12 +144,14 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
         .await?;
     }
     
-    // Verify all ULIDs are unique in database
-    let unique_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT id) FROM raw.events WHERE source = 'monotonic_test_v2'"
-    )
-    .fetch_one(&pool)
-    .await?;
+    // Verify all ULIDs are unique in database using timing utility
+    let unique_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1",
+        &["monotonic_test_v2"],
+        10,
+        5
+    ).await.unwrap_or(0);
     
     assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
     
@@ -223,6 +226,15 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
+    
+    // Wait for all events to be available for range queries
+    wait_for_filtered_event_count(
+        &pool,
+        "source = $1",
+        &["range_test_v2"],
+        10, // Total expected events from both batches
+        10
+    ).await.unwrap_or(0);
     
     // Create a ULID from the mid_time for comparison
     let mid_ulid = Ulid::from_datetime(mid_time);
@@ -414,12 +426,14 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     assert!(count_before > 0, "Should find events before mid ULID");
     assert!(count_after > 0, "Should find events after mid ULID");
     
-    // Total count should be our inserted events
-    let total_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'perf_test_v2'"
-    )
-    .fetch_one(&pool)
-    .await?;
+    // Total count should be our inserted events - use timing utility
+    let total_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1",
+        &["perf_test_v2"],
+        51, // 50 test events + 1 lookup event
+        5
+    ).await.unwrap_or(0);
     
     assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
     assert_eq!(count_before + count_after, total_count, 

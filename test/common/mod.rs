@@ -697,34 +697,11 @@ pub mod enhanced_assertions {
         expected_count: i64,
         timeout_secs: u64,
     ) -> Result<()> {
-        let start = std::time::Instant::now();
-        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-
-        loop {
-            // Check if worker has processed expected events
-            let processed_count = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE payload->>'processed_by' = $1",
-                worker_name
-            )
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(0);
-
-            if processed_count >= expected_count {
-                return Ok(());
-            }
-
-            if start.elapsed() > timeout_duration {
-                anyhow::bail!(
-                    "Worker {} processed {} events, expected {}, after {} seconds",
-                    worker_name,
-                    processed_count,
-                    expected_count,
-                    timeout_secs
-                );
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        use crate::common::timing_optimization::replacements::wait_for_worker_processed_events;
+        
+        match wait_for_worker_processed_events(pool, worker_name, expected_count, timeout_secs).await {
+            Ok(_count) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
 
