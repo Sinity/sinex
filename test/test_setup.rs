@@ -166,22 +166,22 @@ pub async fn cleanup_test_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     
     // First clean tables that reference other tables
     // Clean DLQ entries that reference work queue
-    sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
+    sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name LIKE 'metrics-%' OR agent_name LIKE '%_test_%' OR agent_name LIKE 'perf-%' OR agent_name = 'concurrency_test_agent' OR agent_name LIKE 'algorithm_test_%' OR agent_name LIKE 'degradation_test_%' OR agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     
     // Clean work queue entries (references raw.events)
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker'")
+    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name LIKE 'metrics-%' OR target_agent_name LIKE '%_test_%' OR target_agent_name LIKE 'perf-%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker' OR target_agent_name LIKE 'algorithm_test_%' OR target_agent_name LIKE 'degradation_test_%' OR target_agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     
     // Clean test events
-    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source LIKE 'pipeline_test%' OR source LIKE 'error_test%' OR source = 'concurrency_test' OR source = 'slow_source' OR (source = 'filesystem' AND payload->>'path' LIKE '/test/%')")
+    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source LIKE 'pipeline_test%' OR source LIKE 'error_test%' OR source LIKE 'metrics_%' OR source = 'concurrency_test' OR source = 'slow_source' OR (source = 'filesystem' AND payload->>'path' LIKE '/test/%')")
         .execute(pool)
         .await?;
     
     // Clean test agent manifests
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
+    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name LIKE 'metrics-%' OR agent_name LIKE '%_test_%' OR agent_name LIKE 'perf-%' OR agent_name = 'concurrency_test_agent' OR agent_name LIKE 'algorithm_test_%' OR agent_name LIKE 'degradation_test_%' OR agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     

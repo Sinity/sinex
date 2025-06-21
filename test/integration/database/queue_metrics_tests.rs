@@ -21,6 +21,8 @@ async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
     create_test_agent(&pool, agent1).await?;
     create_test_agent(&pool, agent2).await?;
     
+    
+    
     // Create test events
     let event1_id = insert_test_event(&pool, "metrics_test", "event1").await?;
     let event2_id = insert_test_event(&pool, "metrics_test", "event2").await?;
@@ -39,17 +41,28 @@ async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
     .execute(&pool)
     .await?;
     
-    // Calculate queue depth metrics (this function should exist after implementation)
+    // Calculate queue depth metrics
     let queue_metrics = calculate_queue_depth_metrics(&pool).await?;
     
-    // Verify metrics
-    assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents");
     
-    let agent1_metric = queue_metrics.iter().find(|m| m.agent_name == agent1).unwrap();
-    assert_eq!(agent1_metric.queue_depth, 2, "Agent1 should have 2 pending items");
+    // First, let's check what the function returns and verify against what we expect
+    // After adding 2 items for agent1 and 1 for agent2 (marked as processing)
+    // Expected: agent1=2 pending, agent2=0 pending (but both should be in results)
     
-    let agent2_metric = queue_metrics.iter().find(|m| m.agent_name == agent2).unwrap();
-    assert_eq!(agent2_metric.queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
+    // Verify that we get both agents in the results
+    assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents (even if one has 0 pending)");
+    
+    // Sort results by agent name for consistent checking
+    let mut sorted_metrics = queue_metrics.clone();
+    sorted_metrics.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
+    
+    // Check agent1 (metrics-agent-1)
+    assert_eq!(sorted_metrics[0].agent_name, agent1);
+    assert_eq!(sorted_metrics[0].queue_depth, 2, "Agent1 should have 2 pending items");
+    
+    // Check agent2 (metrics-agent-2)  
+    assert_eq!(sorted_metrics[1].agent_name, agent2);
+    assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
     
     Ok(())
 }}
@@ -211,11 +224,6 @@ async fn test_metrics_update_frequency(pool: PgPool) -> Result<()> {
 
 // Helper functions and types
 
-#[derive(Debug)]
-pub struct QueueDepthMetric {
-    pub agent_name: String,
-    pub queue_depth: i64,
-}
 
 #[derive(Debug)]
 pub struct DequeueLatencyMetric {
@@ -233,30 +241,7 @@ pub struct AgentLagMetric {
 
 // Functions that should exist after implementation
 
-async fn calculate_queue_depth_metrics(pool: &PgPool) -> Result<Vec<QueueDepthMetric>> {
-    // This should calculate queue depth per agent
-    let records = sqlx::query!(
-        r#"
-        SELECT 
-            target_agent_name as agent_name,
-            COUNT(*) as queue_depth
-        FROM sinex_schemas.work_queue 
-        WHERE status IN ('pending', 'failed_retryable')
-        GROUP BY target_agent_name
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
-    
-    let metrics = records.into_iter()
-        .map(|r| QueueDepthMetric {
-            agent_name: r.agent_name,
-            queue_depth: r.queue_depth.unwrap_or(0),
-        })
-        .collect();
-    
-    Ok(metrics)
-}
+// Removed local implementation - using the one from sinex_db::queries now
 
 async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueLatencyMetric>> {
     // This should calculate average and max dequeue latency per agent

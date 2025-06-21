@@ -1275,7 +1275,7 @@ pub async fn run_batch_router(pool: &PgPool) -> Result<i64> {
 }
 
 /// Calculate queue depth metrics per agent
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueueDepthMetric {
     pub agent_name: String,
     pub queue_depth: i64,
