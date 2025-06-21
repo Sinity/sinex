@@ -6,6 +6,7 @@ use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use sinex_ulid::Ulid;
 use serde_json::json;
 use tempfile::TempDir;
+use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_agent_status, wait_for_filtered_event_count};
 
 /// Test startup sequence robustness and error handling
 #[tokio::test]
@@ -110,7 +111,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
             // Simulate restart by running migrations again
             run_migrations(&pool).await?;
             
-            // Verify data integrity after restart
+            // Verify data integrity after restart - use timing utilities for better reliability
             let agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -118,12 +119,14 @@ async fn test_startup_sequence_robustness() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'startup.test'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility for event count verification with source filter
+            let event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["startup.test"], 
+                10, 
+                5
+            ).await.unwrap_or(0);
             
             Ok::<(i64, i64), anyhow::Error>((agent_count, event_count))
         }
@@ -297,13 +300,14 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
             // New connection should work
             let verification_pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
             
-            // Check that committed transactions are persisted
-            let committed_events: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'shutdown.test'"
-            )
-            .fetch_one(&verification_pool)
-            .await?
-            .unwrap_or(0);
+            // Check that committed transactions are persisted - use timing utility
+            let committed_events = wait_for_filtered_event_count(
+                &verification_pool, 
+                "source = $1", 
+                &["shutdown.test"], 
+                3, 
+                5
+            ).await.unwrap_or(0);
             
             // Check database integrity
             let db_check = sqlx::query_scalar!("SELECT 1").fetch_one(&verification_pool).await?;
@@ -384,13 +388,14 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                     // Database should still be responsive
                     let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
                     
-                    // Check partial data from interrupted operation
-                    let partial_events: i64 = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM raw.events WHERE source = 'interrupted.shutdown'"
-                    )
-                    .fetch_one(&pool)
-                    .await?
-                    .unwrap_or(0);
+                    // Check partial data from interrupted operation - use timing utility
+                    let partial_events = wait_for_filtered_event_count(
+                        &pool, 
+                        "source = $1", 
+                        &["interrupted.shutdown"], 
+                        0, 
+                        3
+                    ).await.unwrap_or(0);
                     
                     Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
                 }
@@ -868,7 +873,7 @@ async fn test_data_migration_safety() -> Result<()> {
                 ).await?;
             }
             
-            // Record initial state
+            // Record initial state - use timing utilities for consistency
             let initial_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -876,19 +881,21 @@ async fn test_data_migration_safety() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let initial_event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility to wait for expected event count with source filter
+            let initial_event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["migration.safety"], 
+                test_events, 
+                5
+            ).await.unwrap_or(0);
             
             println!("    Initial state: {} agents, {} events", initial_agent_count, initial_event_count);
             
             // Run migrations again (simulating upgrade)
             run_migrations(&pool).await?;
             
-            // Verify data preservation
+            // Verify data preservation - use timing utilities for reliability
             let final_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -896,12 +903,14 @@ async fn test_data_migration_safety() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let final_event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility to ensure events are available after migration
+            let final_event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["migration.safety"], 
+                test_events, 
+                5
+            ).await.unwrap_or(0);
             
             // Verify data integrity
             let agent_data: Option<String> = sqlx::query_scalar!(

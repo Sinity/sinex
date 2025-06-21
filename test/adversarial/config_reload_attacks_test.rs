@@ -267,7 +267,7 @@ timestamp = "{}"
     futures::future::join_all(handles).await;
     
     // Give time for all updates to be processed
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
     
     let total_configs = collector_handle.await.unwrap();
     let final_count = configs_in_memory.load(Ordering::SeqCst);
