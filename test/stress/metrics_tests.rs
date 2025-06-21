@@ -305,7 +305,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
             .await
             .expect("Work item creation failed");
 
-            sleep(Duration::from_millis(300)).await;
+            sleep(Duration::from_millis(50)).await;
         }
     });
 
@@ -334,6 +334,8 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     let monitor_agent = agent_name.clone();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {
+        use crate::common::timing_optimization::replacements::wait_for_work_queue_status_count;
+        
         let mut interval = interval(Duration::from_secs(2));
         let mut detected_deadlocks = 0u64;
         
@@ -376,25 +378,36 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
                 }
             }
 
-            let pending_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'pending'",
-                monitor_agent
-            )
-            .fetch_one(&monitor_pool)
-            .await
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+            // Use optimized utility functions for work queue monitoring
+            let pending_count = match wait_for_work_queue_status_count(&monitor_pool, "pending", 0, 1).await {
+                Ok(count) => count,
+                Err(_) => {
+                    // Fallback to direct query on timeout
+                    sqlx::query_scalar!(
+                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
+                        monitor_agent
+                    )
+                    .fetch_one(&monitor_pool)
+                    .await
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0)
+                }
+            };
 
-            let processing_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'processing'",
-                monitor_agent
-            )
-            .fetch_one(&monitor_pool)
-            .await
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+            let processing_count = match wait_for_work_queue_status_count(&monitor_pool, "processing", 0, 1).await {
+                Ok(count) => count,
+                Err(_) => {
+                    // Fallback to direct query on timeout
+                    sqlx::query_scalar!(
+                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'processing'",
+                        monitor_agent
+                    )
+                    .fetch_one(&monitor_pool)
+                    .await
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0)
+                }
+            };
 
             println!("Monitor: pending={}, processing={}, stuck_detected={}", 
                     pending_count, processing_count, stuck_items);
