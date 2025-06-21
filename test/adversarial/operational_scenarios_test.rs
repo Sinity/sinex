@@ -29,7 +29,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(10),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             run_migrations(&pool).await?;
@@ -78,7 +78,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     println!("\nTesting startup with existing data...");
     
     let existing_data_startup = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -722,7 +722,7 @@ async fn test_data_migration_safety() -> Result<()> {
     let migration_start = Instant::now();
     
     let fresh_migration_test = timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(10),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -787,7 +787,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting migration idempotency...");
     
     let idempotency_test = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(8),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -838,7 +838,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting data preservation during migrations...");
     
     let data_preservation_test = timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(10),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             

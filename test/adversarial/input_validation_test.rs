@@ -257,7 +257,7 @@ async fn test_json_payload_validation() -> Result<()> {
 
         // Test insertion with timeout to prevent hangs
         let insert_result = timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(5),
             insert_raw_event(
                 &pool,
                 "payload.validation",

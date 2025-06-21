@@ -288,7 +288,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 
     // Wait for completion or timeout
     let load_test_result = timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(10),
         async { tokio::try_join!(generation_task, processing_task) }
     ).await;
 
@@ -360,7 +360,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 
     // Wait for all connection tests
     let connection_results = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(8),
         futures::future::join_all(connection_tasks)
     ).await;
 
@@ -609,7 +609,7 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
     }
 
     let transaction_results = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(8),
         futures::future::join_all(transaction_tasks)
     ).await;
 

@@ -326,7 +326,7 @@ async fn test_resource_exhaustion_protection() -> Result<()> {
 
     let memory_attack_start = std::time::Instant::now();
     let memory_attack_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         insert_raw_event(
             &pool,
             "memory.exhaustion",
@@ -472,7 +472,7 @@ async fn test_resource_exhaustion_protection() -> Result<()> {
     // System should have some protection mechanisms
     assert!(connections_acquired < max_connection_attempts, 
            "Connection pool should have limits");
-    assert!(memory_attack_duration < Duration::from_secs(30),
+    assert!(memory_attack_duration < Duration::from_secs(5),
            "Large payload handling should not hang system");
 
     println!("  ✓ Resource exhaustion protections active");

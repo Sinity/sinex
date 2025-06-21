@@ -183,7 +183,7 @@ async fn test_dead_worker_holding_locks() {
                 // Simulate SIGSTOP - hold transaction open without committing
                 println!("  Zombie worker frozen (holding lock)...");
                 // Hold long enough for other workers to timeout
-                tokio::time::sleep(Duration::from_secs(6)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
                 
                 // Transaction will rollback when dropped
             }
@@ -204,7 +204,7 @@ async fn test_dead_worker_holding_locks() {
             
             // Try to claim with timeout
             let claim_result = timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(3),
                 sqlx::query!(
                     r#"
                     UPDATE raw.events 
@@ -303,7 +303,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
             
             // All workers wake and query simultaneously
             match timeout(
-                Duration::from_secs(10),
+                Duration::from_secs(3),
                 sqlx::query!(
                     r#"
                     SELECT id::uuid as id FROM raw.events 
