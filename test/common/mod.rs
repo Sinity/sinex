@@ -879,6 +879,8 @@ size_threshold_bytes = 1024000
 pub use sinex_db::models::AgentManifest;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
+/// Coverage assurance utilities
+pub mod coverage_assurance;
 
 /// Worker test utilities for setting up work queue scenarios
 #[allow(dead_code)]
@@ -1112,6 +1114,19 @@ pub mod scenario_builders {
         
         /// Add a filesystem event scenario
         pub fn with_filesystem_event(mut self, path: &str, should_succeed: bool) -> Self {
+            coverage_assurance::CoverageTracker::record_event_type_tested("filesystem", "file.created");
+            
+            // Track edge cases
+            if path.is_empty() {
+                coverage_assurance::CoverageTracker::record_edge_case("filesystem", "empty_path");
+            }
+            if !path.starts_with('/') {
+                coverage_assurance::CoverageTracker::record_edge_case("filesystem", "relative_path");
+            }
+            if path.contains('\0') {
+                coverage_assurance::CoverageTracker::record_edge_case("filesystem", "null_byte_in_path");
+            }
+            
             self.events.push(events::filesystem_event("file.created", path));
             self.expected_results.push(should_succeed);
             self
