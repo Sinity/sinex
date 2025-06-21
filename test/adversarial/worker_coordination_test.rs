@@ -4,9 +4,10 @@ use sinex_ulid::Ulid;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
+use tokio::sync::Notify;
 use futures::future::join_all;
 
 #[tokio::test]
@@ -181,7 +182,8 @@ async fn test_dead_worker_holding_locks() {
                 
                 // Simulate SIGSTOP - hold transaction open without committing
                 println!("  Zombie worker frozen (holding lock)...");
-                tokio::time::sleep(Duration::from_secs(30)).await;
+                // Hold long enough for other workers to timeout
+                tokio::time::sleep(Duration::from_secs(6)).await;
                 
                 // Transaction will rollback when dropped
             }

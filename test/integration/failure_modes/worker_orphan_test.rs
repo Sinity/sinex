@@ -3,6 +3,7 @@ use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use crate::common::timing_optimization::TestSynchronizer;
 
 /// Test orphaned worker detection and cleanup
 #[tokio::test]
@@ -69,6 +70,9 @@ async fn test_orphaned_worker_detection() {
     }));
     
     // Worker 2: Stops heartbeating mid-process
+    let worker2_crashed = TestSynchronizer::new(Duration::from_secs(1));
+    let worker2_sync = worker2_crashed.clone();
+    
     handles.push(tokio::spawn(async move {
         for _i in 0..5 {
             worker2.update_heartbeat().await;
@@ -80,8 +84,14 @@ async fn test_orphaned_worker_detection() {
         // Simulate crash - stops heartbeating but has work in progress
         worker2.items_processing.store(1, Ordering::Relaxed);
         worker2.mark_dead();
-        // Hang forever
-        tokio::time::sleep(Duration::from_secs(100)).await;
+        
+        // Signal that we've crashed
+        worker2_sync.signal();
+        
+        // Keep the task alive but do nothing (simulating a hung process)
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }));
     
     // Worker 3: Clean shutdown
@@ -127,8 +137,11 @@ async fn test_orphaned_worker_detection() {
         orphans_detected
     });
     
-    // Let simulation run
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // Wait for worker2 to crash
+    worker2_crashed.wait().await.expect("Worker 2 should crash");
+    
+    // Give monitor time to detect the orphan
+    tokio::time::sleep(Duration::from_secs(3)).await;
     
     // Clean up
     for handle in handles {

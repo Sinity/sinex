@@ -259,8 +259,8 @@ async fn test_connection_leak_detection() {
             }
         }
         
-        // Hold leaked connections
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        // Hold leaked connections long enough for detection
+        tokio::time::sleep(Duration::from_secs(3)).await;
     });
     
     // Leak detector

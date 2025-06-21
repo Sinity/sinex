@@ -68,10 +68,8 @@ impl EventSource for PipelineTestSource {
             tokio::time::sleep(self.generation_rate).await;
         }
         
-        // Keep running to allow pipeline to process
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        }
+        // Signal completion
+        Ok(())
     }
 }
 

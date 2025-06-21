@@ -100,7 +100,7 @@ async fn test_network_partition_during_processing() {
                         Duration::from_millis(100),
                         async {
                             // This simulates a hung connection
-                            tokio::time::sleep(Duration::from_secs(30)).await;
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                             Ok::<(), sqlx::Error>(())
                         }
                     ).await;
