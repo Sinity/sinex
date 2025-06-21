@@ -58,7 +58,7 @@ async fn test_shutdown_signal_during_initialization() {
     
     // Simulate shutdown signal arriving mid-initialization
     let shutdown_handle = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(350)).await; // Interrupt at step 3-4
+        tokio::time::sleep(Duration::from_millis(100)).await; // Interrupt at step 3-4
         shutdown_triggered.store(1, Ordering::SeqCst);
         println!("SHUTDOWN SIGNAL received during initialization");
     });
@@ -151,7 +151,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
         tokio::spawn({
             let counter = shutdown_count.clone();
             async move {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 counter.fetch_add(1, Ordering::SeqCst);
                 println!("SIGTERM sent");
             }
@@ -159,7 +159,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
         tokio::spawn({
             let counter = shutdown_count.clone();
             async move {
-                tokio::time::sleep(Duration::from_millis(510)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 counter.fetch_add(1, Ordering::SeqCst);
                 println!("SIGINT sent");
             }
@@ -167,7 +167,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
         tokio::spawn({
             let counter = shutdown_count.clone();
             async move {
-                tokio::time::sleep(Duration::from_millis(520)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 counter.fetch_add(1, Ordering::SeqCst);
                 println!("SIGKILL sent");
             }

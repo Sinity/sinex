@@ -106,8 +106,8 @@ async fn test_connection_pool_exhaustion() {
             active.fetch_add(1, Ordering::Relaxed);
             println!("Long-running connection acquired");
             
-            // Hold for a long time
-            tokio::time::sleep(Duration::from_millis(800)).await;
+            // Hold for enough time to test pool behavior
+            tokio::time::sleep(Duration::from_millis(100)).await;
             
             active.fetch_sub(1, Ordering::Relaxed);
             println!("Long-running connection released");

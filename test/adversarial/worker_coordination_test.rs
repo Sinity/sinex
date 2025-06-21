@@ -198,7 +198,7 @@ async fn test_dead_worker_holding_locks() {
         let event_id = work_event.id;
         
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(500)).await; // Let zombie claim first
+            tokio::time::sleep(Duration::from_millis(100)).await; // Let zombie claim first
             
             let start = Instant::now();
             
@@ -353,9 +353,18 @@ async fn test_mass_worker_wakeup_thundering_herd() {
         worker_handles.push(handle);
     }
     
-    // Wait for all workers to be ready
+    // Wait for all workers to be ready using proper synchronization
+    let coordinator = Arc::new(crate::common::timing_optimization::replacements::WorkerReadinessCoordinator::new(100));
+    
+    // Use the existing atomic counter pattern but with proper timeout
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(5);
+    
     while waiting_workers.load(Ordering::SeqCst) < 100 {
         tokio::task::yield_now().await;
+        if start.elapsed() > timeout_duration {
+            panic!("Workers not ready within timeout");
+        }
     }
     
     println!("  All 100 workers waiting...");

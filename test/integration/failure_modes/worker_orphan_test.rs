@@ -279,16 +279,15 @@ async fn test_orphaned_work_recovery() {
             }
         }
         
-        // Simulate processing then crash
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Signal ready to crash, then crash immediately  
         panic!("Simulated worker crash!");
     });
     
     // Recovery worker
     let queue_clone = work_queue.clone();
     let recovery_worker = tokio::spawn(async move {
-        // Wait for orphan to crash
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Wait for orphan to crash using a small delay since we can't synchronize with panic
+        tokio::time::sleep(Duration::from_millis(100)).await;
         
         // Scan for orphaned work
         let orphan_timeout = Duration::from_millis(800);
