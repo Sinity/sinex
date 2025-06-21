@@ -101,8 +101,8 @@ async fn create_high_performance_test_pool(database_url: &str) -> Result<PgPool,
         .max_connections(50)  // Higher connection limit for concurrent tests
         .min_connections(10)  // Keep minimum connections ready
         .acquire_timeout(std::time::Duration::from_secs(5))
-        .idle_timeout(Some(std::time::Duration::from_secs(30)))
-        .max_lifetime(Some(std::time::Duration::from_secs(300)))
+        .idle_timeout(Some(std::time::Duration::from_secs(10)))
+        .max_lifetime(Some(std::time::Duration::from_secs(60)))
         .connect_with(connect_options)
         .await
 }

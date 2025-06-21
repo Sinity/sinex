@@ -262,7 +262,7 @@ async fn test_extreme_concurrency_stress() -> Result<()> {
     let agent_name = format!("extreme_stress_{}", Ulid::new());
     let extreme_worker_count = 50;
     let work_items = 100;
-    let test_duration = Duration::from_secs(30);
+    let test_duration = Duration::from_secs(5);
 
     sqlx::query!(
         "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 

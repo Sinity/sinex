@@ -143,7 +143,7 @@ async fn test_graceful_degradation_database_failure() -> Result<()> {
     // Verify system recovery
     let recovery_start = Instant::now();
     let recovery_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         insert_raw_event(
             &pool,
             "degradation.test",
@@ -288,7 +288,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 
     // Wait for completion or timeout
     let load_test_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async { tokio::try_join!(generation_task, processing_task) }
     ).await;
 
@@ -339,7 +339,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
             
             // Try to acquire connection and perform operation
             let result = timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(3),
                 async {
                     let mut conn = pool.acquire().await?;
                     
@@ -360,7 +360,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 
     // Wait for all connection tests
     let connection_results = timeout(
-        Duration::from_secs(8),
+        Duration::from_secs(5),
         futures::future::join_all(connection_tasks)
     ).await;
 
@@ -522,7 +522,7 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
     let large_transaction_start = Instant::now();
     
     let large_transaction_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let mut tx = pool.begin().await?;
             
@@ -577,7 +577,7 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
             let start_time = Instant::now();
             
             let result = timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(3),
                 async {
                     let mut tx = pool.begin().await?;
                     
@@ -609,7 +609,7 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
     }
 
     let transaction_results = timeout(
-        Duration::from_secs(8),
+        Duration::from_secs(5),
         futures::future::join_all(transaction_tasks)
     ).await;
 
@@ -687,7 +687,7 @@ async fn test_resource_exhaustion_scenarios() -> Result<()> {
         let query_start = Instant::now();
         
         let query_result = timeout(
-            Duration::from_secs(3),
+            Duration::from_secs(2),
             sqlx::query(query).fetch_all(&pool)
         ).await;
 

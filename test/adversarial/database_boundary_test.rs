@@ -100,7 +100,7 @@ async fn test_connection_pool_exhaustion() {
             let acquire_start = Instant::now();
             
             // Try to acquire connection with timeout
-            match timeout(Duration::from_secs(10), pool_clone.acquire()).await {
+            match timeout(Duration::from_secs(5), pool_clone.acquire()).await {
                 Ok(Ok(mut conn)) => {
                     let acquire_time = acquire_start.elapsed();
                     println!("    Worker {} acquired connection after {:?}", worker_id, acquire_time);

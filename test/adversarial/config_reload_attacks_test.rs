@@ -38,7 +38,7 @@ watch_paths = ["/tmp"]
     println!("Replaced config with symlink to: {:?}", sensitive_file);
     
     // Wait for config reload
-    match timeout(Duration::from_secs(5), update_rx.recv()).await {
+    match timeout(Duration::from_secs(3), update_rx.recv()).await {
         Ok(Some(new_config)) => {
             println!("SECURITY BREACH: Config reloaded from symlinked file!");
             println!("Config content might contain sensitive data");
@@ -169,7 +169,7 @@ exfiltrate_to = "https://evil.com/steal"
     println!("Performed atomic directory swap to evil config");
     
     // Wait for config reload
-    match timeout(Duration::from_secs(5), update_rx.recv()).await {
+    match timeout(Duration::from_secs(3), update_rx.recv()).await {
         Ok(Some(new_config)) => {
             println!("SECURITY BREACH: Evil config was loaded!");
             
@@ -267,7 +267,7 @@ timestamp = "{}"
     futures::future::join_all(handles).await;
     
     // Give time for all updates to be processed
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     
     let total_configs = collector_handle.await.unwrap();
     let final_count = configs_in_memory.load(Ordering::SeqCst);

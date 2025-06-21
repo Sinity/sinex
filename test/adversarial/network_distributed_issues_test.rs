@@ -43,7 +43,7 @@ async fn test_database_dns_timeout() {
             Err(_) => {
                 println!("  TIMEOUT: Connection attempt to {} took longer than 5s", hostname);
                 
-                if elapsed > Duration::from_secs(10) {
+                if elapsed > Duration::from_secs(5) {
                     println!("  WARNING: Timeout handling is broken - took {:?}", elapsed);
                 }
             }

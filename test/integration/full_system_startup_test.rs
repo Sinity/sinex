@@ -80,16 +80,16 @@ async fn test_system_startup_with_all_configurations() -> Result<()> {
     let startup_duration = startup_start.elapsed();
     
     // Basic timeout assertion  
-    assert!(startup_duration < Duration::from_secs(60), 
-           "System startup should complete within 60 seconds, took {:?}", startup_duration);
+    assert!(startup_duration < Duration::from_secs(15), 
+           "System startup should complete within 15 seconds, took {:?}", startup_duration);
     
     // Performance regression detection assertions (generous safety margins)
     // Normal startup should be much faster than timeout
-    assert!(startup_duration < Duration::from_secs(30), 
-           "Startup performance regression: should complete <30s, took {:?}", startup_duration);
+    assert!(startup_duration < Duration::from_secs(10), 
+           "Startup performance regression: should complete <10s, took {:?}", startup_duration);
     
     // For development environments, startup should be reasonably fast
-    if startup_duration > Duration::from_secs(15) {
+    if startup_duration > Duration::from_secs(5) {
         println!("⚠️  Slower startup detected: {:?} (may indicate performance regression)", startup_duration);
     }
     

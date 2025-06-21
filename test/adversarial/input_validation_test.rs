@@ -257,7 +257,7 @@ async fn test_json_payload_validation() -> Result<()> {
 
         // Test insertion with timeout to prevent hangs
         let insert_result = timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(3),
             insert_raw_event(
                 &pool,
                 "payload.validation",
@@ -579,7 +579,7 @@ async fn test_input_boundary_conditions() -> Result<()> {
 
         // Test as event source
         let source_result = timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(3),
             insert_raw_event(
                 &pool,
                 test_value,
@@ -594,7 +594,7 @@ async fn test_input_boundary_conditions() -> Result<()> {
 
         // Test as JSON payload value
         let payload_result = timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(3),
             insert_raw_event(
                 &pool,
                 "boundary.test",

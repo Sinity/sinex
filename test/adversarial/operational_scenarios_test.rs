@@ -29,7 +29,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             run_migrations(&pool).await?;
@@ -78,7 +78,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     println!("\nTesting startup with existing data...");
     
     let existing_data_startup = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(3),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -151,7 +151,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     
     // Create a corrupted migration state (simulate partial migration failure)
     let error_recovery_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -271,7 +271,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     // Step 1: Complete active transactions
     let transaction_completion_start = Instant::now();
     for (i, tx) in transactions.into_iter().enumerate() {
-        match timeout(Duration::from_secs(5), tx.commit()).await {
+        match timeout(Duration::from_secs(3), tx.commit()).await {
             Ok(Ok(())) => {
                 println!("    ✓ Transaction {} committed gracefully", i);
             }
@@ -292,7 +292,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
 
     // Step 3: Verify database state after shutdown
     let post_shutdown_verification = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(3),
         async {
             // New connection should work
             let verification_pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
@@ -325,7 +325,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
             
             assert!(committed_events >= 3, "Transactions should be committed before shutdown");
             assert!(db_check == 1, "Database should remain functional after shutdown");
-            assert!(total_shutdown_duration < Duration::from_secs(10), "Shutdown should be reasonably fast");
+            assert!(total_shutdown_duration < Duration::from_secs(5), "Shutdown should be reasonably fast");
             
             println!("  ✓ Graceful shutdown sequence completed successfully");
         }
@@ -341,7 +341,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     println!("\nTesting interrupted shutdown scenarios...");
     
     let interrupted_shutdown_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             // Create long-running operation
             let long_operation = tokio::spawn(async {
@@ -376,8 +376,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
             long_operation.abort();
             
             // Verify system remains stable after interrupt
-            let stability_check = timeout(
-                Duration::from_secs(3),
+    let stability_check = timeout(
+                Duration::from_secs(2),
                 async {
                     let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
                     
@@ -474,7 +474,7 @@ enabled = false
     let config_validation_start = Instant::now();
     
     let valid_config_test = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(3),
         async {
             let config_content = fs::read_to_string(&valid_config_file)?;
             let parsed_config = toml::from_str::<toml::Value>(&config_content)?;
@@ -580,7 +580,7 @@ channel_buffer_size = 10000
         fs::write(&invalid_config_file, invalid_config)?;
 
         let validation_result = timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(1),
             async {
                 let config_content = fs::read_to_string(&invalid_config_file)?;
                 let parsed_result = toml::from_str::<toml::Value>(&config_content);
@@ -633,7 +633,7 @@ channel_buffer_size = 10000
     fs::write(&hot_reload_config_file, valid_config)?;
 
     let hot_reload_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             // Initial config load
             let initial_config = fs::read_to_string(&hot_reload_config_file)?;
@@ -722,7 +722,7 @@ async fn test_data_migration_safety() -> Result<()> {
     let migration_start = Instant::now();
     
     let fresh_migration_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -787,7 +787,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting migration idempotency...");
     
     let idempotency_test = timeout(
-        Duration::from_secs(8),
+        Duration::from_secs(4),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -838,7 +838,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting data preservation during migrations...");
     
     let data_preservation_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -953,7 +953,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting migration error handling...");
     
     let error_handling_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = match create_test_pool(&test_db_url).await {
                 Ok(pool) => pool,
