@@ -237,7 +237,7 @@ async fn test_config_reload_timing() {
         match scenario {
             ReloadScenario::DuringBatchProcessing => {
                 // Simulate processing a batch when reload occurs
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::task::yield_now().await;
                 Ok("Completed batch before applying new config".to_string())
             }
             ReloadScenario::BetweenBatches => {

@@ -94,7 +94,7 @@ async fn worker_with_crashes(
                     
                     if !is_duplicate {
                         // Simulate processing work
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::task::yield_now().await;
                         
                         // Complete the item (unless we crash)
                         crash_counter += 1;
@@ -116,7 +116,7 @@ async fn worker_with_crashes(
         }
         
         // Small delay between claim attempts
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
     }
     
     Ok(())

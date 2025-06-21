@@ -128,7 +128,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
                             println!("Task {} LEAKED resource {} due to concurrent shutdown", task_id, resource);
                         } else {
                             // Successful cleanup
-                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            tokio::task::yield_now().await;
                         }
                     }
                     
@@ -137,7 +137,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
                 
                 // Simulate resource allocation
                 resources_held.push(format!("resource_{}_{}", task_id, i));
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                tokio::task::yield_now().await;
             }
             
             format!("task_{}_completed", task_id)
@@ -252,7 +252,7 @@ async fn test_event_router_state_corruption() {
         handles.push(handle);
         
         // Small delay to create ordering issues
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
     }
     
     join_all(handles).await;

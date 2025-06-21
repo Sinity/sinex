@@ -353,7 +353,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     
     // Wait for all workers to be ready
     while waiting_workers.load(Ordering::SeqCst) < 100 {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
     }
     
     println!("  All 100 workers waiting...");

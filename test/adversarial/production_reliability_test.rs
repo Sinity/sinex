@@ -245,7 +245,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
             
             // Small delay to allow monitoring
             if i % 100 == 0 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         }
     });

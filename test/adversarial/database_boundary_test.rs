@@ -127,7 +127,7 @@ async fn test_connection_pool_exhaustion() {
         handles.push(handle);
         
         // Stagger worker starts slightly
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
     }
     
     let results = join_all(handles).await;
@@ -248,7 +248,7 @@ async fn test_concurrent_btree_index_splits() {
                     }
                 }
                 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::task::yield_now().await;
             }
             
             inconsistencies

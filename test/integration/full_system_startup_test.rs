@@ -546,7 +546,7 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
     // Test that health check system can detect component recovery
     
     // Simulate component becoming healthy again
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    tokio::task::yield_now().await;
     let component_healthy = true;
     
     // Should detect recovery

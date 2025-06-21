@@ -274,3 +274,70 @@ mod sqlx_impl {
         }
     }
 }
+
+// Proptest/Arbitrary support for property testing
+#[cfg(feature = "arbitrary")]
+mod arbitrary_impl {
+    use super::*;
+    use proptest::prelude::*;
+    use chrono::{DateTime, Utc, TimeZone};
+
+    impl Arbitrary for Ulid {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            // Generate realistic ULID values for property testing
+            (
+                // Timestamp component (milliseconds since Unix epoch)
+                // Use a reasonable range: 2020-01-01 to 2030-01-01
+                1577836800000u64..1893456000000u64,
+                // Random component (80 bits)
+                any::<u128>()
+            )
+            .prop_map(|(timestamp_ms, random_bits)| {
+                // Use only the lower 80 bits for the random component
+                let random_component = random_bits & ((1u128 << 80) - 1);
+                
+                // Create ULID from components
+                let inner = InnerUlid::from_parts(timestamp_ms, random_component);
+                Ulid(inner)
+            })
+            .boxed()
+        }
+    }
+
+    /// Generate a ULID for property testing
+    pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
+        any::<Ulid>()
+    }
+
+    /// Generate a timestamp for property testing  
+    pub fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
+        (1577836800000u64..1893456000000u64)
+            .prop_map(|timestamp_ms| {
+                Utc.timestamp_millis_opt(timestamp_ms as i64).unwrap()
+            })
+    }
+
+    /// Generate a hostname for property testing
+    pub fn arb_hostname() -> impl Strategy<Value = String> {
+        r"[a-z][a-z0-9-]{1,62}[a-z0-9]"
+            .prop_map(|s| s.to_lowercase())
+    }
+
+    /// Generate a version string for property testing
+    pub fn arb_version() -> impl Strategy<Value = String> {
+        r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}"
+    }
+
+    /// Generate a JSON value for property testing
+    pub fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i32>().prop_map(|i| serde_json::Value::Number(i.into())),
+            r"[a-zA-Z0-9 ]{1,50}".prop_map(serde_json::Value::String),
+        ]
+    }
+}

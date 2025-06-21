@@ -41,7 +41,7 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
         
         // Small delay to avoid overwhelming test infrastructure
         if i % 100 == 0 {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
         }
     }
     
@@ -103,7 +103,7 @@ async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
                 
                 // Small delay to avoid overwhelming
                 if i % 20 == 0 {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
             }
             

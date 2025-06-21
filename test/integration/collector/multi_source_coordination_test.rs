@@ -243,7 +243,7 @@ async fn test_source_startup_synchronization() -> Result<()> {
                     break;
                 }
                 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::task::yield_now().await;
             }
             
             Ok::<_, anyhow::Error>(())

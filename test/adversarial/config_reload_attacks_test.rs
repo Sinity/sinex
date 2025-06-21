@@ -115,7 +115,7 @@ enabled_events = ["file.cre
             }
         }
         
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
     }
 }
 
@@ -239,7 +239,7 @@ timestamp = "{}"
             );
             
             fs::write(&config_path_clone, new_config).unwrap();
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         });
         
         handles.push(handle);
@@ -319,7 +319,7 @@ watch_paths = ["/tmp"]
     });
     
     // Change config during event processing
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::task::yield_now().await;
     
     let new_config = r#"
 [collector]

@@ -297,7 +297,7 @@ fn test_concurrent_metadata_lost_update() {
                 .unwrap();
                 
                 // Simulate processing time
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
                 
                 // Update based on read value (classic lost update)
                 let mut payload = current.payload;

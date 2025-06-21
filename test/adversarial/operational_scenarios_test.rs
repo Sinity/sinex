@@ -362,7 +362,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                     
                     // Simulate work with small delays
                     if i % 100 == 0 {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::task::yield_now().await;
                     }
                 }
                 

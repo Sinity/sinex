@@ -96,7 +96,7 @@ db_test! {
                     
                     for item in items {
                         // Simulate processing
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        tokio::task::yield_now().await;
                         
                         // Mark as processed by completing it
                         complete_work_queue_item(&pool, item.queue_id).await?;

@@ -502,7 +502,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
                 }
                 
                 // Brief pause to allow other workers
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         });
         

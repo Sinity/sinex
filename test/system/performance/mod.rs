@@ -105,7 +105,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
                 
                 if let Some((event_id,)) = maybe_event {
                     // Simulate processing
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::task::yield_now().await;
                     
                     // Mark as processed
                     queries::insert_raw_event(

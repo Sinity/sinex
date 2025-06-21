@@ -205,7 +205,7 @@ pub mod replacements {
             match sqlx::query("SELECT 1").fetch_one(pool).await {
                 Ok(_) => return Ok(()),
                 Err(_) => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::task::yield_now().await;
                 }
             }
         }
