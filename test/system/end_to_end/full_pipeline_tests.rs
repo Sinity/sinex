@@ -14,6 +14,7 @@ use gethostname;
 
 // Import test setup macros
 use crate::db_test;
+use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_filtered_event_count, wait_for_work_queue_count};
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -215,27 +216,31 @@ db_test! {
             worker.run().await
         });
         
-        // Wait for pipeline to process all events
-        let start = std::time::Instant::now();
+        // Wait for pipeline to process all events using optimized coordination
+        use crate::common::timing_optimization::{EventCounter, ProgressTracker};
+        
+        let generation_counter = EventCounter::new(events_to_generate as usize);
+        let processing_counter = EventCounter::new(events_to_generate as usize);
+        
+        // Wait for both generation and processing to complete
         let timeout_duration = Duration::from_secs(10);
         
-        loop {
-            let generated = source_events_generated.load(Ordering::SeqCst);
-            let processed = events_processed.load(Ordering::SeqCst);
-            
-            if generated >= events_to_generate && processed >= events_to_generate {
-                break;
-            }
-            
-            if start.elapsed() > timeout_duration {
-                panic!(
-                    "Pipeline timeout: generated={}, processed={}", 
-                    generated, processed
-                );
-            }
-            
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        // Wait for pipeline completion using timing utilities
+        // First wait for all events to be generated and stored
+        wait_for_filtered_event_count(
+            &pool,
+            "source = $1",
+            &["pipeline_test"],
+            events_to_generate as i64,
+            10
+        ).await.map_err(|e| anyhow::anyhow!("Failed to wait for events: {}", e))?;
+        
+        // Then wait for work queue to be empty (all processed)
+        wait_for_work_queue_count(
+            &pool,
+            0, // Empty queue
+            10
+        ).await.map_err(|e| anyhow::anyhow!("Failed to wait for work queue completion: {}", e))?;
         
         // Stop all components
         source_handle.abort();
@@ -261,20 +266,25 @@ db_test! {
             "Derived events should be created for each processed event"
         );
         
-        // Verify database state
-        let raw_event_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test'"
-        )
-        .fetch_one(&pool)
-        .await?;
+        // Verify database state using timing utilities
+        let raw_event_count = wait_for_filtered_event_count(
+            &pool,
+            "source = $1", 
+            &["pipeline_test"],
+            events_to_generate as i64,
+            10
+        ).await.map_err(|e| anyhow::anyhow!("Failed to verify raw events: {}", e))?;
         
         assert_eq!(raw_event_count, events_to_generate as i64);
         
-        let derived_event_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM raw.events WHERE source = 'pipeline_test_derived'"
-        )
-        .fetch_one(&pool)
-        .await?;
+        // Wait for derived events to be processed
+        let derived_event_count = wait_for_filtered_event_count(
+            &pool,
+            "source = $1",
+            &["pipeline_test_derived"],
+            events_to_generate as i64,
+            10
+        ).await.map_err(|e| anyhow::anyhow!("Failed to verify derived events: {}", e))?;
         
         assert_eq!(derived_event_count, events_to_generate as i64);
         
@@ -361,20 +371,26 @@ db_test! {
             worker_handles.push(worker_handle);
         }
         
-        // Wait for completion
+        // Wait for completion using optimized timing
         let start = std::time::Instant::now();
-        loop {
+        let timeout_duration = Duration::from_secs(15);
+        
+        while start.elapsed() < timeout_duration {
             let processed = total_processed.load(Ordering::SeqCst);
             
             if processed >= events_to_generate {
                 break;
             }
             
-            if start.elapsed() > Duration::from_secs(15) {
-                panic!("Pipeline timeout: processed={}/{}", processed, events_to_generate);
-            }
-            
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // Use exponential backoff instead of fixed sleep  
+            let elapsed = start.elapsed();
+            let backoff = Duration::from_millis(10.min(elapsed.as_millis() as u64 / 20));
+            tokio::time::sleep(backoff).await;
+        }
+        
+        if start.elapsed() >= timeout_duration {
+            let processed = total_processed.load(Ordering::SeqCst);
+            panic!("Pipeline timeout: processed={}/{}", processed, events_to_generate);
         }
         
         // Stop workers

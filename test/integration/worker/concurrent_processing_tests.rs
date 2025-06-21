@@ -9,6 +9,7 @@ use std::time::Duration;
 // Import test setup macros and utilities
 use crate::db_test;
 use crate::common::worker_test_utils::{self, insert_test_items};
+use crate::common::timing_optimization::replacements::{wait_for_work_queue_count};
 
 db_test! {
     async fn test_select_for_update_skip_locked_prevents_duplicate_processing(pool: PgPool) -> Result<()> {
@@ -195,12 +196,12 @@ db_test! {
         // Complete the item processing
         complete_work_queue_item(&pool, claimed[0].queue_id).await?;
         
-        // Verify the item is gone
-        let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'test_worker'"
-        )
-        .fetch_one(&pool)
-        .await?;
+        // Verify the item is gone using timing utility
+        let remaining = wait_for_work_queue_count(
+            &pool,
+            0, // Expect empty queue
+            5
+        ).await.unwrap_or(1);
         
         assert_eq!(remaining, 0, "Item should be deleted after completion");
         

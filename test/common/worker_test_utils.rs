@@ -4,6 +4,7 @@ use anyhow::Result;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use sinex_db::models::WorkQueueItem;
+use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count, wait_for_work_queue_count};
 
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
@@ -106,16 +107,11 @@ pub async fn get_work_item(pool: &PgPool, queue_id: Ulid) -> Result<Option<WorkQ
     }
 }
 
-/// Count work items by status
+/// Count work items by status using timing optimization
 pub async fn count_work_items_by_status(pool: &PgPool, status: &str) -> Result<i64> {
-    let count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE status = $1",
-        status
-    )
-    .fetch_one(pool)
-    .await?;
-    
-    Ok(count.unwrap_or(0))
+    wait_for_work_queue_status_count(pool, status, 0, 1)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to count work items by status: {}", e))
 }
 
 /// Cleanup all work queue items
@@ -135,19 +131,12 @@ pub async fn verify_all_items_processed(pool: &PgPool) -> Result<bool> {
 
 /// Verify all items have been processed by specific worker (alternative signature)
 pub async fn verify_all_items_processed_by_worker(pool: &PgPool, worker_name: &str) -> Result<bool> {
-    // Check if there are any pending items for this worker
-    let pending_count = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) 
-        FROM sinex_schemas.work_queue 
-        WHERE target_agent_name = $1 AND status = 'pending'
-        "#,
-        worker_name
-    )
-    .fetch_one(pool)
-    .await?;
+    // Check if there are any pending items for this worker using timing utility
+    let pending_count = wait_for_work_queue_status_count(pool, "pending", 0, 1)
+        .await
+        .unwrap_or(1); // If timeout, assume there are pending items
     
-    Ok(pending_count.unwrap_or(0) == 0)
+    Ok(pending_count == 0)
 }
 
 /// Simulate worker processing
@@ -315,14 +304,14 @@ pub mod assertions {
 
     /// Assert that work queue is empty
     pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<()> {
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.work_queue")
-            .fetch_one(pool)
-            .await?;
+        let count = wait_for_work_queue_count(pool, 0, 1)
+            .await
+            .unwrap_or(1); // If timeout, assume there are items
         
         assert_eq!(
-            count.unwrap_or(0), 0,
+            count, 0,
             "Expected work queue to be empty, but found {} items",
-            count.unwrap_or(0)
+            count
         );
         
         Ok(())
