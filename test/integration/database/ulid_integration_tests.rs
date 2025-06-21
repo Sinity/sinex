@@ -1,41 +1,38 @@
 use sinex_ulid::Ulid;
 use std::str::FromStr;
 use std::collections::HashSet;
+use crate::common::{events, insert_test_event};
 
 
 #[sqlx::test]
 async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Insert multiple events with delays to ensure proper ordering
+    // Insert multiple events with monotonic ULID ordering
     let mut ulids = Vec::new();
     
     for i in 0..5 {
-        let ulid = Ulid::new();
-        ulids.push(ulid.to_string());
+        // Create event with monotonic ULID - no sleep needed as ULIDs are guaranteed to be ordered
+        let event = events::filesystem_event(
+            "file.created",
+            &format!("/test/file_{}.txt", i)
+        );
         
-        sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload) 
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
-        )
-        .bind(&ulid.to_string())
-        .bind("order_test_source_v2")
-        .bind("order_test_v2")
-        .bind("test_host")
-        .bind(serde_json::json!({"seq": i}))
-        .execute(&pool)
-        .await?;
-        
-        // Ensure different timestamps by sleeping
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let id = insert_test_event(&pool, &event).await?;
+        ulids.push(id.to_string());
     }
     
     // Query events ordered by ID
     let ordered_ids: Vec<String> = sqlx::query_scalar(
         "SELECT id::text FROM raw.events 
-         WHERE source = 'order_test_source_v2' 
-         ORDER BY id"
+         WHERE source = 'filesystem' 
+         ORDER BY id DESC
+         LIMIT 5"
     )
     .fetch_all(&pool)
     .await?;
+    
+    // Reverse to match insertion order
+    let mut ordered_ids = ordered_ids;
+    ordered_ids.reverse();
     
     // Verify they're in the same order as inserted
     assert_eq!(ulids, ordered_ids, "ULIDs should maintain insertion order when sorted");

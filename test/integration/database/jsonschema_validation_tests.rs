@@ -3,6 +3,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::db_test;
+use crate::common::{events, schema_test_utils, create_test_event_with_payload};
 
 db_test! {
     async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
@@ -34,20 +35,12 @@ db_test! {
     let event_source = format!("hyprland-test-{}", test_run_id);
     let event_type = format!("window_focused-{}", test_run_id);
     
-    let schema_id: String = sqlx::query_scalar(
-        "INSERT INTO sinex_schemas.event_payload_schemas 
-         (event_source, event_type, schema_version, json_schema_definition, description) 
-         VALUES ($1, $2, $3, $4::jsonb, $5) 
-         RETURNING id::text"
-    )
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("v1.0")
-    .bind(&schema)
-    .bind("Schema for window focus events")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let schema_id = schema_test_utils::register_test_schema(
+        &pool,
+        &event_source,
+        &event_type,
+        schema
+    ).await?;
     
     // Verify schema was stored correctly
     let retrieved_schema: serde_json::Value = sqlx::query_scalar(
@@ -122,49 +115,9 @@ db_test! {
         }
     });
     
-    let event_id = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(&schema_id)
-    .bind(&valid_payload)
-    .execute(&pool)
-    .await;
-    
-    if let Err(e) = &result {
-        println!("Error inserting valid payload: {:?}", e);
-        
-        // Debug: Check if schema exists and is active
-        let schema_check: Option<(bool, String)> = sqlx::query_as(
-            "SELECT is_active, json_schema_definition::text FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid"
-        )
-        .bind(&schema_id)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-        
-        println!("Schema check for ID {}: {:?}", schema_id, schema_check);
-        
-        // Test the function directly
-        if let Some((is_active, schema_def)) = schema_check {
-            let matches: bool = sqlx::query_scalar(
-                "SELECT jsonb_matches_schema($1::jsonb, $2::jsonb)"
-            )
-            .bind(&schema_def)
-            .bind(&valid_payload)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            
-            println!("Schema active: {}, Payload matches: {}", is_active, matches);
-        }
-    }
-    assert!(result.is_ok(), "Valid payload should be accepted");
+    // Test valid payload
+    let event = create_test_event_with_payload(&event_source, &event_type, valid_payload);
+    schema_test_utils::assert_schema_valid_event(&pool, &event, &schema_id).await?;
     
     // Test invalid payload - missing required field
     let invalid_payload1 = json!({
@@ -172,21 +125,8 @@ db_test! {
         // missing element_id
     });
     
-    let event_id2 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id2.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(&schema_id)
-    .bind(&invalid_payload1)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "Invalid payload missing required field should be rejected");
+    let event = create_test_event_with_payload(&event_source, &event_type, invalid_payload1);
+    schema_test_utils::assert_schema_invalid_event(&pool, &event, &schema_id).await?;
     
     // Test invalid payload - wrong enum value
     let invalid_payload2 = json!({
@@ -194,21 +134,8 @@ db_test! {
         "element_id": "some-element"
     });
     
-    let event_id3 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id3.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(&schema_id)
-    .bind(&invalid_payload2)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "Invalid payload with wrong enum value should be rejected");
+    let event2 = create_test_event_with_payload(&event_source, &event_type, invalid_payload2);
+    schema_test_utils::assert_schema_invalid_event(&pool, &event2, &schema_id).await?;
     
     // Test invalid payload - additional properties
     let invalid_payload3 = json!({
@@ -217,21 +144,8 @@ db_test! {
         "extra_field": "not allowed"
     });
     
-    let event_id4 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id4.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(&schema_id)
-    .bind(&invalid_payload3)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "Invalid payload with additional properties should be rejected");
+    let event3 = create_test_event_with_payload(&event_source, &event_type, invalid_payload3);
+    schema_test_utils::assert_schema_invalid_event(&pool, &event3, &schema_id).await?;
     
     Ok(())
     }

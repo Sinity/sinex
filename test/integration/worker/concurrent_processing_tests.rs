@@ -7,60 +7,13 @@ use tokio::task::JoinSet;
 use sinex_ulid::Ulid;
 use std::time::Duration;
 
-// Import test setup macros
+// Import test setup macros and utilities
 use crate::db_test;
-
-async fn insert_test_items(pool: &PgPool, count: i32) -> Result<Vec<Ulid>> {
-    // Ensure the test agent exists in agent_manifests
-    sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, description, version) 
-         VALUES ($1, $2, $3) 
-         ON CONFLICT (agent_name) DO NOTHING"
-    )
-    .bind("test_worker")
-    .bind("Test worker for concurrent processing tests")
-    .bind("1.0.0")
-    .execute(pool)
-    .await?;
-    
-    let mut ids = Vec::new();
-    
-    for _ in 0..count {
-        let queue_id = Ulid::new();
-        let raw_event_id = Ulid::new();
-        ids.push(queue_id);
-        
-        // First insert the raw event
-        sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload) 
-             VALUES ($1, $2, $3, $4, $5)"
-        )
-        .bind(raw_event_id.to_uuid())
-        .bind("test_worker")
-        .bind("test_event")
-        .bind("test_host")
-        .bind(serde_json::json!({"test": "data"}))
-        .execute(pool)
-        .await?;
-        
-        // Then insert into work queue
-        sqlx::query(
-            "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at) 
-             VALUES ($1, $2, $3, 0, 3, NOW())"
-        )
-        .bind(queue_id.to_uuid())
-        .bind(raw_event_id.to_uuid())
-        .bind("test_worker")
-        .execute(pool)
-        .await?;
-    }
-    
-    Ok(ids)
-}
+use crate::common::worker_test_utils;
 
 db_test! {
     async fn test_select_for_update_skip_locked_prevents_duplicate_processing(pool: PgPool) -> Result<()> {
-        let _items = insert_test_items(&pool, 10).await?;
+        let _items = worker_test_utils::setup_test_worker(&pool, "test_worker", 10).await?;
         
         let pool = Arc::new(pool);
         let barrier = Arc::new(Barrier::new(3));
@@ -122,14 +75,8 @@ db_test! {
         let total_processed = *processed_count.lock().await;
         assert_eq!(total_processed, 10, "All items should be processed exactly once");
         
-        // Verify no items remain
-        let remaining_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'test_worker'"
-        )
-        .fetch_one(&*pool)
-        .await?;
-        
-        assert_eq!(remaining_count, 0, "All items should be processed and deleted");
+        // Verify no items remain using utility
+        worker_test_utils::verify_all_items_processed(&pool, "test_worker").await?;
         
         // Verify work distribution and print for visibility
         let mut workers_that_worked = 0;

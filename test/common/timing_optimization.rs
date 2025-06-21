@@ -1,8 +1,8 @@
 //! Timing optimization utilities to replace sleep-based synchronization
 
 use std::time::Duration;
-use tokio::sync::{Notify, Barrier};
-use tokio::time::{timeout, interval, Instant};
+use tokio::sync::Notify;
+use tokio::time::{timeout, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
