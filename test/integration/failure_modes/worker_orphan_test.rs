@@ -70,7 +70,7 @@ async fn test_orphaned_worker_detection() {
     }));
     
     // Worker 2: Stops heartbeating mid-process
-    let worker2_crashed = TestSynchronizer::new(Duration::from_secs(1));
+    let worker2_crashed = Arc::new(TestSynchronizer::new(Duration::from_secs(5)));
     let worker2_sync = worker2_crashed.clone();
     
     handles.push(tokio::spawn(async move {
