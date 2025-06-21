@@ -4,7 +4,7 @@ use sinex_ulid::Ulid;
 use std::sync::{Arc, Barrier};
 use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[test]
 fn test_worker_claim_exact_same_microsecond() {
@@ -150,16 +150,20 @@ fn test_event_causality_violation() {
                 }),
             };
             
+            // Use deterministic barrier for precise race condition timing
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let barrier_a = barrier.clone();
+            let barrier_b = barrier.clone();
+            
             // Insert B first (race condition)
             let handle_b = tokio::spawn(async move {
+                barrier_b.wait().await;
                 queries::insert_event(&pool2, &event_b).await
             });
             
-            // Small delay to increase chance of order violation
-            tokio::time::sleep(Duration::from_micros(10)).await;
-            
-            // Insert A second
+            // Insert A second - both will start simultaneously at barrier
             let handle_a = tokio::spawn(async move {
+                barrier_a.wait().await;
                 queries::insert_event(&pool1, &event_a).await
             });
             

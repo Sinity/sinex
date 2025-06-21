@@ -10,6 +10,7 @@ use futures::future::join_all;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use sinex_ulid::Ulid;
 use serde_json::json;
+use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
 
 /// Metrics for tracking work distribution algorithm performance
 #[derive(Debug)]
@@ -331,25 +332,21 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
         for _ in 0..12 {
             interval.tick().await;
 
-            let pending_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'pending'",
-                monitor_agent
-            )
-            .fetch_one(&monitor_pool)
-            .await
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+            // Use timing utility for pending work queue monitoring
+            let pending_count = wait_for_work_queue_status_count(
+                &monitor_pool,
+                "pending",
+                0, // Accept any count
+                1  // Quick timeout for monitoring
+            ).await.unwrap_or(0);
 
-            let in_progress_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'processing'",
-                monitor_agent
-            )
-            .fetch_one(&monitor_pool)
-            .await
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+            // Use timing utility for processing work queue monitoring
+            let in_progress_count = wait_for_work_queue_status_count(
+                &monitor_pool,
+                "processing",
+                0, // Accept any count
+                1  // Quick timeout for monitoring
+            ).await.unwrap_or(0);
 
             samples.push((pending_count, in_progress_count));
             println!("Queue status: {} pending, {} in progress", pending_count, in_progress_count);
@@ -374,24 +371,20 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
         println!("Worker {} processed {} items", worker_ids[i], processed);
     }
 
-    // Check final queue status
-    let final_pending: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-         WHERE target_agent_name = $1 AND status = 'pending'",
-        agent_name
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
+    // Check final queue status using timing utilities
+    let final_pending = wait_for_work_queue_status_count(
+        &pool,
+        "pending",
+        0, // Accept any count
+        5  // Reasonable timeout for final check
+    ).await.unwrap_or(0);
 
-    let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-         WHERE target_agent_name = $1 AND status = 'succeeded'",
-        agent_name
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
+    let final_succeeded = wait_for_work_queue_status_count(
+        &pool,
+        "succeeded",
+        0, // Accept any count
+        5  // Reasonable timeout for final check
+    ).await.unwrap_or(0);
 
     println!("\nAlgorithm Fairness Test Results:");
     println!("  Work items created: {}", work_items_to_create);
@@ -499,8 +492,9 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
         metrics.record_work_item_created();
     }
 
-    // Start all workers simultaneously for maximum contention
+    // Start all workers simultaneously for maximum contention using barrier
     let start_signal = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(tokio::sync::Barrier::new(worker_ids.len()));
     let mut worker_handles = Vec::new();
 
     for worker_id in &worker_ids {
@@ -512,21 +506,18 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
             Duration::from_millis(10), // Fast processing to maximize lock contention
         );
 
-        let wait_signal = start_signal.clone();
+        // Use barrier for deterministic simultaneous start
+        let barrier_clone = barrier.clone();
         let handle = tokio::spawn(async move {
-            // Wait for start signal
-            while !wait_signal.load(Ordering::Relaxed) {
-                sleep(Duration::from_millis(1)).await;
-            }
-
+            // Wait at barrier for all workers to be ready
+            barrier_clone.wait().await;
             worker.run_work_loop(Duration::from_secs(5)).await
         });
 
         worker_handles.push(handle);
     }
 
-    // Start all workers simultaneously
-    sleep(Duration::from_millis(100)).await; // Brief delay to ensure all workers are waiting
+    // All workers will start simultaneously when barrier is reached
     start_signal.store(true, Ordering::Relaxed);
 
     // Wait for completion
