@@ -201,6 +201,7 @@ fn test_event_validator_unicode_content() {
         "file.created",
         json!({
             "path": "/home/用户/文档/测试文件.txt",
+            "size": 1024,
             "content": "Unicode content: 🚀 🎉 ✨ مرحبا العالم 🌍",
             "encoding": "UTF-8"
         })

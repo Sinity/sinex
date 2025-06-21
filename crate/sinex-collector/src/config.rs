@@ -505,11 +505,19 @@ impl Default for CollectorConfig {
             table
         }));
         
+        flat_config.insert("event.command_executed".to_string(), toml::Value::Table({
+            let mut table = toml::map::Map::new();
+            table.insert("socket_path".to_string(), toml::Value::String("/tmp/kitty".to_string()));
+            table.insert("polling_interval_secs".to_string(), toml::Value::Integer(2));
+            table
+        }));
+        
         Self {
             enabled_events: vec![
                 "file.created".to_string(),
                 "file.modified".to_string(), 
                 "file.deleted".to_string(),
+                "command.executed".to_string(),
                 "shell.command.executed_atuin".to_string(),
                 "window.focused".to_string(),
                 "workspace.changed".to_string(),

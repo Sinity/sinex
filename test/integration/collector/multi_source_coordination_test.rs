@@ -295,7 +295,7 @@ async fn test_registry_based_source_discovery() -> Result<()> {
     
     // Common sources should be present
     assert!(sources.contains_key("filesystem"));
-    assert!(sources.contains_key("terminal_kitty"));
+    assert!(sources.contains_key("terminal.kitty"));
     
     Ok(())
 }

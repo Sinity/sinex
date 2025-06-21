@@ -110,6 +110,21 @@ impl EventValidator {
     
     /// Validate using hardcoded rules only
     pub fn validate_with_rules(&self, source: &str, event_type: &str, payload: &Value) -> Result<(), ValidationError> {
+        // Basic field validation
+        if source.is_empty() {
+            return Err(ValidationError::InvalidValue {
+                field: "source".to_string(),
+                reason: "cannot be empty".to_string(),
+            });
+        }
+        
+        if event_type.is_empty() {
+            return Err(ValidationError::InvalidValue {
+                field: "event_type".to_string(),
+                reason: "cannot be empty".to_string(),
+            });
+        }
+        
         // First check for exact match
         let key = (source.to_string(), event_type.to_string());
         if let Some(validator) = self.rules.get(&key) {

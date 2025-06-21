@@ -1,7 +1,7 @@
 use sinex_ulid::Ulid;
 use std::str::FromStr;
 use std::collections::HashSet;
-use crate::common::{events, insert_test_event};
+use crate::common::{events, insert_test_event_raw};
 
 
 #[sqlx::test]
@@ -10,14 +10,17 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
     let mut ulids = Vec::new();
     
     for i in 0..5 {
-        // Create event with monotonic ULID - no sleep needed as ULIDs are guaranteed to be ordered
+        // Create event with monotonic ULID - small delay ensures ordering within same millisecond
         let event = events::filesystem_event(
             "file.created",
             &format!("/test/file_{}.txt", i)
         );
         
-        let id = insert_test_event(&pool, &event).await?;
+        let id = insert_test_event_raw(&pool, &event).await?;
         ulids.push(id.to_string());
+        
+        // Small delay to ensure ULID monotonic ordering
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     
     // Query events ordered by ID

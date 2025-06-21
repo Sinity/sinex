@@ -24,7 +24,7 @@ pub async fn create_test_db_pool() -> Result<PgPool> {
 
 /// Helper for inserting test events directly via queries
 #[allow(dead_code)]
-pub async fn insert_test_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
+pub async fn insert_test_event_raw(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
     let inserted = queries::insert_event(pool, event).await?;
     Ok(inserted.id)
 }
@@ -443,6 +443,72 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::Ra
 /// Helper for creating test events with specific payload
 pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
     RawEventBuilder::new(source, event_type, payload).build()
+}
+
+/// Helper for creating a test agent with default settings
+pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+    let manifest = generators::test_agent_manifest(agent_name);
+    queries::upsert_agent_manifest(
+        pool,
+        &manifest.agent_name,
+        manifest.description.as_deref().unwrap_or(""),
+        &manifest.version,
+        &manifest.status,
+        Some(&manifest.agent_type),
+        manifest.config_template_json.clone(),
+        manifest.produces_event_types.clone(),
+    ).await?;
+    Ok(())
+}
+
+/// Helper for inserting test event - 3 argument version used in tests
+#[allow(dead_code)]
+pub async fn insert_test_event(pool: &PgPool, source: &str, event_type: &str) -> Result<Ulid> {
+    let event = RawEventBuilder::new(
+        source,
+        event_type,
+        json!({"test": true})
+    ).build();
+    let inserted = queries::insert_event(pool, &event).await?;
+    Ok(inserted.id)
+}
+
+/// Helper for inserting test event with custom data - 4 argument version for routing tests
+#[allow(dead_code)]
+pub async fn insert_test_event_with_data(pool: &PgPool, source: &str, event_type: &str, data: &str) -> Result<Ulid> {
+    let event = RawEventBuilder::new(
+        source,
+        event_type,
+        serde_json::from_str(data).unwrap_or_else(|_| json!({"data": data}))
+    ).build();
+    let inserted = queries::insert_event(pool, &event).await?;
+    Ok(inserted.id)
+}
+
+/// Helper for creating agent with specific subscriptions
+pub async fn create_agent_with_subscriptions(
+    pool: &PgPool, 
+    agent_name: &str, 
+    subscriptions: &serde_json::Value
+) -> Result<()> {
+    // Create a test agent manifest and add subscriptions
+    let mut manifest = generators::test_agent_manifest(agent_name);
+    manifest.subscribes_to_event_types = Some(subscriptions.clone());
+    
+    queries::upsert_agent_manifest(
+        pool,
+        &manifest.agent_name,
+        manifest.description.as_deref().unwrap_or(""),
+        &manifest.version,
+        &manifest.status,
+        Some(&manifest.agent_type),
+        manifest.config_template_json.clone(),
+        manifest.produces_event_types.clone(),
+    ).await?;
+    
+    // The agent is registered via upsert_agent_manifest above
+    
+    Ok(())
 }
 
 

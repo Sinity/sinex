@@ -10,7 +10,7 @@ fn test_event_registry_creation() {
     // Verify some expected event types are present
     assert!(registry.event_types.contains(&"file.created"));
     assert!(registry.event_types.contains(&"command.executed"));
-    assert!(registry.event_types.contains(&"window.focus"));
+    assert!(registry.event_types.contains(&"window.focused"));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn test_event_registry_get_source_events() {
     assert!(fs_events.contains(&"file.deleted"));
     
     // Test terminal source
-    let terminal_events = registry.events_for_source("terminal_kitty");
+    let terminal_events = registry.events_for_source("terminal.kitty");
     assert!(!terminal_events.is_empty());
     assert!(terminal_events.contains(&"command.executed"));
     
@@ -64,8 +64,8 @@ fn test_event_registry_all_sources() {
     
     // Verify expected sources are present
     assert!(sources.contains(&"filesystem"));
-    assert!(sources.contains(&"terminal_kitty"));
-    assert!(sources.contains(&"window_manager_hyprland"));
+    assert!(sources.contains(&"terminal.kitty"));
+    assert!(sources.contains(&"window_manager.hyprland"));
     assert!(sources.contains(&"clipboard"));
 }
 
@@ -85,7 +85,7 @@ fn test_event_registry_event_type_properties() {
     // Test command.executed event type
     let cmd_source = registry.source_for_event("command.executed");
     assert!(cmd_source.is_some());
-    assert_eq!(cmd_source.unwrap(), "terminal_kitty");
+    assert_eq!(cmd_source.unwrap(), "terminal.kitty");
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn test_event_registry_concurrent_access() {
     // Wait for all threads and verify results
     for handle in handles {
         let result = handle.join().unwrap();
-        assert!(result == "filesystem" || result == "terminal_kitty");
+        assert!(result == "filesystem" || result == "terminal.kitty");
     }
 }
 
@@ -211,7 +211,7 @@ fn test_event_registry_with_real_events() {
     for event_name in terminal_events {
         let source = registry.source_for_event(event_name);
         if source.is_some() {
-            assert_eq!(source.unwrap(), "terminal_kitty");
+            assert_eq!(source.unwrap(), "terminal.kitty");
         }
     }
 }

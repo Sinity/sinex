@@ -3,6 +3,7 @@
 
 use crate::db_test;
 use sinex_db::queries::*;
+// Local function definitions at bottom of file
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use anyhow::Result;

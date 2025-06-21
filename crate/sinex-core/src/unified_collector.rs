@@ -257,12 +257,105 @@ pub fn create_registry() -> EventRegistry {
             ("screen.saver.event", "dbus.monitor"),
             ("storage.mount.event", "dbus.monitor"),
             // Clipboard events
-            ("clipboard.content.changed", "clipboard.monitor"),
-            ("clipboard.selection.changed", "clipboard.monitor"),
+            ("clipboard.content.changed", "clipboard"),
+            ("clipboard.selection.changed", "clipboard"),
             // Journal events
             ("system.journal.entry", "journal.monitor"),
             ("system.journal.sync", "journal.monitor"),
         ],
-        schema_generators: HashMap::new(), // Will be populated by build script
+        schema_generators: {
+            let mut generators: HashMap<&'static str, fn() -> RootSchema> = HashMap::new();
+            
+            fn file_created_schema() -> RootSchema {
+                use schemars::schema::*;
+                RootSchema {
+                    meta_schema: None,
+                    schema: SchemaObject {
+                        instance_type: Some(InstanceType::Object.into()),
+                        object: Some(Box::new(ObjectValidation {
+                            properties: {
+                                let mut props = std::collections::BTreeMap::new();
+                                props.insert("path".to_string(), Schema::Object(SchemaObject {
+                                    instance_type: Some(InstanceType::String.into()),
+                                    ..Default::default()
+                                }));
+                                props.insert("size".to_string(), Schema::Object(SchemaObject {
+                                    instance_type: Some(InstanceType::Integer.into()),
+                                    ..Default::default()
+                                }));
+                                props
+                            },
+                            required: vec!["path".to_string(), "size".to_string()].into_iter().collect(),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    },
+                    definitions: Default::default(),
+                }
+            }
+            
+            fn file_modified_schema() -> RootSchema {
+                file_created_schema() // Same schema as file.created
+            }
+            
+            fn file_deleted_schema() -> RootSchema {
+                use schemars::schema::*;
+                RootSchema {
+                    meta_schema: None,
+                    schema: SchemaObject {
+                        instance_type: Some(InstanceType::Object.into()),
+                        object: Some(Box::new(ObjectValidation {
+                            properties: {
+                                let mut props = std::collections::BTreeMap::new();
+                                props.insert("path".to_string(), Schema::Object(SchemaObject {
+                                    instance_type: Some(InstanceType::String.into()),
+                                    ..Default::default()
+                                }));
+                                props
+                            },
+                            required: vec!["path".to_string()].into_iter().collect(),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    },
+                    definitions: Default::default(),
+                }
+            }
+            
+            fn command_executed_schema() -> RootSchema {
+                use schemars::schema::*;
+                RootSchema {
+                    meta_schema: None,
+                    schema: SchemaObject {
+                        instance_type: Some(InstanceType::Object.into()),
+                        object: Some(Box::new(ObjectValidation {
+                            properties: {
+                                let mut props = std::collections::BTreeMap::new();
+                                props.insert("command".to_string(), Schema::Object(SchemaObject {
+                                    instance_type: Some(InstanceType::String.into()),
+                                    ..Default::default()
+                                }));
+                                props.insert("exit_code".to_string(), Schema::Object(SchemaObject {
+                                    instance_type: Some(InstanceType::Integer.into()),
+                                    ..Default::default()
+                                }));
+                                props
+                            },
+                            required: vec!["command".to_string()].into_iter().collect(),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    },
+                    definitions: Default::default(),
+                }
+            }
+            
+            generators.insert("file.created", file_created_schema);
+            generators.insert("file.modified", file_modified_schema);
+            generators.insert("file.deleted", file_deleted_schema);
+            generators.insert("command.executed", command_executed_schema);
+            
+            generators
+        }
     }
 }

@@ -4,6 +4,9 @@ pub mod queries;
 pub mod validation;
 pub mod metrics;
 
+// Re-export commonly used types
+pub use queries::{QueueDepthMetric, refresh_routing_cache, run_batch_router, calculate_queue_depth_metrics};
+
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
