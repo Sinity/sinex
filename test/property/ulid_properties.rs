@@ -16,7 +16,7 @@ mod ulid_ordering_properties {
             base_timestamp in 0u64..1_000_000_000_000,
             offsets in prop::collection::vec(0u64..1000, 2..10)
         )| {
-            let base_time = DateTime::from_timestamp(base_timestamp, 0).unwrap_or(Utc::now());
+            let base_time = DateTime::from_timestamp(base_timestamp as i64, 0).unwrap_or(Utc::now());
             let mut timestamps: Vec<DateTime<Utc>> = offsets
                 .iter()
                 .map(|&offset| base_time + Duration::seconds(offset as i64))
@@ -28,7 +28,7 @@ mod ulid_ordering_properties {
             // Generate ULIDs from sorted timestamps
             let ulids: Vec<Ulid> = timestamps
                 .iter()
-                .map(|&ts| Ulid::from_datetime(ts.naive_utc()))
+                .map(|&ts| Ulid::from_datetime(ts))
                 .collect();
             
             // Verify ULIDs maintain chronological order
@@ -55,7 +55,7 @@ mod ulid_ordering_properties {
             // Generate ULIDs rapidly (simulating high-frequency events)
             for i in 0..count {
                 let timestamp = base_time + Duration::milliseconds(i as i64);
-                ulids.push(Ulid::from_datetime(timestamp.naive_utc()));
+                ulids.push(Ulid::from_datetime(timestamp));
             }
             
             // Verify all ULIDs are unique
@@ -76,17 +76,17 @@ mod ulid_ordering_properties {
     #[test]
     fn test_ulid_timestamp_extraction() {
         proptest!(|(timestamp in 0u64..2_000_000_000)| {
-            let dt = DateTime::from_timestamp(timestamp, 0).unwrap_or(Utc::now());
-            let ulid = Ulid::from_datetime(dt.naive_utc());
+            let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
+            let ulid = Ulid::from_datetime(dt);
             let extracted_timestamp = ulid.timestamp();
             
             // ULID timestamp should be within 1ms of original
-            let time_diff = (timestamp * 1000) as i64 - extracted_timestamp as i64;
+            let time_diff = (timestamp * 1000) as i64 - extracted_timestamp.timestamp_millis();
             prop_assert!(
                 time_diff.abs() <= 1000, // 1 second tolerance for edge cases
                 "ULID timestamp extraction inaccurate: original={}, extracted={}, diff={}ms",
                 timestamp * 1000,
-                extracted_timestamp,
+                extracted_timestamp.timestamp_millis(),
                 time_diff
             );
         });

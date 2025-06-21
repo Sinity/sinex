@@ -1,6 +1,5 @@
 use anyhow::Result;
 use sinex_db::queries::{claim_work_queue_items, complete_work_queue_item};
-use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Barrier;
 use tokio::task::JoinSet;
@@ -9,7 +8,7 @@ use std::time::Duration;
 
 // Import test setup macros and utilities
 use crate::db_test;
-use crate::common::worker_test_utils;
+use crate::common::worker_test_utils::{self, insert_test_items};
 
 db_test! {
     async fn test_select_for_update_skip_locked_prevents_duplicate_processing(pool: PgPool) -> Result<()> {
@@ -76,7 +75,7 @@ db_test! {
         assert_eq!(total_processed, 10, "All items should be processed exactly once");
         
         // Verify no items remain using utility
-        worker_test_utils::verify_all_items_processed(&pool, "test_worker").await?;
+        worker_test_utils::verify_all_items_processed_by_worker(&pool, "test_worker").await?;
         
         // Verify work distribution and print for visibility
         let mut workers_that_worked = 0;

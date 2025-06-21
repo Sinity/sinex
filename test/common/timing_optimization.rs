@@ -45,6 +45,7 @@ impl TestSynchronizer {
 }
 
 /// Counter-based synchronization for waiting on specific event counts
+#[derive(Clone)]
 pub struct EventCounter {
     count: Arc<AtomicUsize>,
     target: usize,

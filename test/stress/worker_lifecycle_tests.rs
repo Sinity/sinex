@@ -159,8 +159,8 @@ impl RaceConditionWorker {
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '500 milliseconds'
-                 WHERE queue_id = $1",
-                Ulid::from_str(queue_id)?
+                 WHERE queue_id = $1::uuid::ulid",
+                Ulid::from_str(queue_id)?.to_uuid()
             )
             .execute(&self.pool)
             .await?;
@@ -172,10 +172,10 @@ impl RaceConditionWorker {
             "UPDATE sinex_schemas.work_queue 
              SET status = 'succeeded', 
                  processed_at = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = $1",
-            Ulid::from_str(queue_id)?,
-            self.worker_id
+                 processing_worker_id = $2::uuid::ulid
+             WHERE queue_id = $1::uuid::ulid",
+            Ulid::from_str(queue_id)?.to_uuid(),
+            Ulid::from_str(&self.worker_id)?.to_uuid()
         )
         .execute(&self.pool)
         .await?;

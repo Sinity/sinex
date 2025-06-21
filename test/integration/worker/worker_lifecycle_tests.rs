@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 // Import test setup macros and utilities
 use crate::db_test;
-use crate::common::worker_test_utils;
+use crate::common::worker_test_utils::{self, insert_test_work_item};
 
 struct TestEventProcessor {
     agent_name: String,

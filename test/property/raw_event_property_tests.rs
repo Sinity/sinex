@@ -70,7 +70,7 @@ fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
     let end = now + ChronoDuration::hours(1);
     
     (start.timestamp_millis()..=end.timestamp_millis())
-        .prop_map(|ts| DateTime::from_timestamp_millis(ts).unwrap_or(now))
+        .prop_map(move |ts| DateTime::from_timestamp_millis(ts).unwrap_or(now))
 }
 
 /// Strategy for generating complete RawEvent instances

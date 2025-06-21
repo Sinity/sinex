@@ -1,9 +1,8 @@
 use sinex_ulid::Ulid;
 use serde_json::json;
 use uuid::Uuid;
-
 use crate::db_test;
-use crate::common::{events, schema_test_utils, create_test_event_with_payload};
+use crate::common::{schema_test_utils, create_test_event_with_payload};
 
 db_test! {
     async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
@@ -35,6 +34,7 @@ db_test! {
     let event_source = format!("hyprland-test-{}", test_run_id);
     let event_type = format!("window_focused-{}", test_run_id);
     
+    let schema_clone = schema.clone();
     let schema_id = schema_test_utils::register_test_schema(
         &pool,
         &event_source,
@@ -46,12 +46,12 @@ db_test! {
     let retrieved_schema: serde_json::Value = sqlx::query_scalar(
         "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid"
     )
-    .bind(&schema_id)
+    .bind(schema_id.to_uuid())
     .fetch_one(&pool)
     .await
     .unwrap();
     
-    assert_eq!(retrieved_schema, schema, "Schema should be stored correctly");
+    assert_eq!(retrieved_schema, schema_clone, "Schema should be stored correctly");
     
     Ok(())
     }
@@ -91,11 +91,11 @@ db_test! {
     let event_source = format!("ui_test-{}", test_run_id);
     let event_type = format!("user_interaction-{}", test_run_id);
     
-    let schema_id: String = sqlx::query_scalar(
+    let schema_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition) 
          VALUES ($1, $2, $3, $4::jsonb) 
-         RETURNING id::text"
+         RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
@@ -103,7 +103,7 @@ db_test! {
     .bind(&strict_schema)
     .fetch_one(&pool)
     .await
-    .unwrap();
+    .unwrap());
     
     // Test valid payload
     let valid_payload = json!({
@@ -117,7 +117,7 @@ db_test! {
     
     // Test valid payload
     let event = create_test_event_with_payload(&event_source, &event_type, valid_payload);
-    schema_test_utils::assert_schema_valid_event(&pool, &event, &schema_id).await?;
+    schema_test_utils::assert_schema_valid_event(&pool, &event, schema_id).await?;
     
     // Test invalid payload - missing required field
     let invalid_payload1 = json!({
@@ -126,7 +126,7 @@ db_test! {
     });
     
     let event = create_test_event_with_payload(&event_source, &event_type, invalid_payload1);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event, &schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(&pool, &event, schema_id).await?;
     
     // Test invalid payload - wrong enum value
     let invalid_payload2 = json!({
@@ -135,7 +135,7 @@ db_test! {
     });
     
     let event2 = create_test_event_with_payload(&event_source, &event_type, invalid_payload2);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event2, &schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(&pool, &event2, schema_id).await?;
     
     // Test invalid payload - additional properties
     let invalid_payload3 = json!({
@@ -145,7 +145,7 @@ db_test! {
     });
     
     let event3 = create_test_event_with_payload(&event_source, &event_type, invalid_payload3);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event3, &schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(&pool, &event3, schema_id).await?;
     
     Ok(())
     }
@@ -169,11 +169,11 @@ db_test! {
         "required": ["message"]
     });
     
-    let schema_v1_id: String = sqlx::query_scalar(
+    let schema_v1_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition, is_active) 
          VALUES ($1, $2, $3, $4::jsonb, $5) 
-         RETURNING id::text"
+         RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
@@ -182,7 +182,7 @@ db_test! {
     .bind(true) // Must be active for validation to work
     .fetch_one(&pool)
     .await
-    .unwrap();
+    .unwrap());
     
     // Test v1 payload validates against v1 schema (both active)
     let v1_payload = json!({"message": "Hello"});
@@ -196,7 +196,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_v1_id)
+    .bind(schema_v1_id.to_uuid())
     .bind(&v1_payload)
     .execute(&pool)
     .await;
@@ -217,11 +217,11 @@ db_test! {
         "required": ["message", "priority"]
     });
     
-    let schema_v2_id: String = sqlx::query_scalar(
+    let schema_v2_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition, is_active) 
          VALUES ($1, $2, $3, $4::jsonb, $5) 
-         RETURNING id::text"
+         RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
@@ -230,7 +230,7 @@ db_test! {
     .bind(true) // This will be the active version
     .fetch_one(&pool)
     .await
-    .unwrap();
+    .unwrap());
     
     // Now make V1 inactive since V2 is the active version
     sqlx::query(
@@ -238,7 +238,7 @@ db_test! {
          SET is_active = false 
          WHERE id = $1::ulid"
     )
-    .bind(&schema_v1_id)
+    .bind(schema_v1_id.to_uuid())
     .execute(&pool)
     .await
     .unwrap();
@@ -253,7 +253,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_v2_id)
+    .bind(schema_v2_id.to_uuid())
     .bind(&v1_payload)
     .execute(&pool)
     .await;
@@ -270,7 +270,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_v1_id)
+    .bind(schema_v1_id.to_uuid())
     .bind(&v1_payload)
     .execute(&pool)
     .await;
@@ -292,7 +292,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_v2_id)
+    .bind(schema_v2_id.to_uuid())
     .bind(&v2_payload)
     .execute(&pool)
     .await;
@@ -391,11 +391,11 @@ db_test! {
         "required": ["id", "tags", "metadata", "data"]
     });
     
-    let schema_id: String = sqlx::query_scalar(
+    let schema_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
          (event_source, event_type, schema_version, json_schema_definition) 
          VALUES ($1, $2, $3, $4::jsonb) 
-         RETURNING id::text"
+         RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
@@ -403,7 +403,7 @@ db_test! {
     .bind(&complex_schema)
     .fetch_one(&pool)
     .await
-    .unwrap();
+    .unwrap());
     
     // Test valid complex payload
     let valid_complex = json!({
@@ -428,11 +428,11 @@ db_test! {
         "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
          VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
     )
-    .bind(&event_id.to_string())
+    .bind(event_id.to_uuid())
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_id)
+    .bind(schema_id.to_uuid())
     .bind(&valid_complex)
     .execute(&pool)
     .await;
@@ -462,7 +462,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_id)
+    .bind(schema_id.to_uuid())
     .bind(&invalid_pattern)
     .execute(&pool)
     .await;
@@ -492,7 +492,7 @@ db_test! {
     .bind(&event_source)
     .bind(&event_type)
     .bind("test_host")
-    .bind(&schema_id)
+    .bind(schema_id.to_uuid())
     .bind(&invalid_oneof)
     .execute(&pool)
     .await;
@@ -527,7 +527,7 @@ db_test! {
             "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
              VALUES ($1::ulid, $2, $3, $4, NULL, $5::jsonb)"
         )
-        .bind(&event_id.to_string())
+        .bind(event_id.to_uuid())
         .bind(&event_source)
         .bind(format!("type_{}", i))
         .bind("test_host")

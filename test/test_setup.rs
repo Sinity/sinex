@@ -76,9 +76,9 @@ async fn setup_test_database_with_config(config: Option<&str>) -> PgPool {
 
     // Use the high-concurrency test pool with optimized settings
     let pool = match config {
-        Some("high_performance") => create_high_performance_test_pool(&database_url).await,
-        _ => sinex_db::create_test_pool(&database_url).await,
-    }.expect("Failed to connect to test database");
+        Some("high_performance") => create_high_performance_test_pool(&database_url).await.expect("Failed to create high performance test pool"),
+        _ => sinex_db::create_test_pool(&database_url).await.expect("Failed to create test pool"),
+    };
 
     // Ensure migrations are run
     sqlx::migrate!("./migrations")
@@ -91,11 +91,11 @@ async fn setup_test_database_with_config(config: Option<&str>) -> PgPool {
 
 async fn create_high_performance_test_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
     use sqlx::postgres::{PgPoolOptions, PgConnectOptions};
+    use sqlx::ConnectOptions;
     use std::str::FromStr;
     
     let connect_options = PgConnectOptions::from_str(database_url)?
-        .statement_cache_capacity(1000)  // Larger statement cache
-        .log_statements(tracing::metadata::LevelFilter::DEBUG);
+        .statement_cache_capacity(1000);  // Larger statement cache
     
     PgPoolOptions::new()
         .max_connections(50)  // Higher connection limit for concurrent tests

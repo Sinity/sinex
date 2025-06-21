@@ -42,10 +42,11 @@ gethostname.workspace = true
 # Local crate dependencies
 sinex-core = { path = "crate/sinex-core" }
 sinex-db = { path = "crate/sinex-db" }
-sinex-ulid = { path = "crate/sinex-ulid" }
+sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
 sinex-events = { path = "crate/sinex-events" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
+sinex-annex = { path = "crate/sinex-annex" }
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
@@ -53,6 +54,8 @@ toml = "0.8"
 tempfile = "3.10"
 rand = "0.8"
 lazy_static = "1.4"
+fastrand = "2.0"
+jsonschema = "0.17"
 
 # Example dependencies
 tracing-subscriber = { workspace = true }

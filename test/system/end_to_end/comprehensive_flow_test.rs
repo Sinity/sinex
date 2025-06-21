@@ -21,6 +21,9 @@ async fn test_complete_event_pipeline() {
     
     info!("Starting comprehensive pipeline test");
     
+    // Test configuration
+    let num_events = 50; // Number of events to generate for testing
+    
     // Phase 1: Test Event Generation and Collection
     let _collector_config = CollectorConfig {
         enabled_events: vec![
