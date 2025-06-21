@@ -6,8 +6,14 @@ use std::time::{Duration, Instant};
 use crate::common::timing_optimization::TestSynchronizer;
 
 /// Test orphaned worker detection and cleanup
+///
+/// This test verifies that the system can detect when a worker stops sending heartbeats
+/// while still holding work items. In real systems, this happens due to crashes, hangs,
+/// or network issues. The test uses controlled timing to ensure deterministic behavior.
 #[tokio::test]
 async fn test_orphaned_worker_detection() {
+    use tokio::sync::watch;
+    
     // Simulate workers that might become orphaned
     
     #[derive(Debug, Clone)]
@@ -17,22 +23,29 @@ async fn test_orphaned_worker_detection() {
         is_alive: Arc<AtomicBool>,
         items_processing: Arc<AtomicU64>,
         items_completed: Arc<AtomicU64>,
+        heartbeat_tx: watch::Sender<Instant>,
+        heartbeat_rx: watch::Receiver<Instant>,
     }
     
     impl WorkerState {
         fn new(id: String) -> Self {
+            let (tx, rx) = watch::channel(Instant::now());
             Self {
                 id,
                 last_heartbeat: Arc::new(tokio::sync::RwLock::new(Instant::now())),
                 is_alive: Arc::new(AtomicBool::new(true)),
                 items_processing: Arc::new(AtomicU64::new(0)),
                 items_completed: Arc::new(AtomicU64::new(0)),
+                heartbeat_tx: tx,
+                heartbeat_rx: rx,
             }
         }
         
         async fn update_heartbeat(&self) {
+            let now = Instant::now();
             let mut last = self.last_heartbeat.write().await;
-            *last = Instant::now();
+            *last = now;
+            let _ = self.heartbeat_tx.send(now);
         }
         
         async fn seconds_since_heartbeat(&self) -> u64 {
@@ -42,6 +55,10 @@ async fn test_orphaned_worker_detection() {
         
         fn mark_dead(&self) {
             self.is_alive.store(false, Ordering::Relaxed);
+        }
+        
+        fn subscribe_heartbeat(&self) -> watch::Receiver<Instant> {
+            self.heartbeat_rx.clone()
         }
     }
     
@@ -60,10 +77,17 @@ async fn test_orphaned_worker_detection() {
     // Simulate worker lifecycle
     let mut handles = vec![];
     handles.push(tokio::spawn(async move {
+        let mut heartbeat_interval = tokio::time::interval(Duration::from_millis(500));
+        heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        
         for _i in 0..10 {
+            // Send heartbeat
+            heartbeat_interval.tick().await;
             worker1.update_heartbeat().await;
+            
+            // Do work
             worker1.items_processing.store(1, Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::task::yield_now().await; // Simulate work
             worker1.items_completed.fetch_add(1, Ordering::Relaxed);
             worker1.items_processing.store(0, Ordering::Relaxed);
         }
@@ -74,10 +98,12 @@ async fn test_orphaned_worker_detection() {
     let worker2_sync = worker2_crashed.clone();
     
     handles.push(tokio::spawn(async move {
+        // Process some items with heartbeats
         for _i in 0..5 {
             worker2.update_heartbeat().await;
             worker2.items_processing.store(1, Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            // Yield to simulate work without arbitrary delay
+            tokio::task::yield_now().await;
             worker2.items_completed.fetch_add(1, Ordering::Relaxed);
             worker2.items_processing.store(0, Ordering::Relaxed);
         }
@@ -88,18 +114,20 @@ async fn test_orphaned_worker_detection() {
         // Signal that we've crashed
         worker2_sync.signal();
         
-        // Keep the task alive but do nothing (simulating a hung process)
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
+        // Simulate a hung process by waiting on a never-signaled channel
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let _ = rx.await;
     }));
     
     // Worker 3: Clean shutdown
     handles.push(tokio::spawn(async move {
+        let mut heartbeat_interval = tokio::time::interval(Duration::from_millis(500));
+        
         for _i in 0..3 {
+            heartbeat_interval.tick().await;
             worker3.update_heartbeat().await;
             worker3.items_processing.store(1, Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::task::yield_now().await;
             worker3.items_completed.fetch_add(1, Ordering::Relaxed);
             worker3.items_processing.store(0, Ordering::Relaxed);
         }
@@ -109,54 +137,91 @@ async fn test_orphaned_worker_detection() {
     }));
     
     // Monitor workers for orphan detection
-    let monitor_handle = tokio::spawn(async move {
-        let orphan_timeout_secs = 2;
-        let mut orphans_detected = vec![];
+    let monitor_handle = {
+        let orphan_timeout = Duration::from_secs(2);
+        let mut worker_monitors = vec![];
         
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        // Create heartbeat monitors for each worker
+        for worker in workers_for_monitor {
+            let mut heartbeat_rx = worker.subscribe_heartbeat();
+            let worker_clone = worker.clone();
             
-            for worker in &workers_for_monitor {
-                let secs_since_heartbeat = worker.seconds_since_heartbeat().await;
-                let is_alive = worker.is_alive.load(Ordering::Relaxed);
-                let has_work = worker.items_processing.load(Ordering::Relaxed) > 0;
+            let monitor = tokio::spawn(async move {
+                let mut orphan_detected = false;
                 
-                if secs_since_heartbeat > orphan_timeout_secs && has_work {
-                    println!("ORPHAN DETECTED: {} (no heartbeat for {}s, has {} items in progress)",
-                        worker.id, secs_since_heartbeat, worker.items_processing.load(Ordering::Relaxed));
-                    orphans_detected.push(worker.id.clone());
+                loop {
+                    // Wait for heartbeat or timeout
+                    match tokio::time::timeout(orphan_timeout, heartbeat_rx.changed()).await {
+                        Ok(Ok(())) => {
+                            // Heartbeat received - worker is alive
+                            continue;
+                        }
+                        Ok(Err(_)) => {
+                            // Channel closed - worker terminated
+                            break;
+                        }
+                        Err(_) => {
+                            // Timeout - potential orphan
+                            let has_work = worker_clone.items_processing.load(Ordering::Relaxed) > 0;
+                            let is_alive = worker_clone.is_alive.load(Ordering::Relaxed);
+                            
+                            if has_work && !orphan_detected {
+                                println!("ORPHAN DETECTED: {} (no heartbeat for {:?}, has {} items in progress)",
+                                    worker_clone.id, orphan_timeout, 
+                                    worker_clone.items_processing.load(Ordering::Relaxed));
+                                orphan_detected = true;
+                                return Some(worker_clone.id.clone());
+                            }
+                            
+                            if !is_alive && has_work {
+                                println!("DEAD WORKER WITH WORK: {} (has {} items in progress)",
+                                    worker_clone.id, worker_clone.items_processing.load(Ordering::Relaxed));
+                            }
+                        }
+                    }
                 }
                 
-                if !is_alive && has_work {
-                    println!("DEAD WORKER WITH WORK: {} (has {} items in progress)",
-                        worker.id, worker.items_processing.load(Ordering::Relaxed));
-                }
-            }
+                None
+            });
+            
+            worker_monitors.push(monitor);
         }
         
-        orphans_detected
-    });
+        // Collect orphan detections
+        tokio::spawn(async move {
+            let mut orphans_detected = vec![];
+            for monitor in worker_monitors {
+                if let Ok(Some(orphan_id)) = monitor.await {
+                    orphans_detected.push(orphan_id);
+                }
+            }
+            orphans_detected
+        })
+    };
     
     // Wait for worker2 to crash
     worker2_crashed.wait().await.expect("Worker 2 should crash");
     
-    // Give monitor time to detect the orphan
+    // Wait for orphan detection (heartbeat timeout is 2 seconds)
+    // This wait is unavoidable because we're testing timeout-based detection.
+    // In a real system, orphan detection inherently requires waiting for missed heartbeats.
+    // We wait 3 seconds to ensure at least one timeout period has elapsed.
     tokio::time::sleep(Duration::from_secs(3)).await;
     
-    // Clean up
+    // Clean up worker tasks
     for handle in handles {
         handle.abort();
     }
     
+    // Get orphan detection results
     let orphans = monitor_handle.await.unwrap();
     
     // Report results
     println!("\nWorker orphan test results:");
-    
-    // We can't access the moved workers, so just print what we know
     println!("  Orphans detected: {:?}", orphans);
     
     // Verify orphan detection worked
+    assert!(!orphans.is_empty(), "At least one orphan should be detected");
     assert!(orphans.contains(&"worker-2".to_string()), 
         "Worker 2 should have been detected as orphaned");
 }
