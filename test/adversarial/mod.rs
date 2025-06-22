@@ -1,3 +1,7 @@
+// Comprehensive security test that consolidates all attack scenarios
+mod comprehensive_security_test;
+
+// Other adversarial tests
 mod time_ulid_attacks_test;
 mod database_boundary_test;
 mod security_attacks_test;
