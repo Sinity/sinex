@@ -1,19 +1,7 @@
+use crate::common::prelude::*;
+
+// Stress test specific imports
 use super::common::*;
-use anyhow::Result;
-use sqlx::PgPool;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use std::collections::HashSet;
-use tokio::time::{sleep, interval};
-use tokio::sync::Barrier;
-use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations};
-use sinex_ulid::Ulid;
-use serde_json::json;
-use rand::Rng;
-use std::str::FromStr;
-use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<()> {

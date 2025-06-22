@@ -3,6 +3,12 @@
 #![allow(dead_code)] // Test utilities may not all be used
 #![allow(unused_variables)] // Test patterns
 
+// Test prelude for standardized imports
+pub mod prelude;
+
+// Database helper functions and macros
+pub mod database_helpers;
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
@@ -129,6 +135,57 @@ pub mod events {
     /// Create a test event with minimal fields for adversarial testing
     pub fn adversarial_test_event(event_type: &str, payload: serde_json::Value) -> sinex_db::models::RawEvent {
         RawEventBuilder::new("test", event_type, payload).build()
+    }
+
+    /// Create a batch of test events efficiently
+    pub fn test_event_batch(source: &str, event_type: &str, count: usize) -> Vec<sinex_db::models::RawEvent> {
+        (0..count).map(|i| {
+            RawEventBuilder::new(
+                source,
+                event_type,
+                json!({"sequence": i, "batch": true, "timestamp": chrono::Utc::now()})
+            ).build()
+        }).collect()
+    }
+
+    /// Create a quick filesystem event with default payload
+    pub fn quick_filesystem_event(path: &str) -> sinex_db::models::RawEvent {
+        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+    }
+
+    /// Create a quick agent heartbeat with default payload
+    pub fn quick_agent_heartbeat(agent_name: &str) -> sinex_db::models::RawEvent {
+        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
+    }
+
+    /// Create test events for timing and ordering tests
+    pub fn timing_test_event(sequence: u32, delay_ms: u64) -> sinex_db::models::RawEvent {
+        RawEventBuilder::new(
+            "timing_test",
+            "sequence.event",
+            json!({
+                "sequence": sequence,
+                "delay_ms": delay_ms,
+                "created_at": chrono::Utc::now()
+            })
+        ).build()
+    }
+
+    /// Create test events for performance testing
+    pub fn performance_test_event(payload_size_kb: usize) -> sinex_db::models::RawEvent {
+        let large_data = "x".repeat(payload_size_kb * 1024);
+        RawEventBuilder::new(
+            "performance_test",
+            "large.payload",
+            json!({
+                "size_kb": payload_size_kb,
+                "data": large_data,
+                "metadata": {
+                    "test_type": "performance",
+                    "created_at": chrono::Utc::now()
+                }
+            })
+        ).build()
     }
 }
 

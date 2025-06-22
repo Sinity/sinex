@@ -1,21 +1,12 @@
-use anyhow::Result;
-use sinex_core::{RawEvent, RawEventBuilder, EventSource, EventSourceContext};
+use crate::common::prelude::*;
+
+// Project-specific imports not covered by prelude
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
-use std::time::Duration;
-use tokio::sync::mpsc;
-use serde_json::json;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use gethostname;
 
-// Import test setup macros
+// Test setup macros
 use crate::db_test;
-use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_filtered_event_count, wait_for_work_queue_count};
-use crate::common::event_sources;
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
