@@ -4,16 +4,15 @@
 //! a wide range of inputs, providing more comprehensive testing than
 //! example-based tests.
 
-// Track 1 - Property-Based Testing Expansion (Agent Beta)
+// Core property tests
 pub mod raw_event_property_tests;
 pub mod ulid_concurrent_property_tests;
 pub mod event_registry_property_tests;
 pub mod json_schema_property_tests;
 pub mod ulid_ordering_property_tests;
 pub mod work_queue_property_tests;
-
-// Agent Alpha - VM Infrastructure  
 pub mod ulid_properties;
+pub mod property_tests; // Moved from root level
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;

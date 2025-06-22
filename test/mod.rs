@@ -19,9 +19,6 @@ mod system;
 mod adversarial;
 
 #[cfg(test)]
-mod property_tests;
-
-#[cfg(test)]
 mod property;
 
 // Stress tests

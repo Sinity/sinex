@@ -116,6 +116,20 @@ pub mod events {
     pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::models::RawEvent {
         agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
     }
+
+    /// Create a test event for race condition testing
+    pub fn race_test_event(target: &str) -> sinex_db::models::RawEvent {
+        RawEventBuilder::new(
+            "test",
+            "race.test",
+            json!({"target": target})
+        ).build()
+    }
+
+    /// Create a test event with minimal fields for adversarial testing
+    pub fn adversarial_test_event(event_type: &str, payload: serde_json::Value) -> sinex_db::models::RawEvent {
+        RawEventBuilder::new("test", event_type, payload).build()
+    }
 }
 
 /// Assertion helpers for common test patterns
