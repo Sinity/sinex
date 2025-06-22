@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use crate::common::resources;
 
 #[tokio::test]
-async fn test_unbounded_file_descriptor_explosion() {
+async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
     // Try to watch a directory with thousands of files
     let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];
@@ -55,6 +55,7 @@ async fn test_unbounded_file_descriptor_explosion() {
     if watcher_count < 100 {
         println!("RESOURCE LIMIT: System restricted file watchers to {}", watcher_count);
     }
+    Ok(())
 }
 
 #[tokio::test]

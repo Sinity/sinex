@@ -91,7 +91,7 @@ fn test_ulid_generation_with_system_clock_regression() {
 }
 
 #[test]
-fn test_ulid_uniqueness_across_processes() {
+fn test_ulid_uniqueness_across_processes() -> Result<(), Box<dyn std::error::Error>> {
     // This test forks multiple processes to test ULID generation under
     // true multi-process conditions (not just threads)
     
@@ -202,6 +202,7 @@ fn test_ulid_uniqueness_across_processes() {
     } else {
         println!("No output file generated - all processes failed");
     }
+    Ok(())
 }
 
 #[test]
