@@ -590,7 +590,7 @@ async fn test_atuin_timestamp_conversion() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_error_conditions() {
+async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>> {
     // Test with non-existent database file
     let temp_dir = resources::temp_dir()?;
     let bad_config = AtuinConfig {
@@ -620,6 +620,7 @@ async fn test_atuin_error_conditions() {
     // actual corruption would be detected during event streaming
     let reader = AtuinDbReader::initialize(ctx).await;
     assert!(reader.is_ok(), "Initialization should succeed even with corrupted file");
+    Ok(())
 }
 
 #[tokio::test]
@@ -922,7 +923,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<()> {
 /// This test is ignored by default since it requires a real Atuin installation
 #[tokio::test]
 #[ignore = "requires real Atuin database"]
-async fn test_real_atuin_integration() {
+async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>> {
     // Check for real Atuin database in standard locations
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
@@ -933,7 +934,7 @@ async fn test_real_atuin_integration() {
         eprintln!("1. Install Atuin: curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh");
         eprintln!("2. Run some commands to populate history");
         eprintln!("3. Run: cargo test test_real_atuin_integration -- --ignored");
-        return;
+        return Ok(());
     }
     
     let config = AtuinConfig {
@@ -966,7 +967,7 @@ async fn test_real_atuin_integration() {
     
     if events.is_empty() {
         eprintln!("Warning: No Atuin history entries found. Run some commands first!");
-        return;
+        return Ok(());
     }
     
     println!("Successfully processed {} real Atuin entries", events.len());
@@ -992,19 +993,20 @@ async fn test_real_atuin_integration() {
     }
     
     println!("✅ Real Atuin integration test passed!");
+    Ok(())
 }
 
 /// Test that demonstrates how to run against a live Atuin database
 /// while Atuin is actively being used (without interfering)
 #[tokio::test]
 #[ignore = "requires live Atuin usage"]
-async fn test_live_atuin_monitoring() {
+async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
     
     if !atuin_db_path.exists() {
         eprintln!("Skipping live Atuin test - database not found");
-        return;
+        return Ok(());
     }
     
     let config = AtuinConfig {
@@ -1056,6 +1058,7 @@ async fn test_live_atuin_monitoring() {
         println!("   pwd");
         println!("   Then re-run this test!");
     }
+    Ok(())
 }
 
 #[cfg(test)]
