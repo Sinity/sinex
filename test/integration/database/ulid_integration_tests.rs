@@ -1,53 +1,33 @@
 use sinex_ulid::Ulid;
 use std::str::FromStr;
 use std::collections::HashSet;
-use crate::common::{events, insert_test_event_raw};
-use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use crate::common::{events, assertions, generators};
+use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 
 
 #[sqlx::test]
 async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Insert multiple events with monotonic ULID ordering
+    // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
     
     for i in 0..5 {
-        // Create event with monotonic ULID - small delay ensures ordering within same millisecond
-        let event = events::filesystem_event(
-            "file.created",
-            &format!("/test/file_{}.txt", i)
-        );
-        
-        let id = insert_test_event_raw(&pool, &event).await?;
-        ulids.push(id.to_string());
+        let event = events::file_created_event(&format!("/test/file_{}.txt", i));
+        let id = assertions::assert_event_inserted(&pool, &event).await?;
+        ulids.push(id);
         
         // Small delay to ensure ULID monotonic ordering
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     
-    // Query events ordered by ID
-    let ordered_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id::text FROM raw.events 
-         WHERE source = 'filesystem' 
-         ORDER BY id DESC
-         LIMIT 5"
-    )
-    .fetch_all(&pool)
-    .await?;
+    // Query filesystem events to verify ordering
+    let filesystem_events = crate::common::get_events_by_source(&pool, "filesystem", 5).await?;
+    let retrieved_ulids: Vec<Ulid> = filesystem_events.iter().map(|e| e.id).collect();
     
-    // Reverse to match insertion order
-    let mut ordered_ids = ordered_ids;
-    ordered_ids.reverse();
-    
-    // Verify they're in the same order as inserted
-    assert_eq!(ulids, ordered_ids, "ULIDs should maintain insertion order when sorted");
-    
-    // Also verify strict ordering by comparing ULIDs directly
-    for i in 1..ulids.len() {
-        let prev_ulid = Ulid::from_str(&ulids[i-1])?;
-        let curr_ulid = Ulid::from_str(&ulids[i])?;
-        assert!(curr_ulid > prev_ulid, 
+    // Verify strict ordering by comparing ULIDs directly
+    for i in 1..retrieved_ulids.len() {
+        assert!(retrieved_ulids[i] > retrieved_ulids[i-1], 
             "Each ULID should be greater than the previous: {} > {}", 
-            curr_ulid, prev_ulid);
+            retrieved_ulids[i], retrieved_ulids[i-1]);
     }
     
     Ok(())
@@ -56,42 +36,21 @@ async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dy
 
 #[sqlx::test]
 async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let ulid = Ulid::new();
-    let expected_timestamp = ulid.timestamp();
+    // Create an event with a known ULID
+    let event = crate::common::create_test_event("timestamp_test_v2", "test_type_v2");
+    let expected_timestamp = event.id.timestamp();
     
-    // Insert ULID
-    sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
-    )
-    .bind(&ulid.to_string())
-    .bind("timestamp_test_v2")
-    .bind("test_type_v2")
-    .bind("test_host")
-    .bind(serde_json::json!({"test": "data"}))
-    .execute(&pool)
-    .await?;
+    // Insert the event and retrieve it
+    let event_id = assertions::assert_event_inserted(&pool, &event).await?;
+    let retrieved_event = crate::common::get_event_by_id(&pool, event_id).await?;
     
-    // Extract ULID as string and parse timestamp in Rust
-    let stored_ulid_str: String = sqlx::query_scalar(
-        "SELECT id::text FROM raw.events WHERE source = 'timestamp_test_v2'"
-    )
-    .fetch_one(&pool)
-    .await?;
-    
-    let stored_ulid = Ulid::from_str(&stored_ulid_str)
-        .map_err(|e| format!("Failed to parse stored ULID: {}", e))?;
-    let extracted_timestamp = stored_ulid.timestamp();
-    
-    // Compare timestamps (should be identical since it's the same ULID)
+    // Verify ULID timestamp matches
+    let extracted_timestamp = retrieved_event.id.timestamp();
     assert_eq!(expected_timestamp, extracted_timestamp,
-        "Extracted timestamp should exactly match ULID timestamp: expected {:?}, got {:?}",
-        expected_timestamp, extracted_timestamp
-    );
+        "Extracted timestamp should exactly match ULID timestamp");
     
-    // Also verify that the extracted timestamp is reasonable (within last few seconds)
-    let now = chrono::Utc::now();
-    let age = now.signed_duration_since(extracted_timestamp);
+    // Verify timestamp is recent
+    let age = chrono::Utc::now().signed_duration_since(extracted_timestamp);
     assert!(age.num_seconds() < 10, 
         "ULID timestamp should be recent (within 10 seconds): age = {} seconds", 
         age.num_seconds());

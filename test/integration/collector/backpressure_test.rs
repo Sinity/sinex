@@ -8,6 +8,7 @@ use tokio::time::{timeout, sleep, Instant};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use crate::common::timing_optimization::replacements::{wait_for_condition, wait_for_condition_or_timeout};
 
 fn create_test_context(config: serde_json::Value) -> EventSourceContext {
     EventSourceContext::new(config)
@@ -174,9 +175,18 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
         producer_clone.stream_events(tx).await
     });
 
-    // Let it run for 3 seconds
-    sleep(Duration::from_secs(3)).await;
-
+    // Wait for meaningful test progress instead of fixed sleep
+    // We want at least 20 events processed to verify backpressure behavior
+    let consumer_clone = slow_consumer.clone();
+    let wait_result = wait_for_condition_or_timeout(
+        move || {
+            let processed = consumer_clone.events_processed();
+            processed >= 20
+        },
+        Duration::from_secs(5),
+        Duration::from_millis(100)
+    ).await;
+    
     // Stop both
     slow_consumer.stop();
     fast_producer.stop();
@@ -206,13 +216,16 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
            "Producer should be throttled by backpressure, sent {} but could send up to {}", 
            events_sent, expected_max_sent);
 
-    // The number of events processed should be roughly limited by consumer speed
-    let expected_processed = 10 * 3; // ~30 events at 10 events/sec for 3 seconds
-    let tolerance = 10; // Allow some variation
-    assert!(events_processed >= expected_processed - tolerance && 
-            events_processed <= expected_processed + tolerance + 30, // Extra tolerance for startup
-           "Consumer processed {} events, expected around {} ± {}", 
-           events_processed, expected_processed, tolerance);
+    // We waited for at least 20 events to be processed
+    assert!(events_processed >= 20, 
+           "Consumer should have processed at least 20 events, got {}", 
+           events_processed);
+    
+    // Process rate should be roughly limited by consumer speed
+    let process_rate = events_processed as f64 / elapsed.as_secs_f64();
+    assert!(process_rate <= 15.0, // Allow some burst above theoretical 10/sec
+           "Process rate {} events/sec should be limited by consumer delay", 
+           process_rate);
 
     Ok(())
 }
@@ -231,8 +244,12 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
         producer_clone.stream_events(tx).await
     });
 
-    // Let producer fill the channel
-    sleep(Duration::from_millis(100)).await;
+    // Wait for producer to send enough events to saturate channel
+    let producer_clone = producer.clone();
+    wait_for_condition(
+        move || producer_clone.events_sent() >= 100, // Channel capacity
+        Duration::from_millis(10)
+    ).await;
 
     // Now consume all events slowly
     let mut events_received = Vec::new();

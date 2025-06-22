@@ -9,13 +9,9 @@
 //!
 //! Uses #[sqlx::test] for automatic transaction isolation
 
-use crate::common;
+use crate::common::{self, events, assertions, generators};
 use sinex_core::event_type_constants;
 use std::time::Duration;
-
-use common::{
-    events, assertions, generators
-};
 
 /// Test basic event lifecycle: insert → retrieve → verify
 /// 
@@ -81,13 +77,11 @@ async fn test_query_events_by_source(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     let term_event = events::kitty_event("ls -la");
     assertions::assert_event_inserted(&pool, &term_event).await?;
     
-    // Query all events and filter by source
-    let all_events = sqlx::query!("SELECT source FROM raw.events WHERE source = $1 LIMIT $2", "filesystem", 10i64)
-        .fetch_all(&pool)
-        .await?;
-    assert!(all_events.len() >= 2);
+    // Query using our helper function
+    let filesystem_events = common::get_events_by_source(&pool, "filesystem", 10).await?;
+    assert!(filesystem_events.len() >= 2);
     
-    for event in &all_events {
+    for event in &filesystem_events {
         assert_eq!(event.source, "filesystem");
     }
 

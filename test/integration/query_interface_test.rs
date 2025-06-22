@@ -1,35 +1,25 @@
-use sinex_ulid::Ulid;
 use serde_json::json;
 use std::process::Command;
-use std::time::Duration;
-use tokio::time::sleep;
+use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
 #[sqlx::test]
 async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
     
-    // Insert test events
+    // Insert test events using helpers
     let test_events = vec![
-        ("filesystem", "file.created", json!({"path": "/test/file1.txt", "size": 1024})),
-        ("filesystem", "file.modified", json!({"path": "/test/file2.txt", "size": 2048})),
-        ("terminal", "command.executed", json!({"command": "ls -la", "exit_code": 0})),
-        ("clipboard", "content.changed", json!({"content": "test data", "format": "text"})),
+        events::file_created_event("/test/file1.txt"),
+        events::file_modified_event("/test/file2.txt"),
+        events::kitty_event("ls -la"),
+        crate::common::create_test_event_with_payload(
+            "clipboard",
+            "content.changed",
+            json!({"content": "test data", "format": "text"})
+        ),
     ];
     
-    for (source, event_type, payload) in test_events {
-        let event = sinex_core::RawEvent {
-            id: Ulid::new(),
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test-host".to_string(),
-            ingestor_version: Some("test-1.0".to_string()),
-            payload_schema_id: None,
-            payload,
-        };
-        
-        sinex_db::queries::insert_event(&pool, &event).await.unwrap();
+    for event in test_events {
+        assertions::assert_event_inserted(&pool, &event).await?;
     }
     
     // Test various CLI commands
@@ -104,12 +94,14 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
         "required": ["path"]
     });
     
-    sqlx::query("INSERT INTO sinex_schemas.event_payload_schemas (schema_id, schema_json) VALUES ($1, $2)")
-        .bind("test.filesystem.v1")
-        .bind(&test_schema)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Use schema test utilities to insert schema
+    sinex_db::queries::upsert_event_schema(
+        &pool,
+        "test.filesystem.v1",
+        &test_schema,
+        None,
+        None
+    ).await?;
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
@@ -148,19 +140,11 @@ async fn test_exo_cli_agent_commands() {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
     
-    // Insert test agent manifest
-    sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests (name, version, capabilities, status, last_heartbeat) 
-         VALUES ($1, $2, $3, $4, $5)"
-    )
-        .bind("test-collector")
-        .bind("1.0.0")
-        .bind(json!(["filesystem", "terminal"]))
-        .bind("active")
-        .bind(chrono::Utc::now())
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Insert test agent manifest using helpers
+    let mut manifest = generators::test_agent_manifest("test-collector");
+    manifest.status = "active".to_string();
+    manifest.produces_event_types = Some(json!(["filesystem", "terminal"]));
+    assertions::assert_manifest_registered(&pool, &manifest).await?;
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
