@@ -1,18 +1,11 @@
-use anyhow::Result;
-use sqlx::PgPool;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::common::prelude::*;
+use sinex_db::{queries::insert_raw_event, create_test_pool};
 use tokio::time::timeout;
-use tokio::sync::mpsc;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
-use serde_json::json;
 
 /// Test graceful degradation under database connectivity issues
 #[tokio::test]
 async fn test_graceful_degradation_database_failure() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Create test agent
@@ -191,7 +184,7 @@ async fn test_graceful_degradation_database_failure() -> Result<()> {
 /// Test resource limits and monitoring under load
 #[tokio::test]
 async fn test_resource_limits_monitoring() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing resource limits and monitoring under load...");
@@ -513,7 +506,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 /// Test system behavior under resource exhaustion scenarios
 #[tokio::test]
 async fn test_resource_exhaustion_scenarios() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing resource exhaustion scenarios...");

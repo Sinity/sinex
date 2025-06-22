@@ -19,12 +19,8 @@ edition.workspace = true
 authors.workspace = true
 
 [[test]]
-name = "integration"
+name = "tests"
 path = "test/mod.rs"
-
-[[test]]
-name = "property_tests"
-path = "test/property/work_queue_property_tests.rs"
 
 
 [dependencies]

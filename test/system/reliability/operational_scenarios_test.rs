@@ -1,11 +1,7 @@
-use anyhow::Result;
-use std::time::{Duration, Instant};
+use crate::common::prelude::*;
 use std::fs;
+use sinex_db::{queries::insert_raw_event, create_test_pool};
 use tokio::time::timeout;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
-use serde_json::json;
-use tempfile::TempDir;
 use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_agent_status, wait_for_filtered_event_count};
 
 /// Test startup sequence robustness and error handling
@@ -218,7 +214,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
 /// Test shutdown sequence and graceful termination
 #[tokio::test]
 async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -298,7 +294,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
         Duration::from_secs(3),
         async {
             // New connection should work
-            let verification_pool = get_shared_test_pool().await?;
+            let verification_pool = database_helpers::get_shared_test_pool().await?;
             
             // Check that committed transactions are persisted - use timing utility
             let committed_events = wait_for_filtered_event_count(
@@ -347,9 +343,11 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     let interrupted_shutdown_test = timeout(
         Duration::from_secs(5),
         async {
+            // Get pool outside of spawn to avoid Send issues
+            let pool = database_helpers::get_shared_test_pool().await?;
+            
             // Create long-running operation
-            let long_operation = tokio::spawn(async {
-                let pool = get_shared_test_pool().await?;
+            let long_operation = tokio::spawn(async move {
                 
                 // Simulate long-running batch operation
                 for i in 0..1000 {
@@ -383,7 +381,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     let stability_check = timeout(
                 Duration::from_secs(2),
                 async {
-                    let pool = get_shared_test_pool().await?;
+                    let pool = database_helpers::get_shared_test_pool().await?;
                     
                     // Database should still be responsive
                     let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;

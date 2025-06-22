@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4c5742a1943ce973710af48866f052782941539292eaadc780c7eca3a5bbe079 # shrinks to event = RawEvent { id: Ulid(01JYCJXCAW5GG6RNT9SK6HY4PH), source: "A0A", event_type: "file.created", ts_ingest: 2025-06-22T19:47:43.580288317Z, ts_orig: None, host: "sinnix-prime", ingestor_version: None, payload_schema_id: None, payload: Object {"a": Array [Number(7.411754332543023e239)]} }
