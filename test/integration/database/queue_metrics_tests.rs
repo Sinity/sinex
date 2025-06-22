@@ -1,7 +1,7 @@
 // Queue metrics tests - should fail until metrics implementation is complete
 // Tests for queue_depth, dequeue_latency_ms, and per_agent_lag metrics
 
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 use sinex_db::queries::*;
 // Local function definitions at bottom of file
 use sinex_ulid::Ulid;
@@ -10,8 +10,9 @@ use anyhow::Result;
 use serde_json::json;
 use chrono::{Utc, Duration};
 
-db_test! {
-async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_queue_depth_metric_calculation() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that queue_depth metric correctly counts pending items per agent
     
     // Create test agents
@@ -65,10 +66,11 @@ async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
     assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_dequeue_latency_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_dequeue_latency_metric_calculation() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that dequeue_latency_ms measures time from creation to processing
     
     let agent_name = "latency-test-agent";
@@ -104,10 +106,11 @@ async fn test_dequeue_latency_metric_calculation(pool: PgPool) -> Result<()> {
     assert!(agent_metric.avg_dequeue_latency_ms < 200.0, "Should be under 200ms latency");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_per_agent_lag_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_per_agent_lag_metric_calculation() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that per_agent_lag measures how far behind each agent is
     
     let fast_agent = "fast-agent";
@@ -148,10 +151,11 @@ async fn test_per_agent_lag_metric_calculation(pool: PgPool) -> Result<()> {
     assert!(fast_agent_metric.max_lag_seconds < 60.0, "Fast agent should have minimal lag");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_prometheus_metrics_exposition(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_prometheus_metrics_exposition() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that metrics are properly exposed in Prometheus format
     
     let agent_name = "prometheus-test-agent";
@@ -191,10 +195,11 @@ async fn test_prometheus_metrics_exposition(pool: PgPool) -> Result<()> {
     }
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_metrics_update_frequency(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_metrics_update_frequency() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that metrics are updated efficiently without excessive database queries
     
     let agent_name = "frequency-test-agent";
@@ -220,7 +225,7 @@ async fn test_metrics_update_frequency(pool: PgPool) -> Result<()> {
     assert!(duration.as_millis() < 100, "Metrics calculation should be efficient: {:?}", duration);
     
     Ok(())
-}}
+}
 
 // Helper functions and types
 

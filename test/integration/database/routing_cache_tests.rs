@@ -1,7 +1,7 @@
 // Routing cache tests - should fail until materialized view implementation is complete
 // Tests for replacing per-row trigger routing with materialized view approach
 
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 use sinex_db::queries::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
 use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
@@ -11,8 +11,9 @@ use sqlx::PgPool;
 use anyhow::Result;
 use serde_json::json;
 
-db_test! {
-async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_view_exists() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
         r#"
@@ -27,10 +28,11 @@ async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
     
     assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_structure() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that routing_cache has the correct columns (event_type, agent_id)
     // For materialized views, we need to query pg_attribute directly
     let columns = sqlx::query!(
@@ -61,10 +63,11 @@ async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     assert_eq!(agent_id_col.data_type, "text");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that routing_cache is automatically refreshed when agent_manifests change
     
     // Create an agent with specific event subscriptions
@@ -100,10 +103,11 @@ async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result
     assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_batch_router_creates_work_queue_entries() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that the batch router function creates work queue entries based on routing cache
     
     // Create an agent
@@ -144,10 +148,11 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     assert!(event_ids.contains(&event2_id.to_uuid()));
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_batch_router_avoids_duplicate_routing() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that batch router doesn't create duplicate work queue entries
     
     let agent_name = "dedup-test-agent";
@@ -182,10 +187,11 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_performance_over_triggers() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     // Test that routing cache approach performs better than per-row triggers
     // This is a conceptual test - in practice we'd measure timing
     
@@ -225,7 +231,7 @@ async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()
     assert!(duration.as_millis() < 1000, "Batch routing should complete quickly");
     
     Ok(())
-}}
+}
 
 
 // Helper function for creating test events in routing tests

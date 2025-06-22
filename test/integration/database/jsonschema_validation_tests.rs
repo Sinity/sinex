@@ -1,11 +1,13 @@
 use sinex_ulid::Ulid;
 use serde_json::json;
 use uuid::Uuid;
-use crate::db_test;
+use anyhow::Result;
+use crate::common::database_helpers::get_shared_test_pool;
 use crate::common::{schema_test_utils, test_event_with_payload};
 
-db_test! {
-    async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_json_schema_registration() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // Register a JSON Schema
     let schema = json!({
@@ -54,11 +56,11 @@ db_test! {
     assert_eq!(retrieved_schema, schema_clone, "Schema should be stored correctly");
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_json_schema_validation_constraint(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_json_schema_validation_constraint() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // First, register a strict schema
     let strict_schema = json!({
@@ -148,11 +150,11 @@ db_test! {
     schema_test_utils::assert_schema_invalid_event(&pool, &event3, schema_id).await?;
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_schema_versioning(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_schema_versioning() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts
     let test_run_id = &Uuid::new_v4().to_string()[..8];
@@ -313,11 +315,11 @@ db_test! {
     assert_eq!(active_version, "v2.0", "V2 should be the active version");
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_complex_schema_validation(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_complex_schema_validation() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts
     let test_run_id = &Uuid::new_v4().to_string()[..8];
@@ -500,11 +502,11 @@ db_test! {
     assert!(result.is_err(), "Invalid oneOf structure should be rejected");
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_null_schema_allows_any_payload(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_null_schema_allows_any_payload() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts
     let test_run_id = &Uuid::new_v4().to_string()[..8];
@@ -539,5 +541,4 @@ db_test! {
     }
     
     Ok(())
-    }
 }

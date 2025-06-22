@@ -8,7 +8,7 @@ use sinex_ulid::Ulid;
 use async_trait::async_trait;
 
 // Import test setup macros and utilities
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 use crate::common::worker_test_utils::{self, insert_test_work_item};
 
 struct TestEventProcessor {
@@ -60,8 +60,9 @@ impl EventProcessor for TestEventProcessor {
     }
 }
 
-db_test! {
-    async fn test_event_processor_basic_processing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_event_processor_basic_processing() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
         
@@ -85,11 +86,11 @@ db_test! {
         assert_eq!(process_count.load(Ordering::SeqCst), 1);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_event_processor_failure_handling(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_event_processor_failure_handling() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         
         processor.should_fail.store(true, Ordering::SeqCst);
@@ -110,7 +111,6 @@ db_test! {
         assert!(result.is_err());
         
         Ok(())
-    }
 }
 
 #[tokio::test]
@@ -150,8 +150,9 @@ async fn test_worker_metrics_creation() {
     assert_eq!(metrics.items_failed.get(), 1.0);
 }
 
-db_test! {
-    async fn test_multiple_processors_different_agents(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_multiple_processors_different_agents() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
         
@@ -188,7 +189,6 @@ db_test! {
         assert_eq!(count_b.load(Ordering::SeqCst), 1);
         
         Ok(())
-    }
 }
 
 #[tokio::test]

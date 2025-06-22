@@ -3,10 +3,12 @@ use serde_json::json;
 use chrono::{Duration, Utc};
 use sinex_core::RawEventBuilder;
 use sinex_db::queries;
-use crate::db_test;
+use anyhow::Result;
+use crate::common::database_helpers::get_shared_test_pool;
 
-db_test! {
-    async fn test_raw_events_is_timescale_hypertable(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_raw_events_is_timescale_hypertable() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
     
     // Verify raw.events is a hypertable
     let hypertable_info: Option<(String, String, String, String)> = sqlx::query_as(
@@ -40,7 +42,6 @@ db_test! {
     assert_eq!(interval_days, 7, "Chunk interval should be 7 days");
     
     Ok(())
-    }
 }
 
 #[tokio::test]

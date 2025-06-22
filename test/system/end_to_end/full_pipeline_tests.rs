@@ -7,7 +7,7 @@ use sinex_worker::{EventProcessor, worker::Worker};
 use gethostname;
 
 // Test setup macros
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -123,8 +123,9 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-db_test! {
-    async fn test_full_pipeline_end_to_end(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_full_pipeline_end_to_end() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
         let events_processed = Arc::new(AtomicU32::new(0));
@@ -276,11 +277,11 @@ db_test! {
         assert_eq!(remaining_queue, 0);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_pipeline_with_multiple_workers(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_pipeline_with_multiple_workers() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
         
@@ -389,11 +390,11 @@ db_test! {
         assert_eq!(remaining_queue, 0);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_pipeline_error_recovery(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_pipeline_error_recovery() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         // Insert some events that will cause errors
         for i in 0..5 {
             let event = RawEventBuilder::new(
@@ -513,5 +514,4 @@ db_test! {
         assert!(dlq >= 0);
         
         Ok(())
-    }
 }

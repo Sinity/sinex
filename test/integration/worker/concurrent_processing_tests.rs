@@ -7,12 +7,13 @@ use sinex_ulid::Ulid;
 use std::time::Duration;
 
 // Import test setup macros and utilities
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 use crate::common::worker_test_utils::{self, insert_test_items};
 use crate::common::timing_optimization::replacements::{wait_for_work_queue_count};
 
-db_test! {
-    async fn test_select_for_update_skip_locked_prevents_duplicate_processing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let _items = worker_test_utils::setup_test_worker(&pool, "test_worker", 10).await?;
         
         let pool = Arc::new(pool);
@@ -96,11 +97,11 @@ db_test! {
         );
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_skip_locked_allows_parallel_processing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let _ = insert_test_items(&pool, 20).await?;
         
         let pool = Arc::new(pool);
@@ -166,11 +167,11 @@ db_test! {
         );
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_concurrent_claiming_prevents_duplicates(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_concurrent_claiming_prevents_duplicates() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         let _items = insert_test_items(&pool, 1).await?;
         
         // Worker 1: Claim the item
@@ -206,11 +207,11 @@ db_test! {
         assert_eq!(remaining, 0, "Item should be deleted after completion");
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_priority_ordering_with_concurrent_workers(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
         // Insert items with different timestamps
         for i in 0..10 {
             let raw_event_id = Ulid::new();
@@ -316,5 +317,4 @@ db_test! {
         }
         
         Ok(())
-    }
 }
