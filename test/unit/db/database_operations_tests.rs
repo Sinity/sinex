@@ -2,12 +2,6 @@ use sinex_db::{queries, create_test_pool};
 use sinex_core::RawEventBuilder;
 use serde_json::json;
 
-async fn setup_test_db() -> sqlx::PgPool {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    create_test_pool(&database_url).await.unwrap()
-}
-
 // Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 
 #[sqlx::test]

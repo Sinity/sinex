@@ -22,9 +22,9 @@ pub async fn create_test_db_pool() -> Result<PgPool> {
     create_test_pool(&db_url).await
 }
 
-/// Helper for inserting test events directly via queries
+/// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
-pub async fn insert_test_event_raw(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
+pub async fn insert_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
     let inserted = queries::insert_event(pool, event).await?;
     Ok(inserted.id)
 }
@@ -181,30 +181,30 @@ pub mod generators {
     use super::*;
 
     /// Generate test file path
-    pub fn test_file_path(name: &str) -> String {
+    pub fn file_path(name: &str) -> String {
         format!("/test/path/{}.txt", name)
     }
 
-    /// Get test commands for terminal testing
-    pub fn test_commands() -> Vec<&'static str> {
+    /// Common terminal commands for testing
+    pub fn common_commands() -> Vec<&'static str> {
         vec!["ls -la", "cd /home", "git status", "cargo build", "vim file.rs"]
     }
 
-    /// Generate test event with predictable data
-    pub fn test_event(index: usize) -> sinex_db::models::RawEvent {
+    /// Generate test event with predictable data based on index
+    pub fn indexed_event(index: usize) -> sinex_db::models::RawEvent {
         match index % 3 {
             0 => events::filesystem_event(
                 event_type_constants::filesystem::FILE_CREATED,
-                &test_file_path(&format!("file_{}", index))
+                &file_path(&format!("file_{}", index))
             ),
-            1 => events::kitty_event(&test_commands()[index % test_commands().len()]),
+            1 => events::kitty_event(&common_commands()[index % common_commands().len()]),
             _ => events::hyprland_event("workspace", json!({"id": index})),
         }
     }
 
     /// Generate multiple test events
     pub fn test_events(count: usize) -> Vec<sinex_db::models::RawEvent> {
-        (0..count).map(test_event).collect()
+        (0..count).map(indexed_event).collect()
     }
 
     /// Generate realistic filesystem events with proper paths
@@ -259,7 +259,7 @@ pub mod generators {
         interval_secs: i64
     ) -> Vec<sinex_db::models::RawEvent> {
         (0..count).map(|i| {
-            let mut event = test_event(i);
+            let mut event = indexed_event(i);
             event.ts_orig = Some(start_time + chrono::Duration::seconds(interval_secs * i as i64));
             event
         }).collect()
@@ -274,7 +274,7 @@ pub mod generators {
             let burst_start = base_time + chrono::Duration::minutes(burst as i64 * 10);
             
             for i in 0..burst_size {
-                let mut event = test_event(burst * burst_size + i);
+                let mut event = indexed_event(burst * burst_size + i);
                 event.ts_orig = Some(burst_start + chrono::Duration::milliseconds(i as i64 * 100));
                 events.push(event);
             }
@@ -293,7 +293,7 @@ pub mod generators {
                 _ => json!({"binary_data": "a".repeat(1000)}), // Very large payload
             };
             
-            create_test_event_with_payload(
+            test_event_with_payload(
                 sources::FILESYSTEM,
                 event_type_constants::filesystem::FILE_MODIFIED,
                 payload
@@ -327,30 +327,7 @@ pub mod generators {
     }
 }
 
-/// Helper for querying events by ULID (delegates to sinex_db::queries)
-pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<sinex_db::models::RawEvent> {
-    queries::get_event_by_id(pool, event_id).await
-}
-
-/// Helper for getting recent events
-pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
-    queries::get_recent_events(pool, limit).await
-}
-
-/// Helper for getting events by source
-pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
-    queries::get_events_by_source(pool, source, limit).await
-}
-
-/// Helper for getting events by type
-pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> Result<Vec<sinex_db::models::RawEvent>> {
-    queries::get_events_by_type(pool, event_type, limit).await
-}
-
-/// Helper for getting events in time range
-pub async fn get_events_in_time_range(pool: &PgPool, start_time: chrono::DateTime<chrono::Utc>, end_time: chrono::DateTime<chrono::Utc>) -> Result<Vec<sinex_db::models::RawEvent>> {
-    queries::get_events_in_time_range(pool, start_time, end_time).await
-}
+// Query functions are available directly from sinex_db::queries - no need for wrappers
 
 /// Helper for getting event count from database
 pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
@@ -428,20 +405,8 @@ pub mod env {
     }
 }
 
-/// Helper for creating a simple test event with custom source and type
-pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::RawEvent {
-    RawEventBuilder::new(
-        source,
-        event_type,
-        json!({
-            "test": true,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        })
-    ).build()
-}
-
-/// Helper for creating test events with specific payload
-pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
+/// Create test event with custom payload
+pub fn test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
     RawEventBuilder::new(source, event_type, payload).build()
 }
 
@@ -461,28 +426,11 @@ pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Helper for inserting test event - 3 argument version used in tests
+/// Quick test event insertion - creates minimal event
 #[allow(dead_code)]
 pub async fn insert_test_event(pool: &PgPool, source: &str, event_type: &str) -> Result<Ulid> {
-    let event = RawEventBuilder::new(
-        source,
-        event_type,
-        json!({"test": true})
-    ).build();
-    let inserted = queries::insert_event(pool, &event).await?;
-    Ok(inserted.id)
-}
-
-/// Helper for inserting test event with custom data - 4 argument version for routing tests
-#[allow(dead_code)]
-pub async fn insert_test_event_with_data(pool: &PgPool, source: &str, event_type: &str, data: &str) -> Result<Ulid> {
-    let event = RawEventBuilder::new(
-        source,
-        event_type,
-        serde_json::from_str(data).unwrap_or_else(|_| json!({"data": data}))
-    ).build();
-    let inserted = queries::insert_event(pool, &event).await?;
-    Ok(inserted.id)
+    let event = RawEventBuilder::new(source, event_type, json!({"test": true})).build();
+    insert_event(pool, &event).await
 }
 
 /// Helper for creating agent with specific subscriptions
@@ -569,7 +517,7 @@ pub mod database_builder {
             interval: chrono::Duration
         ) -> Self {
             for i in 0..count {
-                let mut event = generators::test_event(i);
+                let mut event = generators::indexed_event(i);
                 event.ts_orig = Some(start_time + interval * i as i32);
                 self.events.push(event);
             }

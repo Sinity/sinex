@@ -22,21 +22,6 @@ async fn setup_test_db() -> Result<PgPool> {
     Ok(pool)
 }
 
-async fn create_test_agent(pool: &PgPool) -> Result<()> {
-    use sinex_db::queries::upsert_agent_manifest;
-    
-    upsert_agent_manifest(
-        pool,
-        "test-agent",
-        "1.0.0",
-        "active",
-        "ingestor",
-        Some("Test agent for watermarking"),
-        Some(serde_json::json!(["shell.command.executed_atuin"])),
-        None,
-    ).await?;
-    Ok(())
-}
 
 async fn insert_test_event_simple(pool: &PgPool, event: &RawEvent) -> Result<Ulid> {
     // Use a direct SQL insert to avoid any query conflicts
@@ -459,7 +444,7 @@ async fn test_atuin_watermarking_resume_behavior() {
     let pg_pool = setup_test_db().await.unwrap();
     
     // Create test agent for work queue operations
-    create_test_agent(&pg_pool).await.unwrap();
+    crate::common::create_test_agent(&pg_pool, "test-agent").await.unwrap();
     
     // First run: Process initial entries with watermarking
     let ctx1 = EventSourceContext::new(serde_json::to_value(&config).unwrap())

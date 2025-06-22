@@ -4,7 +4,8 @@
 use crate::db_test;
 use sinex_db::queries::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
-use crate::common::{create_agent_with_subscriptions, insert_test_event_with_data};
+use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
+use sinex_core::RawEventBuilder;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use anyhow::Result;
@@ -113,8 +114,8 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
     
     // Create some test events
-    let event1_id = insert_test_event_with_data(&pool, "test_source", "test_event", "test data 1").await?;
-    let event2_id = insert_test_event_with_data(&pool, "test_source", "test_event", "test data 2").await?;
+    let event1_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 1"}))).await?;
+    let event2_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 2"}))).await?;
     
     // Refresh routing cache
     refresh_routing_cache(&pool).await?;
@@ -156,7 +157,7 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
     
     // Create a test event
-    let event_id = insert_test_event_with_data(&pool, "test_source", "test_event", "dedup test").await?;
+    let event_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "dedup test"}))).await?;
     
     // Refresh routing cache
     refresh_routing_cache(&pool).await?;

@@ -2,7 +2,7 @@ use sinex_ulid::Ulid;
 use serde_json::json;
 use uuid::Uuid;
 use crate::db_test;
-use crate::common::{schema_test_utils, create_test_event_with_payload};
+use crate::common::{schema_test_utils, test_event_with_payload};
 
 db_test! {
     async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
@@ -116,7 +116,7 @@ db_test! {
     });
     
     // Test valid payload
-    let event = create_test_event_with_payload(&event_source, &event_type, valid_payload);
+    let event = test_event_with_payload(&event_source, &event_type, valid_payload);
     schema_test_utils::assert_schema_valid_event(&pool, &event, schema_id).await?;
     
     // Test invalid payload - missing required field
@@ -125,7 +125,7 @@ db_test! {
         // missing element_id
     });
     
-    let event = create_test_event_with_payload(&event_source, &event_type, invalid_payload1);
+    let event = test_event_with_payload(&event_source, &event_type, invalid_payload1);
     schema_test_utils::assert_schema_invalid_event(&pool, &event, schema_id).await?;
     
     // Test invalid payload - wrong enum value
@@ -134,7 +134,7 @@ db_test! {
         "element_id": "some-element"
     });
     
-    let event2 = create_test_event_with_payload(&event_source, &event_type, invalid_payload2);
+    let event2 = test_event_with_payload(&event_source, &event_type, invalid_payload2);
     schema_test_utils::assert_schema_invalid_event(&pool, &event2, schema_id).await?;
     
     // Test invalid payload - additional properties
@@ -144,7 +144,7 @@ db_test! {
         "extra_field": "not allowed"
     });
     
-    let event3 = create_test_event_with_payload(&event_source, &event_type, invalid_payload3);
+    let event3 = test_event_with_payload(&event_source, &event_type, invalid_payload3);
     schema_test_utils::assert_schema_invalid_event(&pool, &event3, schema_id).await?;
     
     Ok(())

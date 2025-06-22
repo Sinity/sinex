@@ -10,7 +10,7 @@ use anyhow::Result;
 #[sqlx::test]
 async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> {
     // Create test agent first
-    create_test_agent(&pool, "test-agent").await?;
+    crate::common::create_test_agent(&pool, "test-agent").await?;
     
     // Create test events
     let old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_succeeded"})).build();
@@ -76,7 +76,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> 
 #[sqlx::test]
 async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<()> {
     // Create test agent first
-    create_test_agent(&pool, "test-agent").await?;
+    crate::common::create_test_agent(&pool, "test-agent").await?;
     
     // Create test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_failed"})).build();
@@ -107,7 +107,7 @@ async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<()> {
 #[sqlx::test]
 async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<()> {
     // Create test agent first
-    create_test_agent(&pool, "test-agent").await?;
+    crate::common::create_test_agent(&pool, "test-agent").await?;
     
     // Create test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_pending"})).build();
@@ -148,7 +148,7 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<()> {
 #[sqlx::test]
 async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Result<()> {
     // Create test agent first
-    create_test_agent(&pool, "test-agent").await?;
+    crate::common::create_test_agent(&pool, "test-agent").await?;
     
     // Test that items without processed_at are never purged
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "no_processed_at"})).build();
@@ -175,7 +175,7 @@ async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Resul
 #[sqlx::test]
 async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<()> {
     // Create test agent first
-    create_test_agent(&pool, "test-agent").await?;
+    crate::common::create_test_agent(&pool, "test-agent").await?;
     
     // Test edge cases around the 90-day threshold
     let just_old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "just_old"})).build();
@@ -216,20 +216,5 @@ async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<()> {
     Ok(())
 }
 
-// Helper function to create test agent
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO sinex_schemas.agent_manifests 
-        (agent_name, version, status, agent_type, registered_at, updated_at)
-        VALUES ($1, '1.0.0', 'running', 'test', now(), now())
-        ON CONFLICT (agent_name) DO NOTHING
-        "#,
-        agent_name
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 // Function that should exist after TTL implementation - now implemented!
