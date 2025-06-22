@@ -6,8 +6,7 @@ use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
 use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
 use sqlx::PgPool;
 
@@ -158,6 +157,9 @@ struct ClipboardHistoryEntry {
     copy_count: u32,
 }
 
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for ClipboardMonitor {}
+
 #[async_trait]
 impl EventSource for ClipboardMonitor {
     type Config = ClipboardConfig;
@@ -165,8 +167,8 @@ impl EventSource for ClipboardMonitor {
     const SOURCE_NAME: &'static str = "clipboard.monitor";
     
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        // Use base trait for config parsing
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         
         info!("Initializing clipboard monitor");
         
@@ -227,14 +229,11 @@ impl EventSource for ClipboardMonitor {
             None
         };
         
-        Ok(Self {
-            config,
-            last_clipboard: None,
-            last_primary: None,
-            clipboard_history: Vec::new(),
-            git_annex,
-            db_pool: ctx.db_pool,
-        })
+        // Create instance and set additional fields
+        let mut instance = Self::new(config).await?;
+        instance.git_annex = git_annex;
+        instance.db_pool = ctx.db_pool;
+        Ok(instance)
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
@@ -265,6 +264,17 @@ impl EventSource for ClipboardMonitor {
 }
 
 impl ClipboardMonitor {
+    async fn new(config: ClipboardConfig) -> Result<Self> {
+        Ok(Self {
+            config,
+            last_clipboard: None,
+            last_primary: None,
+            clipboard_history: Vec::new(),
+            git_annex: None,
+            db_pool: None,
+        })
+    }
+    
     async fn check_clipboard(
         &mut self,
         tx: &mpsc::Sender<RawEvent>,
@@ -627,17 +637,5 @@ impl ClipboardMonitor {
         Ok((annex_key.key, blob_id))
     }
     
-    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: Self::SOURCE_NAME.to_string(),
-            event_type: event_type.to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: Some(Utc::now()),
-            host: gethostname::gethostname().to_string_lossy().to_string(),
-            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            payload_schema_id: None,
-            payload,
-        }
-    }
+    // Removed - now using EventSourceBase::create_event
 }
