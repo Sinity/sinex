@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Barrier};
 use serde_json::json;
 use std::collections::HashMap;
+use crate::common::event_sources;
 
 // Test source that can simulate different behaviors
 struct TestCoordinatedSource {
@@ -83,7 +84,7 @@ async fn test_multiple_sources_lifecycle_management() -> Result<()> {
     let mut source_controls = Vec::new();
     
     for i in 0..3 {
-        let ctx = EventSourceContext::new(json!({
+        let ctx = event_sources::test_context(json!({
             "source_id": format!("source_{}", i),
             "startup_delay_ms": i * 100, // Staggered startup
             "event_delay_ms": 50,
@@ -146,7 +147,7 @@ async fn test_source_failure_isolation() -> Result<()> {
     let mut source_controls = Vec::new();
     
     for i in 0..3 {
-        let ctx = EventSourceContext::new(json!({
+        let ctx = event_sources::test_context(json!({
             "source_id": format!("source_{}", i),
             "event_delay_ms": 50,
         }));
@@ -212,7 +213,7 @@ async fn test_source_startup_synchronization() -> Result<()> {
         let tx_clone = tx.clone();
         
         let handle = tokio::spawn(async move {
-            let ctx = EventSourceContext::new(json!({
+            let ctx = event_sources::test_context(json!({
                 "source_id": format!("source_{}", i),
                 "event_delay_ms": 50,
             }));
@@ -307,7 +308,7 @@ async fn test_dynamic_source_addition() -> Result<()> {
     
     // Start with 2 sources
     for i in 0..2 {
-        let ctx = EventSourceContext::new(json!({
+        let ctx = event_sources::test_context(json!({
             "source_id": format!("initial_{}", i),
             "event_delay_ms": 100,
         }));
@@ -330,7 +331,7 @@ async fn test_dynamic_source_addition() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     
     // Add a new source dynamically
-    let ctx = EventSourceContext::new(json!({
+    let ctx = event_sources::test_context(json!({
         "source_id": "dynamic_source",
         "event_delay_ms": 50,
     }));

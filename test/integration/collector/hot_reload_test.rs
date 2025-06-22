@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, Mutex};
 use tempfile::NamedTempFile;
 use std::io::Write;
 use serde_json::json;
+use crate::common::event_sources;
 use std::collections::HashMap;
 
 // Mock event source that can track configuration changes
@@ -99,7 +100,7 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
     });
     
     // Simulate collector behavior - start source
-    let ctx = EventSourceContext::new(json!({
+    let ctx = event_sources::test_context(json!({
         "event_interval_ms": 100
     }));
     let mut source = ConfigurableEventSource::initialize(ctx).await?;
@@ -168,7 +169,7 @@ async fn test_config_reload_with_source_restart() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
     // Start with one configuration
-    let ctx1 = EventSourceContext::new(json!({
+    let ctx1 = event_sources::test_context(json!({
         "event_interval_ms": 200,
         "source_id": "instance_1"
     }));
@@ -193,7 +194,7 @@ async fn test_config_reload_with_source_restart() -> Result<()> {
     handle1.await??;
     
     // Start new source with different config
-    let ctx2 = EventSourceContext::new(json!({
+    let ctx2 = event_sources::test_context(json!({
         "event_interval_ms": 100,
         "source_id": "instance_2"
     }));
@@ -264,7 +265,7 @@ async fn test_partial_reload_capability() -> Result<()> {
     let mut stop_flags = Vec::new();
     
     for i in 0..2 {
-        let ctx = EventSourceContext::new(json!({
+        let ctx = event_sources::test_context(json!({
             "event_interval_ms": 100,
             "source_id": format!("source_{}", i)
         }));

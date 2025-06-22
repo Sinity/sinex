@@ -15,6 +15,7 @@ use gethostname;
 // Import test setup macros
 use crate::db_test;
 use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_filtered_event_count, wait_for_work_queue_count};
+use crate::common::event_sources;
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -156,7 +157,7 @@ db_test! {
             events_to_generate,
             generation_rate: 50,
         };
-        let ctx = EventSourceContext::new(serde_json::to_value(config)?);
+        let ctx = event_sources::test_context(serde_json::to_value(config)?);
         let mut source = PipelineTestSource::initialize(ctx).await?;
         let source_events_generated = source.events_generated.clone();
         

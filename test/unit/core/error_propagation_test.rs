@@ -71,7 +71,7 @@ impl EventSource for FailingEventSource {
 
 #[tokio::test]
 async fn test_event_source_error_propagation() {
-    let ctx = EventSourceContext::new(json!({}));
+    let ctx = event_sources::test_context(json!({}));
     let result = FailingEventSource::initialize(ctx).await;
     
     assert!(result.is_err());
@@ -126,6 +126,7 @@ fn test_error_display_implementation() {
 #[tokio::test]
 async fn test_error_propagation_across_tasks() {
     use tokio::task;
+use crate::common::event_sources;
     
     let handle = task::spawn(async {
         // Simulate work that fails

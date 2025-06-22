@@ -3,6 +3,7 @@ use sinex_core::{EventSource, EventType, EventSourceContext};
 use tempfile::TempDir;
 use crate::common::resources;
 use chrono::Utc;
+use crate::common::event_sources;
 
 #[tokio::test]
 async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +15,7 @@ async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::
         polling_interval_secs: 1,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let listener = KittySocketListener::initialize(ctx).await;
     // Should succeed even if no socket exists (will wait for socket)
     assert!(listener.is_ok(), "Should initialize even without active socket");

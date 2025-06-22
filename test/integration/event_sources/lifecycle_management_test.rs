@@ -13,10 +13,9 @@ use tokio::time::{timeout, sleep};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::common::event_sources;
 
-fn create_test_context(config: serde_json::Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+
 
 /// Mock event source that can be configured to crash after a certain number of events
 pub struct CrashingEventSource {
@@ -263,7 +262,7 @@ async fn test_filesystem_source_permission_denied() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // This should either fail gracefully or succeed with warnings
     match FilesystemMonitor::initialize(ctx).await {
@@ -301,7 +300,7 @@ async fn test_kitty_socket_unavailable() -> Result<()> {
         "polling_interval_secs": 1
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // Should handle missing socket gracefully
     match KittySocketListener::initialize(ctx).await {
@@ -341,7 +340,7 @@ async fn test_clipboard_source_access_denied() -> Result<()> {
         "max_content_size": 1024
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // This might fail in CI/headless environments, which is expected
     match ClipboardMonitor::initialize(ctx).await {
@@ -383,8 +382,8 @@ async fn test_event_source_coordination_failures() -> Result<()> {
     
     let config2 = config1.clone();
 
-    let ctx1 = create_test_context(config1);
-    let ctx2 = create_test_context(config2);
+    let ctx1 = event_sources::test_context(config1);
+    let ctx2 = event_sources::test_context(config2);
 
     // Start two filesystem monitors on the same directory
     let mut monitor1 = FilesystemMonitor::initialize(ctx1).await?;
@@ -459,7 +458,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx1 = create_test_context(invalid_config1);
+    let ctx1 = event_sources::test_context(invalid_config1);
     match FilesystemMonitor::initialize(ctx1).await {
         Ok(_) => {
             // Some sources might handle empty patterns gracefully
@@ -477,7 +476,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         "debounce_ms": -1
     });
 
-    let ctx2 = create_test_context(invalid_config2);
+    let ctx2 = event_sources::test_context(invalid_config2);
     match FilesystemMonitor::initialize(ctx2).await {
         Ok(_) => {
             eprintln!("FilesystemMonitor accepted negative debounce (might use default)");
@@ -493,7 +492,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         // Missing watch_patterns
     });
 
-    let ctx3 = create_test_context(invalid_config3);
+    let ctx3 = event_sources::test_context(invalid_config3);
     match FilesystemMonitor::initialize(ctx3).await {
         Ok(_) => {
             eprintln!("FilesystemMonitor used defaults for missing fields");
@@ -515,7 +514,7 @@ async fn test_source_shutdown_during_active_streaming() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut monitor = FilesystemMonitor::initialize(ctx).await?;
 
     let (tx, mut rx) = mpsc::channel(100);

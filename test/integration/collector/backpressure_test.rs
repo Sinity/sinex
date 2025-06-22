@@ -9,10 +9,9 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use crate::common::timing_optimization::replacements::{wait_for_condition, wait_for_condition_or_timeout};
+use crate::common::event_sources;
 
-fn create_test_context(config: serde_json::Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+
 
 /// High-frequency event source that can generate events rapidly
 #[derive(Clone)]

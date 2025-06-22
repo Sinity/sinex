@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 use gethostname;
+use crate::common::event_sources;
 #[allow(unused_imports)]
 use sqlx::PgPool;
 
@@ -105,7 +106,7 @@ async fn test_event_source_initialization() -> Result<()> {
         should_fail: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let source = TestEventSource::initialize(ctx).await?;
     
     assert_eq!(source.config.events_to_generate, 10);
@@ -123,7 +124,7 @@ async fn test_event_source_initialization_failure() -> Result<()> {
         should_fail: true,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -146,7 +147,7 @@ async fn test_event_source_streaming() -> Result<()> {
         should_fail: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
     let events_sent = source.events_sent.clone();
     
@@ -189,7 +190,7 @@ async fn test_event_source_runtime_error() -> Result<()> {
         should_fail: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
     let should_error = source.should_error.clone();
     let events_sent = source.events_sent.clone();
@@ -227,7 +228,7 @@ async fn test_event_source_graceful_shutdown() -> Result<()> {
         should_fail: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
     
     // Test shutdown
@@ -245,7 +246,7 @@ async fn test_event_source_receiver_drop() -> Result<()> {
         should_fail: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let mut source = TestEventSource::initialize(ctx).await?;
     let _events_sent = source.events_sent.clone();
     
@@ -321,8 +322,8 @@ impl EventSource for SlowEventSource {
 async fn test_multiple_event_sources() -> Result<()> {
     let config = TestSourceConfig::default();
     
-    let ctx1 = EventSourceContext::new(serde_json::to_value(&config)?);
-    let ctx2 = EventSourceContext::new(serde_json::to_value(&config)?);
+    let ctx1 = event_sources::test_context(serde_json::to_value(&config)?);
+    let ctx2 = event_sources::test_context(serde_json::to_value(&config)?);
     
     let mut source1 = TestEventSource::initialize(ctx1).await?;
     let mut source2 = SlowEventSource::initialize(ctx2).await?;
@@ -360,7 +361,7 @@ db_test! {
             should_fail: false,
         };
         
-        let ctx = EventSourceContext::new(serde_json::to_value(&config)?);
+        let ctx = event_sources::test_context(serde_json::to_value(&config)?);
         let mut source = TestEventSource::initialize(ctx).await?;
         
         let (tx, mut rx) = mpsc::channel(10);

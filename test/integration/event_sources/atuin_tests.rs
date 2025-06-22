@@ -8,7 +8,7 @@ use chrono::{Utc, TimeZone};
 use sqlx::PgPool;
 use anyhow::Result;
 use sinex_ulid::Ulid;
-use crate::common::{resources, create_test_db_pool, database};
+use crate::common::{resources, create_test_db_pool, database, event_sources};
 
 
 
@@ -162,7 +162,7 @@ async fn test_atuin_reader_initialization() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let reader = AtuinDbReader::initialize(ctx).await;
     assert!(reader.is_ok(), "Should initialize with valid database");
     
@@ -172,7 +172,7 @@ async fn test_atuin_reader_initialization() -> Result<()> {
         ..config
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&bad_config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let reader = AtuinDbReader::initialize(ctx).await;
     assert!(reader.is_err(), "Should fail with non-existent database");
     Ok(())
@@ -212,7 +212,7 @@ async fn test_atuin_event_capture() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -296,7 +296,7 @@ async fn test_atuin_watermarking() -> Result<()> {
     };
     
     // First read
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -350,7 +350,7 @@ async fn test_atuin_watermarking() -> Result<()> {
     let pg_pool = create_test_db_pool().await?;
     
     // Second read with PostgreSQL connection for watermarking
-    let ctx_with_db = EventSourceContext::new(serde_json::to_value(&config).unwrap())
+    let ctx_with_db = event_sources::test_context(serde_json::to_value(&config).unwrap())
         .with_db_pool(pg_pool);
     let mut reader2 = AtuinDbReader::initialize(ctx_with_db).await.unwrap();
     let (tx2, mut rx2) = mpsc::channel(100);
@@ -421,7 +421,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
     crate::common::create_test_agent(&pg_pool, "test-agent").await.unwrap();
     
     // First run: Process initial entries with watermarking
-    let ctx1 = EventSourceContext::new(serde_json::to_value(&config).unwrap())
+    let ctx1 = event_sources::test_context(serde_json::to_value(&config).unwrap())
         .with_db_pool(pg_pool.clone());
     let mut reader1 = AtuinDbReader::initialize(ctx1).await.unwrap();
     let (tx1, mut rx1) = mpsc::channel(100);
@@ -489,7 +489,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
     }
     
     // Second run: Should only process NEW entries due to watermarking
-    let ctx2 = EventSourceContext::new(serde_json::to_value(&config).unwrap())
+    let ctx2 = event_sources::test_context(serde_json::to_value(&config).unwrap())
         .with_db_pool(pg_pool);
     let mut reader2 = AtuinDbReader::initialize(ctx2).await.unwrap();
     let (tx2, mut rx2) = mpsc::channel(100);
@@ -564,7 +564,7 @@ async fn test_atuin_timestamp_conversion() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -603,7 +603,7 @@ async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>>
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&bad_config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let result = AtuinDbReader::initialize(ctx).await;
     assert!(result.is_err(), "Should fail with non-existent database");
     
@@ -618,7 +618,7 @@ async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>>
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&corrupted_config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&corrupted_config).unwrap());
     // Note: AtuinDbReader initialization only checks if file exists, 
     // actual corruption would be detected during event streaming
     let reader = AtuinDbReader::initialize(ctx).await;
@@ -657,7 +657,7 @@ async fn test_atuin_builder_patterns() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -734,7 +734,7 @@ async fn test_atuin_edge_cases() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -819,7 +819,7 @@ async fn test_atuin_global_history() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -881,7 +881,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<()> {
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(1000);
     
@@ -951,7 +951,7 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
         use_file_watch: false,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
@@ -1023,7 +1023,7 @@ async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> 
         use_file_watch: true, // Use file watching for live updates
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(1000);
     
