@@ -1,13 +1,10 @@
+use crate::common::prelude::*;
 use super::common::*;
-use anyhow::Result;
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use tokio::time::{sleep, interval};
 use futures::future::join_all;
 use sinex_db::{create_test_pool, run_migrations};
-use sinex_ulid::Ulid;
 use serde_json::json;
 use std::str::FromStr;
 use rand::Rng;
@@ -256,7 +253,7 @@ struct WorkerStressResult {
 
 #[tokio::test]
 async fn test_extreme_concurrency_stress() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());

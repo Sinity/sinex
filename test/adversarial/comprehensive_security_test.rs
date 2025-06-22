@@ -1,11 +1,7 @@
-use anyhow::Result;
-use serde_json::{json, Value};
+use crate::common::prelude::*;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event, validation::EventValidator};
-use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::fs;
-use std::time::{Duration, Instant};
-use tempfile::TempDir;
 use tokio::time::timeout;
 
 /// Security test scenario definition
@@ -309,7 +305,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
 async fn test_comprehensive_security_scenarios() -> Result<()> {
     let scenarios = security_scenarios();
 
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let validator = EventValidator::new();
@@ -487,7 +483,7 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
     println!("\n=== Testing {} Security Scenarios ===", category_name);
     println!("Running {} test scenarios", scenarios.len());
 
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let validator = EventValidator::new();

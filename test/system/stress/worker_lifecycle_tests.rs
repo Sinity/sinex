@@ -191,7 +191,7 @@ struct RaceWorkerResult {
 
 #[tokio::test]
 async fn test_race_condition_detection() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("race_condition_{}", Ulid::new());

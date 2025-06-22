@@ -1,15 +1,5 @@
-use anyhow::Result;
-use sqlx::PgPool;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use std::str::FromStr;
-use tokio::time::{sleep, interval};
-use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
-use serde_json::json;
+use crate::common::prelude::*;
+use sinex_db::queries::insert_raw_event;
 use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
 
 /// Metrics for tracking work distribution algorithm performance
@@ -238,7 +228,7 @@ impl SelectForUpdateWorker {
 
 #[tokio::test]
 async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("algorithm_test_{}", Ulid::new());
@@ -440,7 +430,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
 
 #[tokio::test]
 async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("contention_test_{}", Ulid::new());
@@ -584,7 +574,7 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
 
 #[tokio::test]
 async fn test_work_queue_ordering_properties() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("ordering_test_{}", Ulid::new());
@@ -757,7 +747,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
 
 #[tokio::test]
 async fn test_work_queue_retry_mechanism() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("retry_test_{}", Ulid::new());

@@ -1,3 +1,4 @@
+use crate::common::prelude::*;
 use sinex_db::models::RawEvent;
 use serde_json::json;
 use crate::common::events;
@@ -13,7 +14,7 @@ fn test_json_payload_size_limits() {
         }));
     }
     
-    let event = events::generic_adversarial_event("test", "huge.payload", json!({"huge_array": huge_array}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "huge.payload", json!({"huge_array": huge_array}), None);
     
     // This might cause issues with serialization or database storage
     let serialized = serde_json::to_string(&event);
@@ -38,7 +39,7 @@ fn test_json_special_characters() {
     ];
     
     for (i, payload) in evil_payloads.iter().enumerate() {
-        let mut event = events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
+        let mut event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
         event.payload = payload.clone();
         
         // These might fail serialization or cause database issues
@@ -60,7 +61,7 @@ fn test_recursive_json_structure() {
         });
     }
     
-    let event = events::generic_adversarial_event("test", "deeply.nested", nested, None);
+    let event = crate::common::events::generic_adversarial_event("test", "deeply.nested", nested, None);
     
     // This might cause stack overflow or other issues
     let result = serde_json::to_string(&event);

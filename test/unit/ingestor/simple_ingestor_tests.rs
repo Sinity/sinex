@@ -1,7 +1,4 @@
-use anyhow::Result;
-use async_trait::async_trait;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, RawEventBuilder};
-use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
+use crate::common::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
@@ -10,10 +7,8 @@ use gethostname;
 use crate::common::event_sources;
 use crate::common::events;
 #[allow(unused_imports)]
-use sqlx::PgPool;
 
 // Import test setup macros
-use crate::common::database_helpers::get_shared_test_pool;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct TestSourceConfig {
@@ -64,7 +59,7 @@ impl EventSource for TestEventSource {
                 return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()));
             }
             
-            let event = events::generic_adversarial_event("test", "test_event", json!({"test": true}), None);
+            let event = crate::common::events::generic_adversarial_event("test", "test_event", json!({"test": true}), None);
             
             if tx.send(event).await.is_err() {
                 break; // Receiver dropped
@@ -343,7 +338,7 @@ async fn test_multiple_event_sources() -> Result<()> {
 
 #[tokio::test]
 async fn test_event_source_database_integration() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     
     let config = TestSourceConfig {
         events_to_generate: 2,

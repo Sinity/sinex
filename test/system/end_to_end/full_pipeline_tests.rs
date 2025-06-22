@@ -7,7 +7,6 @@ use sinex_worker::{EventProcessor, worker::Worker};
 use gethostname;
 
 // Test setup macros
-use crate::common::database_helpers::get_shared_test_pool;
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -40,7 +39,7 @@ impl EventSource for PipelineTestSource {
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for i in 0..self.events_to_generate {
-            let event = events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
+            let event = crate::common::events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);
@@ -125,7 +124,7 @@ impl EventProcessor for PipelineTestProcessor {
 
 #[tokio::test]
 async fn test_full_pipeline_end_to_end() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
         let events_processed = Arc::new(AtomicU32::new(0));
@@ -281,7 +280,7 @@ async fn test_full_pipeline_end_to_end() -> Result<()> {
 
 #[tokio::test]
 async fn test_pipeline_with_multiple_workers() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
         
@@ -394,7 +393,7 @@ async fn test_pipeline_with_multiple_workers() -> Result<()> {
 
 #[tokio::test]
 async fn test_pipeline_error_recovery() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         // Insert some events that will cause errors
         for i in 0..5 {
             let event = RawEventBuilder::new(

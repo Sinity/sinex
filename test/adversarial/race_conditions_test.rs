@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use crate::common::{create_test_db_pool, events};
 use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
 use std::sync::{Arc, Barrier};
 use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};

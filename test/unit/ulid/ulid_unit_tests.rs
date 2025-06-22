@@ -1,4 +1,4 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use std::str::FromStr;
 
 #[test]

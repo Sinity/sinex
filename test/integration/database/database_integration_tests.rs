@@ -9,6 +9,7 @@
 //!
 //! Uses #[sqlx::test] for automatic transaction isolation
 
+use crate::common::prelude::*;
 use crate::common::{self, events, assertions, generators};
 use sinex_core::event_type_constants;
 use std::time::Duration;

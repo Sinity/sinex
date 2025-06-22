@@ -1,13 +1,10 @@
+use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
 use sinex_core::{EventSource, EventType, EventSourceContext};
 use sinex_db::{models::RawEvent, create_test_pool};
 use tokio::sync::mpsc;
 use std::path::PathBuf;
-use tempfile::TempDir;
 use chrono::{Utc, TimeZone};
-use sqlx::PgPool;
-use anyhow::Result;
-use sinex_ulid::Ulid;
 use crate::common::{resources, create_test_db_pool, database, event_sources};
 
 
@@ -436,7 +433,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
         while let Some(event) = rx1.recv().await {
             // CRITICAL: Save event to database for watermarking to work
             // Use the simplified pattern from other tests
-            let _inserted_id = crate::common::insert_event(&pg_pool, &event).await?;
+            let _inserted_id = crate::common::insert_event(&pg_pool, &event).await.unwrap();
             
             first_run_events.push(event);
             if first_run_events.len() >= 2 {

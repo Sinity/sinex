@@ -299,7 +299,7 @@ proptest! {
 mod stress_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+use crate::common::prelude::*;
     
     #[test]
     fn test_registry_high_concurrency_stress() {

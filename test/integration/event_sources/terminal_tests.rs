@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
 use sinex_core::{EventSource, EventType, EventSourceContext};
-use tempfile::TempDir;
 use crate::common::resources;
 use chrono::Utc;
 use crate::common::event_sources;

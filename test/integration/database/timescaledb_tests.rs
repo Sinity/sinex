@@ -1,14 +1,12 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use serde_json::json;
 use chrono::{Duration, Utc};
 use sinex_core::RawEventBuilder;
 use sinex_db::queries;
-use anyhow::Result;
-use crate::common::database_helpers::get_shared_test_pool;
 
 #[tokio::test]
 async fn test_raw_events_is_timescale_hypertable() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     
     // Verify raw.events is a hypertable
     let hypertable_info: Option<(String, String, String, String)> = sqlx::query_as(
@@ -45,12 +43,12 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_timescale_chunk_creation() {
+async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Clean up any previous test data
     let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await;
     
     // Get initial chunk count
@@ -58,7 +56,7 @@ async fn test_timescale_chunk_creation() {
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await
     .unwrap();
     
@@ -89,7 +87,7 @@ async fn test_timescale_chunk_creation() {
         .bind(event.event_type)
         .bind(event.host)
         .bind(event.payload)
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await
         .unwrap();
     }
@@ -99,7 +97,7 @@ async fn test_timescale_chunk_creation() {
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await
     .unwrap();
     
@@ -120,16 +118,17 @@ async fn test_timescale_chunk_creation() {
         .bind("chunk_test")
         .bind(format!("event_type_{}", i))
         .bind(ts)
-        .fetch_one(pool.as_ref())
+        .fetch_one(&pool)
         .await
         .unwrap();
         
         assert_eq!(count, 1, "Each event should be in its appropriate chunk");
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_timescale_compression_policy() {
+async fn test_timescale_compression_policy() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Check if compression policy exists
@@ -140,7 +139,7 @@ async fn test_timescale_compression_policy() {
          AND hypertable_name = 'events'
          AND proc_name = 'compress_chunks'"
     )
-    .fetch_optional(pool.as_ref())
+    .fetch_optional(&pool)
     .await
     .unwrap();
     
@@ -153,7 +152,7 @@ async fn test_timescale_compression_policy() {
              AND hypertable_name = 'events'
              AND proc_name = 'compress_chunks'"
         )
-        .fetch_optional(pool.as_ref())
+        .fetch_optional(&pool)
         .await
         .unwrap();
         
@@ -175,7 +174,7 @@ async fn test_timescale_compression_policy() {
         .bind("old_event")
         .bind("test_host")
         .bind(json!({"seq": i}))
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await
         .unwrap();
     }
@@ -188,15 +187,16 @@ async fn test_timescale_compression_policy() {
          AND range_end < now() - interval '7 days'
          AND is_compressed = false"
     )
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await
     .unwrap_or(0);
     
     println!("Found {} compressible chunks", compressible_chunks);
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_timescale_continuous_aggregates() {
+async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Create a continuous aggregate for event counts by source and hour
@@ -213,7 +213,7 @@ async fn test_timescale_continuous_aggregates() {
          GROUP BY hour, source, event_type
          WITH NO DATA"
     )
-    .execute(pool.as_ref())
+    .execute(&pool)
     .await;
     
     // Note: This might fail if the view already exists from previous test runs
@@ -225,7 +225,7 @@ async fn test_timescale_continuous_aggregates() {
                 end_offset => INTERVAL '1 hour',
                 schedule_interval => INTERVAL '1 hour')"
         )
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await;
     }
     
@@ -248,7 +248,7 @@ async fn test_timescale_continuous_aggregates() {
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
                 .bind(json!({"hour": hour}))
-                .execute(pool.as_ref())
+                .execute(&pool)
                 .await
                 .unwrap();
             }
@@ -257,7 +257,7 @@ async fn test_timescale_continuous_aggregates() {
     
     // Refresh the aggregate
     let _ = sqlx::query("CALL refresh_continuous_aggregate('event_counts_hourly', NULL, NULL)")
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await;
     
     // Query the aggregate
@@ -269,7 +269,7 @@ async fn test_timescale_continuous_aggregates() {
              ORDER BY hour DESC
              LIMIT 5"
         )
-        .fetch_all(pool.as_ref())
+        .fetch_all(&pool)
         .await
         .unwrap_or_default();
     
@@ -282,10 +282,11 @@ async fn test_timescale_continuous_aggregates() {
             println!("Hour: {}, Count: {}, Unique hosts: {}", hour, count, hosts);
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_timescale_retention_policies() {
+async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Check if retention policy exists
@@ -296,7 +297,7 @@ async fn test_timescale_retention_policies() {
          AND hypertable_name = 'events'
          AND proc_name = 'drop_chunks'"
     )
-    .fetch_optional(pool.as_ref())
+    .fetch_optional(&pool)
     .await
     .unwrap();
     
@@ -305,7 +306,7 @@ async fn test_timescale_retention_policies() {
         let result = sqlx::query(
             "SELECT add_retention_policy('raw.events', INTERVAL '1 year')"
         )
-        .execute(pool.as_ref())
+        .execute(&pool)
         .await;
         
         if result.is_ok() {
@@ -331,7 +332,7 @@ async fn test_timescale_retention_policies() {
     .bind("very_old_event")
     .bind("test_host")
     .bind(json!({"data": "old"}))
-    .execute(pool.as_ref())
+    .execute(&pool)
     .await;
     
     // Insert recent event using ULID from recent timestamp
@@ -345,7 +346,7 @@ async fn test_timescale_retention_policies() {
     .bind("recent_event")
     .bind("test_host")
     .bind(json!({"data": "recent"}))
-    .execute(pool.as_ref())
+    .execute(&pool)
     .await
     .unwrap();
     
@@ -356,15 +357,16 @@ async fn test_timescale_retention_policies() {
          AND hypertable_name = 'events'
          AND range_end < now() - interval '1 year'"
     )
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await
     .unwrap_or(0);
     
     println!("Found {} chunks eligible for retention policy", droppable_chunks);
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_timescale_data_node_stats() {
+async fn test_timescale_data_node_stats() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Get hypertable stats
@@ -374,7 +376,7 @@ async fn test_timescale_data_node_stats() {
          FROM timescaledb_information.hypertables
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_optional(pool.as_ref())
+    .fetch_optional(&pool)
     .await
     .unwrap();
     
@@ -398,7 +400,7 @@ async fn test_timescale_data_node_stats() {
              ORDER BY range_start DESC NULLS LAST
              LIMIT 5"
         )
-        .fetch_all(pool.as_ref())
+        .fetch_all(&pool)
         .await
         .unwrap();
     
@@ -410,4 +412,5 @@ async fn test_timescale_data_node_stats() {
             println!("  Compressed: true");
         }
     }
+    Ok(())
 }

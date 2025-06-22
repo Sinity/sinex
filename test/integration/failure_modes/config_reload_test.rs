@@ -1,5 +1,5 @@
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
-use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -64,10 +64,8 @@ async fn test_config_reload_during_processing() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             loop {
-                let event = events::generic_adversarial_event("test", "config.test", json!({"test": true}), None);
-                if tx.send(event).await.is_err() { break; }
-                
-                tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
+                let event = crate::common::events::generic_adversarial_event("test", "config.test", json!({"test": true}), None);
+                if tx.send(event).await.is_err() { return Ok(()); }
                 
                 if self.reload_flag.load(Ordering::Relaxed) {
                     self.events_after.fetch_add(1, Ordering::Relaxed);

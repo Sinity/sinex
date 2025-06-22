@@ -1,5 +1,4 @@
-use anyhow::Result;
-use async_trait::async_trait;
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_db::models::RawEvent;
 use std::time::Duration;
@@ -8,7 +7,6 @@ use tokio::time::{timeout, sleep, Instant};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-use crate::common::timing_optimization::replacements::{wait_for_condition, wait_for_condition_or_timeout};
 use crate::common::event_sources;
 
 
@@ -180,10 +178,9 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
     let wait_result = wait_for_condition_or_timeout(
         move || {
             let processed = consumer_clone.events_processed();
-            processed >= 20
+            Box::pin(async move { Ok(processed >= 20) })
         },
-        Duration::from_secs(5),
-        Duration::from_millis(100)
+        5
     ).await;
     
     // Stop both
@@ -245,9 +242,12 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
 
     // Wait for producer to send enough events to saturate channel
     let producer_clone = producer.clone();
-    wait_for_condition(
-        move || producer_clone.events_sent() >= 100, // Channel capacity
-        Duration::from_millis(10)
+    let _ = wait_for_condition_or_timeout(
+        move || {
+            let sent = producer_clone.events_sent();
+            Box::pin(async move { Ok(sent >= 100) })
+        },
+        1 // 1 second timeout
     ).await;
 
     // Now consume all events slowly

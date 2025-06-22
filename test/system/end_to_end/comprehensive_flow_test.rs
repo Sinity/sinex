@@ -1,3 +1,4 @@
+use crate::common::prelude::*;
 use crate::common;
 use crate::common::timing_optimization::EventCounter;
 use crate::common::events;
@@ -6,7 +7,6 @@ use sinex_collector::CollectorConfig;
 use sinex_core::{RawEvent, event_type_constants, sources};
 use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
@@ -157,7 +157,7 @@ async fn test_complete_event_pipeline() {
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
+    let bad_event = crate::common::events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
     
     queries::insert_event(&pool, &bad_event).await.unwrap();
     
@@ -202,7 +202,7 @@ async fn test_complete_event_pipeline() {
         version: "0.1.0".to_string(),
     };
     
-    let heartbeat_event = events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
+    let heartbeat_event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
     
     queries::insert_event(&pool, &heartbeat_event).await.unwrap();
     
@@ -279,7 +279,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     let base_time = Utc::now();
     
     // Filesystem events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.created",
         serde_json::json!({
@@ -287,10 +287,10 @@ fn generate_test_events() -> Vec<RawEvent> {
             "size": 1024,
             "created_at": base_time.to_rfc3339()
         }),
-        None,
+        base_time,
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.modified",
         serde_json::json!({
@@ -302,7 +302,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(1),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.deleted",
         serde_json::json!({
@@ -313,7 +313,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     ));
     
     // Terminal events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -324,7 +324,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(3),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -338,7 +338,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     ));
     
     // Window manager events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "window_manager.hyprland",
         "window.focused",
         serde_json::json!({
@@ -352,7 +352,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(5),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "window_manager.hyprland",
         "workspace.changed",
         serde_json::json!({
@@ -364,7 +364,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     
     // Add more events for stress testing
     for i in 7..20 {
-        events.push(create_raw_event(
+        events.push(events::create_raw_event(
             "filesystem",
             "file.created",
             serde_json::json!({
@@ -372,18 +372,10 @@ fn generate_test_events() -> Vec<RawEvent> {
                 "size": i * 100,
                 "timestamp": base_time + ChronoDuration::seconds(i as i64)
             }),
-            None,
+            base_time + ChronoDuration::seconds(i as i64),
         ));
     }
     
     events
 }
 
-fn create_raw_event(
-    source: &str, 
-    event_type: &str, 
-    payload: serde_json::Value,
-    version: Option<&str>,
-) -> sinex_core::RawEvent {
-    events::generic_adversarial_event(source, event_type, payload, version)
-}

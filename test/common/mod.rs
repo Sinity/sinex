@@ -9,12 +9,9 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
-use anyhow::Result;
-use serde_json::{json, Value};
+use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
 use sinex_db::{create_test_pool, queries};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -261,6 +258,13 @@ pub mod events {
         }
         
         builder.build()
+    }
+
+    /// Create a raw event with specified timestamp (for comprehensive tests)
+    pub fn create_raw_event(source: &str, event_type: &str, payload: serde_json::Value, timestamp: chrono::DateTime<chrono::Utc>) -> sinex_db::models::RawEvent {
+        RawEventBuilder::new(source, event_type, payload)
+            .with_orig_timestamp(timestamp)
+            .build()
     }
 }
 

@@ -1,12 +1,11 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tokio::sync::Notify;
 use futures::future::join_all;
@@ -20,7 +19,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     // Insert events to be claimed
     let mut event_ids = vec![];
     for i in 0..10 {
-        let event = events::generic_adversarial_event("test", "work.item", json!({"test": true}), None);
+        let event = crate::common::events::generic_adversarial_event("test", "work.item", json!({"test": true}), None);
         
         queries::insert_event(&pool, &event).await.unwrap();
         event_ids.push(event.id);
@@ -124,7 +123,7 @@ async fn test_dead_worker_holding_locks() {
     println!("Testing zombie worker scenario:");
     
     // Insert work item
-    let work_event = events::generic_adversarial_event("test", "critical.work", json!({"importance": "high"}), None);
+    let work_event = crate::common::events::generic_adversarial_event("test", "critical.work", json!({"importance": "high"}), None);
     
     queries::insert_event(&pool, &work_event).await.unwrap();
     
@@ -351,7 +350,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     println!("  All 100 workers waiting...");
     
     // Insert single work item
-    let work_event = events::generic_adversarial_event("thundering_herd", "single.work", json!({"value": "high"}), None);
+    let work_event = crate::common::events::generic_adversarial_event("thundering_herd", "single.work", json!({"value": "high"}), None);
     
     queries::insert_event(&pool, &work_event).await.unwrap();
     

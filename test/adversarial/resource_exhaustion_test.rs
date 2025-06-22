@@ -1,9 +1,8 @@
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_db::models::RawEvent;
-use sinex_ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tempfile::TempDir;
 use crate::common::resources;
 use crate::common::events;
 use serde_json::json;
@@ -132,7 +131,6 @@ watch_paths = {}
 #[test]
 fn test_string_concatenation_memory_bomb() {
     use sinex_db::models::RawEvent;
-    use sinex_ulid::Ulid;
     
     // Create event with expanding string pattern
     let mut expanding_string = String::from("a");
@@ -142,7 +140,7 @@ fn test_string_concatenation_memory_bomb() {
         expanding_string = expanding_string.repeat(2);  // Exponential growth
         sizes.push(expanding_string.len());
         
-        let event = events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None);
+        let event = crate::common::events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None);
         
         match serde_json::to_string(&event) {
             Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len()),
@@ -180,7 +178,7 @@ async fn test_collector_event_queue_overflow() {
     
     let producer = tokio::spawn(async move {
         for i in 0..10000 {
-            let event = events::generic_adversarial_event("overflow", "test", json!({"test": true}), None);
+            let event = crate::common::events::generic_adversarial_event("overflow", "test", json!({"test": true}), None);
             
             // try_send doesn't block
             match tx_clone.try_send(event) {

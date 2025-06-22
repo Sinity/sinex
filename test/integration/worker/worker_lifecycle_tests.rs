@@ -1,14 +1,9 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
-use sqlx::PgPool;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
 use std::time::Duration;
-use sinex_ulid::Ulid;
-use async_trait::async_trait;
 
 // Import test setup macros and utilities
-use crate::common::database_helpers::get_shared_test_pool;
 use crate::common::worker_test_utils::{self, insert_test_work_item};
 
 struct TestEventProcessor {
@@ -62,7 +57,7 @@ impl EventProcessor for TestEventProcessor {
 
 #[tokio::test]
 async fn test_event_processor_basic_processing() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
         
@@ -90,7 +85,7 @@ async fn test_event_processor_basic_processing() -> Result<()> {
 
 #[tokio::test]
 async fn test_event_processor_failure_handling() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         
         processor.should_fail.store(true, Ordering::SeqCst);
@@ -152,7 +147,7 @@ async fn test_worker_metrics_creation() {
 
 #[tokio::test]
 async fn test_multiple_processors_different_agents() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
         

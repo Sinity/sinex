@@ -1,11 +1,9 @@
 // TTL policy tests - should fail until TTL implementation is complete
 use sinex_db::queries::*;
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use sinex_core::RawEventBuilder;
 use chrono::{Utc, Duration};
-use sqlx::PgPool;
 use serde_json::json;
-use anyhow::Result;
 
 #[sqlx::test]
 async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> {

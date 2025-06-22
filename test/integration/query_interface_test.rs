@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use serde_json::json;
 use std::process::Command;
-use sinex_ulid::Ulid;
 use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
@@ -20,7 +20,7 @@ async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
     ];
     
     for event in test_events {
-        assertions::assert_event_inserted(&pool, &event).await?;
+        assertions::assert_event_inserted(&pool, &event).await.unwrap();
     }
     
     // Test various CLI commands
@@ -99,10 +99,10 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
     crate::common::schema_test_utils::database::insert_test_schema(
         &pool,
         "test.filesystem",
-        "v1",
-        "1.0",
+        "file_event",
+        "1.0.0",
         test_schema
-    ).await?;
+    ).await.unwrap();
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
@@ -137,7 +137,7 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
 
 /// Test agent monitoring commands
 #[tokio::test]
-async fn test_exo_cli_agent_commands() {
+async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
     
@@ -175,6 +175,7 @@ async fn test_exo_cli_agent_commands() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("test-collector"), "Should show agent details");
     assert!(stdout.contains("filesystem"), "Should show capabilities");
+    Ok(())
 }
 
 /// Test error handling in CLI
@@ -228,7 +229,7 @@ async fn test_exo_cli_advanced_queries() {
     let base_time = chrono::Utc::now();
     
     for i in 0..20 {
-        let event = sinex_core::events::generic_adversarial_event(
+        let event = crate::common::events::generic_adversarial_event(
             &format!("source_{}", if i % 2 == 0 { "a" } else { "b" }),
             &format!("event.type_{}", i % 3),
             json!({
@@ -236,7 +237,7 @@ async fn test_exo_cli_advanced_queries() {
                 "data": format!("test data {}", i),
                 "important": i % 5 == 0
             }),
-            Some(base_time - chrono::Duration::minutes(i + 1))
+            Some(&(base_time - chrono::Duration::minutes(i + 1)).to_rfc3339())
         );
         
         sinex_db::queries::insert_event(&pool, &event).await.unwrap();
@@ -301,7 +302,7 @@ async fn test_exo_cli_output_formats() {
     let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
     
     // Insert a test event
-    let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
     
     sinex_db::queries::insert_event(&pool, &event).await.unwrap();
     

@@ -1,11 +1,9 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use std::fs;
 use std::time::Duration;
 use tokio::time::timeout;
 use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
 use serde_json::json;
-use tempfile::TempDir;
 
 /// Test filesystem monitoring against path traversal attacks
 #[tokio::test]
@@ -99,7 +97,7 @@ async fn test_filesystem_path_traversal_protection() -> Result<()> {
 /// Test SQL injection protection in dynamic query construction
 #[tokio::test]
 async fn test_sql_injection_protection() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Create test agent
@@ -292,7 +290,7 @@ async fn test_sql_injection_protection() -> Result<()> {
 /// Test resource exhaustion attack protection
 #[tokio::test]
 async fn test_resource_exhaustion_protection() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("exhaustion_test_{}", Ulid::new());
@@ -607,7 +605,7 @@ async fn test_configuration_injection_protection() -> Result<()> {
 /// Test event payload sanitization
 #[tokio::test]
 async fn test_malicious_payload_sanitization() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test various malicious payload patterns

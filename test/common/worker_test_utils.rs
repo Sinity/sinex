@@ -48,7 +48,7 @@ pub async fn insert_test_work_item(
 ) -> Result<Ulid> {
     // First create a raw event to reference
     let raw_event_id = Ulid::new();
-    let event = events::generic_adversarial_event("test_source", "test.event", json!({"test": true}), Some("test_1.0"));
+    let event = crate::common::events::generic_adversarial_event("test_source", "test.event", json!({"test": true}), Some("test_1.0"));
     
     // Insert the raw event first
     sinex_db::queries::insert_event(pool, &event).await?;

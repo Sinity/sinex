@@ -18,7 +18,7 @@ fn test_ulid_uuid_roundtrip() {
 
 #[test]
 fn test_raw_event_json_serialization() {
-    let event = events::generic_adversarial_event("test.source", "test.event", json!({"test": true}), Some("1.0.0"));
+    let event = crate::common::events::generic_adversarial_event("test.source", "test.event", json!({"test": true}), Some("1.0.0"));
     
     // Serialize to JSON
     let json_str = serde_json::to_string(&event).unwrap();
@@ -151,7 +151,7 @@ fn test_ulid_json_string_format() {
 #[test]
 fn test_optional_field_serialization() {
     // Test with None values
-    let event = events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
     let json_val = serde_json::to_value(&event).unwrap();
     
@@ -164,7 +164,7 @@ fn test_optional_field_serialization() {
 #[test]
 fn test_datetime_serialization_format() {
     let now = Utc::now();
-    let event = events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
     let json_str = serde_json::to_string(&event).unwrap();
     
@@ -195,7 +195,7 @@ fn test_large_payload_serialization() {
         });
     }
     
-    let event = events::generic_adversarial_event("test", "test.large", json!({"test": true}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "test.large", json!({"test": true}), None);
     
     // Should serialize without issues
     let json_str = serde_json::to_string(&event).unwrap();

@@ -1,6 +1,6 @@
 //! Deterministic wait utilities that replace arbitrary sleeps
 
-use std::time::{Duration, Instant};
+use crate::common::prelude::*;
 use super::EventCounter;
 
 /// Replace `sleep(Duration::from_millis(10))` with proper synchronization
@@ -281,7 +281,7 @@ pub async fn wait_for_filtered_event_count(
 
     while start.elapsed() < timeout_duration {
         let query = format!("SELECT COUNT(*) FROM raw.events WHERE {}", where_condition);
-        let mut query_builder = sqlx::query_scalar(&query);
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&query);
         
         // Bind parameters
         for param in params {
@@ -290,7 +290,7 @@ pub async fn wait_for_filtered_event_count(
         
         let count = query_builder
             .fetch_one(pool)
-            .await?
+            .await
             .unwrap_or(0i64);
 
         if count >= expected_count {

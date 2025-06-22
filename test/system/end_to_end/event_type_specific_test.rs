@@ -236,7 +236,7 @@ async fn test_window_geometry_overflow() {
     println!("Testing window geometry integer overflows:");
     
     for (x, y, width, height, desc) in overflow_geometries {
-        let event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None),
+        let event = crate::common::events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None),
                 "title": desc,
             }),
         };
@@ -327,7 +327,7 @@ async fn test_event_cascade_explosion() {
     
     // Simulate: file change triggers 10 terminal commands
     for i in 0..10 {
-        let term_event = events::generic_adversarial_event("terminal", "command.executed", json!({"test": true}), None)'", i),
+        let term_event = crate::common::events::generic_adversarial_event("terminal", "command.executed", json!({"test": true}), None)'", i),
                 "triggered_by": fs_event.id.to_string(),
             }),
         };
@@ -336,7 +336,7 @@ async fn test_event_cascade_explosion() {
         total_events += 1;
         
         // Each terminal command opens a notification window
-        let win_event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None);
+        let win_event = crate::common::events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None);
         };
         
         queries::insert_event(&pool, &win_event).await.unwrap();

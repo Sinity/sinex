@@ -1,7 +1,7 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::{queries, models::{RawEvent, AgentManifest}};
-use sinex_ulid::Ulid;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use futures::future::join_all;
@@ -127,7 +127,7 @@ async fn test_heartbeat_from_unregistered_agent() {
     let phantom_agent = "phantom-agent";
     
     // Send heartbeat without registration
-    let heartbeat_event = events::generic_adversarial_event("agent", "agent.heartbeat", json!({
+    let heartbeat_event = crate::common::events::generic_adversarial_event("agent", "agent.heartbeat", json!({
             "agent_name": phantom_agent,
             "status": "alive",
             "metrics": {

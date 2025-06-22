@@ -1,11 +1,9 @@
 //! Validation test utilities
 
-use anyhow::Result;
-use serde_json::{json, Value};
+use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_core::RawEventBuilder;
 use sinex_db::models::RawEvent;
-use sqlx::PgPool;
 use std::time::Duration;
 
 /// Assert that an event is valid (used by test files)
@@ -47,27 +45,27 @@ pub mod events {
 
     /// Create a valid filesystem event for testing
     pub fn valid_filesystem_event() -> RawEvent {
-        events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an invalid filesystem event (missing required fields)
     pub fn invalid_filesystem_event() -> RawEvent {
-        events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create a valid terminal event for testing
     pub fn valid_terminal_event() -> RawEvent {
-        events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an event with unknown source/type
     pub fn unknown_event() -> RawEvent {
-        events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an event with malformed payload
     pub fn malformed_payload_event() -> RawEvent {
-        events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 }
 
@@ -180,7 +178,6 @@ pub mod generators {
 /// Performance testing utilities for validation
 pub mod performance {
     use super::*;
-    use std::time::{Duration, Instant};
 
     /// Measure validation performance
     pub fn measure_validation_time(validator: &EventValidator, event: &RawEvent, iterations: usize) -> Duration {

@@ -1,10 +1,9 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
 use chrono::Utc;
 use serde_json::json;
-use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use futures::future::join_all;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
@@ -283,7 +282,7 @@ async fn test_events_spanning_chunk_boundary() {
     println!("  Chunk boundary at: {}", chunk_boundary);
     
     for (timestamp, label) in boundary_events {
-        let event = events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
+        let event = crate::common::events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
         
         match queries::insert_event(&pool, &event).await {
             Ok(_) => println!("    Inserted {}: {}", label, timestamp),

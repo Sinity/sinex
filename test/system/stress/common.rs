@@ -1,10 +1,8 @@
-use anyhow::Result;
-use sqlx::PgPool;
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 use sinex_db::{create_test_pool, run_migrations};
-use sinex_ulid::Ulid;
 use serde_json::json;
 
 /// Comprehensive metrics for tracking concurrency stress patterns
@@ -143,7 +141,7 @@ pub struct StressTestUtils;
 impl StressTestUtils {
     /// Setup a clean test environment with agent registration
     pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<PgPool> {
-        let pool = get_shared_test_pool().await?;
+        let pool = database_helpers::get_shared_test_pool().await?;
         run_migrations(&pool).await?;
 
         // Register the test agent

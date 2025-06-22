@@ -1,7 +1,7 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
 use std::sync::Arc;
 use tokio::time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -291,7 +291,7 @@ async fn test_worker_state_machine_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create a job that will be processed by workers
-    let test_event = events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
+    let test_event = crate::common::events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
     
     queries::insert_event(&pool, &test_event).await.unwrap();
     

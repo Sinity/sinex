@@ -39,6 +39,8 @@ pub use sqlx::PgPool;
 pub use futures::future::join_all;
 pub use tempfile::TempDir;
 pub use async_trait::async_trait;
+pub use std::pin::Pin;
+pub use std::boxed::Box;
 
 // External utilities  
 pub use rand::Rng;
@@ -50,6 +52,7 @@ pub use crate::common::{
     create_test_agent,
     resources,
     database_helpers,
+    event_sources,
 };
 
 // Test macros
@@ -63,7 +66,9 @@ pub use crate::common::timing_optimization::wait_helpers::{
     wait_for_event_count,
     wait_for_filtered_event_count,
     wait_for_work_queue_count,
+    wait_for_work_queue_status_count,
     wait_for_condition,
+    wait_for_condition_or_timeout,
 };
 
 // Constants commonly used in tests

@@ -5,7 +5,7 @@ use super::common::*;
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());

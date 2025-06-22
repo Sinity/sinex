@@ -1,3 +1,4 @@
+use crate::common::prelude::*;
 use sinex_db::{queries, models::RawEvent};
 use crate::common::create_test_db_pool;
 use crate::common::events;
@@ -24,7 +25,7 @@ async fn test_concurrent_ulid_generation() {
             
             let mut ulids = vec![];
             for i in 0..events_per_task {
-                let event = events::generic_adversarial_event("test", "concurrent.test", json!({
+                let event = crate::common::events::generic_adversarial_event("test", "concurrent.test", json!({
                         "task": task_id,
                         "event": i
                     }), None);
@@ -61,7 +62,7 @@ async fn test_worker_double_processing() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Insert a test event
-    let event = events::generic_adversarial_event("test", "worker_test", json!({"test": true}), None);
+    let event = crate::common::events::generic_adversarial_event("test", "worker_test", json!({"test": true}), None);
     let inserted = queries::insert_event(&pool, &event).await.unwrap();
     
     // Simulate two workers trying to claim the same event

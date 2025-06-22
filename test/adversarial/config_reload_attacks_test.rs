@@ -1,5 +1,5 @@
 use sinex_collector::config::{CollectorConfig, ConfigManager};
-use tempfile::TempDir;
+use crate::common::prelude::*;
 use std::fs;
 use std::os::unix;
 use tokio::time::{Duration, timeout};

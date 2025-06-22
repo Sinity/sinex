@@ -1,9 +1,7 @@
 use proptest::prelude::*;
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, Instant};
-use std::collections::{HashMap, HashSet};
 use chrono::{Utc, Duration as ChronoDuration};
 
 /// Test concurrent ULID generation properties

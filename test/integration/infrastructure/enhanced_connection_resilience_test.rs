@@ -1,8 +1,7 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
 use tokio::time::{timeout, sleep, interval};
 use futures::StreamExt;
 use sinex_db::{create_test_pool, run_migrations};
@@ -339,7 +338,7 @@ impl ResilientDbWorker {
 
 #[tokio::test]
 async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let metrics = Arc::new(ConnectionMetrics::new());
@@ -704,7 +703,7 @@ async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
 
 #[tokio::test]
 async fn test_connection_pool_memory_pressure_resilience() -> Result<()> {
-    let pool = get_shared_test_pool().await?;
+    let pool = database_helpers::get_shared_test_pool().await?;
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Test large query results under memory pressure
