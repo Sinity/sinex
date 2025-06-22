@@ -96,7 +96,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             .into_iter()
             .filter_map(|r| {
                 match (r.queue_id, r.processing_worker_id) {
-                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id);
+                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
                     _ => None,
                 }
             })
@@ -388,7 +388,7 @@ impl DeadlockStressWorker {
                 }))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(e.into();
+            Err(e) => Err(e.into()),
         }
     }
 

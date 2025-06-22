@@ -1,5 +1,6 @@
 use sinex_db::models::RawEvent;
 use serde_json::json;
+use crate::common::events;
 
 #[test]
 fn test_json_payload_size_limits() {
@@ -9,11 +10,10 @@ fn test_json_payload_size_limits() {
         huge_array.push(json!({
             "index": i,
             "data": "x".repeat(100)
-        });
+        }));
     }
     
-    let event = events::generic_adversarial_event("test", "huge.payload", json!({"test": true}), None);
-    };
+    let event = events::generic_adversarial_event("test", "huge.payload", json!({"huge_array": huge_array}), None);
     
     // This might cause issues with serialization or database storage
     let serialized = serde_json::to_string(&event);
@@ -38,14 +38,8 @@ fn test_json_special_characters() {
     ];
     
     for (i, payload) in evil_payloads.iter().enumerate() {
-        let event = events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)", i),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: payload.clone(),
-        };
+        let mut event = events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
+        event.payload = payload.clone();
         
         // These might fail serialization or cause database issues
         match serde_json::to_string(&event) {
@@ -66,7 +60,7 @@ fn test_recursive_json_structure() {
         });
     }
     
-    let event = events::generic_adversarial_event("test", "deeply.nested", json!({"test": true}), None);
+    let event = events::generic_adversarial_event("test", "deeply.nested", nested, None);
     
     // This might cause stack overflow or other issues
     let result = serde_json::to_string(&event);

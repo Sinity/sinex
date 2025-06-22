@@ -39,10 +39,10 @@ fn arb_json_value() -> BoxedStrategy<Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
-        any::<i64>().prop_map(|i| Value::Number(i.into());
+        any::<i64>().prop_map(|i| Value::Number(i.into())),
         any::<f64>()
             .prop_filter("valid float", |f| f.is_finite() && f.abs() > 1e-300 && f.abs() < 1e300)
-            .prop_map(|f| Value::Number(serde_json::Number::from_f64(f).unwrap());
+            .prop_map(|f| Value::Number(serde_json::Number::from_f64(f).unwrap())),
         "[a-zA-Z0-9_]{0,50}".prop_map(Value::String),
     ];
 
@@ -59,7 +59,7 @@ fn arb_json_value() -> BoxedStrategy<Value> {
                     inner,
                     0..10,
                 )
-                .prop_map(|m| Value::Object(m.into_iter().collect());
+                .prop_map(|m| Value::Object(m.into_iter().collect())),
             ]
         },
     )

@@ -304,7 +304,7 @@ proptest! {
             target_time, extracted_time, time_diff.num_milliseconds());
         
         // Property: ULID string representation should be consistent
-        let ulid_str = ulid.to_string());
+        let ulid_str = ulid.to_string();
         let parsed_ulid = Ulid::from_str(&ulid_str).expect("Should parse ULID string");
         prop_assert_eq!(ulid, parsed_ulid, "ULID should round-trip through string representation");
         

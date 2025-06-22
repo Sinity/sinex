@@ -40,10 +40,7 @@ impl EventSource for PipelineTestSource {
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for i in 0..self.events_to_generate {
-            let event = events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None)", i),
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                }),
-            };
+            let event = events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);

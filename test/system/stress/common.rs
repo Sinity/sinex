@@ -38,7 +38,7 @@ impl ConcurrencyStressMetrics {
             race_conditions_detected: AtomicU64::new(0),
             deadlock_recovery_attempts: AtomicU64::new(0),
             max_concurrent_workers: AtomicUsize::new(0),
-            worker_cycle_times: RwLock::new(Vec::new();
+            worker_cycle_times: RwLock::new(Vec::new()),
         }
     }
 

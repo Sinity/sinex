@@ -135,7 +135,7 @@ impl RaceConditionWorker {
                 }))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(e.into();
+            Err(e) => Err(e.into()),
         }
     }
 

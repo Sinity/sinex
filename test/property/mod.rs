@@ -32,13 +32,13 @@ pub mod strategies {
     pub fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
             // Small payload
-            Just(serde_json::json!({"type": "simple", "data": "test"});
+            Just(serde_json::json!({"type": "simple", "data": "test"})),
             // Medium payload
             Just(serde_json::json!({
                 "type": "medium",
                 "data": vec![1, 2, 3, 4, 5],
                 "metadata": {"created": "2024-01-01"}
-            });
+            })),
             // Large payload
             Just(serde_json::json!({
                 "type": "large",

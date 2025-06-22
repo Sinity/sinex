@@ -9,9 +9,9 @@ fn arb_json_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
-        any::<i64>().prop_map(|n| Value::Number(n.into());
+        any::<i64>().prop_map(|n| Value::Number(n.into())),
         any::<f64>().prop_filter("must be finite", |f| f.is_finite())
-            .prop_map(|f| json!(f);
+            .prop_map(|f| json!(f)),
         "[a-zA-Z0-9_-]{1,50}".prop_map(Value::String),
     ];
     
@@ -23,7 +23,7 @@ fn arb_json_value() -> impl Strategy<Value = Value> {
             prop::collection::vec(inner.clone(), 0..10)
                 .prop_map(Value::Array),
             prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_-]{0,20}", inner, 0..10)
-                .prop_map(|map| Value::Object(map.into_iter().collect());
+                .prop_map(|map| Value::Object(map.into_iter().collect())),
         ],
     )
 }
@@ -79,10 +79,10 @@ fn arb_raw_event() -> impl Strategy<Value = RawEvent> {
         arb_source_name(),
         arb_event_type_name(),
         arb_json_value(),
-        prop::option::of(arb_timestamp();
-        prop::option::of(arb_hostname();
-        prop::option::of(arb_version();
-        prop::option::of(any::<Ulid>();
+        prop::option::of(arb_timestamp()),
+        prop::option::of(arb_hostname()),
+        prop::option::of(arb_version()),
+        prop::option::of(any::<Ulid>()),
     ).prop_map(|(source, event_type, payload, ts_orig, host, version, schema_id)| {
         let mut builder = RawEventBuilder::new(source, event_type, payload);
         
@@ -273,7 +273,7 @@ mod unit_tests {
         
         assert_eq!(event.source, "test_source");
         assert_eq!(event.event_type, "test.event");
-        assert_eq!(event.payload, json!({"key": "value"});
+        assert_eq!(event.payload, json!({"key": "value"}));
         assert!(event.ts_orig.is_none());
         assert!(!event.host.is_empty()); // Should get hostname
         assert!(event.ingestor_version.is_none());

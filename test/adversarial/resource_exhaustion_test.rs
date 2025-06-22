@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use tempfile::TempDir;
 use crate::common::resources;
 use crate::common::events;
+use serde_json::json;
 
 #[tokio::test]
 async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
@@ -142,10 +143,9 @@ fn test_string_concatenation_memory_bomb() {
         sizes.push(expanding_string.len());
         
         let event = events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None);
-        };
         
         match serde_json::to_string(&event) {
-            Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len();
+            Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len());
             Err(e) => {
                 println!("Iteration {}: String size {} - FAILED: {}", i, expanding_string.len(), e);
                 break;
@@ -181,7 +181,6 @@ async fn test_collector_event_queue_overflow() {
     let producer = tokio::spawn(async move {
         for i in 0..10000 {
             let event = events::generic_adversarial_event("overflow", "test", json!({"test": true}), None);
-            };
             
             // try_send doesn't block
             match tx_clone.try_send(event) {
