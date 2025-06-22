@@ -212,42 +212,18 @@ impl Worker {
         &self.metrics
     }
     
-    /// Helper to fetch raw event by ID for DLQ
+    /// Helper to fetch raw event by ID for DLQ (using consolidated query)
     async fn get_raw_event(&self, event_id: sinex_ulid::Ulid) -> Result<Option<RawEvent>> {
-        let record = sqlx::query!(
-            r#"
-            SELECT 
-                id::uuid as "id!",
-                source as "source!",
-                event_type as "event_type!",
-                ts_ingest as "ts_ingest!",
-                ts_orig,
-                host as "host!",
-                ingestor_version,
-                payload_schema_id::uuid as "payload_schema_id",
-                payload as "payload!"
-            FROM raw.events
-            WHERE id = $1::uuid::ulid
-            "#,
-            event_id.to_uuid()
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        
-        if let Some(record) = record {
-            Ok(Some(RawEvent {
-                id: sinex_ulid::Ulid::from_uuid(record.id),
-                source: record.source,
-                event_type: record.event_type,
-                ts_ingest: record.ts_ingest,
-                ts_orig: record.ts_orig,
-                host: record.host,
-                ingestor_version: record.ingestor_version,
-                payload_schema_id: record.payload_schema_id.map(sinex_ulid::Ulid::from_uuid),
-                payload: record.payload,
-            }))
-        } else {
-            Ok(None)
+        match sinex_db::queries::get_event_by_id(&self.pool, event_id).await {
+            Ok(event) => Ok(Some(event)),
+            Err(e) => {
+                // Check if it's a RowNotFound error by examining the error string
+                if e.to_string().contains("RowNotFound") {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
         }
     }
 }
