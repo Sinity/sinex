@@ -7,40 +7,9 @@ use std::time::Duration;
 use sinex_ulid::Ulid;
 use async_trait::async_trait;
 
-// Import test setup macros
+// Import test setup macros and utilities
 use crate::db_test;
-
-async fn insert_test_work_item(pool: &PgPool, agent_name: &str) -> Result<Ulid> {
-    let queue_id = Ulid::new();
-    let raw_event_id = Ulid::new();
-    
-    // Insert a raw event first
-    sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, ts_ingest, host, payload) 
-         VALUES ($1, $2, $3, NOW(), $4, $5)"
-    )
-    .bind(raw_event_id.to_uuid())
-    .bind("test_source")
-    .bind("test_event")
-    .bind("test_host")
-    .bind(serde_json::json!({"test": "data"}))
-    .execute(pool)
-    .await?;
-    
-    // Insert into work queue
-    sqlx::query(
-        "INSERT INTO sinex_schemas.work_queue 
-         (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at) 
-         VALUES ($1, $2, $3, 'pending', 0, 3, NOW())"
-    )
-    .bind(queue_id.to_uuid())
-    .bind(raw_event_id.to_uuid())
-    .bind(agent_name)
-    .execute(pool)
-    .await?;
-    
-    Ok(queue_id)
-}
+use crate::common::worker_test_utils::{self, insert_test_work_item};
 
 struct TestEventProcessor {
     agent_name: String,
@@ -96,8 +65,9 @@ db_test! {
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
         
-        // Insert a test item
-        let _queue_id = insert_test_work_item(&pool, "test_agent").await?;
+        // Insert a test item using the utility
+        let queue_ids = worker_test_utils::setup_test_worker(&pool, "test_agent", 1).await?;
+        let _queue_id = queue_ids[0];
         
         // Process the item
         let item = sqlx::query_as::<_, WorkQueueItem>(

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde_json::json;
+use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]
 async fn test_database_insertion_performance() -> anyhow::Result<()> {
@@ -41,7 +42,7 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
         
         // Small delay to avoid overwhelming test infrastructure
         if i % 100 == 0 {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
         }
     }
     
@@ -52,9 +53,14 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
     println!("Inserted {} events in {:?} ({:.2} events/sec)", 
              total_inserted, elapsed, insertion_rate);
     
-    // Verify events in database
-    let count_query = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events WHERE source = 'load_test'");
-    let db_count = count_query.fetch_one(&pool).await?.unwrap_or(0) as u64;
+    // Verify events in database using timing utility
+    let db_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1",
+        &["load_test"],
+        target_events as i64,
+        10
+    ).await.unwrap_or(0) as u64;
     
     println!("Database contains {} load_test events", db_count);
     
@@ -103,7 +109,7 @@ async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
                 
                 // Small delay to avoid overwhelming
                 if i % 20 == 0 {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
             }
             
@@ -125,9 +131,14 @@ async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
     println!("Concurrent test: {} workers inserted {} events in {:?} ({:.2} events/sec)", 
              num_workers, total_inserted, elapsed, insertion_rate);
     
-    // Verify events in database
-    let count_query = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events WHERE source = 'concurrent_load_test'");
-    let db_count = count_query.fetch_one(&pool).await?.unwrap_or(0) as u64;
+    // Verify events in database using timing utility
+    let db_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1",
+        &["concurrent_load_test"],
+        (num_workers * events_per_worker) as i64,
+        10
+    ).await.unwrap_or(0) as u64;
     
     // Success criteria
     assert!(total_inserted >= (num_workers * events_per_worker * 95 / 100), "Too few events inserted");

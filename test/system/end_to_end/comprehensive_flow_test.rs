@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
 use sinex_core::{RawEvent, event_type_constants, sources};
@@ -20,6 +21,9 @@ async fn test_complete_event_pipeline() {
     
     info!("Starting comprehensive pipeline test");
     
+    // Test configuration
+    let num_events = 50; // Number of events to generate for testing
+    
     // Phase 1: Test Event Generation and Collection
     let _collector_config = CollectorConfig {
         enabled_events: vec![
@@ -38,11 +42,14 @@ async fn test_complete_event_pipeline() {
     let (event_tx, mut event_rx) = mpsc::channel(1000);
     let collected_events = Arc::new(Mutex::new(Vec::new()));
     let collected_clone = collected_events.clone();
+    let event_counter = Arc::new(EventCounter::new(num_events as usize));
+    let counter_clone = event_counter.clone();
     
     // Spawn event collector task
     let collector_task = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             collected_clone.lock().await.push(event);
+            counter_clone.increment();
         }
     });
     
@@ -56,8 +63,9 @@ async fn test_complete_event_pipeline() {
         event_tx.send(event).await.unwrap();
     }
     
-    // Allow time for collection
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for all events to be collected
+    event_counter.wait_for_target(Duration::from_secs(5)).await
+        .expect("Timed out waiting for events to be collected");
     
     // Verify all events collected
     let collected = collected_events.lock().await;

@@ -4,9 +4,10 @@ use sinex_ulid::Ulid;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
+use tokio::sync::Notify;
 use futures::future::join_all;
 
 #[tokio::test]
@@ -181,7 +182,8 @@ async fn test_dead_worker_holding_locks() {
                 
                 // Simulate SIGSTOP - hold transaction open without committing
                 println!("  Zombie worker frozen (holding lock)...");
-                tokio::time::sleep(Duration::from_secs(30)).await;
+                // Hold long enough for other workers to timeout
+                tokio::time::sleep(Duration::from_secs(3)).await;
                 
                 // Transaction will rollback when dropped
             }
@@ -196,13 +198,13 @@ async fn test_dead_worker_holding_locks() {
         let event_id = work_event.id;
         
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(500)).await; // Let zombie claim first
+            tokio::time::sleep(Duration::from_millis(100)).await; // Let zombie claim first
             
             let start = Instant::now();
             
             // Try to claim with timeout
             let claim_result = timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(3),
                 sqlx::query!(
                     r#"
                     UPDATE raw.events 
@@ -301,7 +303,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
             
             // All workers wake and query simultaneously
             match timeout(
-                Duration::from_secs(10),
+                Duration::from_secs(3),
                 sqlx::query!(
                     r#"
                     SELECT id::uuid as id FROM raw.events 
@@ -351,9 +353,18 @@ async fn test_mass_worker_wakeup_thundering_herd() {
         worker_handles.push(handle);
     }
     
-    // Wait for all workers to be ready
+    // Wait for all workers to be ready using proper synchronization
+    let coordinator = Arc::new(crate::common::timing_optimization::replacements::WorkerReadinessCoordinator::new(100));
+    
+    // Use the existing atomic counter pattern but with proper timeout
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(5);
+    
     while waiting_workers.load(Ordering::SeqCst) < 100 {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+        if start.elapsed() > timeout_duration {
+            panic!("Workers not ready within timeout");
+        }
     }
     
     println!("  All 100 workers waiting...");

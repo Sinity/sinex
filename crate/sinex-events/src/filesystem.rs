@@ -9,8 +9,7 @@ use tracing::{debug, info, error};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, event_type_constants, sources, RawEvent};
 
 // ============================================================================
 // Event Payloads
@@ -99,6 +98,10 @@ pub struct FilesystemMonitor {
 pub type FilesystemWatcher = FilesystemMonitor;
 
 impl FilesystemMonitor {
+    async fn new(config: FilesystemConfig) -> Result<Self> {
+        Ok(Self { config })
+    }
+    
     fn process_notify_event(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
@@ -217,6 +220,9 @@ impl FilesystemMonitor {
             _ => return None,
         };
         
+        // Create event using helper - but we need 'self' for this
+        // Since this is a static method, we'll keep the manual creation for now
+        // and use the helper in stream_events instead
         Some(RawEvent {
             id: sinex_ulid::Ulid::new(),
             source: sources::FILESYSTEM.to_string(),
@@ -224,12 +230,15 @@ impl FilesystemMonitor {
             ts_ingest: Utc::now(),
             ts_orig: Some(Utc::now()),
             host: gethostname::gethostname().to_string_lossy().to_string(),
-            ingestor_version: Some("0.1.0".to_string()),
+            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             payload_schema_id: None,
             payload,
         })
     }
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for FilesystemMonitor {}
 
 #[async_trait]
 impl EventSource for FilesystemMonitor {
@@ -238,15 +247,14 @@ impl EventSource for FilesystemMonitor {
     const SOURCE_NAME: &'static str = sources::FILESYSTEM;
     
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        // Extract config from context
-        let config: FilesystemConfig = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        // Use base trait for config parsing
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         
         info!(
             patterns = ?config.watch_patterns,
             "Initializing filesystem watcher"
         );
-        Ok(Self { config })
+        Self::new(config).await
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {

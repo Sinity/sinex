@@ -227,7 +227,7 @@ async fn test_connection_pool_transaction_isolation() -> Result<()> {
     // Try to query from another connection - should not see uncommitted data
     let pool2 = pool.clone();
     let task2 = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
         
         // This should fail - table doesn't exist in this connection
         let result = sqlx::query("SELECT * FROM pool_test")

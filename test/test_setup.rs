@@ -76,9 +76,9 @@ async fn setup_test_database_with_config(config: Option<&str>) -> PgPool {
 
     // Use the high-concurrency test pool with optimized settings
     let pool = match config {
-        Some("high_performance") => create_high_performance_test_pool(&database_url).await,
-        _ => sinex_db::create_test_pool(&database_url).await,
-    }.expect("Failed to connect to test database");
+        Some("high_performance") => create_high_performance_test_pool(&database_url).await.expect("Failed to create high performance test pool"),
+        _ => sinex_db::create_test_pool(&database_url).await.expect("Failed to create test pool"),
+    };
 
     // Ensure migrations are run
     sqlx::migrate!("./migrations")
@@ -91,18 +91,18 @@ async fn setup_test_database_with_config(config: Option<&str>) -> PgPool {
 
 async fn create_high_performance_test_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
     use sqlx::postgres::{PgPoolOptions, PgConnectOptions};
+    use sqlx::ConnectOptions;
     use std::str::FromStr;
     
     let connect_options = PgConnectOptions::from_str(database_url)?
-        .statement_cache_capacity(1000)  // Larger statement cache
-        .log_statements(tracing::metadata::LevelFilter::DEBUG);
+        .statement_cache_capacity(1000);  // Larger statement cache
     
     PgPoolOptions::new()
         .max_connections(50)  // Higher connection limit for concurrent tests
         .min_connections(10)  // Keep minimum connections ready
         .acquire_timeout(std::time::Duration::from_secs(5))
-        .idle_timeout(Some(std::time::Duration::from_secs(30)))
-        .max_lifetime(Some(std::time::Duration::from_secs(300)))
+        .idle_timeout(Some(std::time::Duration::from_secs(10)))
+        .max_lifetime(Some(std::time::Duration::from_secs(60)))
         .connect_with(connect_options)
         .await
 }
@@ -166,22 +166,22 @@ pub async fn cleanup_test_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     
     // First clean tables that reference other tables
     // Clean DLQ entries that reference work queue
-    sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
+    sqlx::query!("DELETE FROM sinex_schemas.dlq_events WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name LIKE 'metrics-%' OR agent_name LIKE '%_test_%' OR agent_name LIKE 'perf-%' OR agent_name = 'concurrency_test_agent' OR agent_name LIKE 'algorithm_test_%' OR agent_name LIKE 'degradation_test_%' OR agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     
     // Clean work queue entries (references raw.events)
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker'")
+    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test%' OR target_agent_name LIKE 'pipeline_test%' OR target_agent_name LIKE 'error_test%' OR target_agent_name LIKE 'metrics-%' OR target_agent_name LIKE '%_test_%' OR target_agent_name LIKE 'perf-%' OR target_agent_name = 'concurrency_test_agent' OR target_agent_name = 'test_worker' OR target_agent_name LIKE 'algorithm_test_%' OR target_agent_name LIKE 'degradation_test_%' OR target_agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     
     // Clean test events
-    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source LIKE 'pipeline_test%' OR source LIKE 'error_test%' OR source = 'concurrency_test' OR source = 'slow_source' OR (source = 'filesystem' AND payload->>'path' LIKE '/test/%')")
+    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source LIKE 'pipeline_test%' OR source LIKE 'error_test%' OR source LIKE 'metrics_%' OR source = 'concurrency_test' OR source = 'slow_source' OR (source = 'filesystem' AND payload->>'path' LIKE '/test/%')")
         .execute(pool)
         .await?;
     
     // Clean test agent manifests
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name = 'concurrency_test_agent'")
+    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test%' OR agent_name LIKE 'pipeline_test%' OR agent_name LIKE 'error_test%' OR agent_name LIKE 'metrics-%' OR agent_name LIKE '%_test_%' OR agent_name LIKE 'perf-%' OR agent_name = 'concurrency_test_agent' OR agent_name LIKE 'algorithm_test_%' OR agent_name LIKE 'degradation_test_%' OR agent_name LIKE '%agent%'")
         .execute(pool)
         .await?;
     

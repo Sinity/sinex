@@ -182,7 +182,7 @@ async fn test_connection_pool_timeout_resilience() {
                 }
                 
                 // Brief pause between attempts
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         });
         

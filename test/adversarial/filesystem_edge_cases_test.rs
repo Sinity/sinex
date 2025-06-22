@@ -45,7 +45,7 @@ async fn test_file_permission_revoked_while_watching() {
     });
     
     // After some time, revoke permissions
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     
     // Remove all permissions
     match fs::set_permissions(&watch_dir, fs::Permissions::from_mode(0o000)) {
@@ -124,8 +124,8 @@ async fn test_directory_unmounted_while_watching() {
         }
     });
     
-    // After some time, simulate "unmounting" by removing the directory
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // After brief time, simulate "unmounting" by removing the directory
+    tokio::time::sleep(Duration::from_millis(100)).await;
     
     println!("Simulating unmount by removing directory");
     match fs::remove_dir_all(&mount_point) {

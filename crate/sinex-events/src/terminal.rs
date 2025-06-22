@@ -10,8 +10,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, event_type_constants, sources, RawEvent};
 
 // ============================================================================
 // Event Payloads
@@ -73,6 +72,9 @@ pub struct KittySocketListener {
     last_command_times: Arc<Mutex<HashMap<u32, DateTime<Utc>>>>,
 }
 
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for KittySocketListener {}
+
 #[async_trait]
 impl EventSource for KittySocketListener {
     type Config = KittyConfig;
@@ -80,17 +82,14 @@ impl EventSource for KittySocketListener {
     const SOURCE_NAME: &'static str = sources::TERMINAL_KITTY;
     
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        // Use base trait for config parsing
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         
         info!(
             socket_path = ?config.socket_path,
             "Initializing Kitty socket listener"
         );
-        Ok(Self { 
-            config,
-            last_command_times: Arc::new(Mutex::new(HashMap::new())),
-        })
+        Self::new(config).await
     }
     
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
@@ -114,6 +113,13 @@ impl EventSource for KittySocketListener {
 }
 
 impl KittySocketListener {
+    async fn new(config: KittyConfig) -> Result<Self> {
+        Ok(Self { 
+            config,
+            last_command_times: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+    
     async fn poll_kitty_commands(&self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
         // Find Kitty sockets
         let sockets = Self::find_kitty_sockets(&self.config.socket_path)?;
@@ -154,17 +160,10 @@ impl KittySocketListener {
                                 "New command detected"
                             );
                             
-                            let event = RawEvent {
-                                id: sinex_ulid::Ulid::new(),
-                                source: sources::TERMINAL_KITTY.to_string(),
-                                event_type: event_type_constants::terminal::COMMAND_EXECUTED.to_string(),
-                                ts_ingest: Utc::now(),
-                                ts_orig: Some(cmd.ts_end_orig),
-                                host: gethostname::gethostname().to_string_lossy().to_string(),
-                                ingestor_version: Some("0.1.0".to_string()),
-                                payload_schema_id: None,
-                                payload: serde_json::to_value(cmd)?,
-                            };
+                            let event = self.create_event(
+                                event_type_constants::terminal::COMMAND_EXECUTED,
+                                serde_json::to_value(cmd)?
+                            );
 
                             tx.send(event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
                             

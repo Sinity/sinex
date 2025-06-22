@@ -408,49 +408,31 @@ pub fn create_agent_manifest(
 
 /// Helper functions to create agent events
 pub fn create_heartbeat_event(heartbeat: AgentHeartbeat) -> RawEvent {
-    use sinex_core::{event_type_constants, sources};
+    use sinex_core::{event_type_constants, sources, RawEventBuilder};
     
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: sources::SINEX.to_string(),
-        event_type: event_type_constants::sinex::AGENT_HEARTBEAT.to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload: serde_json::to_value(heartbeat).unwrap(),
-    }
+    RawEventBuilder::new(
+        sources::SINEX,
+        event_type_constants::sinex::AGENT_HEARTBEAT,
+        serde_json::to_value(heartbeat).unwrap(),
+    ).build()
 }
 
 pub fn create_error_event(error: AgentError) -> RawEvent {
-    use sinex_core::{event_type_constants, sources};
+    use sinex_core::{event_type_constants, sources, RawEventBuilder};
     
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: sources::SINEX.to_string(),
-        event_type: event_type_constants::sinex::AGENT_ERROR.to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload: serde_json::to_value(error).unwrap(),
-    }
+    RawEventBuilder::new(
+        sources::SINEX,
+        event_type_constants::sinex::AGENT_ERROR,
+        serde_json::to_value(error).unwrap(),
+    ).build()
 }
 
 pub fn create_dlq_event(dlq: DlqEventWritten) -> RawEvent {
-    use sinex_core::{event_type_constants, sources};
+    use sinex_core::{event_type_constants, sources, RawEventBuilder};
     
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: sources::SINEX.to_string(),
-        event_type: event_type_constants::sinex::AGENT_DLQ_EVENT_WRITTEN.to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload: serde_json::to_value(dlq).unwrap(),
-    }
+    RawEventBuilder::new(
+        sources::SINEX,
+        event_type_constants::sinex::AGENT_DLQ_EVENT_WRITTEN,
+        serde_json::to_value(dlq).unwrap(),
+    ).build()
 }

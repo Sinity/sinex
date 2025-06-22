@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use sinex_db::{
-    models::{WorkQueueItem, RawEvent},
+    models::WorkQueueItem,
     queries::{upsert_agent_manifest},
 };
 use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
@@ -73,38 +73,9 @@ struct ExampleProcessor {
 #[async_trait]
 impl EventProcessor for ExampleProcessor {
     async fn process_event(&self, pool: &PgPool, item: &WorkQueueItem) -> Result<()> {
-        // Fetch the raw event - need to handle ULID conversion manually
-        let record = sqlx::query!(
-            r#"
-            SELECT 
-                id::uuid as "id!", 
-                source as "source!", 
-                event_type as "event_type!", 
-                ts_ingest as "ts_ingest!",
-                ts_orig,
-                host as "host!", 
-                ingestor_version, 
-                payload_schema_id::uuid as "payload_schema_id", 
-                payload as "payload!"
-            FROM raw.events 
-            WHERE id = $1::uuid::ulid
-            "#,
-            uuid::Uuid::from(item.raw_event_id)
-        )
-        .fetch_one(pool)
-        .await?;
-        
-        let event = RawEvent {
-            id: record.id.into(),
-            source: record.source,
-            event_type: record.event_type,
-            ts_ingest: record.ts_ingest,
-            ts_orig: record.ts_orig,
-            host: record.host,
-            ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(Into::into),
-            payload: record.payload,
-        };
+        // Use consolidated query function
+        let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id)
+            .await?;
 
         info!(
             agent = %self.agent_name,

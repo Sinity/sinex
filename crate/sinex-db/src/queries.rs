@@ -1254,3 +1254,56 @@ pub async fn insert_work_queue_item(
         failure_reason: record.failure_reason,
     })
 }
+
+/// Refresh the routing cache materialized view
+pub async fn refresh_routing_cache(pool: &PgPool) -> Result<()> {
+    sqlx::query!("SELECT sinex_router.refresh_routing_cache()")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Run the batch router function to process unrouted events
+pub async fn run_batch_router(pool: &PgPool) -> Result<i64> {
+    let result = sqlx::query!(
+        "SELECT sinex_router.batch_route_events() as count"
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(result.count.unwrap_or(0))
+}
+
+/// Calculate queue depth metrics per agent
+#[derive(Debug, Clone)]
+pub struct QueueDepthMetric {
+    pub agent_name: String,
+    pub queue_depth: i64,
+}
+
+pub async fn calculate_queue_depth_metrics(pool: &PgPool) -> Result<Vec<QueueDepthMetric>> {
+    let metrics = sqlx::query!(
+        r#"
+        SELECT 
+            am.agent_name,
+            COALESCE(wq.queue_depth, 0) as queue_depth
+        FROM sinex_schemas.agent_manifests am
+        LEFT JOIN (
+            SELECT 
+                target_agent_name,
+                COUNT(*) as queue_depth
+            FROM sinex_schemas.work_queue
+            WHERE status = 'pending'
+            GROUP BY target_agent_name
+        ) wq ON am.agent_name = wq.target_agent_name
+        ORDER BY am.agent_name
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(metrics.into_iter().map(|m| QueueDepthMetric {
+        agent_name: m.agent_name,
+        queue_depth: m.queue_depth.unwrap_or(0),
+    }).collect())
+}

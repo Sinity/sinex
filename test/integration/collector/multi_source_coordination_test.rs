@@ -243,7 +243,7 @@ async fn test_source_startup_synchronization() -> Result<()> {
                     break;
                 }
                 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::task::yield_now().await;
             }
             
             Ok::<_, anyhow::Error>(())
@@ -295,7 +295,7 @@ async fn test_registry_based_source_discovery() -> Result<()> {
     
     // Common sources should be present
     assert!(sources.contains_key("filesystem"));
-    assert!(sources.contains_key("terminal_kitty"));
+    assert!(sources.contains_key("terminal.kitty"));
     
     Ok(())
 }

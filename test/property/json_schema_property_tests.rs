@@ -117,13 +117,13 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
     ]
 }
 
-proptest! {
-    #[test]
-    fn test_event_validator_normal_payloads(
+#[test]
+fn test_event_validator_normal_payloads() {
+    proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
         payload in arb_event_payload()
-    ) {
+    )| {
         let event = RawEventBuilder::new(source, event_type, payload).build();
         let validator = EventValidator::new();
         
@@ -134,31 +134,39 @@ proptest! {
         match result {
             Ok(()) => {
                 // Event passed validation
+                prop_assert!(true);
             },
             Err(ValidationError::UnknownEventType { .. }) => {
                 // Expected for unknown event types
+                prop_assert!(true);
             },
             Err(ValidationError::MissingField { .. }) => {
                 // Expected for malformed events
+                prop_assert!(true);
             },
             Err(ValidationError::InvalidType { .. }) => {
                 // Expected for type mismatches
+                prop_assert!(true);
             },
             Err(ValidationError::InvalidValue { .. }) => {
                 // Expected for invalid values
+                prop_assert!(true);
             },
             Err(_) => {
                 // Other validation errors are also acceptable
+                prop_assert!(true);
             }
         }
-    }
+    });
+}
 
-    #[test]
-    fn test_event_validator_security_payloads(
+#[test]
+fn test_event_validator_security_payloads() {
+    proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
         payload in arb_problematic_payload()
-    ) {
+    )| {
         let event = RawEventBuilder::new(source, event_type, payload).build();
         let validator = EventValidator::new();
         
@@ -169,16 +177,19 @@ proptest! {
         match result {
             Ok(()) | Err(_) => {
                 // Any result is fine - main thing is no crashes
+                prop_assert!(true);
             }
         }
-    }
+    });
+}
 
-    #[test]
-    fn test_raw_event_validation_consistency(
+#[test]
+fn test_raw_event_validation_consistency() {
+    proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
         payload in arb_event_payload()
-    ) {
+    )| {
         let event = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
         let validator = EventValidator::new();
         
@@ -198,33 +209,36 @@ proptest! {
                 prop_assert!(false, "Validation was not consistent");
             }
         }
-    }
+    });
+}
 
-    #[test]
-    fn test_event_validator_edge_cases() {
-        let validator = EventValidator::new();
+#[test]
+fn test_event_validator_edge_cases() {
+    let validator = EventValidator::new();
+    
+    let long_source = "x".repeat(1000);
+    let long_event_type = "x".repeat(1000);
+    
+    let edge_cases = vec![
+        // Empty fields
+        ("", "test.event", json!({})),
+        ("test_source", "", json!({})),
+        ("test_source", "test.event", json!(null)),
         
-        let edge_cases = vec![
-            // Empty fields
-            ("", "test.event", json!({})),
-            ("test_source", "", json!({})),
-            ("test_source", "test.event", json!(null)),
-            
-            // Very long fields
-            ("x".repeat(1000), "test.event", json!({})),
-            ("test_source", "x".repeat(1000), json!({})),
-            
-            // Special characters
-            ("test@source#", "test.event!", json!({})),
-            ("test_source", "test.event.with.many.dots", json!({})),
-        ];
+        // Very long fields  
+        (long_source.as_str(), "test.event", json!({})),
+        ("test_source", long_event_type.as_str(), json!({})),
         
-        for (source, event_type, payload) in edge_cases {
-            let event = RawEventBuilder::new(source, event_type, payload).build();
-            
-            // Should not panic
-            let _result = validator.validate(&event);
-        }
+        // Special characters
+        ("test@source#", "test.event!", json!({})),
+        ("test_source", "test.event.with.many.dots", json!({})),
+    ];
+    
+    for (source, event_type, payload) in edge_cases {
+        let event = RawEventBuilder::new(source, event_type, payload).build();
+        
+        // Should not panic
+        let _result = validator.validate(&event);
     }
 }
 

@@ -26,7 +26,7 @@ pub mod strategies {
     /// Strategy for generating valid ULID timestamps
     pub fn valid_timestamps() -> impl Strategy<Value = DateTime<Utc>> {
         (0u64..2_000_000_000u64)  // Valid Unix timestamp range
-            .prop_map(|ts| DateTime::from_timestamp(ts, 0).unwrap_or(Utc::now()))
+            .prop_map(|ts| DateTime::from_timestamp(ts as i64, 0).unwrap_or(Utc::now()))
     }
 
     /// Strategy for generating realistic event payloads

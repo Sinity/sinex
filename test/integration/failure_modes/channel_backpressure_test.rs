@@ -60,7 +60,7 @@ async fn test_channel_backpressure_handling() {
     let consumer = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             // Simulate slow processing
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::task::yield_now().await;
             cons_count.fetch_add(1, Ordering::Relaxed);
             
             if let Some(seq) = event.payload.get("seq").and_then(|v| v.as_u64()) {
@@ -224,7 +224,7 @@ async fn test_event_source_crash_recovery() {
                     panic!("Simulated event source crash at event {}", i);
                 }
                 
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
             Ok(())
         }

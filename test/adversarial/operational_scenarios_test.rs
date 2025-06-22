@@ -6,6 +6,7 @@ use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
 use sinex_ulid::Ulid;
 use serde_json::json;
 use tempfile::TempDir;
+use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_agent_status, wait_for_filtered_event_count};
 
 /// Test startup sequence robustness and error handling
 #[tokio::test]
@@ -29,7 +30,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             run_migrations(&pool).await?;
@@ -78,7 +79,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     println!("\nTesting startup with existing data...");
     
     let existing_data_startup = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(3),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -110,7 +111,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
             // Simulate restart by running migrations again
             run_migrations(&pool).await?;
             
-            // Verify data integrity after restart
+            // Verify data integrity after restart - use timing utilities for better reliability
             let agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -118,12 +119,14 @@ async fn test_startup_sequence_robustness() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'startup.test'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility for event count verification with source filter
+            let event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["startup.test"], 
+                10, 
+                5
+            ).await.unwrap_or(0);
             
             Ok::<(i64, i64), anyhow::Error>((agent_count, event_count))
         }
@@ -151,7 +154,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
     
     // Create a corrupted migration state (simulate partial migration failure)
     let error_recovery_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -271,7 +274,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     // Step 1: Complete active transactions
     let transaction_completion_start = Instant::now();
     for (i, tx) in transactions.into_iter().enumerate() {
-        match timeout(Duration::from_secs(5), tx.commit()).await {
+        match timeout(Duration::from_secs(3), tx.commit()).await {
             Ok(Ok(())) => {
                 println!("    ✓ Transaction {} committed gracefully", i);
             }
@@ -292,18 +295,19 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
 
     // Step 3: Verify database state after shutdown
     let post_shutdown_verification = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(3),
         async {
             // New connection should work
             let verification_pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
             
-            // Check that committed transactions are persisted
-            let committed_events: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'shutdown.test'"
-            )
-            .fetch_one(&verification_pool)
-            .await?
-            .unwrap_or(0);
+            // Check that committed transactions are persisted - use timing utility
+            let committed_events = wait_for_filtered_event_count(
+                &verification_pool, 
+                "source = $1", 
+                &["shutdown.test"], 
+                3, 
+                5
+            ).await.unwrap_or(0);
             
             // Check database integrity
             let db_check = sqlx::query_scalar!("SELECT 1").fetch_one(&verification_pool).await?;
@@ -325,7 +329,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
             
             assert!(committed_events >= 3, "Transactions should be committed before shutdown");
             assert!(db_check == 1, "Database should remain functional after shutdown");
-            assert!(total_shutdown_duration < Duration::from_secs(10), "Shutdown should be reasonably fast");
+            assert!(total_shutdown_duration < Duration::from_secs(5), "Shutdown should be reasonably fast");
             
             println!("  ✓ Graceful shutdown sequence completed successfully");
         }
@@ -341,7 +345,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     println!("\nTesting interrupted shutdown scenarios...");
     
     let interrupted_shutdown_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             // Create long-running operation
             let long_operation = tokio::spawn(async {
@@ -362,7 +366,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
                     
                     // Simulate work with small delays
                     if i % 100 == 0 {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::task::yield_now().await;
                     }
                 }
                 
@@ -376,21 +380,22 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
             long_operation.abort();
             
             // Verify system remains stable after interrupt
-            let stability_check = timeout(
-                Duration::from_secs(3),
+    let stability_check = timeout(
+                Duration::from_secs(2),
                 async {
                     let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
                     
                     // Database should still be responsive
                     let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
                     
-                    // Check partial data from interrupted operation
-                    let partial_events: i64 = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM raw.events WHERE source = 'interrupted.shutdown'"
-                    )
-                    .fetch_one(&pool)
-                    .await?
-                    .unwrap_or(0);
+                    // Check partial data from interrupted operation - use timing utility
+                    let partial_events = wait_for_filtered_event_count(
+                        &pool, 
+                        "source = $1", 
+                        &["interrupted.shutdown"], 
+                        0, 
+                        3
+                    ).await.unwrap_or(0);
                     
                     Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
                 }
@@ -474,7 +479,7 @@ enabled = false
     let config_validation_start = Instant::now();
     
     let valid_config_test = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(3),
         async {
             let config_content = fs::read_to_string(&valid_config_file)?;
             let parsed_config = toml::from_str::<toml::Value>(&config_content)?;
@@ -580,7 +585,7 @@ channel_buffer_size = 10000
         fs::write(&invalid_config_file, invalid_config)?;
 
         let validation_result = timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(1),
             async {
                 let config_content = fs::read_to_string(&invalid_config_file)?;
                 let parsed_result = toml::from_str::<toml::Value>(&config_content);
@@ -633,7 +638,7 @@ channel_buffer_size = 10000
     fs::write(&hot_reload_config_file, valid_config)?;
 
     let hot_reload_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             // Initial config load
             let initial_config = fs::read_to_string(&hot_reload_config_file)?;
@@ -722,7 +727,7 @@ async fn test_data_migration_safety() -> Result<()> {
     let migration_start = Instant::now();
     
     let fresh_migration_test = timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -787,7 +792,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting migration idempotency...");
     
     let idempotency_test = timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(4),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -838,7 +843,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting data preservation during migrations...");
     
     let data_preservation_test = timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(5),
         async {
             let pool = create_test_pool(&test_db_url).await?;
             
@@ -868,7 +873,7 @@ async fn test_data_migration_safety() -> Result<()> {
                 ).await?;
             }
             
-            // Record initial state
+            // Record initial state - use timing utilities for consistency
             let initial_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -876,19 +881,21 @@ async fn test_data_migration_safety() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let initial_event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility to wait for expected event count with source filter
+            let initial_event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["migration.safety"], 
+                test_events, 
+                5
+            ).await.unwrap_or(0);
             
             println!("    Initial state: {} agents, {} events", initial_agent_count, initial_event_count);
             
             // Run migrations again (simulating upgrade)
             run_migrations(&pool).await?;
             
-            // Verify data preservation
+            // Verify data preservation - use timing utilities for reliability
             let final_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
@@ -896,12 +903,14 @@ async fn test_data_migration_safety() -> Result<()> {
             .await?
             .unwrap_or(0);
             
-            let final_event_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE source = 'migration.safety'"
-            )
-            .fetch_one(&pool)
-            .await?
-            .unwrap_or(0);
+            // Use timing utility to ensure events are available after migration
+            let final_event_count = wait_for_filtered_event_count(
+                &pool, 
+                "source = $1", 
+                &["migration.safety"], 
+                test_events, 
+                5
+            ).await.unwrap_or(0);
             
             // Verify data integrity
             let agent_data: Option<String> = sqlx::query_scalar!(
@@ -953,7 +962,7 @@ async fn test_data_migration_safety() -> Result<()> {
     println!("\nTesting migration error handling...");
     
     let error_handling_test = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(5),
         async {
             let pool = match create_test_pool(&test_db_url).await {
                 Ok(pool) => pool,

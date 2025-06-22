@@ -65,7 +65,7 @@ async fn test_database_connection_recovery(pool: &sqlx::PgPool) -> Result<bool> 
     };
     
     // Phase 3: Verify system can continue after timeout
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::task::yield_now().await;
     let recovery_event = RawEventBuilder::new(
         "database_recovery_test",
         "recovery.test",
@@ -103,7 +103,7 @@ async fn test_event_buffering_during_outage(pool: &sqlx::PgPool) -> Result<bool>
             
             // Buffer events locally when database is "unavailable"
             producer_events.lock().await.push(event);
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
     });
     
@@ -160,7 +160,7 @@ async fn test_connection_pool_recovery(pool: &sqlx::PgPool) -> Result<bool> {
     
     // Phase 3: Release connections and verify recovery
     drop(connections); // Release all connections
-    tokio::time::sleep(Duration::from_millis(50)).await; // Allow cleanup
+    tokio::task::yield_now().await; // Allow cleanup
     
     // Should be able to acquire connections again
     let recovery_conn = pool.acquire().await;
@@ -206,12 +206,12 @@ async fn test_source_crash_and_restart() -> Result<bool> {
             if tx.send(event).await.is_err() {
                 break; // Channel closed
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
         
         // Phase 2: Simulate crash
         crash_flag.store(true, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
         
         // Phase 3: Restart and continue
         restart_flag.store(true, Ordering::SeqCst);
@@ -225,7 +225,7 @@ async fn test_source_crash_and_restart() -> Result<bool> {
             if tx.send(event).await.is_err() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
     });
     
@@ -325,7 +325,7 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
         healthy.store(2, Ordering::SeqCst);
         failed.store(1, Ordering::SeqCst);
         
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
         
         // Simulate source recovery
         healthy.store(3, Ordering::SeqCst);
@@ -564,7 +564,7 @@ async fn test_memory_pressure_recovery() -> Result<bool> {
             
             match tx.send(event).await {
                 Ok(()) => {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
                 Err(_) => {
                     stress_flag.store(true, Ordering::SeqCst);
@@ -580,7 +580,7 @@ async fn test_memory_pressure_recovery() -> Result<bool> {
         while let Some(_event) = rx.recv().await {
             processed += 1;
             // Simulate processing time that could cause backpressure
-            tokio::time::sleep(Duration::from_millis(2)).await;
+            tokio::task::yield_now().await;
             
             if processed >= 25 {
                 break; // Process some events to demonstrate recovery
@@ -622,7 +622,7 @@ async fn test_channel_overflow_recovery() -> Result<bool> {
                 Err(_) => {
                     overflow_flag.store(true, Ordering::SeqCst);
                     // In real implementation, would apply backpressure or buffering
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::task::yield_now().await;
                 }
             }
         }

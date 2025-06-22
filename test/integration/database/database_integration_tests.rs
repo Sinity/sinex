@@ -109,7 +109,7 @@ async fn test_ulid_time_ordering(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     let event1 = events::file_created_event("/test/first.txt");
     let id1 = assertions::assert_event_inserted(&pool, &event1).await?;
     
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    tokio::task::yield_now().await;
     
     let event2 = events::file_created_event("/test/second.txt");
     let id2 = assertions::assert_event_inserted(&pool, &event2).await?;
