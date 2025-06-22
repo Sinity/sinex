@@ -1,6 +1,8 @@
 // Work queue tests - should fail until migration is complete
 use sinex_db::{queries::*, models::WorkQueueItem};
 use sinex_ulid::Ulid;
+use sinex_core::RawEventBuilder;
+use serde_json::json;
 use chrono::Utc;
 use sqlx::PgPool;
 use anyhow::Result;
@@ -52,7 +54,8 @@ async fn test_work_queue_status_enum_includes_succeeded(pool: PgPool) -> Result<
     // This should work once the new status values are supported
     
     // First insert a test event
-    let event_id = insert_test_event(&pool, "test").await?;
+    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "data"})).build();
+    let event_id = insert_event(&pool, &event).await?.id;
     
     // Add to work queue
     let _queue_item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
@@ -67,22 +70,6 @@ async fn test_work_queue_status_enum_includes_succeeded(pool: PgPool) -> Result<
     
     assert!(result.is_ok(), "Should be able to set status to 'succeeded'");
     Ok(())
-}
-
-// Helper function that will be created once queries are updated
-async fn insert_test_event(pool: &PgPool, test_data: &str) -> Result<Ulid> {
-    let payload = serde_json::json!({"test": test_data});
-    let event = insert_raw_event(
-        pool,
-        "test_source",
-        "test_event", 
-        "test_host",
-        payload,
-        None,
-        Some("1.0.0"),
-        None,
-    ).await?;
-    Ok(event.id)
 }
 
 // Helper function that calls the real add_to_work_queue

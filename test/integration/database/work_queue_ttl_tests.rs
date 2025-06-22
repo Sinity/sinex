@@ -1,8 +1,10 @@
 // TTL policy tests - should fail until TTL implementation is complete
 use sinex_db::queries::*;
 use sinex_ulid::Ulid;
+use sinex_core::RawEventBuilder;
 use chrono::{Utc, Duration};
 use sqlx::PgPool;
+use serde_json::json;
 use anyhow::Result;
 
 #[sqlx::test]
@@ -11,8 +13,11 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> 
     create_test_agent(&pool, "test-agent").await?;
     
     // Create test events
-    let old_event_id = insert_test_event(&pool, "old_succeeded").await?;
-    let recent_event_id = insert_test_event(&pool, "recent_succeeded").await?;
+    let old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_succeeded"})).build();
+    let old_event_id = insert_event(&pool, &old_event).await?.id;
+    
+    let recent_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "recent_succeeded"})).build();
+    let recent_event_id = insert_event(&pool, &recent_event).await?.id;
     
     // Add to work queue
     let old_item = add_to_work_queue(&pool, old_event_id, "test-agent", 3).await?;
@@ -74,7 +79,8 @@ async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<()> {
     create_test_agent(&pool, "test-agent").await?;
     
     // Create test event
-    let event_id = insert_test_event(&pool, "old_failed").await?;
+    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_failed"})).build();
+    let event_id = insert_event(&pool, &event).await?.id;
     
     // Add to work queue
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
@@ -104,7 +110,8 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<()> {
     create_test_agent(&pool, "test-agent").await?;
     
     // Create test event
-    let event_id = insert_test_event(&pool, "old_pending").await?;
+    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_pending"})).build();
+    let event_id = insert_event(&pool, &event).await?.id;
     
     // Add to work queue (will be in 'pending' status)
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
@@ -144,7 +151,8 @@ async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Resul
     create_test_agent(&pool, "test-agent").await?;
     
     // Test that items without processed_at are never purged
-    let event_id = insert_test_event(&pool, "no_processed_at").await?;
+    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "no_processed_at"})).build();
+    let event_id = insert_event(&pool, &event).await?.id;
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
     
     // Set to succeeded status but without processed_at (edge case)
@@ -170,11 +178,14 @@ async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<()> {
     create_test_agent(&pool, "test-agent").await?;
     
     // Test edge cases around the 90-day threshold
-    let just_old_event = insert_test_event(&pool, "just_old").await?;
-    let just_new_event = insert_test_event(&pool, "just_new").await?;
+    let just_old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "just_old"})).build();
+    let just_old_event_id = insert_event(&pool, &just_old_event).await?.id;
     
-    let just_old_item = add_to_work_queue(&pool, just_old_event, "test-agent", 3).await?;
-    let just_new_item = add_to_work_queue(&pool, just_new_event, "test-agent", 3).await?;
+    let just_new_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "just_new"})).build();
+    let just_new_event_id = insert_event(&pool, &just_new_event).await?.id;
+    
+    let just_old_item = add_to_work_queue(&pool, just_old_event_id, "test-agent", 3).await?;
+    let just_new_item = add_to_work_queue(&pool, just_new_event_id, "test-agent", 3).await?;
     
     // Set one to exactly 90 days + 1 hour ago (should be purged)
     let just_old_time = Utc::now() - Duration::days(90) - Duration::hours(1);
@@ -203,22 +214,6 @@ async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<()> {
     assert_eq!(purged_count, 1, "Should purge exactly 1 item at 90-day threshold");
     
     Ok(())
-}
-
-// Helper function for creating test events
-async fn insert_test_event(pool: &PgPool, test_data: &str) -> Result<Ulid> {
-    let payload = serde_json::json!({"test": test_data});
-    let event = insert_raw_event(
-        pool,
-        "test_source",
-        "test_event", 
-        "test_host",
-        payload,
-        None,
-        Some("1.0.0"),
-        None,
-    ).await?;
-    Ok(event.id)
 }
 
 // Helper function to create test agent

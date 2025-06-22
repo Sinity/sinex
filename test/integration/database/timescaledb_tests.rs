@@ -1,6 +1,8 @@
 use sinex_ulid::Ulid;
 use serde_json::json;
 use chrono::{Duration, Utc};
+use sinex_core::RawEventBuilder;
+use sinex_db::queries;
 use crate::db_test;
 
 db_test! {
@@ -59,10 +61,6 @@ async fn test_timescale_chunk_creation() {
     .await
     .unwrap();
     
-    // Use unique test identifier based on current time
-    let test_id = Utc::now().timestamp_millis();
-    let test_source = format!("chunk_test_{}", test_id);
-    
     // Insert events across different time periods to trigger chunk creation
     let time_periods = vec![
         Utc::now(),
@@ -72,16 +70,24 @@ async fn test_timescale_chunk_creation() {
     ];
     
     for (i, ts) in time_periods.iter().enumerate() {
+        let event = RawEventBuilder::new(
+            "chunk_test",
+            &format!("event_type_{}", i),
+            json!({"chunk_test": i})
+        )
+        .build();
+        
+        // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload) 
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
         )
         .bind(&event_id.to_string())
-        .bind(&test_source)
-        .bind(format!("event_type_{}", i))
-        .bind("test_host")
-        .bind(json!({"chunk_test": i}))
+        .bind(event.source)
+        .bind(event.event_type)
+        .bind(event.host)
+        .bind(event.payload)
         .execute(pool.as_ref())
         .await
         .unwrap();
