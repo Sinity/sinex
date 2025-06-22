@@ -431,7 +431,7 @@ metrics_enabled = false
     assert!(!initial.monitoring.metrics_enabled);
     
     // Simulate time passing
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    tokio::task::yield_now().await;
     
     // Update configuration
     let updated_config = r#"

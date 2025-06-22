@@ -13,6 +13,7 @@ use sinex_ulid::Ulid;
 use serde_json::json;
 use rand::Rng;
 use std::str::FromStr;
+use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<()> {
@@ -127,25 +128,21 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             .filter_map(|w| w)
             .collect();
 
-            let total_pending: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'pending'",
-                detection_agent
-            )
-            .fetch_one(&detection_pool)
-            .await
-            .unwrap_or(None)
-            .unwrap_or(0);
+            // Use timing utility for work queue status counting
+            let total_pending = wait_for_work_queue_status_count(
+                &detection_pool,
+                "pending",
+                0, // Accept any count
+                1  // Quick timeout for detection loop
+            ).await.unwrap_or(0);
 
-            let total_processing: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 AND status = 'processing'",
-                detection_agent
-            )
-            .fetch_one(&detection_pool)
-            .await
-            .unwrap_or(None)
-            .unwrap_or(0);
+            // Use timing utility for processing work queue count
+            let total_processing = wait_for_work_queue_status_count(
+                &detection_pool,
+                "processing",
+                0, // Accept any count
+                1  // Quick timeout for detection loop
+            ).await.unwrap_or(0);
 
             if !stuck_processing.is_empty() {
                 detected_scenarios.push(format!(

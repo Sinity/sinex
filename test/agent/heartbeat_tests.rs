@@ -2,6 +2,7 @@ use sqlx::postgres::PgPoolOptions;
 use sinex_ulid::Ulid;
 use serde_json::json;
 use std::time::Duration;
+use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]
 async fn test_agent_heartbeat_generation() {
@@ -78,15 +79,14 @@ async fn test_agent_heartbeat_generation() {
     
     assert!(last_heartbeat.is_some(), "Heartbeat timestamp should be set");
     
-    // Verify heartbeat event exists
-    let heartbeat_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events 
-         WHERE source = 'sinex.agent.heartbeat_test_agent' 
-         AND event_type = 'agent.heartbeat'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Verify heartbeat event exists using timing utility
+    let heartbeat_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1 AND event_type = $2",
+        &["sinex.agent.heartbeat_test_agent", "agent.heartbeat"],
+        1,
+        5
+    ).await.unwrap();
     
     assert_eq!(heartbeat_count, 1, "Heartbeat event should exist");
 }
@@ -253,17 +253,14 @@ async fn test_heartbeat_metrics_tracking() {
     assert!(avg_cpu.is_some());
     assert!((avg_cpu.unwrap() - 25.0).abs() < 0.1); // Average should be ~25%
     
-    // Count degraded status occurrences
-    let degraded_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) 
-         FROM raw.events 
-         WHERE source = 'sinex.agent.metrics_test_agent' 
-         AND event_type = 'agent.heartbeat'
-         AND payload->>'status' = 'degraded'"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Count degraded status occurrences using timing utility
+    let degraded_count = wait_for_filtered_event_count(
+        &pool,
+        "source = $1 AND event_type = $2 AND payload->>'status' = $3",
+        &["sinex.agent.metrics_test_agent", "agent.heartbeat", "degraded"],
+        1,
+        5
+    ).await.unwrap();
     
     assert_eq!(degraded_count, 1);
 }

@@ -36,7 +36,7 @@ impl CrashingEventSource {
 
     pub fn new_crash_on_event(crash_on_event: usize) -> Self {
         Self {
-            crash_after: Duration::from_secs(3600), // Won't timeout
+            crash_after: Duration::from_secs(30), // For testing - we don't actually wait this long
             crash_on_event: Some(crash_on_event),
             events_sent: Arc::new(AtomicUsize::new(0)),
         }

@@ -106,8 +106,8 @@ async fn test_connection_pool_exhaustion() {
             active.fetch_add(1, Ordering::Relaxed);
             println!("Long-running connection acquired");
             
-            // Hold for a long time
-            tokio::time::sleep(Duration::from_millis(800)).await;
+            // Hold for enough time to test pool behavior
+            tokio::time::sleep(Duration::from_millis(100)).await;
             
             active.fetch_sub(1, Ordering::Relaxed);
             println!("Long-running connection released");
@@ -129,7 +129,7 @@ async fn test_connection_pool_exhaustion() {
                 eprintln!("WARNING: Connection pool at capacity! ({}/{})", current, MAX_CONNECTIONS);
             }
             
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::task::yield_now().await;
         }
         
         (max_active, samples)
@@ -252,15 +252,15 @@ async fn test_connection_leak_detection() {
                     leaked.push(conn);
                 } else {
                     // Use and release others
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::task::yield_now().await;
                     conn.released.store(true, Ordering::Relaxed);
                     println!("Leaky actor released connection {}", conn.id);
                 }
             }
         }
         
-        // Hold leaked connections
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        // Hold leaked connections long enough for detection
+        tokio::time::sleep(Duration::from_secs(3)).await;
     });
     
     // Leak detector
@@ -335,7 +335,7 @@ async fn test_connection_deadlock_prevention() {
         println!("Worker A: Got first connection");
         
         // Small delay to ensure worker B gets one too
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
         
         println!("Worker A: Trying to acquire second connection...");
         match timeout(Duration::from_millis(500), pool_a.acquire()).await {

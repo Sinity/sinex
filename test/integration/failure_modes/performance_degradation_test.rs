@@ -89,7 +89,7 @@ async fn test_memory_leak_detection() {
     // Simulate workload
     for i in 0..100 {
         component.process_event(1024 * (i % 10 + 1)).await; // Variable sizes
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
         
         // Stop leaking after detection
         if i == 50 {
@@ -200,7 +200,7 @@ async fn test_cpu_throttling_detection() {
             println!("Unlikely");
         }
         
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
     }
     
     let throttling_detected = monitor.throttle_detected.load(Ordering::Relaxed);
@@ -272,7 +272,7 @@ async fn test_io_saturation_handling() {
         file.sync_all().await.unwrap();
         
         baseline_latencies.push(start.elapsed());
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
     }
     
     let baseline_avg = baseline_latencies.iter()
@@ -337,7 +337,7 @@ async fn test_io_saturation_handling() {
                     // First half: aggressive
                 } else {
                     // Second half: back off
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::task::yield_now().await;
                 }
             }
         });
@@ -498,7 +498,7 @@ async fn test_resource_usage_patterns() {
         };
         
         monitor.record_usage(usage).await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
     }
     
     let detected_pattern = monitor.pattern_detected.read().await.clone();

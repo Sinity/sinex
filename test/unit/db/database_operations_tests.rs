@@ -90,6 +90,18 @@ async fn test_query_events_by_type(pool: sqlx::PgPool) -> Result<(), Box<dyn std
 
 #[sqlx::test]
 async fn test_work_queue_operations(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Create agent first (required for foreign key)
+    let _agent = queries::upsert_agent_manifest(
+        &pool,
+        "test_agent",
+        "1.0.0",
+        "running",
+        "test",
+        Some("Test agent for work queue"),
+        None,
+        None,
+    ).await?;
+    
     // Insert a raw event first
     let event = RawEventBuilder::new(
         "filesystem",
@@ -134,26 +146,38 @@ async fn test_work_queue_operations(pool: sqlx::PgPool) -> Result<(), Box<dyn st
 
 #[sqlx::test]
 async fn test_work_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    // Create agent first (required for foreign key)
+    let _agent = queries::upsert_agent_manifest(
+        &pool,
+        "test_agent",
+        "1.0.0",
+        "running",
+        "test",
+        Some("Test agent for retry logic"),
+        None,
+        None,
+    ).await?;
+    
     // Insert a raw event
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
-        json!({"path": "/test/retry_test.txt"})
+        json!({"path": "/test/retry_test.txt", "size": 1024})
     ).build();
     
     let inserted_event = queries::insert_event(&pool, &event).await?;
     
     // Add to work queue with limited retries
-    let _queue_item = queries::add_to_work_queue(
+    let queue_item = queries::add_to_work_queue(
         &pool,
         inserted_event.id,
-        "retry_agent",
+        "test_agent",
         2 // max_attempts
     ).await?;
     
     // Get and fail processing multiple times
     for attempt in 1..=3 {
-        let next_item = queries::get_next_work_item(&pool, "retry_agent").await?;
+        let next_item = queries::get_next_work_item(&pool, "test_agent").await?;
         
         if attempt <= 2 {
             // Should get an item
@@ -170,12 +194,12 @@ async fn test_work_queue_retry_logic(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     }
     
     // Verify item is in DLQ
-    let dlq_items = queries::get_dlq_items(&pool, "retry_agent", 10).await?;
+    let dlq_items = queries::get_dlq_items(&pool, "test_agent", 10).await?;
     assert!(!dlq_items.is_empty());
     
     let dlq_item = &dlq_items[0];
     assert_eq!(dlq_item.failed_event_id, inserted_event.id);
-    assert_eq!(dlq_item.agent_name, "retry_agent");
+    assert_eq!(dlq_item.agent_name, "test_agent");
     assert!(!dlq_item.failure_reason.is_empty());
     
     Ok(())

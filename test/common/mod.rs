@@ -24,7 +24,7 @@ pub async fn create_test_db_pool() -> Result<PgPool> {
 
 /// Helper for inserting test events directly via queries
 #[allow(dead_code)]
-pub async fn insert_test_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
+pub async fn insert_test_event_raw(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
     let inserted = queries::insert_event(pool, event).await?;
     Ok(inserted.id)
 }
@@ -445,6 +445,72 @@ pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: V
     RawEventBuilder::new(source, event_type, payload).build()
 }
 
+/// Helper for creating a test agent with default settings
+pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+    let manifest = generators::test_agent_manifest(agent_name);
+    queries::upsert_agent_manifest(
+        pool,
+        &manifest.agent_name,
+        manifest.description.as_deref().unwrap_or(""),
+        &manifest.version,
+        &manifest.status,
+        Some(&manifest.agent_type),
+        manifest.config_template_json.clone(),
+        manifest.produces_event_types.clone(),
+    ).await?;
+    Ok(())
+}
+
+/// Helper for inserting test event - 3 argument version used in tests
+#[allow(dead_code)]
+pub async fn insert_test_event(pool: &PgPool, source: &str, event_type: &str) -> Result<Ulid> {
+    let event = RawEventBuilder::new(
+        source,
+        event_type,
+        json!({"test": true})
+    ).build();
+    let inserted = queries::insert_event(pool, &event).await?;
+    Ok(inserted.id)
+}
+
+/// Helper for inserting test event with custom data - 4 argument version for routing tests
+#[allow(dead_code)]
+pub async fn insert_test_event_with_data(pool: &PgPool, source: &str, event_type: &str, data: &str) -> Result<Ulid> {
+    let event = RawEventBuilder::new(
+        source,
+        event_type,
+        serde_json::from_str(data).unwrap_or_else(|_| json!({"data": data}))
+    ).build();
+    let inserted = queries::insert_event(pool, &event).await?;
+    Ok(inserted.id)
+}
+
+/// Helper for creating agent with specific subscriptions
+pub async fn create_agent_with_subscriptions(
+    pool: &PgPool, 
+    agent_name: &str, 
+    subscriptions: &serde_json::Value
+) -> Result<()> {
+    // Create a test agent manifest and add subscriptions
+    let mut manifest = generators::test_agent_manifest(agent_name);
+    manifest.subscribes_to_event_types = Some(subscriptions.clone());
+    
+    queries::upsert_agent_manifest(
+        pool,
+        &manifest.agent_name,
+        manifest.description.as_deref().unwrap_or(""),
+        &manifest.version,
+        &manifest.status,
+        Some(&manifest.agent_type),
+        manifest.config_template_json.clone(),
+        manifest.produces_event_types.clone(),
+    ).await?;
+    
+    // The agent is registered via upsert_agent_manifest above
+    
+    Ok(())
+}
+
 
 /// Database state builder for complex test scenarios
 #[allow(dead_code)]
@@ -631,34 +697,11 @@ pub mod enhanced_assertions {
         expected_count: i64,
         timeout_secs: u64,
     ) -> Result<()> {
-        let start = std::time::Instant::now();
-        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-
-        loop {
-            // Check if worker has processed expected events
-            let processed_count = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM raw.events WHERE payload->>'processed_by' = $1",
-                worker_name
-            )
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(0);
-
-            if processed_count >= expected_count {
-                return Ok(());
-            }
-
-            if start.elapsed() > timeout_duration {
-                anyhow::bail!(
-                    "Worker {} processed {} events, expected {}, after {} seconds",
-                    worker_name,
-                    processed_count,
-                    expected_count,
-                    timeout_secs
-                );
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        use crate::common::timing_optimization::replacements::wait_for_worker_processed_events;
+        
+        match wait_for_worker_processed_events(pool, worker_name, expected_count, timeout_secs).await {
+            Ok(_count) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -853,6 +896,15 @@ size_threshold_bytes = 1024000
 pub use sinex_db::models::AgentManifest;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
+
+/// Validation test utilities
+pub mod validation_test_utils;
+
+/// Schema test utilities 
+pub mod schema_test_utils;
+
+/// Worker test utilities
+pub mod worker_test_utils;
 
 /// Test parallelization utilities
 #[allow(dead_code)]

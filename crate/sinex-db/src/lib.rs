@@ -4,6 +4,15 @@ pub mod queries;
 pub mod validation;
 pub mod metrics;
 
+// Re-export commonly used types and query functions
+pub use queries::{
+    QueueDepthMetric, refresh_routing_cache, run_batch_router, calculate_queue_depth_metrics,
+    get_event_by_id, insert_raw_event, get_recent_events, get_events_by_source,
+    get_events_by_type, get_events_in_time_range, claim_work_queue_items, 
+    complete_work_queue_item, fail_work_queue_item, add_to_work_queue,
+    get_next_work_item, complete_work_item, fail_work_item
+};
+
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};

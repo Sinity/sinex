@@ -548,7 +548,7 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
                 }
             }
             
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
     });
     
@@ -557,7 +557,7 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
         let mut health_snapshots = Vec::new();
         
         for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::task::yield_now().await;
             let health = monitor.get_system_health().await;
             health_snapshots.push((Instant::now(), health));
         }

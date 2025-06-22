@@ -6,6 +6,7 @@ use anyhow::Result;
 use sinex_db::queries;
 use sqlx::PgPool;
 use std::time::{Duration, Instant};
+use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[sqlx::test]
 async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
@@ -45,10 +46,14 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
     let elapsed = start.elapsed();
     println!("Inserted 1000 events in {:?}", elapsed);
     
-    // Verify count
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE source LIKE 'perf_test_%'")
-        .fetch_one(&pool)
-        .await?;
+    // Verify count using timing utility
+    let count = wait_for_filtered_event_count(
+        &pool,
+        "source LIKE $1",
+        &["perf_test_%"],
+        1000,
+        10
+    ).await.map_err(|e| anyhow::anyhow!("Failed to verify event count: {}", e))?;
     
     assert_eq!(count, 1000);
     assert!(elapsed < Duration::from_secs(5), "Ingestion took too long: {:?}", elapsed);
@@ -105,7 +110,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
                 
                 if let Some((event_id,)) = maybe_event {
                     // Simulate processing
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::task::yield_now().await;
                     
                     // Mark as processed
                     queries::insert_raw_event(

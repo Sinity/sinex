@@ -35,7 +35,7 @@ watch_paths = ["/tmp", "/home/user{}"]
         std::fs::write(&config_path, new_config).unwrap();
         
         // Small delay to trigger filesystem events
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
     }
     
     // Try to receive all updates

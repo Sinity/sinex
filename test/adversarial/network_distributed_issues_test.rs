@@ -43,7 +43,7 @@ async fn test_database_dns_timeout() {
             Err(_) => {
                 println!("  TIMEOUT: Connection attempt to {} took longer than 5s", hostname);
                 
-                if elapsed > Duration::from_secs(10) {
+                if elapsed > Duration::from_secs(5) {
                     println!("  WARNING: Timeout handling is broken - took {:?}", elapsed);
                 }
             }
@@ -100,7 +100,7 @@ async fn test_network_partition_during_processing() {
                         Duration::from_millis(100),
                         async {
                             // This simulates a hung connection
-                            tokio::time::sleep(Duration::from_secs(30)).await;
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                             Ok::<(), sqlx::Error>(())
                         }
                     ).await;

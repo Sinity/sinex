@@ -1,6 +1,7 @@
 use sinex_db::validation::EventValidator;
 use sinex_core::RawEventBuilder;
 use serde_json::json;
+use crate::common::{events, validation_test_utils};
 
 #[test]
 fn test_event_validator_creation() {
@@ -11,48 +12,22 @@ fn test_event_validator_creation() {
 
 #[test]
 fn test_event_validator_valid_filesystem_event() {
-    let validator = EventValidator::new();
-    
-    let event = RawEventBuilder::new(
-        "filesystem",
+    let event = events::filesystem_event(
         "file.created",
-        json!({
-            "path": "/home/user/document.txt",
-            "size": 1024,
-            "permissions": "644",
-            "created_time": "2024-01-01T12:00:00Z"
-        })
-    ).build();
-    
-    let result = validator.validate(&event);
-    assert!(result.is_ok(), "Valid filesystem event should pass validation");
+        "/home/user/document.txt"
+    );
+    validation_test_utils::assert_valid_event(&event);
 }
 
 #[test]
 fn test_event_validator_valid_terminal_event() {
-    let validator = EventValidator::new();
-    
-    let event = RawEventBuilder::new(
-        "terminal_kitty",
-        "command.executed", 
-        json!({
-            "command": "ls -la /home",
-            "exit_code": 0,
-            "duration_ms": 150,
-            "working_directory": "/home/user"
-        })
-    ).build();
-    
-    let result = validator.validate(&event);
-    assert!(result.is_ok(), "Valid terminal event should pass validation");
+    let event = events::kitty_event("ls -la /home");
+    validation_test_utils::assert_valid_event(&event);
 }
 
 #[test]
 fn test_event_validator_valid_window_manager_event() {
-    let validator = EventValidator::new();
-    
-    let event = RawEventBuilder::new(
-        "hyprland",
+    let event = events::hyprland_event(
         "window.focus",
         json!({
             "window_id": 123456,
@@ -60,44 +35,30 @@ fn test_event_validator_valid_window_manager_event() {
             "window_class": "kitty",
             "workspace": 1
         })
-    ).build();
-    
-    let result = validator.validate(&event);
-    assert!(result.is_ok(), "Valid window manager event should pass validation");
+    );
+    validation_test_utils::assert_valid_event(&event);
 }
 
 #[test]
 fn test_event_validator_invalid_empty_source() {
-    let validator = EventValidator::new();
-    
     let event = RawEventBuilder::new(
         "", // Empty source
         "file.created",
         json!({"path": "/test/file.txt"})
     ).build();
     
-    let result = validator.validate(&event);
-    assert!(result.is_err(), "Event with empty source should fail validation");
-    
-    let error = result.unwrap_err();
-    assert!(error.to_string().contains("source"), "Error should mention source field");
+    validation_test_utils::assert_invalid_event(&event, "source");
 }
 
 #[test]
 fn test_event_validator_invalid_empty_event_type() {
-    let validator = EventValidator::new();
-    
     let event = RawEventBuilder::new(
         "filesystem",
         "", // Empty event type
         json!({"path": "/test/file.txt"})
     ).build();
     
-    let result = validator.validate(&event);
-    assert!(result.is_err(), "Event with empty event type should fail validation");
-    
-    let error = result.unwrap_err();
-    assert!(error.to_string().contains("event_type"), "Error should mention event_type field");
+    validation_test_utils::assert_invalid_event(&event, "event_type");
 }
 
 #[test]
@@ -139,8 +100,6 @@ fn test_event_validator_filesystem_missing_path() {
 
 #[test]
 fn test_event_validator_filesystem_invalid_path() {
-    let validator = EventValidator::new();
-    
     // Test with various invalid path scenarios
     let invalid_paths = [
         "", // Empty path
@@ -159,9 +118,9 @@ fn test_event_validator_filesystem_invalid_path() {
             })
         ).build();
         
+        // If validation fails, it should mention path or invalid
+        let validator = EventValidator::new();
         let result = validator.validate(&event);
-        // Depending on validation implementation, this might fail
-        // The test ensures the validator handles invalid paths gracefully
         if result.is_err() {
             let error = result.unwrap_err();
             assert!(error.to_string().contains("path") || error.to_string().contains("invalid"));
@@ -242,6 +201,7 @@ fn test_event_validator_unicode_content() {
         "file.created",
         json!({
             "path": "/home/用户/文档/测试文件.txt",
+            "size": 1024,
             "content": "Unicode content: 🚀 🎉 ✨ مرحبا العالم 🌍",
             "encoding": "UTF-8"
         })
