@@ -385,6 +385,7 @@ async fn test_atuin_watermarking() -> Result<()> {
         .collect();
     
     assert!(commands.contains(&"echo third".to_string()), "Should include the newly added command");
+    Ok(())
 }
 
 #[tokio::test]
@@ -531,6 +532,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
     
     println!("✅ Watermarking test passed! First run: {} events, Second run: {} events", 
              first_run_events.len(), second_run_events.len());
+    Ok(())
 }
 
 #[tokio::test]
@@ -587,6 +589,7 @@ async fn test_atuin_timestamp_conversion() -> Result<()> {
     // Start time should be 2.5 seconds before end time
     let expected_start = timestamp - chrono::Duration::milliseconds(2500);
     assert_eq!(payload.ts_start_orig, expected_start);
+    Ok(())
 }
 
 #[tokio::test]
@@ -698,6 +701,7 @@ async fn test_atuin_builder_patterns() -> Result<()> {
     
     assert!(exit_codes.contains(&0)); // git status success
     assert!(exit_codes.contains(&1)); // cargo test failure
+    Ok(())
 }
 
 #[tokio::test]
@@ -764,6 +768,7 @@ async fn test_atuin_edge_cases() -> Result<()> {
         assert!(payload.atuin_history_id.len() > 0);
         assert!(payload.cwd.len() > 0);
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -845,6 +850,7 @@ async fn test_atuin_global_history() -> Result<()> {
     assert!(hosts.contains(&"host1".to_string()));
     assert!(hosts.contains(&"host2".to_string()));
     assert!(hosts.contains(&"host3".to_string()));
+    Ok(())
 }
 
 #[tokio::test]
@@ -917,6 +923,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<()> {
     
     println!("Performance test: {} entries processed in {}ms (DB creation: {}ms)", 
              num_entries, processing_time.as_millis(), db_creation_time.as_millis());
+    Ok(())
 }
 
 /// Test against real Atuin database if available
