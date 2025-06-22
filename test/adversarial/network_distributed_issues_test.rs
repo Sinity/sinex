@@ -133,8 +133,7 @@ async fn test_network_partition_during_processing() {
                 
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
-        })
-    };;
+        });
         
         worker_handles.push(handle);
     }
@@ -253,8 +252,8 @@ async fn test_split_brain_scenario() {
     
     for event in &events {
         match event.source.as_str() {
-            "brain_a" => brain_a_times.push(event.ts_ingest.unwrap();
-            "brain_b" => brain_b_times.push(event.ts_ingest.unwrap();
+            "brain_a" => brain_a_times.push(event.ts_ingest.unwrap()),
+            "brain_b" => brain_b_times.push(event.ts_ingest.unwrap()),
             _ => {}
         }
     }

@@ -280,8 +280,8 @@ async fn test_json_payload_validation() -> Result<()> {
                 .fetch_one(&pool)
                 .await?;
 
-                let original_str = malicious_payload.to_string());
-                let stored_str = stored_payload.to_string());
+                let original_str = malicious_payload.to_string();
+                let stored_str = stored_payload.to_string();
                 
                 let payload_result = PayloadValidationResult {
                     test_case: i,
@@ -473,12 +473,12 @@ async fn test_malformed_input_handling() -> Result<()> {
     .await?;
 
     // Test malformed event creation
-    let malformed_events = vec!{
-        ("", "empty_source", "localhost", json!({});
+    let malformed_events = vec![
+        ("", "empty_source", "localhost", json!({})),
         ("test", "", "localhost", json!({})), // Empty event type
         ("test", "type", "", json!({})), // Empty host
         ("test", "type", "localhost", serde_json::Value::Null), // Null payload
-    };
+    ];
 
     let mut event_validation_results = Vec::new();
 
@@ -553,10 +553,10 @@ async fn test_input_boundary_conditions() -> Result<()> {
     let boundary_tests = vec![
         // String length boundaries
         ("single_char", "a"),
-        ("normal_length", normal_string.as_str();
-        ("large_string", large_string.as_str();
-        ("very_large_string", very_large_string.as_str();
-        ("extreme_string", extreme_string.as_str();
+        ("normal_length", normal_string.as_str()),
+        ("large_string", large_string.as_str()),
+        ("very_large_string", very_large_string.as_str()),
+        ("extreme_string", extreme_string.as_str()),
         
         // Unicode boundaries
         ("unicode_basic", "héllo wörld"),

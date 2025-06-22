@@ -688,7 +688,7 @@ async fn test_malicious_payload_sanitization() -> Result<()> {
                 .fetch_one(&pool)
                 .await?;
 
-                let stored_str = stored_payload.to_string());
+                let stored_str = stored_payload.to_string();
                 
                 // Check if dangerous content was sanitized
                 if stored_str.contains("<script>") {
