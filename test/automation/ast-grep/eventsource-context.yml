@@ -1,0 +1,18 @@
+rules:
+  - id: eventsource-context-to-helper
+    message: "Replace EventSourceContext::new() with test helper"
+    rule:
+      pattern: EventSourceContext::new($CONFIG)
+      fix: event_sources::test_context($CONFIG)
+      
+  - id: eventsource-context-with-serde-json
+    message: "Replace EventSourceContext::new(serde_json::to_value()) with helper"
+    rule:
+      pattern: EventSourceContext::new(serde_json::to_value($CONFIG)?)
+      fix: event_sources::test_context(serde_json::to_value($CONFIG)?)
+      
+  - id: eventsource-context-with-json-macro
+    message: "Replace EventSourceContext::new(json!()) with helper"
+    rule:
+      pattern: EventSourceContext::new(json!($JSON))
+      fix: event_sources::test_context(json!($JSON))

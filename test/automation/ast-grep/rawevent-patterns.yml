@@ -1,0 +1,51 @@
+rules:
+  - id: rawevent-adversarial-pattern
+    message: "Replace adversarial test RawEvent construction with builder"
+    rule:
+      pattern: |
+        RawEvent {
+          id: Ulid::new(),
+          source: $SOURCE,
+          event_type: $EVENT_TYPE,
+          ts_ingest: chrono::Utc::now(),
+          ts_orig: None,
+          host: "test".to_string(),
+          ingestor_version: None,
+          payload_schema_id: None,
+          payload: $PAYLOAD,
+        }
+      fix: events::adversarial_test_event($EVENT_TYPE, $PAYLOAD)
+      
+  - id: rawevent-race-test-pattern
+    message: "Replace race test RawEvent construction with builder"
+    rule:
+      pattern: |
+        RawEvent {
+          id: Ulid::new(),
+          source: "test".to_string(),
+          event_type: "race.test".to_string(),
+          ts_ingest: chrono::Utc::now(),
+          ts_orig: None,
+          host: "test".to_string(),
+          ingestor_version: None,
+          payload_schema_id: None,
+          payload: serde_json::json!({"target": $TARGET}),
+        }
+      fix: events::race_test_event($TARGET)
+      
+  - id: rawevent-filesystem-created-pattern
+    message: "Replace filesystem RawEvent construction with builder"
+    rule:
+      pattern: |
+        RawEvent {
+          id: Ulid::new(),
+          source: "filesystem".to_string(),
+          event_type: "file.created".to_string(),
+          ts_ingest: chrono::Utc::now(),
+          ts_orig: None,
+          host: $HOST,
+          ingestor_version: None,
+          payload_schema_id: None,
+          payload: serde_json::json!({"path": $PATH, $$$REST}),
+        }
+      fix: events::file_created_event($PATH)

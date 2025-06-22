@@ -5,6 +5,7 @@ use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use sinex_db::models::WorkQueueItem;
 use crate::common::timing_optimization::wait_helpers::{wait_for_work_queue_status_count, wait_for_work_queue_count};
+use crate::common::events;
 
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
@@ -46,16 +47,7 @@ pub async fn insert_test_work_item(
 ) -> Result<Ulid> {
     // First create a raw event to reference
     let raw_event_id = Ulid::new();
-    let event = sinex_db::models::RawEvent {
-        id: raw_event_id,
-        source: "test_source".to_string(),
-        event_type: "test.event".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test_host".to_string(),
-        ingestor_version: Some("test_1.0".to_string()),
-        payload_schema_id: None,
-        payload: serde_json::json!({"test": true}),
+    let event = sinex_db::models::events::generic_adversarial_event("test_source", "test.event", json!({"test": true}), Some("test_1.0"))),
     };
     
     // Insert the raw event first

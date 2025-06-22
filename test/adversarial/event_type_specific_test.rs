@@ -1,4 +1,5 @@
 use crate::common::create_test_db_pool;
+use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
 use chrono::Utc;
@@ -235,23 +236,7 @@ async fn test_window_geometry_overflow() {
     println!("Testing window geometry integer overflows:");
     
     for (x, y, width, height, desc) in overflow_geometries {
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "hyprland".to_string(),
-            event_type: "window.created".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "window_id": "0x12345678",
-                "geometry": {
-                    "x": x,
-                    "y": y,
-                    "width": width,
-                    "height": height,
-                },
+        let event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None),
                 "title": desc,
             }),
         };
@@ -335,37 +320,14 @@ async fn test_event_cascade_explosion() {
     let mut total_events = 0;
     
     // Initial filesystem event
-    let fs_event = RawEvent {
-        id: Ulid::new(),
-        source: "filesystem".to_string(),
-        event_type: "file.modified".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({
-            "path": "/tmp/trigger.sh",
-            "action": "chmod +x",
-        }),
-    };
+    let fs_event = events::filesystem_chaos_event("file.modified", "/tmp/trigger.sh", None);
     
     queries::insert_event(&pool, &fs_event).await.unwrap();
     total_events += 1;
     
     // Simulate: file change triggers 10 terminal commands
     for i in 0..10 {
-        let term_event = RawEvent {
-            id: Ulid::new(),
-            source: "terminal".to_string(),
-            event_type: "command.executed".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "command": format!("notify-send 'File changed {}'", i),
+        let term_event = events::generic_adversarial_event("terminal", "command.executed", json!({"test": true}), None)'", i),
                 "triggered_by": fs_event.id.to_string(),
             }),
         };
@@ -374,19 +336,7 @@ async fn test_event_cascade_explosion() {
         total_events += 1;
         
         // Each terminal command opens a notification window
-        let win_event = RawEvent {
-            id: Ulid::new(),
-            source: "hyprland".to_string(),
-            event_type: "window.created".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "window_class": "notification",
-                "triggered_by": term_event.id.to_string(),
-            }),
+        let win_event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None)),
         };
         
         queries::insert_event(&pool, &win_event).await.unwrap();

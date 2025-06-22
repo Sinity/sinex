@@ -17,20 +17,7 @@ fn test_ulid_uuid_roundtrip() {
 
 #[test]
 fn test_raw_event_json_serialization() {
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test.source".to_string(),
-        event_type: "test.event".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now() - Duration::seconds(5)),
-        host: "test-host".to_string(),
-        ingestor_version: Some("1.0.0".to_string()),
-        payload_schema_id: Some(Ulid::new()),
-        payload: json!({
-            "key": "value",
-            "nested": {
-                "field": 123
-            }
+    let event = events::generic_adversarial_event("test.source", "test.event", json!({"test": true}), Some("1.0.0"))
         }),
     };
     
@@ -165,16 +152,7 @@ fn test_ulid_json_string_format() {
 #[test]
 fn test_optional_field_serialization() {
     // Test with None values
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.type".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({}),
+    let event = events::generic_adversarial_event("test", "test.type", json!({"test": true}), None)),
     };
     
     let json_val = serde_json::to_value(&event).unwrap();
@@ -188,16 +166,7 @@ fn test_optional_field_serialization() {
 #[test]
 fn test_datetime_serialization_format() {
     let now = Utc::now();
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.type".to_string(),
-        ts_ingest: now,
-        ts_orig: Some(now),
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({}),
+    let event = events::generic_adversarial_event("test", "test.type", json!({"test": true}), None)),
     };
     
     let json_str = serde_json::to_string(&event).unwrap();
@@ -229,17 +198,7 @@ fn test_large_payload_serialization() {
         });
     }
     
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.large".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: large_obj.clone(),
-    };
+    let event = events::generic_adversarial_event("test", "test.large", json!({"test": true}), None);
     
     // Should serialize without issues
     let json_str = serde_json::to_string(&event).unwrap();

@@ -1,4 +1,5 @@
 use crate::common::create_test_db_pool;
+use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
 use chrono::Utc;
@@ -19,16 +20,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     // Insert events to be claimed
     let mut event_ids = vec![];
     for i in 0..10 {
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "work.item".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({"work_id": i}),
+        let event = events::generic_adversarial_event("test", "work.item", json!({"test": true}), None)),
         };
         
         queries::insert_event(&pool, &event).await.unwrap();
@@ -133,17 +125,7 @@ async fn test_dead_worker_holding_locks() {
     println!("Testing zombie worker scenario:");
     
     // Insert work item
-    let work_event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "critical.work".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({"importance": "high"}),
-    };
+    let work_event = events::generic_adversarial_event("test", "critical.work", json!({"importance": "high"}), None);
     
     queries::insert_event(&pool, &work_event).await.unwrap();
     
@@ -370,17 +352,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     println!("  All 100 workers waiting...");
     
     // Insert single work item
-    let work_event = RawEvent {
-        id: Ulid::new(),
-        source: "thundering_herd".to_string(),
-        event_type: "single.work".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({"value": "high"}),
-    };
+    let work_event = events::generic_adversarial_event("thundering_herd", "single.work", json!({"value": "high"}), None);
     
     queries::insert_event(&pool, &work_event).await.unwrap();
     

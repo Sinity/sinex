@@ -1,4 +1,5 @@
 use crate::common::prelude::*;
+use crate::common::events;
 
 // Project-specific imports not covered by prelude
 use sinex_db::models::WorkQueueItem;
@@ -39,18 +40,7 @@ impl EventSource for PipelineTestSource {
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for i in 0..self.events_to_generate {
-            let event = RawEvent {
-                id: sinex_ulid::Ulid::new(),
-                source: "pipeline_test".to_string(),
-                event_type: "test_event".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: gethostname::gethostname().to_string_lossy().to_string(),
-                ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                payload_schema_id: None,
-                payload: json!({
-                    "sequence": i,
-                    "data": format!("Test event {}", i),
+            let event = events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None)", i),
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }),
             };

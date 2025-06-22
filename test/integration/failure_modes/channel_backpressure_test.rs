@@ -20,16 +20,7 @@ async fn test_channel_backpressure_handling() {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "fast_producer".to_string(),
-                event_type: "test.event".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: json!({"seq": i}),
+            let event = events::generic_adversarial_event("fast_producer", "test.event", json!({"test": true}), None)),
             };
             
             gen_count.fetch_add(1, Ordering::Relaxed);
@@ -124,20 +115,7 @@ async fn test_memory_pressure_handling() {
             let size = 1024 * (i + 1); // 1KB to 100KB
             let large_data = "x".repeat(size);
             
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "memory_test".to_string(),
-                event_type: "large.payload".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({
-                    "seq": i,
-                    "data": large_data,
-                    "size_kb": size / 1024
-                }),
+            let event = events::large_payload_test_event(1024)),
             };
             
             if tx.send(event).await.is_err() {
@@ -204,16 +182,7 @@ async fn test_event_source_crash_recovery() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             for i in 0..100 {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: "crashing".to_string(),
-                    event_type: "test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({"seq": i}),
+                let event = events::generic_adversarial_event("crashing", "test", json!({"test": true}), None)),
                 };
                 
                 tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;

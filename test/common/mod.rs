@@ -187,6 +187,81 @@ pub mod events {
             })
         ).build()
     }
+
+    /// Create agent heartbeat event for chaos testing
+    pub fn agent_heartbeat_chaos_event(agent_name: &str, version: Option<&str>) -> sinex_db::models::RawEvent {
+        let mut builder = RawEventBuilder::new(
+            "agent",
+            "agent.heartbeat",
+            json!({
+                "agent_name": agent_name,
+                "status": "alive",
+                "version": version.unwrap_or("1.0.0")
+            })
+        );
+        
+        if let Some(v) = version {
+            builder = builder.with_ingestor_version(v);
+        }
+        
+        builder.build()
+    }
+
+    /// Create filesystem event for chaos testing
+    pub fn filesystem_chaos_event(event_type: &str, path: &str, version: Option<&str>) -> sinex_db::models::RawEvent {
+        let mut builder = RawEventBuilder::new(
+            "filesystem",
+            event_type,
+            json!({
+                "path": path,
+                "chaos_test": true
+            })
+        );
+        
+        if let Some(v) = version {
+            builder = builder.with_ingestor_version(v);
+        }
+        
+        builder.build()
+    }
+
+    /// Create large payload event for boundary testing
+    pub fn large_payload_test_event(data_size: usize) -> sinex_db::models::RawEvent {
+        let large_data = "x".repeat(data_size);
+        RawEventBuilder::new(
+            "test",
+            "large.payload",
+            json!({
+                "data": large_data,
+                "size": data_size,
+                "test_type": "boundary"
+            })
+        ).build()
+    }
+
+    /// Create indexed test event for database boundary testing
+    pub fn indexed_test_event(index: i64, event_time: chrono::DateTime<chrono::Utc>) -> sinex_db::models::RawEvent {
+        RawEventBuilder::new(
+            "btree_test",
+            "index.split",
+            json!({
+                "index": index,
+                "timestamp": event_time,
+                "test_type": "btree_boundary"
+            })
+        ).with_orig_timestamp(event_time).build()
+    }
+
+    /// Generic adversarial event with customizable source and type  
+    pub fn generic_adversarial_event(source: &str, event_type: &str, payload: serde_json::Value, version: Option<&str>) -> sinex_db::models::RawEvent {
+        let mut builder = RawEventBuilder::new(source, event_type, payload);
+        
+        if let Some(v) = version {
+            builder = builder.with_ingestor_version(v);
+        }
+        
+        builder.build()
+    }
 }
 
 /// Assertion helpers for common test patterns

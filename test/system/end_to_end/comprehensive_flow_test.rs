@@ -1,5 +1,6 @@
 use crate::common;
 use crate::common::timing_optimization::EventCounter;
+use crate::common::events;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
 use sinex_core::{RawEvent, event_type_constants, sources};
@@ -155,19 +156,7 @@ async fn test_complete_event_pipeline() {
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: "test".to_string(),
-        event_type: "invalid.event".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("test".to_string()),
-        payload_schema_id: None,
-        payload: serde_json::json!({
-            "invalid": "data",
-            "will_fail": true
-        }),
+    let bad_event = events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), Some("test"))),
     };
     
     queries::insert_event(&pool, &bad_event).await.unwrap();
@@ -213,17 +202,7 @@ async fn test_complete_event_pipeline() {
         version: "0.1.0".to_string(),
     };
     
-    let heartbeat_event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: sources::SINEX.to_string(),
-        event_type: event_type_constants::sinex::AGENT_HEARTBEAT.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("0.1.0".to_string()),
-        payload_schema_id: None,
-        payload: serde_json::to_value(&heartbeat).unwrap(),
-    };
+    let heartbeat_event = events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
     
     queries::insert_event(&pool, &heartbeat_event).await.unwrap();
     
@@ -405,16 +384,5 @@ fn create_raw_event(
     event_type: &str, 
     payload: serde_json::Value,
     timestamp: chrono::DateTime<Utc>,
-) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: source.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: timestamp,
-        ts_orig: Some(timestamp),
-        host: "test-host".to_string(),
-        ingestor_version: Some("test-v1".to_string()),
-        payload_schema_id: None,
-        payload,
-    }
+) -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("test-v1"))
 }

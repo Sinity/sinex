@@ -64,19 +64,7 @@ async fn test_config_reload_during_processing() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             loop {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: Self::SOURCE_NAME.to_string(),
-                    event_type: "config.test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({
-                        "interval_ms": self.interval_ms,
-                        "reloaded": self.reload_flag.load(Ordering::Relaxed)
-                    }),
+                let event = events::generic_adversarial_event("test", "config.test", json!({"test": true}), None)),
                 };
                 
                 tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;

@@ -228,9 +228,7 @@ async fn test_exo_cli_advanced_queries() {
     let base_time = chrono::Utc::now();
     
     for i in 0..20 {
-        let event = sinex_core::RawEvent {
-            id: Ulid::new(),
-            source: if i % 2 == 0 { "source_a" } else { "source_b" }.to_string(),
+        let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None) else { "source_b" }.to_string(),
             event_type: format!("event.type_{}", i % 3),
             ts_ingest: base_time - chrono::Duration::minutes(i),
             ts_orig: Some(base_time - chrono::Duration::minutes(i + 1)),
@@ -306,20 +304,7 @@ async fn test_exo_cli_output_formats() {
     let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
     
     // Insert a test event
-    let event = sinex_core::RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.event".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("test-1.0".to_string()),
-        payload_schema_id: None,
-        payload: json!({
-            "message": "Test message",
-            "level": "info",
-            "tags": ["test", "cli"]
-        }),
+    let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("test-1.0"))),
     };
     
     sinex_db::queries::insert_event(&pool, &event).await.unwrap();

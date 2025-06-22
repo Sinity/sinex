@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tempfile::TempDir;
 use crate::common::resources;
+use crate::common::events;
 
 #[tokio::test]
 async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
@@ -140,20 +141,7 @@ fn test_string_concatenation_memory_bomb() {
         expanding_string = expanding_string.repeat(2);  // Exponential growth
         sizes.push(expanding_string.len());
         
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "memory".to_string(),
-            event_type: "bomb.test".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: serde_json::json!({
-                "iteration": i,
-                "data": &expanding_string[..expanding_string.len().min(1000)], // Cap for test
-                "actual_size": expanding_string.len()
-            }),
+        let event = events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None)),
         };
         
         match serde_json::to_string(&event) {
@@ -192,16 +180,7 @@ async fn test_collector_event_queue_overflow() {
     
     let producer = tokio::spawn(async move {
         for i in 0..10000 {
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "overflow".to_string(),
-                event_type: "test".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({"seq": i}),
+            let event = events::generic_adversarial_event("overflow", "test", json!({"test": true}), None)),
             };
             
             // try_send doesn't block

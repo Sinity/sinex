@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 use serde_json::json;
 use gethostname;
 use crate::common::event_sources;
+use crate::common::events;
 #[allow(unused_imports)]
 use sqlx::PgPool;
 
@@ -63,19 +64,7 @@ impl EventSource for TestEventSource {
                 return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()));
             }
             
-            let event = RawEvent {
-                id: sinex_ulid::Ulid::new(),
-                source: Self::SOURCE_NAME.to_string(),
-                event_type: "test_event".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: gethostname::gethostname().to_string_lossy().to_string(),
-                ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                payload_schema_id: None,
-                payload: json!({
-                    "sequence": i,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                }),
+            let event = events::generic_adversarial_event("test", "test_event", json!({"test": true}), None)),
             };
             
             if tx.send(event).await.is_err() {

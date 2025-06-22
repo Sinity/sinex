@@ -1,4 +1,5 @@
 use crate::common::create_test_db_pool;
+use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
 use chrono::Utc;
@@ -30,19 +31,7 @@ async fn test_event_payload_approaching_1gb_limit() {
         // Create large string
         let large_data = "x".repeat(size);
         
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "large.payload".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "data": large_data,
-                "size_bytes": size,
-            }),
+        let event = events::large_payload_test_event(1024)),
         };
         
         let start = Instant::now();
@@ -191,19 +180,7 @@ async fn test_concurrent_btree_index_splits() {
                 let event_time = group_time + chrono::Duration::microseconds(i as i64);
                 let ulid = Ulid::from_datetime(event_time);
                 
-                let event = RawEvent {
-                    id: ulid,
-                    source: "btree_test".to_string(),
-                    event_type: "index.split".to_string(),
-                    ts_ingest: event_time,
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({
-                        "group": group,
-                        "index": i,
-                    }),
+                let event = events::indexed_test_event(0, chrono::Utc::now())),
                 };
                 
                 events.push(event);
@@ -309,19 +286,7 @@ async fn test_events_spanning_chunk_boundary() {
     println!("  Chunk boundary at: {}", chunk_boundary);
     
     for (timestamp, label) in boundary_events {
-        let event = RawEvent {
-            id: Ulid::from_datetime(timestamp),
-            source: "chunk_test".to_string(),
-            event_type: "boundary.test".to_string(),
-            ts_ingest: timestamp,
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "position": label,
-                "exact_time": timestamp.to_rfc3339(),
-            }),
+        let event = events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None)),
         };
         
         match queries::insert_event(&pool, &event).await {
@@ -370,19 +335,7 @@ async fn test_query_during_chunk_compression() {
     
     // Insert many events to make compression worthwhile
     for i in 0..10000 {
-        let event = RawEvent {
-            id: Ulid::from_datetime(old_time + chrono::Duration::seconds(i)),
-            source: "compression_test".to_string(),
-            event_type: "bulk.data".to_string(),
-            ts_ingest: old_time + chrono::Duration::seconds(i),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "index": i,
-                "data": "x".repeat(100), // Some bulk to compress
-            }),
+        let event = events::large_payload_test_event(1024)),
         };
         
         queries::insert_event(&pool, &event).await.unwrap();

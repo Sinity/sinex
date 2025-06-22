@@ -46,62 +46,27 @@ pub mod events {
     use super::*;
 
     /// Create a valid filesystem event for testing
-    pub fn valid_filesystem_event() -> RawEvent {
-        RawEventBuilder::new(
-            "filesystem",
-            "file.created",
-            json!({
-                "path": "/home/user/test.txt",
-                "size": 1024,
-                "timestamp": "2024-06-20T10:00:00Z"
-            })
+    pub fn valid_filesystem_event() -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), None))
         ).build()
     }
 
     /// Create an invalid filesystem event (missing required fields)
-    pub fn invalid_filesystem_event() -> RawEvent {
-        RawEventBuilder::new(
-            "filesystem",
-            "file.created",
-            json!({
-                "path": "",
-                "size": -1
-            })
+    pub fn invalid_filesystem_event() -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), None))
         ).build()
     }
 
     /// Create a valid terminal event for testing
-    pub fn valid_terminal_event() -> RawEvent {
-        RawEventBuilder::new(
-            "terminal.kitty",
-            "command.executed",
-            json!({
-                "command": "ls -la",
-                "exit_code": 0,
-                "duration_ms": 150
-            })
+    pub fn valid_terminal_event() -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), None))
         ).build()
     }
 
     /// Create an event with unknown source/type
-    pub fn unknown_event() -> RawEvent {
-        RawEventBuilder::new(
-            "unknown_source",
-            "unknown.event",
-            json!({
-                "data": "test"
-            })
+    pub fn unknown_event() -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), None))
         ).build()
     }
 
     /// Create an event with malformed payload
-    pub fn malformed_payload_event() -> RawEvent {
-        RawEventBuilder::new(
-            "test_source",
-            "test.event",
-            json!(null)
-        ).build()
-    }
+    pub fn malformed_payload_event() -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
 }
 
 /// Validation assertion helpers
