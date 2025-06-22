@@ -8,22 +8,22 @@ use std::collections::HashMap;
 fn arb_event_type() -> impl Strategy<Value = String> {
     prop_oneof![
         // Known event types from registry
-        Just("file.created".to_string()),
-        Just("file.modified".to_string()),
-        Just("file.deleted".to_string()),
-        Just("command.executed".to_string()),
-        Just("window.focused".to_string()),
-        Just("window.opened".to_string()),
-        Just("workspace.changed".to_string()),
-        Just("monitor.focused".to_string()),
-        Just("shell.history.command".to_string()),
-        Just("terminal.asciinema.session_started".to_string()),
-        Just("dbus.signal".to_string()),
-        Just("system.notification".to_string()),
+        Just("file.created".to_string());
+        Just("file.modified".to_string());
+        Just("file.deleted".to_string());
+        Just("command.executed".to_string());
+        Just("window.focused".to_string());
+        Just("window.opened".to_string());
+        Just("workspace.changed".to_string());
+        Just("monitor.focused".to_string());
+        Just("shell.history.command".to_string());
+        Just("terminal.asciinema.session_started".to_string());
+        Just("dbus.signal".to_string());
+        Just("system.notification".to_string());
         // Unknown event types (should not be found)
-        Just("unknown.event".to_string()),
-        Just("nonexistent.type".to_string()),
-        Just("invalid.name".to_string()),
+        Just("unknown.event".to_string());
+        Just("nonexistent.type".to_string());
+        Just("invalid.name".to_string());
         // Randomly generated event types
         "[a-zA-Z][a-zA-Z0-9_-]{1,20}\\.[a-zA-Z][a-zA-Z0-9_-]{1,20}"
     ]
@@ -33,14 +33,14 @@ fn arb_event_type() -> impl Strategy<Value = String> {
 fn arb_source_name() -> impl Strategy<Value = String> {
     prop_oneof![
         // Known source names from registry
-        Just("filesystem".to_string()),
-        Just("terminal_kitty".to_string()),
-        Just("hyprland".to_string()),
-        Just("shell_history".to_string()),
-        Just("dbus".to_string()),
+        Just("filesystem".to_string());
+        Just("terminal_kitty".to_string());
+        Just("hyprland".to_string());
+        Just("shell_history".to_string());
+        Just("dbus".to_string());
         // Unknown source names
-        Just("unknown_source".to_string()),
-        Just("nonexistent".to_string()),
+        Just("unknown_source".to_string());
+        Just("nonexistent".to_string());
         // Random source names
         "[a-zA-Z][a-zA-Z0-9_-]{1,30}"
     ]

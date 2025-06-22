@@ -24,7 +24,7 @@ async fn test_concurrent_ulid_generation() {
             let mut ulids = vec![];
             for i in 0..events_per_task {
                 let event = events::generic_adversarial_event("test", "concurrent.test", json!({"test": true}), None)", task_id),
-                    ingestor_version: Some("test".to_string()),
+                    ingestor_version: Some("test".to_string());
                     payload_schema_id: None,
                     payload: serde_json::json!({
                         "task": task_id,
@@ -64,7 +64,7 @@ async fn test_worker_double_processing() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Insert a test event
-    let event = events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None)),
+    let event = events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
     };
     let inserted = queries::insert_event(&pool, &event).await.unwrap();
     

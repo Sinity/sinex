@@ -339,7 +339,7 @@ impl ResilientDbWorker {
 
 #[tokio::test]
 async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let metrics = Arc::new(ConnectionMetrics::new());
@@ -704,7 +704,7 @@ async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
 
 #[tokio::test]
 async fn test_connection_pool_memory_pressure_resilience() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Test large query results under memory pressure

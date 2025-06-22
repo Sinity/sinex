@@ -99,7 +99,7 @@ async fn test_filesystem_path_traversal_protection() -> Result<()> {
 /// Test SQL injection protection in dynamic query construction
 #[tokio::test]
 async fn test_sql_injection_protection() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Create test agent
@@ -292,7 +292,7 @@ async fn test_sql_injection_protection() -> Result<()> {
 /// Test resource exhaustion attack protection
 #[tokio::test]
 async fn test_resource_exhaustion_protection() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("exhaustion_test_{}", Ulid::new());
@@ -607,7 +607,7 @@ async fn test_configuration_injection_protection() -> Result<()> {
 /// Test event payload sanitization
 #[tokio::test]
 async fn test_malicious_payload_sanitization() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test various malicious payload patterns
@@ -688,7 +688,7 @@ async fn test_malicious_payload_sanitization() -> Result<()> {
                 .fetch_one(&pool)
                 .await?;
 
-                let stored_str = stored_payload.to_string();
+                let stored_str = stored_payload.to_string());
                 
                 // Check if dangerous content was sanitized
                 if stored_str.contains("<script>") {

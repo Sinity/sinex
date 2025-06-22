@@ -20,7 +20,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     // Insert events to be claimed
     let mut event_ids = vec![];
     for i in 0..10 {
-        let event = events::generic_adversarial_event("test", "work.item", json!({"test": true}), None)),
+        let event = events::generic_adversarial_event("test", "work.item", json!({"test": true}), None);
         };
         
         queries::insert_event(&pool, &event).await.unwrap();

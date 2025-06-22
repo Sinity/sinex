@@ -38,7 +38,7 @@ impl ConcurrencyStressMetrics {
             race_conditions_detected: AtomicU64::new(0),
             deadlock_recovery_attempts: AtomicU64::new(0),
             max_concurrent_workers: AtomicUsize::new(0),
-            worker_cycle_times: RwLock::new(Vec::new()),
+            worker_cycle_times: RwLock::new(Vec::new();
         }
     }
 
@@ -143,7 +143,7 @@ pub struct StressTestUtils;
 impl StressTestUtils {
     /// Setup a clean test environment with agent registration
     pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<PgPool> {
-        let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+        let pool = get_shared_test_pool().await?;
         run_migrations(&pool).await?;
 
         // Register the test agent

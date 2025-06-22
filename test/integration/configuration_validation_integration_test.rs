@@ -249,7 +249,7 @@ async fn test_invalid_event_types() -> Result<()> {
         let validation = config.validate();
         assert!(validation.is_err(), "Invalid event type '{}' should fail validation", invalid_type);
         
-        let error_message = validation.unwrap_err().to_string();
+        let error_message = validation.unwrap_err().to_string());
         // Check that error message contains relevant information
         assert!(error_message.contains("Event type") || error_message.contains("format"), 
                "Error message should be descriptive for '{}': {}", invalid_type, error_message);
@@ -277,7 +277,7 @@ async fn test_invalid_configuration_values() -> Result<()> {
     // Test invalid git-annex values
     let mut invalid_annex = CollectorConfig::default();
     invalid_annex.git_annex.enabled = true;
-    invalid_annex.git_annex.repository_path = "relative/path".to_string(); // Invalid: must be absolute
+    invalid_annex.git_annex.repository_path = "relative/path".to_string()); // Invalid: must be absolute
     
     let validation = invalid_annex.validate();
     assert!(validation.is_err(), "Relative path should fail validation");
@@ -295,7 +295,7 @@ async fn test_missing_required_configurations() -> Result<()> {
     let cross_validation = missing_config.cross_validate();
     assert!(cross_validation.is_err(), "Missing required config should fail cross-validation");
     
-    let error_message = cross_validation.unwrap_err().to_string();
+    let error_message = cross_validation.unwrap_err().to_string());
     assert!(error_message.contains("missing") || error_message.contains("required"), 
            "Error should mention missing requirement: {}", error_message);
     
@@ -319,7 +319,7 @@ async fn test_cross_validation_failures() -> Result<()> {
     invalid_paths.event.insert("shell_command_executed_atuin".to_string(), json!({
         "db_path": "relative/path/to/db", // Should be absolute
         "polling_interval_secs": 5
-    }));
+    });
     
     let validation = invalid_paths.cross_validate();
     assert!(validation.is_err(), "Relative paths should fail cross-validation");
@@ -564,7 +564,7 @@ async fn test_large_event_configuration() -> Result<()> {
             "setting1": format!("value_{}", i),
             "setting2": i * 10,
             "setting3": true
-        }));
+        });
     }
     
     // Test validation performance
@@ -627,7 +627,7 @@ async fn test_complex_event_configurations() -> Result<()> {
                 {"type": "webhook", "url": "https://api.example.com/events"}
             ]
         }
-    }));
+    });
     
     // Test validation with complex configuration
     let validation = complex_config.validate();
@@ -664,7 +664,7 @@ async fn test_configuration_validation_performance() -> Result<()> {
             config.event.insert(format!("config_{}", i), json!({
                 "value": i,
                 "name": format!("config_{}", i)
-            }));
+            });
         }
         
         // Measure validation time

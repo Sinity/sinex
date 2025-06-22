@@ -218,7 +218,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
 /// Test shutdown sequence and graceful termination
 #[tokio::test]
 async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -298,7 +298,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
         Duration::from_secs(3),
         async {
             // New connection should work
-            let verification_pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+            let verification_pool = get_shared_test_pool().await?;
             
             // Check that committed transactions are persisted - use timing utility
             let committed_events = wait_for_filtered_event_count(
@@ -349,7 +349,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
         async {
             // Create long-running operation
             let long_operation = tokio::spawn(async {
-                let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+                let pool = get_shared_test_pool().await?;
                 
                 // Simulate long-running batch operation
                 for i in 0..1000 {
@@ -383,7 +383,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
     let stability_check = timeout(
                 Duration::from_secs(2),
                 async {
-                    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+                    let pool = get_shared_test_pool().await?;
                     
                     // Database should still be responsive
                     let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;

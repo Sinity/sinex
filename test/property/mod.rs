@@ -32,13 +32,13 @@ pub mod strategies {
     pub fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
             // Small payload
-            Just(serde_json::json!({"type": "simple", "data": "test"})),
+            Just(serde_json::json!({"type": "simple", "data": "test"});
             // Medium payload
             Just(serde_json::json!({
                 "type": "medium",
                 "data": vec![1, 2, 3, 4, 5],
                 "metadata": {"created": "2024-01-01"}
-            })),
+            });
             // Large payload
             Just(serde_json::json!({
                 "type": "large",
@@ -51,11 +51,11 @@ pub mod strategies {
     /// Strategy for generating realistic file paths
     pub fn file_paths() -> impl Strategy<Value = String> {
         prop_oneof![
-            Just("/home/user/document.txt".to_string()),
-            Just("/tmp/cache/file.json".to_string()),
-            Just("/var/log/system.log".to_string()),
-            Just("/home/user/code/project/src/main.rs".to_string()),
-            Just("/home/user/.config/app/settings.toml".to_string()),
+            Just("/home/user/document.txt".to_string());
+            Just("/tmp/cache/file.json".to_string());
+            Just("/var/log/system.log".to_string());
+            Just("/home/user/code/project/src/main.rs".to_string());
+            Just("/home/user/.config/app/settings.toml".to_string());
         ]
     }
 

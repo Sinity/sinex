@@ -9,10 +9,10 @@ fn test_json_payload_size_limits() {
         huge_array.push(json!({
             "index": i,
             "data": "x".repeat(100)
-        }));
+        });
     }
     
-    let event = events::generic_adversarial_event("test", "huge.payload", json!({"test": true}), None)),
+    let event = events::generic_adversarial_event("test", "huge.payload", json!({"test": true}), None);
     };
     
     // This might cause issues with serialization or database storage

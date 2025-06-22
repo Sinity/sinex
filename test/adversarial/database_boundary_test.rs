@@ -31,7 +31,7 @@ async fn test_event_payload_approaching_1gb_limit() {
         // Create large string
         let large_data = "x".repeat(size);
         
-        let event = events::large_payload_test_event(1024)),
+        let event = events::large_payload_test_event(1024);
         };
         
         let start = Instant::now();
@@ -180,7 +180,7 @@ async fn test_concurrent_btree_index_splits() {
                 let event_time = group_time + chrono::Duration::microseconds(i as i64);
                 let ulid = Ulid::from_datetime(event_time);
                 
-                let event = events::indexed_test_event(0, chrono::Utc::now())),
+                let event = events::indexed_test_event(0, chrono::Utc::now());
                 };
                 
                 events.push(event);
@@ -286,7 +286,7 @@ async fn test_events_spanning_chunk_boundary() {
     println!("  Chunk boundary at: {}", chunk_boundary);
     
     for (timestamp, label) in boundary_events {
-        let event = events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None)),
+        let event = events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
         };
         
         match queries::insert_event(&pool, &event).await {
@@ -335,7 +335,7 @@ async fn test_query_during_chunk_compression() {
     
     // Insert many events to make compression worthwhile
     for i in 0..10000 {
-        let event = events::large_payload_test_event(1024)),
+        let event = events::large_payload_test_event(1024);
         };
         
         queries::insert_event(&pool, &event).await.unwrap();
@@ -364,7 +364,7 @@ async fn test_query_during_chunk_compression() {
                 let result = Ok(count);
                 
                 match result {
-                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed()),
+                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed();
                     Err(e) => format!("Count failed: {}", e),
                 }
             }
@@ -388,7 +388,7 @@ async fn test_query_during_chunk_compression() {
                 let result: Result<FakeRangeRecord, _> = Ok(FakeRangeRecord { count: Some(count) });
                 
                 match result {
-                    Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed()),
+                    Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed();
                     Err(e) => format!("Range scan failed: {}", e),
                 }
             }
@@ -412,7 +412,7 @@ async fn test_query_during_chunk_compression() {
                 ).fetch_all(&pool).await;
                 
                 match result {
-                    Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),
+                    Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed();
                     Err(e) => format!("Aggregation failed: {}", e),
                 }
             }

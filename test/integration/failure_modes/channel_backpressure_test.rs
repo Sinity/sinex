@@ -20,8 +20,8 @@ async fn test_channel_backpressure_handling() {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event = events::generic_adversarial_event("fast_producer", "test.event", json!({"test": true}), None)),
-            };
+            let event = events::generic_adversarial_event("fast_producer", "test.event", json!({"test": true}), None);
+            if tx.send(event).await.is_err() { break; }
             
             gen_count.fetch_add(1, Ordering::Relaxed);
             
@@ -115,8 +115,8 @@ async fn test_memory_pressure_handling() {
             let size = 1024 * (i + 1); // 1KB to 100KB
             let large_data = "x".repeat(size);
             
-            let event = events::large_payload_test_event(1024)),
-            };
+            let event = events::large_payload_test_event(1024);
+            if tx.send(event).await.is_err() { break; }
             
             if tx.send(event).await.is_err() {
                 eprintln!("Channel closed at event {}", i);
@@ -182,8 +182,8 @@ async fn test_event_source_crash_recovery() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
             for i in 0..100 {
-                let event = events::generic_adversarial_event("crashing", "test", json!({"test": true}), None)),
-                };
+                let event = events::generic_adversarial_event("crashing", "test", json!({"test": true}), None);
+                if tx.send(event).await.is_err() { break; }
                 
                 tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
                 self.events_sent.fetch_add(1, Ordering::Relaxed);

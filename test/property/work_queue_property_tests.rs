@@ -379,13 +379,9 @@ mod unit_tests {
         assert_eq!(tracker.get_duplicates()[0], id1);
     }
     
-    #[tokio::test]
-    async fn test_worker_crash_simulation() {
+    #[sqlx::test]
+    async fn test_worker_crash_simulation(pool: sqlx::PgPool) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-        
-        let pool = create_test_pool(&database_url).await.expect("DB operation failed");
         let tracker = ProcessingTracker::new();
         
         // Test with 100% crash probability (should exit immediately)
@@ -400,5 +396,6 @@ mod unit_tests {
         ).await;
         
         assert!(result.is_ok());
+        Ok(())
     }
 }

@@ -336,7 +336,7 @@ async fn test_event_cascade_explosion() {
         total_events += 1;
         
         // Each terminal command opens a notification window
-        let win_event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None)),
+        let win_event = events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None);
         };
         
         queries::insert_event(&pool, &win_event).await.unwrap();
@@ -359,15 +359,15 @@ fn test_event_type_confusion() {
         ("filesystem", json!({
             "window_id": "0x12345",  // Window data in filesystem event
             "geometry": {"x": 0, "y": 0},
-        })),
+        });
         ("terminal", json!({
             "path": "/etc/passwd",  // Filesystem data in terminal event
             "inode": 12345,
-        })),
+        });
         ("hyprland", json!({
             "command": "rm -rf /",  // Terminal data in window event
             "exit_code": 0,
-        })),
+        });
     ];
     
     println!("Testing event type confusion:");

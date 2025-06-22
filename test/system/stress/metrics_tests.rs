@@ -188,7 +188,7 @@ impl StressTestWorker {
                 }))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e.into();
         }
     }
 
@@ -256,7 +256,7 @@ struct WorkerStressResult {
 
 #[tokio::test]
 async fn test_extreme_concurrency_stress() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());

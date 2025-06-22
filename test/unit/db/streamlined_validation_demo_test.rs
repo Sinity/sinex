@@ -104,9 +104,9 @@ fn test_multiple_validation_rules_streamlined() {
     use crate::common::validation_test_utils;
     
     let event_creators = vec![
-        ("filesystem", |p| RawEventBuilder::new("filesystem", "file.created", p).build()),
-        ("terminal", |p| RawEventBuilder::new("terminal_kitty", "command.executed", p).build()),
-        ("window", |p| RawEventBuilder::new("hyprland", "window.focus", p).build()),
+        ("filesystem", |p| RawEventBuilder::new("filesystem", "file.created", p).build();
+        ("terminal", |p| RawEventBuilder::new("terminal_kitty", "command.executed", p).build();
+        ("window", |p| RawEventBuilder::new("hyprland", "window.focus", p).build();
     ];
     
     for (name, creator) in event_creators {
@@ -114,15 +114,15 @@ fn test_multiple_validation_rules_streamlined() {
         
         // Valid event
         let valid_event = match name {
-            "filesystem" => creator(json!({"path": "/test.txt", "size": 1024})),
-            "terminal" => creator(json!({"command": "ls", "exit_code": 0})),
-            "window" => creator(json!({"window_id": 123, "title": "Test"})),
+            "filesystem" => creator(json!({"path": "/test.txt", "size": 1024});
+            "terminal" => creator(json!({"command": "ls", "exit_code": 0});
+            "window" => creator(json!({"window_id": 123, "title": "Test"});
             _ => unreachable!(),
         };
         validation_test_utils::assert_valid_event(&valid_event);
         
         // Invalid event (empty payload)
-        let invalid_event = creator(json!({}));
+        let invalid_event = creator(json!({});
         validation_test_utils::assert_invalid_event(&invalid_event, "");
     }
 }

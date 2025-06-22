@@ -54,7 +54,8 @@ pub use crate::common::{
 
 // Test macros
 pub use crate::{
-    test_with_pool, integration_test, test_with_agent, workload_test
+    test_with_pool, integration_test, test_with_agent, workload_test,
+    test_with_transaction, test_with_shared_pool, test_with_transaction_agent
 };
 
 // Timing optimization helpers

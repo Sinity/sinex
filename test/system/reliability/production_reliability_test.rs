@@ -12,7 +12,7 @@ use serde_json::json;
 /// Test graceful degradation under database connectivity issues
 #[tokio::test]
 async fn test_graceful_degradation_database_failure() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Create test agent
@@ -191,7 +191,7 @@ async fn test_graceful_degradation_database_failure() -> Result<()> {
 /// Test resource limits and monitoring under load
 #[tokio::test]
 async fn test_resource_limits_monitoring() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing resource limits and monitoring under load...");
@@ -513,7 +513,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 /// Test system behavior under resource exhaustion scenarios
 #[tokio::test]
 async fn test_resource_exhaustion_scenarios() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     println!("Testing resource exhaustion scenarios...");

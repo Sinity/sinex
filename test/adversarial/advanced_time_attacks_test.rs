@@ -211,10 +211,10 @@ fn test_timezone_confusion_attacks() {
     let ambiguous_time_str = "2024-03-10 02:30:00"; // During DST transition
     
     let timezones = vec![
-        ("UTC", FixedOffset::east_opt(0).unwrap()),
-        ("EST", FixedOffset::west_opt(5 * 3600).unwrap()),
-        ("PST", FixedOffset::west_opt(8 * 3600).unwrap()),
-        ("JST", FixedOffset::east_opt(9 * 3600).unwrap()),
+        ("UTC", FixedOffset::east_opt(0).unwrap();
+        ("EST", FixedOffset::west_opt(5 * 3600).unwrap();
+        ("PST", FixedOffset::west_opt(8 * 3600).unwrap();
+        ("JST", FixedOffset::east_opt(9 * 3600).unwrap();
     ];
     
     println!("Testing timezone confusion with time: {}", ambiguous_time_str);
@@ -308,7 +308,7 @@ fn test_ulid_with_extreme_clock_skew() {
         ("Far future", base_time + Duration::days(365 * 100)),  // 100 years ahead
         ("Far past", base_time - Duration::days(365 * 50)),     // 50 years ago
         ("Unix epoch", Utc.timestamp_opt(0, 0).unwrap()),       // 1970-01-01
-        ("Y2K", Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap()),
+        ("Y2K", Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
         ("Y2038 problem", Utc.timestamp_opt(2147483647, 0).unwrap()), // 32-bit overflow
     ];
     

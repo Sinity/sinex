@@ -156,8 +156,7 @@ async fn test_complete_event_pipeline() {
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), Some("test"))),
-    };
+    let bad_event = events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
     
     queries::insert_event(&pool, &bad_event).await.unwrap();
     
@@ -383,6 +382,7 @@ fn create_raw_event(
     source: &str, 
     event_type: &str, 
     payload: serde_json::Value,
-    timestamp: chrono::DateTime<Utc>,
-) -> events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("test-v1"))
+    timestamp: Option<chrono::DateTime<Utc>>,
+) -> sinex_core::RawEvent {
+    events::generic_adversarial_event(source, event_type, payload, timestamp)
 }

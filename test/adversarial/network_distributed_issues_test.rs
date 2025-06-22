@@ -59,7 +59,7 @@ async fn test_network_partition_during_processing() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create test event to be processed
-    let test_event = events::generic_adversarial_event("partition_test", "network.test", json!({"test": true}), None)),
+    let test_event = events::generic_adversarial_event("partition_test", "network.test", json!({"test": true}), None);
     };
     
     queries::insert_event(&pool, &test_event).await.unwrap();
@@ -180,7 +180,7 @@ async fn test_split_brain_scenario() {
         
         tokio::spawn(async move {
             for i in 0..10 {
-                let event = events::generic_adversarial_event("brain_a", "primary.operation", json!({"test": true}), None)),
+                let event = events::generic_adversarial_event("brain_a", "primary.operation", json!({"test": true}), None);
                 };
                 
                 match queries::insert_event(&pool, &event).await {
@@ -210,7 +210,7 @@ async fn test_split_brain_scenario() {
             tokio::time::sleep(Duration::from_millis(100)).await;
             
             for i in 0..10 {
-                let event = events::generic_adversarial_event("brain_b", "primary.operation", json!({"test": true}), None)),
+                let event = events::generic_adversarial_event("brain_b", "primary.operation", json!({"test": true}), None);
                 };
                 
                 match queries::insert_event(&pool, &event).await {
@@ -255,8 +255,8 @@ async fn test_split_brain_scenario() {
     
     for event in &events {
         match event.source.as_str() {
-            "brain_a" => brain_a_times.push(event.ts_ingest.unwrap()),
-            "brain_b" => brain_b_times.push(event.ts_ingest.unwrap()),
+            "brain_a" => brain_a_times.push(event.ts_ingest.unwrap();
+            "brain_b" => brain_b_times.push(event.ts_ingest.unwrap();
             _ => {}
         }
     }

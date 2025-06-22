@@ -64,8 +64,7 @@ impl EventSource for TestEventSource {
                 return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()));
             }
             
-            let event = events::generic_adversarial_event("test", "test_event", json!({"test": true}), None)),
-            };
+            let event = events::generic_adversarial_event("test", "test_event", json!({"test": true}), None);
             
             if tx.send(event).await.is_err() {
                 break; // Receiver dropped

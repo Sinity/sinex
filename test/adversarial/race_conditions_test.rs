@@ -158,7 +158,7 @@ fn test_work_queue_thundering_herd() {
         let pool = create_test_db_pool().await.unwrap();
         
         // Insert single event
-        let event = events::adversarial_test_event("herd.test", serde_json::json!({"value": "prize"}));
+        let event = events::adversarial_test_event("herd.test", serde_json::json!({"value": "prize"});
         
         queries::insert_event(&pool, &event).await.unwrap();
         
@@ -221,7 +221,7 @@ fn test_concurrent_metadata_lost_update() {
         let event = events::adversarial_test_event("metadata.test", serde_json::json!({
             "counter": 0,
             "updates": []
-        }));
+        });
         
         let inserted = queries::insert_event(&pool, &event).await.unwrap();
         let event_id = inserted.id;

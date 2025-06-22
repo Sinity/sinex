@@ -11,27 +11,27 @@ fn arb_event_payload() -> impl Strategy<Value = Value> {
             "path": "/home/user/test.txt",
             "size": 1024,
             "timestamp": "2024-06-20T10:00:00Z"
-        })),
+        });
         
         // Window manager events  
         Just(json!({
             "window_id": "0x12345",
             "title": "Terminal",
             "class": "kitty"
-        })),
+        });
         
         // Terminal events
         Just(json!({
             "command": "ls -la",
             "exit_code": 0,
             "duration_ms": 150
-        })),
+        });
         
         // Simple events
         Just(json!({
             "type": "simple",
             "data": "test"
-        })),
+        });
         
         // Complex nested events
         Just(json!({
@@ -46,20 +46,20 @@ fn arb_event_payload() -> impl Strategy<Value = Value> {
                 "timestamp": "2024-06-20T10:00:00Z",
                 "source": "test"
             }
-        })),
+        });
         
         // Array data
         Just(json!({
             "items": ["item1", "item2", "item3"],
             "count": 3
-        })),
+        });
         
         // Edge cases
-        Just(json!({})),
-        Just(json!(null)),
-        Just(json!("simple string")),
-        Just(json!(42)),
-        Just(json!(true)),
+        Just(json!({});
+        Just(json!(null);
+        Just(json!("simple string");
+        Just(json!(42);
+        Just(json!(true);
     ]
 }
 
@@ -70,7 +70,7 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
         Just(json!({
             "large_field": "x".repeat(10000),
             "data": "test"
-        })),
+        });
         
         // Deeply nested structures
         Just(json!({
@@ -93,27 +93,27 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
                     }
                 }
             }
-        })),
+        });
         
         // Large arrays
         Just(json!({
             "large_array": (0..1000).collect::<Vec<i32>>(),
             "type": "array_test"
-        })),
+        });
         
         // Suspicious patterns that might indicate security issues
         Just(json!({
             "script": "<script>alert('xss')</script>",
             "sql": "'; DROP TABLE users; --",
             "path": "../../../etc/passwd"
-        })),
+        });
         
         // Unicode and special characters
         Just(json!({
             "unicode": "🦀🔒🌟",
             "special_chars": "!@#$%^&*(){}[]|\\:;\"'<>,.?/",
             "null_bytes": "test\u{0000}data"
-        })),
+        });
     ]
 }
 
@@ -221,17 +221,17 @@ fn test_event_validator_edge_cases() {
     
     let edge_cases = vec![
         // Empty fields
-        ("", "test.event", json!({})),
-        ("test_source", "", json!({})),
-        ("test_source", "test.event", json!(null)),
+        ("", "test.event", json!({});
+        ("test_source", "", json!({});
+        ("test_source", "test.event", json!(null);
         
         // Very long fields  
-        (long_source.as_str(), "test.event", json!({})),
-        ("test_source", long_event_type.as_str(), json!({})),
+        (long_source.as_str(), "test.event", json!({});
+        ("test_source", long_event_type.as_str(), json!({});
         
         // Special characters
-        ("test@source#", "test.event!", json!({})),
-        ("test_source", "test.event.with.many.dots", json!({})),
+        ("test@source#", "test.event!", json!({});
+        ("test_source", "test.event.with.many.dots", json!({});
     ];
     
     for (source, event_type, payload) in edge_cases {

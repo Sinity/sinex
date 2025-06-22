@@ -206,9 +206,9 @@ async fn test_event_router_state_corruption() {
     
     // Create events that test state transitions
     let state_events = vec![
-        ("file.created", json!({"path": "/test.txt", "state": "created"})),
-        ("file.modified", json!({"path": "/test.txt", "state": "modified"})),
-        ("file.deleted", json!({"path": "/test.txt", "state": "deleted"})),
+        ("file.created", json!({"path": "/test.txt", "state": "created"});
+        ("file.modified", json!({"path": "/test.txt", "state": "modified"});
+        ("file.deleted", json!({"path": "/test.txt", "state": "deleted"});
         ("file.modified", json!({"path": "/test.txt", "state": "modified_after_delete"})), // Invalid!
     ];
     
@@ -291,7 +291,7 @@ async fn test_worker_state_machine_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create a job that will be processed by workers
-    let test_event = events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None)),
+    let test_event = events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
     };
     
     queries::insert_event(&pool, &test_event).await.unwrap();

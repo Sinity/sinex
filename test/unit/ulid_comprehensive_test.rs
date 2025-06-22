@@ -56,7 +56,7 @@ mod basic_functionality {
     #[test]
     fn string_parsing_and_formatting() {
         let ulid = Ulid::new();
-        let ulid_str = ulid.to_string();
+        let ulid_str = ulid.to_string());
         let parsed = ulid_str.parse::<Ulid>().expect("Valid ULID string should parse");
         
         assert_eq!(ulid, parsed);
@@ -289,10 +289,10 @@ mod correctness {
     #[test]
     fn crockford_base32_compliance() {
         let ulid = Ulid::new();
-        let ulid_str = ulid.to_string();
+        let ulid_str = ulid.to_string());
         
         assert_eq!(ulid_str.len(), 26, "ULID must be 26 characters");
-        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)),
+        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c);
             "ULID must only contain valid Crockford Base32 characters");
         
         // Verify excluded characters
@@ -497,7 +497,7 @@ mod properties {
         #[test]
         fn string_roundtrip_property(s in "[0-9A-Z]{26}") {
             if let Ok(ulid) = Ulid::from_str(&s) {
-                let s2 = ulid.to_string();
+                let s2 = ulid.to_string());
                 let ulid2 = Ulid::from_str(&s2).unwrap();
                 prop_assert_eq!(ulid, ulid2);
             }

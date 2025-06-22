@@ -9,6 +9,7 @@ pub mod worker;
 pub mod event_sources;
 pub mod failure_modes;
 pub mod infrastructure;
+pub mod agent;
 
 // Query interface tests
 pub mod query_interface_test;

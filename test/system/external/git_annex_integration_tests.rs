@@ -143,7 +143,7 @@ async fn test_git_annex_configuration() -> Result<()> {
     let config = AnnexConfig {
         repo_path: repo_path.clone(),
         num_copies: Some(2),
-        large_files: Some("*.bin".to_string()),
+        large_files: Some("*.bin".to_string());
     };
     
     let annex = GitAnnex::new(config)?;
@@ -156,7 +156,7 @@ async fn test_git_annex_configuration() -> Result<()> {
         .output()
         .await?;
     
-    let num_copies = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let num_copies = String::from_utf8_lossy(&output.stdout).trim().to_string());
     assert_eq!(num_copies, "2");
     
     Ok(())

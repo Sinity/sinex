@@ -26,7 +26,7 @@ async fn test_agent_registering_from_multiple_instances() {
         let handle = tokio::spawn(async move {
             let manifest = AgentManifest {
                 agent_name: agent_name.to_string(),
-                description: Some(format!("Chaos agent instance {}", instance_id)),
+                description: Some(format!("Chaos agent instance {}", instance_id);
                 version: format!("1.0.{}", instance_id), // Slightly different versions
                 status: "running".to_string(),
                 agent_type: "filesystem".to_string(),
@@ -35,13 +35,13 @@ async fn test_agent_registering_from_multiple_instances() {
                     "properties": {
                         "paths": {"type": "array"}
                     }
-                })),
-                produces_event_types: Some(json!(["file.created", "file.modified"])),
+                });
+                produces_event_types: Some(json!(["file.created", "file.modified"]);
                 subscribes_to_event_types: None,
-                required_capabilities: Some(json!(["read", "write"])),
+                required_capabilities: Some(json!(["read", "write"]);
                 llm_dependencies: None,
                 repo_url: None,
-                last_heartbeat_ts: Some(Utc::now()),
+                last_heartbeat_ts: Some(Utc::now();
                 last_error_ts: None,
                 last_error_summary: None,
                 registered_at: Utc::now(),
@@ -172,7 +172,7 @@ async fn test_agent_downgrade_during_operation() {
     // Register agent v2.0
     let manifest_v2 = AgentManifest {
         agent_name: agent_name.to_string(),
-        description: Some("Version chaos test agent v2".to_string()),
+        description: Some("Version chaos test agent v2".to_string());
         version: "2.0.0".to_string(),
         status: "running".to_string(),
         agent_type: "filesystem".to_string(),
@@ -182,13 +182,13 @@ async fn test_agent_downgrade_during_operation() {
                 "paths": {"type": "array"},
                 "new_feature": {"type": "boolean"}  // v2.0 feature
             }
-        })),
-        produces_event_types: Some(json!(["file.created", "file.modified", "file.deleted"])),
+        });
+        produces_event_types: Some(json!(["file.created", "file.modified", "file.deleted"]);
         subscribes_to_event_types: None,
-        required_capabilities: Some(json!(["read", "write", "delete"])),
+        required_capabilities: Some(json!(["read", "write", "delete"]);
         llm_dependencies: None,
         repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
+        last_heartbeat_ts: Some(Utc::now();
         last_error_ts: None,
         last_error_summary: None,
         registered_at: Utc::now(),
@@ -208,7 +208,7 @@ async fn test_agent_downgrade_during_operation() {
     println!("Registered agent v2.0");
     
     // Send some v2.0 events
-    let v2_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("2.0.0"))),
+    let v2_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("2.0.0"));
     };
     
     queries::insert_event(&pool, &v2_event).await.unwrap();
@@ -219,7 +219,7 @@ async fn test_agent_downgrade_during_operation() {
     // Now try to "downgrade" to v1.0 (different capabilities, schema)
     let manifest_v1 = AgentManifest {
         agent_name: agent_name.to_string(),
-        description: Some("Version chaos test agent v1".to_string()),
+        description: Some("Version chaos test agent v1".to_string());
         version: "1.0.0".to_string(),
         status: "running".to_string(),
         agent_type: "filesystem".to_string(),
@@ -229,13 +229,13 @@ async fn test_agent_downgrade_during_operation() {
                 "paths": {"type": "array"}
                 // No new_feature property
             }
-        })),
+        });
         produces_event_types: Some(json!(["file.created", "file.modified"])), // No file.deleted
         subscribes_to_event_types: None,
         required_capabilities: Some(json!(["read", "write"])), // No delete
         llm_dependencies: None,
         repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
+        last_heartbeat_ts: Some(Utc::now();
         last_error_ts: None,
         last_error_summary: None,
         registered_at: Utc::now(),
@@ -271,7 +271,7 @@ async fn test_agent_downgrade_during_operation() {
             }
             
             // Try to send v1.0 event with old capabilities
-            let v1_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("1.0.0"))),
+            let v1_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("1.0.0"));
             };
             
             match queries::insert_event(&pool, &v1_event).await {
@@ -298,17 +298,17 @@ async fn test_concurrent_agent_status_updates() {
     // Register agent
     let manifest = AgentManifest {
         agent_name: agent_name.to_string(),
-        description: Some("Status chaos test agent".to_string()),
+        description: Some("Status chaos test agent".to_string());
         version: "1.0.0".to_string(),
         status: "running".to_string(),
         agent_type: "filesystem".to_string(),
         config_template_json: None,
-        produces_event_types: Some(json!(["file.created"])),
+        produces_event_types: Some(json!(["file.created"]);
         subscribes_to_event_types: None,
-        required_capabilities: Some(json!(["read"])),
+        required_capabilities: Some(json!(["read"]);
         llm_dependencies: None,
         repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
+        last_heartbeat_ts: Some(Utc::now();
         last_error_ts: None,
         last_error_summary: None,
         registered_at: Utc::now(),
@@ -341,7 +341,7 @@ async fn test_concurrent_agent_status_updates() {
     for (i, status) in statuses.iter().enumerate() {
         let pool_clone = pool.clone();
         let update_count = status_updates.clone();
-        let status_str = status.to_string();
+        let status_str = status.to_string());
         
         let handle = tokio::spawn(async move {
             // Try to update status
@@ -402,17 +402,17 @@ async fn test_agent_zombie_heartbeat_scenario() {
     // Register agent
     let manifest = AgentManifest {
         agent_name: agent_name.to_string(),
-        description: Some("Zombie test agent".to_string()),
+        description: Some("Zombie test agent".to_string());
         version: "1.0.0".to_string(),
         status: "running".to_string(),
         agent_type: "filesystem".to_string(),
         config_template_json: None,
-        produces_event_types: Some(json!(["file.created"])),
+        produces_event_types: Some(json!(["file.created"]);
         subscribes_to_event_types: None,
-        required_capabilities: Some(json!(["read"])),
+        required_capabilities: Some(json!(["read"]);
         llm_dependencies: None,
         repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
+        last_heartbeat_ts: Some(Utc::now();
         last_error_ts: None,
         last_error_summary: None,
         registered_at: Utc::now(),
@@ -436,17 +436,17 @@ async fn test_agent_zombie_heartbeat_scenario() {
     // New agent with same name tries to register (recovery scenario)
     let recovery_manifest = AgentManifest {
         agent_name: agent_name.to_string(),
-        description: Some("Zombie test agent (recovered)".to_string()),
+        description: Some("Zombie test agent (recovered)".to_string());
         version: "1.0.1".to_string(), // Slightly newer
         status: "running".to_string(),
         agent_type: "filesystem".to_string(),
         config_template_json: None,
-        produces_event_types: Some(json!(["file.created"])),
+        produces_event_types: Some(json!(["file.created"]);
         subscribes_to_event_types: None,
-        required_capabilities: Some(json!(["read"])),
+        required_capabilities: Some(json!(["read"]);
         llm_dependencies: None,
         repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
+        last_heartbeat_ts: Some(Utc::now();
         last_error_ts: None,
         last_error_summary: None,
         registered_at: Utc::now(),

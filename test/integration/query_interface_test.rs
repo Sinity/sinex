@@ -228,19 +228,16 @@ async fn test_exo_cli_advanced_queries() {
     let base_time = chrono::Utc::now();
     
     for i in 0..20 {
-        let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None) else { "source_b" }.to_string(),
-            event_type: format!("event.type_{}", i % 3),
-            ts_ingest: base_time - chrono::Duration::minutes(i),
-            ts_orig: Some(base_time - chrono::Duration::minutes(i + 1)),
-            host: "test-host".to_string(),
-            ingestor_version: Some("test-1.0".to_string()),
-            payload_schema_id: None,
-            payload: json!({
+        let event = sinex_core::events::generic_adversarial_event(
+            &format!("source_{}", if i % 2 == 0 { "a" } else { "b" }),
+            &format!("event.type_{}", i % 3),
+            json!({
                 "index": i,
                 "data": format!("test data {}", i),
                 "important": i % 5 == 0
             }),
-        };
+            Some(base_time - chrono::Duration::minutes(i + 1))
+        );
         
         sinex_db::queries::insert_event(&pool, &event).await.unwrap();
         
@@ -304,8 +301,7 @@ async fn test_exo_cli_output_formats() {
     let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
     
     // Insert a test event
-    let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("test-1.0"))),
-    };
+    let event = sinex_core::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
     
     sinex_db::queries::insert_event(&pool, &event).await.unwrap();
     

@@ -5,7 +5,7 @@ use super::common::*;
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+    let pool = get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());
@@ -96,7 +96,7 @@ async fn test_coordinated_deadlock_scenario() -> Result<()> {
             .into_iter()
             .filter_map(|r| {
                 match (r.queue_id, r.processing_worker_id) {
-                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
+                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id);
                     _ => None,
                 }
             })
@@ -388,7 +388,7 @@ impl DeadlockStressWorker {
                 }))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e.into();
         }
     }
 
