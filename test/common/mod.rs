@@ -460,157 +460,28 @@ pub async fn create_agent_with_subscriptions(
 }
 
 
-/// Database state builder for complex test scenarios
+/// Simple database test utilities
 #[allow(dead_code)]
-pub mod database_builder {
+pub mod database {
     use super::*;
-    use sinex_db::models::{RawEvent, AgentManifest};
-    use chrono::{DateTime, Utc};
-
-    /// Builder for setting up complex database states in tests
-    pub struct DatabaseStateBuilder {
-        pool: PgPool,
-        events: Vec<RawEvent>,
-        manifests: Vec<AgentManifest>,
-        schemas: Vec<(String, serde_json::Value)>,
-    }
-
-    impl DatabaseStateBuilder {
-        /// Create a new database state builder
-        pub fn new(pool: PgPool) -> Self {
-            Self {
-                pool,
-                events: Vec::new(),
-                manifests: Vec::new(),
-                schemas: Vec::new(),
-            }
+    
+    /// Insert multiple test events quickly
+    pub async fn insert_test_events(pool: &PgPool, count: usize) -> Result<Vec<Ulid>> {
+        let mut ids = Vec::new();
+        for i in 0..count {
+            let event = generators::indexed_event(i);
+            let id = insert_event(pool, &event).await?;
+            ids.push(id);
         }
-
-        /// Add events to be inserted
-        pub fn with_events(mut self, events: Vec<RawEvent>) -> Self {
-            self.events.extend(events);
-            self
-        }
-
-        /// Add a single event
-        pub fn with_event(mut self, event: RawEvent) -> Self {
-            self.events.push(event);
-            self
-        }
-
-        /// Add events from a generator function
-        pub fn with_generated_events<F>(mut self, count: usize, generator: F) -> Self 
-        where
-            F: Fn(usize) -> RawEvent,
-        {
-            for i in 0..count {
-                self.events.push(generator(i));
-            }
-            self
-        }
-
-        /// Add events with time distribution
-        pub fn with_time_distributed_events(
-            mut self, 
-            count: usize, 
-            start_time: DateTime<Utc>, 
-            interval: chrono::Duration
-        ) -> Self {
-            for i in 0..count {
-                let mut event = generators::indexed_event(i);
-                event.ts_orig = Some(start_time + interval * i as i32);
-                self.events.push(event);
-            }
-            self
-        }
-
-        /// Add agent manifests
-        pub fn with_manifests(mut self, manifests: Vec<AgentManifest>) -> Self {
-            self.manifests.extend(manifests);
-            self
-        }
-
-        /// Add JSON schemas
-        pub fn with_schema(mut self, name: String, schema: serde_json::Value) -> Self {
-            self.schemas.push((name, schema));
-            self
-        }
-
-        /// Build the database state
-        pub async fn build(self) -> Result<DatabaseState> {
-            // Insert all events
-            let mut event_ids = Vec::new();
-            for event in &self.events {
-                let inserted = queries::insert_event(&self.pool, event).await?;
-                event_ids.push(inserted.id);
-            }
-
-            // Insert all manifests
-            for manifest in &self.manifests {
-                queries::upsert_agent_manifest(
-                    &self.pool,
-                    &manifest.agent_name,
-                    manifest.description.as_deref().unwrap_or(""),
-                    &manifest.version,
-                    &manifest.status,
-                    Some(&manifest.agent_type),
-                    manifest.config_template_json.clone(),
-                    manifest.produces_event_types.clone(),
-                ).await?;
-            }
-
-            // Insert schemas if any
-            for (name, schema) in &self.schemas {
-                // Insert schema logic here when available
-                // For now, just validate the schema
-                let _ = serde_json::to_string(schema)?;
-            }
-
-            Ok(DatabaseState {
-                pool: self.pool,
-                event_ids,
-                manifest_names: self.manifests.into_iter().map(|m| m.agent_name).collect(),
-                schema_names: self.schemas.into_iter().map(|(name, _)| name).collect(),
-            })
-        }
-    }
-
-    /// Represents a built database state for testing
-    pub struct DatabaseState {
-        pub pool: PgPool,
-        pub event_ids: Vec<Ulid>,
-        pub manifest_names: Vec<String>,
-        pub schema_names: Vec<String>,
-    }
-
-    impl DatabaseState {
-        /// Verify all events were inserted correctly
-        pub async fn verify_events(&self) -> Result<()> {
-            for event_id in &self.event_ids {
-                let exists = super::event_exists(&self.pool, *event_id).await?;
-                assert!(exists, "Event {} was not found in database", event_id);
-            }
-            Ok(())
-        }
-
-        /// Get event count in database
-        pub async fn event_count(&self) -> Result<i64> {
-            super::get_event_count(&self.pool).await
-        }
-
-        /// Clean up all inserted data
-        pub async fn cleanup(&self) -> Result<()> {
-            super::cleanup::truncate_all_tables(&self.pool).await
-        }
+        Ok(ids)
     }
 }
 
-/// Enhanced assertion helpers
+/// Essential assertion helpers
 #[allow(dead_code)]
-pub mod enhanced_assertions {
+pub mod assertions_extra {
     use super::*;
     use sinex_db::models::RawEvent;
-    use chrono::{DateTime, Utc};
 
     /// Assert events are in chronological order
     pub fn assert_events_in_order(events: &[RawEvent]) {
@@ -618,98 +489,16 @@ pub mod enhanced_assertions {
             let (prev, curr) = (&window[0], &window[1]);
             assert!(
                 prev.ts_ingest <= curr.ts_ingest,
-                "Events not in chronological order: {} > {}",
-                prev.ts_ingest,
-                curr.ts_ingest
+                "Events not in chronological order"
             );
         }
-    }
-
-    /// Assert events are in ULID order (which implies time order)
-    pub fn assert_events_in_ulid_order(events: &[RawEvent]) {
-        for window in events.windows(2) {
-            let (prev, curr) = (&window[0], &window[1]);
-            assert!(
-                prev.id.timestamp() <= curr.id.timestamp(),
-                "Events not in ULID time order: {} > {}",
-                prev.id,
-                curr.id
-            );
-        }
-    }
-
-    /// Assert that worker processed expected number of events
-    pub async fn assert_worker_processed(
-        pool: &PgPool,
-        worker_name: &str,
-        expected_count: i64,
-        timeout_secs: u64,
-    ) -> Result<()> {
-        use crate::common::timing_optimization::replacements::wait_for_worker_processed_events;
-        
-        match wait_for_worker_processed_events(pool, worker_name, expected_count, timeout_secs).await {
-            Ok(_count) => Ok(()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Assert events match expected pattern
-    pub fn assert_events_match_pattern<F>(events: &[RawEvent], pattern: F) 
-    where
-        F: Fn(&RawEvent) -> bool,
-    {
-        for (i, event) in events.iter().enumerate() {
-            assert!(
-                pattern(event),
-                "Event at index {} does not match expected pattern: {:?}",
-                i,
-                event
-            );
-        }
-    }
-
-    /// Assert events are from expected sources
-    pub fn assert_events_from_sources(events: &[RawEvent], expected_sources: &[&str]) {
-        let unique_sources: std::collections::HashSet<_> = events.iter().map(|e| e.source.as_str()).collect();
-        let expected_set: std::collections::HashSet<_> = expected_sources.iter().copied().collect();
-        
-        assert_eq!(
-            unique_sources, expected_set,
-            "Events from unexpected sources. Expected: {:?}, Found: {:?}",
-            expected_sources,
-            unique_sources
-        );
     }
 
     /// Assert no duplicate events (by ULID)
     pub fn assert_no_duplicate_events(events: &[RawEvent]) {
         let mut seen_ids = std::collections::HashSet::new();
-        for (i, event) in events.iter().enumerate() {
-            assert!(
-                seen_ids.insert(event.id),
-                "Duplicate event ULID found at index {}: {}",
-                i,
-                event.id
-            );
-        }
-    }
-
-    /// Assert events contain expected payload fields
-    pub fn assert_events_have_fields(events: &[RawEvent], required_fields: &[&str]) {
-        for (i, event) in events.iter().enumerate() {
-            if let serde_json::Value::Object(payload) = &event.payload {
-                for field in required_fields {
-                    assert!(
-                        payload.contains_key(*field),
-                        "Event at index {} missing required field '{}': {:?}",
-                        i,
-                        field,
-                        event.payload
-                    );
-                }
-            } else {
-                panic!("Event at index {} has non-object payload: {:?}", i, event.payload);
-            }
+        for event in events {
+            assert!(seen_ids.insert(event.id), "Duplicate event found: {}", event.id);
         }
     }
 }
@@ -782,63 +571,41 @@ pub mod cleanup {
     }
 }
 
-/// Configuration utilities for integration tests
+/// Test resource management utilities
 #[allow(dead_code)]
-pub mod config {
+pub mod resources {
     use super::*;
-    use tempfile::NamedTempFile;
+    use tempfile::{TempDir, NamedTempFile};
     use tokio::fs;
+    use std::path::{Path, PathBuf};
+    
+    /// Create temporary directory with standard test structure
+    pub fn temp_dir() -> Result<TempDir> {
+        TempDir::new().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))
+    }
+    
+    /// Create temp directory with specific subdirectories
+    pub fn temp_dir_with_structure(subdirs: &[&str]) -> Result<TempDir> {
+        let temp = temp_dir()?;
+        for subdir in subdirs {
+            std::fs::create_dir_all(temp.path().join(subdir))?;
+        }
+        Ok(temp)
+    }
     
     /// Create a temporary configuration file
-    pub async fn create_temp_config(content: &str) -> Result<NamedTempFile> {
+    pub async fn temp_config_file(content: &str) -> Result<NamedTempFile> {
         let temp_file = NamedTempFile::new()?;
         fs::write(temp_file.path(), content).await?;
         Ok(temp_file)
     }
     
-    /// Create a minimal valid configuration
-    pub fn minimal_valid_config() -> String {
-        r#"
-enabled_events = ["filesystem.file.created"]
-
-[monitoring]
-health_check_interval_secs = 30
-metrics_enabled = true
-
-[database]
-max_connections = 10
-"#.to_string()
+    /// Create test file with content
+    pub fn create_test_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf> {
+        let file_path = dir.join(name);
+        std::fs::write(&file_path, content)?;
+        Ok(file_path)
     }
-    
-    /// Create a comprehensive test configuration
-    pub fn comprehensive_test_config() -> String {
-        r#"
-enabled_events = [
-    "filesystem.file.created",
-    "filesystem.file.modified", 
-    "terminal.command.executed",
-    "hyprland.window.focus",
-    "clipboard.content.changed"
-]
-
-[monitoring]
-health_check_interval_secs = 30
-metrics_enabled = true
-failure_threshold = 3
-recovery_timeout_secs = 60
-
-[database]
-max_connections = 50
-connection_timeout_secs = 30
-health_check_enabled = true
-
-[git_annex]
-enabled = true
-repository_path = "/tmp/test-annex"
-size_threshold_bytes = 1024000
-"#.to_string()
-    }
-}
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
@@ -853,6 +620,81 @@ pub mod schema_test_utils;
 
 /// Worker test utilities
 pub mod worker_test_utils;
+
+/// Event source testing utilities
+#[allow(dead_code)]
+pub mod event_sources {
+    use super::*;
+    use sinex_core::{EventSource, EventSourceContext, RawEvent};
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+    use serde_json::Value;
+    
+    /// Create EventSourceContext with test configuration
+    pub fn test_context(config: Value) -> EventSourceContext {
+        EventSourceContext::new(config)
+    }
+    
+    /// Create EventSourceContext with database pool
+    pub fn test_context_with_db(config: Value, pool: sqlx::PgPool) -> EventSourceContext {
+        EventSourceContext::new(config).with_db_pool(pool)
+    }
+    
+    /// Standard filesystem event source config
+    pub fn filesystem_config(watch_path: &str) -> Value {
+        serde_json::json!({
+            "watch_patterns": [format!("{}/**/*", watch_path)],
+            "ignore_patterns": ["*.tmp", "*.log"],
+            "debounce_ms": 50
+        })
+    }
+    
+    /// Standard terminal event source config  
+    pub fn terminal_config(socket_path: &str) -> Value {
+        serde_json::json!({
+            "socket_path": socket_path,
+            "polling_interval_secs": 1
+        })
+    }
+    
+    /// Standard clipboard event source config
+    pub fn clipboard_config() -> Value {
+        serde_json::json!({
+            "monitor_clipboard": true,
+            "monitor_primary": false,
+            "poll_interval_ms": 100,
+            "max_content_size": 1024
+        })
+    }
+    
+    /// Test event source until it produces events or times out
+    pub async fn test_event_production<T: EventSource>(
+        mut source: T,
+        timeout_secs: u64,
+        min_events: usize,
+    ) -> Result<Vec<RawEvent>> {
+        let (tx, mut rx) = mpsc::channel(100);
+        let timeout_duration = Duration::from_secs(timeout_secs);
+        
+        let source_handle = tokio::spawn(async move {
+            source.stream_events(tx).await
+        });
+        
+        let mut events = Vec::new();
+        let start = std::time::Instant::now();
+        
+        while events.len() < min_events && start.elapsed() < timeout_duration {
+            match timeout(Duration::from_millis(100), rx.recv()).await {
+                Ok(Some(event)) => events.push(event),
+                Ok(None) => break, // Channel closed
+                Err(_) => continue, // Timeout, keep waiting
+            }
+        }
+        
+        source_handle.abort();
+        Ok(events)
+    }
+}
 
 /// Test parallelization utilities
 #[allow(dead_code)]

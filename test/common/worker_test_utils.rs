@@ -4,7 +4,7 @@ use anyhow::Result;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use sinex_db::models::WorkQueueItem;
-use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count, wait_for_work_queue_count};
+use crate::common::timing_optimization::wait_helpers::{wait_for_work_queue_status_count, wait_for_work_queue_count};
 
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {

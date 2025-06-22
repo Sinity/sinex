@@ -6,11 +6,11 @@ use tokio::time::{timeout, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// Deterministic wait utilities that replace arbitrary sleeps
-pub mod replacements;
+/// Deterministic wait utilities for database conditions
+pub mod wait_helpers;
 
-// Re-export everything from replacements for convenience
-pub use replacements::*;
+// Re-export everything for convenience
+pub use wait_helpers::*;
 
 /// Deterministic synchronization primitive to replace arbitrary sleeps
 pub struct TestSynchronizer {

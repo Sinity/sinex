@@ -8,26 +8,17 @@ use sinex_events::{
     scrollback::ScrollbackCapture,
 };
 use std::time::Duration;
-use tempfile::TempDir;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::fs;
-
-fn create_test_context(config: Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+use crate::common::{resources, event_sources};
 
 #[tokio::test]
 async fn test_filesystem_watcher_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let config = json!({
-        "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],
-        "ignore_patterns": ["*.tmp", "*.log"],
-        "debounce_ms": 100
-    });
-    
-    let ctx = create_test_context(config);
+    let temp_dir = resources::temp_dir()?;
+    let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
+    let ctx = event_sources::test_context(config);
     let _watcher = FilesystemMonitor::initialize(ctx).await?;
     
     // FilesystemMonitor doesn't have name() or version() methods
