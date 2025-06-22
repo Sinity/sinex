@@ -280,7 +280,6 @@ mod sqlx_impl {
 mod arbitrary_impl {
     use super::*;
     use proptest::prelude::*;
-    use chrono::{DateTime, Utc, TimeZone};
 
     impl Arbitrary for Ulid {
         type Parameters = ();
