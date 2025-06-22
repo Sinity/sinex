@@ -359,7 +359,7 @@ async fn test_query_during_chunk_compression() {
                 let result = Ok(count);
                 
                 match result {
-                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed());
+                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed()),
                     Err(e) => format!("Count failed: {}", e),
                 }
             }
@@ -383,7 +383,7 @@ async fn test_query_during_chunk_compression() {
                 let result: Result<FakeRangeRecord, _> = Ok(FakeRangeRecord { count: Some(count) });
                 
                 match result {
-                    Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed());
+                    Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed()),
                     Err(e) => format!("Range scan failed: {}", e),
                 }
             }
@@ -407,7 +407,7 @@ async fn test_query_during_chunk_compression() {
                 ).fetch_all(&pool).await;
                 
                 match result {
-                    Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed());
+                    Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),
                     Err(e) => format!("Aggregation failed: {}", e),
                 }
             }

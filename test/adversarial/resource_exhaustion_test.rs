@@ -145,7 +145,7 @@ fn test_string_concatenation_memory_bomb() {
         let event = events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None);
         
         match serde_json::to_string(&event) {
-            Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len());
+            Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len()),
             Err(e) => {
                 println!("Iteration {}: String size {} - FAILED: {}", i, expanding_string.len(), e);
                 break;

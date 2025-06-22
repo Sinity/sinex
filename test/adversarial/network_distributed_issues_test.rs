@@ -60,7 +60,6 @@ async fn test_network_partition_during_processing() {
     
     // Create test event to be processed
     let test_event = events::generic_adversarial_event("partition_test", "network.test", json!({"test": true}), None);
-    };
     
     queries::insert_event(&pool, &test_event).await.unwrap();
     
@@ -134,7 +133,8 @@ async fn test_network_partition_during_processing() {
                 
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
-        });
+        })
+    };;
         
         worker_handles.push(handle);
     }
@@ -181,7 +181,6 @@ async fn test_split_brain_scenario() {
         tokio::spawn(async move {
             for i in 0..10 {
                 let event = events::generic_adversarial_event("brain_a", "primary.operation", json!({"test": true}), None);
-                };
                 
                 match queries::insert_event(&pool, &event).await {
                     Ok(_) => {
@@ -211,7 +210,6 @@ async fn test_split_brain_scenario() {
             
             for i in 0..10 {
                 let event = events::generic_adversarial_event("brain_b", "primary.operation", json!({"test": true}), None);
-                };
                 
                 match queries::insert_event(&pool, &event).await {
                     Ok(_) => {
