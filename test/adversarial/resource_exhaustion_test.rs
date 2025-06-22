@@ -4,11 +4,12 @@ use sinex_ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tempfile::TempDir;
+use crate::common::resources;
 
 #[tokio::test]
 async fn test_unbounded_file_descriptor_explosion() {
     // Try to watch a directory with thousands of files
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];
     
     // Create many files
@@ -58,7 +59,7 @@ async fn test_unbounded_file_descriptor_explosion() {
 
 #[tokio::test]
 async fn test_memory_exhaustion_via_config_reload() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config

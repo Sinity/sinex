@@ -1,11 +1,12 @@
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
 use sinex_core::{EventSource, EventType, EventSourceContext};
 use tempfile::TempDir;
+use crate::common::resources;
 use chrono::Utc;
 
 #[tokio::test]
 async fn test_kitty_listener_initialization() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let socket_path = temp_dir.path().join("kitty-test-*");
     
     let config = KittyConfig {

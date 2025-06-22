@@ -8,39 +8,10 @@ use chrono::{Utc, TimeZone};
 use sqlx::PgPool;
 use anyhow::Result;
 use sinex_ulid::Ulid;
-
-async fn setup_test_db() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
-    
-    // Use DELETE instead of TRUNCATE for TimescaleDB hypertables to avoid constraint errors
-    sqlx::query("DELETE FROM raw.events")
-        .execute(&pool)
-        .await?;
-    
-    Ok(pool)
-}
+use crate::common::{resources, create_test_db_pool, database};
 
 
-async fn insert_test_event_simple(pool: &PgPool, event: &RawEvent) -> Result<Ulid> {
-    // Use a direct SQL insert to avoid any query conflicts
-    let record = sqlx::query!(
-        r#"
-        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id::uuid as "id!"
-        "#,
-        event.source,
-        event.event_type,
-        event.host,
-        event.payload,
-        event.ts_orig,
-        event.ingestor_version
-    ).fetch_one(pool).await?;
-    
-    Ok(Ulid::from_uuid(record.id))
-}
+
 
 /// Create a test Atuin database with sample data using real SQLite schema
 fn create_test_atuin_db(path: &PathBuf, entries: Vec<TestAtuinEntry>) -> anyhow::Result<()> {
@@ -177,8 +148,8 @@ impl TestAtuinEntryBuilder {
 }
 
 #[tokio::test]
-async fn test_atuin_reader_initialization() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_reader_initialization() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create empty database
@@ -204,11 +175,12 @@ async fn test_atuin_reader_initialization() {
     let ctx = EventSourceContext::new(serde_json::to_value(&bad_config).unwrap());
     let reader = AtuinDbReader::initialize(ctx).await;
     assert!(reader.is_err(), "Should fail with non-existent database");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_atuin_event_capture() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_event_capture() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create test entries using builder pattern
@@ -282,11 +254,12 @@ async fn test_atuin_event_capture() {
     assert_eq!(payload2.command_string, "git status");
     assert_eq!(payload2.exit_code, 1);
     assert_eq!(payload2.atuin_history_id, "test-id-2");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_atuin_watermarking() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_watermarking() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create initial entries
@@ -374,7 +347,7 @@ async fn test_atuin_watermarking() {
     }
     
     // Setup PostgreSQL database for watermarking
-    let pg_pool = setup_test_db().await.unwrap();
+    let pg_pool = create_test_db_pool().await?;
     
     // Second read with PostgreSQL connection for watermarking
     let ctx_with_db = EventSourceContext::new(serde_json::to_value(&config).unwrap())
@@ -415,8 +388,8 @@ async fn test_atuin_watermarking() {
 }
 
 #[tokio::test]
-async fn test_atuin_watermarking_resume_behavior() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create initial batch of entries
@@ -441,7 +414,7 @@ async fn test_atuin_watermarking_resume_behavior() {
     };
     
     // Setup PostgreSQL database for watermarking persistence
-    let pg_pool = setup_test_db().await.unwrap();
+    let pg_pool = create_test_db_pool().await?;
     
     // Create test agent for work queue operations
     crate::common::create_test_agent(&pg_pool, "test-agent").await.unwrap();
@@ -462,7 +435,7 @@ async fn test_atuin_watermarking_resume_behavior() {
         while let Some(event) = rx1.recv().await {
             // CRITICAL: Save event to database for watermarking to work
             // Use the simplified pattern from other tests
-            let _inserted_id = insert_test_event_simple(&pg_pool, &event).await.unwrap();
+            let _inserted_id = crate::common::insert_event(&pg_pool, &event).await?;
             
             first_run_events.push(event);
             if first_run_events.len() >= 2 {
@@ -561,8 +534,8 @@ async fn test_atuin_watermarking_resume_behavior() {
 }
 
 #[tokio::test]
-async fn test_atuin_timestamp_conversion() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_timestamp_conversion() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create entry with specific timestamp
@@ -619,7 +592,7 @@ async fn test_atuin_timestamp_conversion() {
 #[tokio::test]
 async fn test_atuin_error_conditions() {
     // Test with non-existent database file
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let bad_config = AtuinConfig {
         db_path: temp_dir.path().join("nonexistent.db"),
         polling_interval_secs: 1,
@@ -650,8 +623,8 @@ async fn test_atuin_error_conditions() {
 }
 
 #[tokio::test]
-async fn test_atuin_builder_patterns() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_builder_patterns() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Test using the builder pattern for more readable test data
@@ -727,8 +700,8 @@ async fn test_atuin_builder_patterns() {
 }
 
 #[tokio::test]
-async fn test_atuin_edge_cases() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_edge_cases() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Test edge cases: empty commands, very long commands, special characters
@@ -793,8 +766,8 @@ async fn test_atuin_edge_cases() {
 }
 
 #[tokio::test]
-async fn test_atuin_global_history() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_global_history() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create entries from multiple hosts
@@ -874,8 +847,8 @@ async fn test_atuin_global_history() {
 }
 
 #[tokio::test]
-async fn test_atuin_performance_with_many_entries() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_atuin_performance_with_many_entries() -> Result<()> {
+    let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
     // Create a larger number of entries to test performance

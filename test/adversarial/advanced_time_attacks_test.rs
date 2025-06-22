@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::process::Command;
 use tempfile::TempDir;
 use std::fs;
+use crate::common::resources;
 
 #[test]
 fn test_event_processing_during_dst_change() {
@@ -94,7 +95,7 @@ fn test_ulid_uniqueness_across_processes() {
     // This test forks multiple processes to test ULID generation under
     // true multi-process conditions (not just threads)
     
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let output_file = temp_dir.path().join("ulids.txt");
     
     let num_processes = 4;

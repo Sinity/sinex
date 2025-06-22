@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
+use crate::common::resources;
 
 /// Test disk full scenarios during event capture
 #[tokio::test]
 async fn test_disk_full_handling() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
     
     // Track write attempts and failures
@@ -94,7 +95,7 @@ async fn test_disk_full_handling() {
 /// Test permission changes during filesystem monitoring
 #[tokio::test]
 async fn test_permission_change_handling() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
     
@@ -164,7 +165,7 @@ async fn test_permission_change_handling() {
 #[tokio::test]
 async fn test_filesystem_availability() {
     // This test simulates monitoring a path that becomes unavailable
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount");
     fs::create_dir(&mount_point).unwrap();
     
@@ -233,7 +234,7 @@ async fn test_filesystem_availability() {
 /// Test handling of symbolic link edge cases
 #[tokio::test]
 async fn test_symlink_edge_cases() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let base_path = temp_dir.path();
     
     // Create directory structure
@@ -329,7 +330,7 @@ async fn test_symlink_edge_cases() {
 /// Test rapid file creation/deletion patterns
 #[tokio::test]
 async fn test_rapid_filesystem_changes() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let test_dir = temp_dir.path();
     
     let files_created = Arc::new(AtomicU64::new(0));

@@ -5,10 +5,11 @@ use std::os::unix;
 use tokio::time::{Duration, timeout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::common::resources;
 
 #[tokio::test]
 async fn test_config_file_replaced_with_symlink() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     let sensitive_file = temp_dir.path().join("secrets.txt");
     
@@ -60,7 +61,7 @@ watch_paths = ["/tmp"]
 
 #[tokio::test]
 async fn test_config_reload_during_partial_write() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config
@@ -121,7 +122,7 @@ enabled_events = ["file.cre
 
 #[tokio::test]
 async fn test_config_directory_swap_attack() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
     let evil_dir = temp_dir.path().join("evil");
     
@@ -195,7 +196,7 @@ exfiltrate_to = "https://evil.com/steal"
 
 #[tokio::test]
 async fn test_config_race_condition_memory_leak() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config
@@ -288,7 +289,7 @@ timestamp = "{}"
 
 #[tokio::test]
 async fn test_config_hot_reload_during_event_processing() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config with limited events
