@@ -46,7 +46,7 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<()> {
 
 #[tokio::test]
 async fn test_timescale_chunk_creation() {
-    let pool = crate::test_setup::get_test_db().await;
+    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Clean up any previous test data
     let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
@@ -130,7 +130,7 @@ async fn test_timescale_chunk_creation() {
 
 #[tokio::test]
 async fn test_timescale_compression_policy() {
-    let pool = crate::test_setup::get_test_db().await;
+    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Check if compression policy exists
     let compression_policy: Option<(i32,)> = sqlx::query_as(
@@ -197,7 +197,7 @@ async fn test_timescale_compression_policy() {
 
 #[tokio::test]
 async fn test_timescale_continuous_aggregates() {
-    let pool = crate::test_setup::get_test_db().await;
+    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Create a continuous aggregate for event counts by source and hour
     let result = sqlx::query(
@@ -286,7 +286,7 @@ async fn test_timescale_continuous_aggregates() {
 
 #[tokio::test]
 async fn test_timescale_retention_policies() {
-    let pool = crate::test_setup::get_test_db().await;
+    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Check if retention policy exists
     let retention_policy: Option<(i32, String)> = sqlx::query_as(
@@ -365,7 +365,7 @@ async fn test_timescale_retention_policies() {
 
 #[tokio::test]
 async fn test_timescale_data_node_stats() {
-    let pool = crate::test_setup::get_test_db().await;
+    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
     // Get hypertable stats
     let stats: Option<(i64,)> = sqlx::query_as(

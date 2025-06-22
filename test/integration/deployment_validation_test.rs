@@ -22,10 +22,10 @@ async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
     
     // Verify the notification sequence was correct
     let expected_sequence = vec![
-        SystemdEvent::Status("Starting event collection".to_string());
+        SystemdEvent::Status("Starting event collection".to_string()),
         SystemdEvent::Ready,
         SystemdEvent::Watchdog,
-        SystemdEvent::Status("Processing events".to_string());
+        SystemdEvent::Status("Processing events".to_string()),
         SystemdEvent::Watchdog,
         SystemdEvent::Stopping,
     ];
@@ -77,10 +77,10 @@ async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
     
     // Verify sequence up to the failure
     let expected_sequence = vec![
-        SystemdEvent::Status("Starting service".to_string());
+        SystemdEvent::Status("Starting service".to_string()),
         SystemdEvent::Ready,
         SystemdEvent::Watchdog,
-        SystemdEvent::Status("Handling watchdog failure".to_string());
+        SystemdEvent::Status("Handling watchdog failure".to_string()),
     ];
     
     notifier.verify_sequence(&expected_sequence)

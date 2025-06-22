@@ -188,19 +188,19 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "json_deep_nesting",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_deeply_nested_json(100));
+            payload: SecurityPayload::Json(create_deeply_nested_json(100)),
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
             name: "json_wide_object",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_wide_json(10000));
+            payload: SecurityPayload::Json(create_wide_json(10000)),
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {
             name: "json_exponential_expansion",
             category: SecurityCategory::JsonAttack,
-            payload: SecurityPayload::Json(create_exponential_json(6));
+            payload: SecurityPayload::Json(create_exponential_json(6)),
             expected_behavior: ExpectedBehavior::ResourceLimited,
         },
         SecurityScenario {

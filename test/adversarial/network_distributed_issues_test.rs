@@ -7,6 +7,7 @@ use tokio::time::{Duration, timeout};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
 use futures::future::join_all;
+use serde_json::json;
 
 #[tokio::test]
 async fn test_database_dns_timeout() {

@@ -51,11 +51,11 @@ pub mod strategies {
     /// Strategy for generating realistic file paths
     pub fn file_paths() -> impl Strategy<Value = String> {
         prop_oneof![
-            Just("/home/user/document.txt".to_string());
-            Just("/tmp/cache/file.json".to_string());
-            Just("/var/log/system.log".to_string());
-            Just("/home/user/code/project/src/main.rs".to_string());
-            Just("/home/user/.config/app/settings.toml".to_string());
+            Just("/home/user/document.txt".to_string()),
+            Just("/tmp/cache/file.json".to_string()),
+            Just("/var/log/system.log".to_string()),
+            Just("/home/user/code/project/src/main.rs".to_string()),
+            Just("/home/user/.config/app/settings.toml".to_string())
         ]
     }
 

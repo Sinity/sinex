@@ -222,7 +222,7 @@ async fn test_concurrent_btree_index_splits() {
                 
                 // Create a compatible result structure
                 struct FakeCountRecord { count: Option<i64> }
-                let count_result: Result<FakeCountRecord, _> = Ok(FakeCountRecord { count: Some(count) });
+                let count_result: Result<FakeCountRecord, sqlx::Error> = Ok(FakeCountRecord { count: Some(count) });
                 
                 if let Ok(record) = count_result {
                     let count = record.count.unwrap_or(0);
@@ -356,10 +356,10 @@ async fn test_query_during_chunk_compression() {
                     3  // Reasonable timeout for stress test
                 ).await.unwrap_or(0);
                 
-                let result = Ok(count);
+                let result: Result<i64, anyhow::Error> = Ok(count);
                 
                 match result {
-                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed()),
+                    Ok(r) => format!("Count: {} in {:?}", r, start.elapsed()),
                     Err(e) => format!("Count failed: {}", e),
                 }
             }
@@ -380,7 +380,7 @@ async fn test_query_during_chunk_compression() {
                 ).await.unwrap_or(0);
                 
                 struct FakeRangeRecord { count: Option<i64> }
-                let result: Result<FakeRangeRecord, _> = Ok(FakeRangeRecord { count: Some(count) });
+                let result: Result<FakeRangeRecord, anyhow::Error> = Ok(FakeRangeRecord { count: Some(count) });
                 
                 match result {
                     Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed()),

@@ -4,14 +4,16 @@
 //! reducing boilerplate and ensuring consistency.
 
 use crate::common::prelude::*;
-use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 use std::sync::Mutex;
 
 /// Shared test database pool to reduce resource waste
 /// 
 /// Creates a single database pool with reasonable connection limits that all tests share.
 /// Tests get transaction isolation automatically to prevent interference.
-static SHARED_TEST_POOL: Lazy<Mutex<Option<PgPool>>> = Lazy::new(|| Mutex::new(None));
+lazy_static! {
+    static ref SHARED_TEST_POOL: Mutex<Option<PgPool>> = Mutex::new(None);
+}
 
 /// Create or reuse the shared test database pool
 ///
@@ -79,11 +81,25 @@ pub async fn create_test_work_items(
     for i in 0..count {
         let queue_id = Ulid::new();
         let event_id = Ulid::new();
+        
+        // First create a raw event for the foreign key constraint
         sqlx::query!(
-            "INSERT INTO sinex_schemas.work_queue (queue_id, event_id, route_key, agent_name, status) 
-             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4, $5)",
+            "INSERT INTO raw.events (id, source, event_type, payload, ts_orig, host) 
+             VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
+            event_id.to_uuid(), 
+            "test_source", 
+            format!("test.event.{}", i),
+            serde_json::json!({"test": true, "index": i}),
+            chrono::Utc::now(),
+            "test_host"
+        ).execute(pool).await?;
+        
+        // Then create the work queue item
+        sqlx::query!(
+            "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name, status) 
+             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4)",
             queue_id.to_uuid(), event_id.to_uuid(), 
-            format!("test_route_{}", i), agent_name, "pending"
+            agent_name, "pending"
         ).execute(pool).await?;
         items.push(queue_id);
     }
@@ -109,7 +125,7 @@ pub async fn get_clean_test_pool() -> Result<PgPool> {
     let pool = get_shared_test_pool().await?;
     
     // Clean up any leftover test data (less needed with transaction isolation)
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE agent_name LIKE 'test_%'")
+    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
         .execute(&pool).await?;
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
         .execute(&pool).await?;

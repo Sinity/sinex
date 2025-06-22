@@ -37,16 +37,16 @@ fn arb_source_name() -> impl Strategy<Value = String> {
 fn arb_event_type_name() -> impl Strategy<Value = String> {
     prop_oneof![
         // Filesystem events
-        Just("file.created".to_string());
-        Just("file.modified".to_string());
-        Just("file.deleted".to_string());
+        Just("file.created".to_string()),
+        Just("file.modified".to_string()),
+        Just("file.deleted".to_string()),
         // Terminal events  
-        Just("command.executed".to_string());
-        Just("shell.command.executed_atuin".to_string());
+        Just("command.executed".to_string()),
+        Just("shell.command.executed_atuin".to_string()),
         // Window events
-        Just("window.focused".to_string());
-        Just("window.opened".to_string());
-        Just("window.closed".to_string());
+        Just("window.focused".to_string()),
+        Just("window.opened".to_string()),
+        Just("window.closed".to_string()),
         // Custom format
         "[a-zA-Z][a-zA-Z0-9_-]{1,30}\\.[a-zA-Z][a-zA-Z0-9_-]{1,30}"
     ]

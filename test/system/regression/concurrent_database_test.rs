@@ -3,6 +3,7 @@ use crate::common::create_test_db_pool;
 use crate::common::events;
 use std::sync::Arc;
 use tokio::sync::Barrier;
+use serde_json::json;
 
 #[tokio::test]
 async fn test_concurrent_ulid_generation() {

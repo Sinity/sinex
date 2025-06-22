@@ -66,13 +66,7 @@ pub use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition,
 };
 
-// Assertion helpers
-pub use crate::common::assertions::{
-    assert_event_contains,
-    assert_event_field_equals,
-    assert_ulid_chronological_order,
-};
-
 // Constants commonly used in tests
-pub use sinex_events::event_type_constants;
-pub use sinex_events::sources;
+pub use sinex_core::event_type_constants;
+pub use sinex_core::sources;
+

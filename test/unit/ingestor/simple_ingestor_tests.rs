@@ -13,7 +13,7 @@ use crate::common::events;
 use sqlx::PgPool;
 
 // Import test setup macros
-use crate::db_test;
+use crate::common::database_helpers::get_shared_test_pool;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct TestSourceConfig {
@@ -341,43 +341,44 @@ async fn test_multiple_event_sources() -> Result<()> {
     Ok(())
 }
 
-db_test! {
-    async fn test_event_source_database_integration(pool: PgPool) -> Result<()> {
-        let config = TestSourceConfig {
-            events_to_generate: 2,
-            generation_delay_ms: 10,
-            should_fail: false,
-        };
-        
-        let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-        let mut source = TestEventSource::initialize(ctx).await?;
-        
-        let (tx, mut rx) = mpsc::channel(10);
-        
-        let stream_handle = tokio::spawn(async move {
-            source.stream_events(tx).await
-        });
-        
-        // Receive and store events
-        for _ in 0..2 {
-            if let Some(event) = rx.recv().await {
-                // Store in database using proper queries that handle ts_ingest correctly
-                use sinex_db::queries::insert_event;
-                insert_event(&pool, &event).await?;
-            }
+#[tokio::test]
+async fn test_event_source_database_integration() -> Result<()> {
+    let pool = get_shared_test_pool().await?;
+    
+    let config = TestSourceConfig {
+        events_to_generate: 2,
+        generation_delay_ms: 10,
+        should_fail: false,
+    };
+    
+    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx).await?;
+    
+    let (tx, mut rx) = mpsc::channel(10);
+    
+    let stream_handle = tokio::spawn(async move {
+        source.stream_events(tx).await
+    });
+    
+    // Receive and store events
+    for _ in 0..2 {
+        if let Some(event) = rx.recv().await {
+            // Store in database using proper queries that handle ts_ingest correctly
+            use sinex_db::queries::insert_event;
+            insert_event(&pool, &event).await?;
         }
-        
-        stream_handle.abort();
-        
-        // Verify events were stored
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'"
-        )
-        .fetch_one(&pool)
-        .await?;
-        
-        assert_eq!(count, 2);
-        
-        Ok(())
     }
+    
+    stream_handle.abort();
+    
+    // Verify events were stored
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'"
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    assert_eq!(count, 2);
+    
+    Ok(())
 }

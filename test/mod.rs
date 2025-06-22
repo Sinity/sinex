@@ -17,5 +17,4 @@ mod property;
 #[cfg(test)]
 mod adversarial;
 
-#[cfg(test)]
 // mod validation; // File doesn't exist

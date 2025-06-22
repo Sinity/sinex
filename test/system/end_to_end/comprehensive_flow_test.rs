@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
+use serde_json::json;
 
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
@@ -286,7 +287,7 @@ fn generate_test_events() -> Vec<RawEvent> {
             "size": 1024,
             "created_at": base_time.to_rfc3339()
         }),
-        base_time,
+        None,
     ));
     
     events.push(create_raw_event(
@@ -371,7 +372,7 @@ fn generate_test_events() -> Vec<RawEvent> {
                 "size": i * 100,
                 "timestamp": base_time + ChronoDuration::seconds(i as i64)
             }),
-            base_time + ChronoDuration::seconds(i as i64),
+            None,
         ));
     }
     
@@ -382,7 +383,7 @@ fn create_raw_event(
     source: &str, 
     event_type: &str, 
     payload: serde_json::Value,
-    timestamp: Option<chrono::DateTime<Utc>>,
+    version: Option<&str>,
 ) -> sinex_core::RawEvent {
-    events::generic_adversarial_event(source, event_type, payload, timestamp)
+    events::generic_adversarial_event(source, event_type, payload, version)
 }

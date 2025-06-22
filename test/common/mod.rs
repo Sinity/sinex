@@ -707,9 +707,14 @@ pub mod cleanup {
     
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &PgPool) -> Result<()> {
-        // Use the existing cleanup function from test_setup
-        crate::test_setup::cleanup_test_data(pool).await
-            .map_err(|e| anyhow::anyhow!("Failed to cleanup test data: {}", e))
+        // Clean up test data manually
+        sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
+            .execute(pool).await?;
+        sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
+            .execute(pool).await?;
+        sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test_%'")
+            .execute(pool).await?;
+        Ok(())
     }
     
     /// Clean up test files and directories
