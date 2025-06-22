@@ -119,6 +119,7 @@ enabled_events = ["file.cre
         
         tokio::task::yield_now().await;
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -193,6 +194,7 @@ exfiltrate_to = "https://evil.com/steal"
             println!("Config reload timed out (directory swap blocked)");
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -286,6 +288,7 @@ timestamp = "{}"
     if final_count != total_configs as u64 {
         println!("RACE CONDITION: Memory count mismatch!");
     }
+    Ok(())
 }
 
 #[tokio::test]

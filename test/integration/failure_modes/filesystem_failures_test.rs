@@ -160,6 +160,7 @@ async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Err
     println!("  Permission denials: {}", access_denials.load(Ordering::Relaxed));
     
     assert_eq!(access_denials.load(Ordering::Relaxed), 1);
+    Ok(())
 }
 
 /// Test filesystem unmount/remount scenarios
@@ -230,6 +231,7 @@ async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>
     assert!(events_before_unmount.load(Ordering::Relaxed) > 0);
     assert_eq!(events_during_unavailable.load(Ordering::Relaxed), 0);
     assert!(events_after_remount.load(Ordering::Relaxed) > 0);
+    Ok(())
 }
 
 /// Test handling of symbolic link edge cases
@@ -326,6 +328,7 @@ async fn test_symlink_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     
     // Verify expected behaviors
     // Normal should work, broken should fail, circular should fail
+    Ok(())
 }
 
 /// Test rapid file creation/deletion patterns
