@@ -8,7 +8,7 @@ use crate::common::resources;
 
 /// Test disk full scenarios during event capture
 #[tokio::test]
-async fn test_disk_full_handling() {
+async fn test_disk_full_handling() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
     
@@ -90,11 +90,12 @@ async fn test_disk_full_handling() {
     
     // In a real scenario with limited disk, we'd expect some failures
     assert!(write_attempts.load(Ordering::Relaxed) > 0);
+    Ok(())
 }
 
 /// Test permission changes during filesystem monitoring
 #[tokio::test]
-async fn test_permission_change_handling() {
+async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
@@ -163,7 +164,7 @@ async fn test_permission_change_handling() {
 
 /// Test filesystem unmount/remount scenarios
 #[tokio::test]
-async fn test_filesystem_availability() {
+async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates monitoring a path that becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount");
@@ -233,7 +234,7 @@ async fn test_filesystem_availability() {
 
 /// Test handling of symbolic link edge cases
 #[tokio::test]
-async fn test_symlink_edge_cases() {
+async fn test_symlink_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let base_path = temp_dir.path();
     
@@ -329,7 +330,7 @@ async fn test_symlink_edge_cases() {
 
 /// Test rapid file creation/deletion patterns
 #[tokio::test]
-async fn test_rapid_filesystem_changes() {
+async fn test_rapid_filesystem_changes() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let test_dir = temp_dir.path();
     
@@ -405,4 +406,5 @@ async fn test_rapid_filesystem_changes() {
     println!("  Potential missed events: {}", missed);
     
     assert!(created > 0, "Should have created files");
+    Ok(())
 }

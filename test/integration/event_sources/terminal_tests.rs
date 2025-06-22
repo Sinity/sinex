@@ -5,7 +5,7 @@ use crate::common::resources;
 use chrono::Utc;
 
 #[tokio::test]
-async fn test_kitty_listener_initialization() {
+async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let socket_path = temp_dir.path().join("kitty-test-*");
     
@@ -18,6 +18,7 @@ async fn test_kitty_listener_initialization() {
     let listener = KittySocketListener::initialize(ctx).await;
     // Should succeed even if no socket exists (will wait for socket)
     assert!(listener.is_ok(), "Should initialize even without active socket");
+    Ok(())
 }
 
 #[tokio::test]

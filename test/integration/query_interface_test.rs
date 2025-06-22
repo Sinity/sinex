@@ -1,5 +1,6 @@
 use serde_json::json;
 use std::process::Command;
+use sinex_ulid::Ulid;
 use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
@@ -95,12 +96,12 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
     });
     
     // Use schema test utilities to insert schema
-    sinex_db::queries::upsert_event_schema(
+    crate::common::schema_test_utils::database::insert_test_schema(
         &pool,
-        "test.filesystem.v1",
-        &test_schema,
-        None,
-        None
+        "test.filesystem",
+        "v1",
+        "1.0",
+        test_schema
     ).await?;
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
@@ -246,7 +247,7 @@ async fn test_exo_cli_advanced_queries() {
         sinex_db::queries::insert_event(&pool, &event).await.unwrap();
         
         // Small delay to ensure different timestamps
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");

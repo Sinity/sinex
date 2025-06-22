@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[tokio::test]
-async fn test_file_permission_revoked_while_watching() {
+async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
     
@@ -74,10 +74,11 @@ async fn test_file_permission_revoked_while_watching() {
     } else {
         println!("Expected behavior: Some accesses failed after permission revocation");
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_directory_unmounted_while_watching() {
+async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -153,6 +154,7 @@ async fn test_directory_unmounted_while_watching() {
     if successful == total_attempts {
         println!("ISSUE: Directory remained accessible after 'unmount'");
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -198,7 +200,7 @@ async fn test_watching_special_files() {
 }
 
 #[tokio::test]
-async fn test_fifo_pipe_watching() {
+async fn test_fifo_pipe_watching() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let fifo_path = temp_dir.path().join("test_fifo");
     
@@ -246,10 +248,11 @@ async fn test_fifo_pipe_watching() {
             println!("mkfifo command failed: {}", e);
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_rapid_file_creation_deletion() {
+async fn test_rapid_file_creation_deletion() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("rapid_changes");
     
@@ -325,10 +328,11 @@ async fn test_rapid_file_creation_deletion() {
             println!("Failed to read final directory state: {}", e);
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_watching_symlink_cycles() {
+async fn test_watching_symlink_cycles() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     
     let link_a = temp_dir.path().join("link_a");
@@ -363,4 +367,5 @@ async fn test_watching_symlink_cycles() {
             }
         }
     }
+    Ok(())
 }

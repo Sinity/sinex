@@ -116,7 +116,7 @@ async fn test_timescale_chunk_creation() {
              AND ts_ingest >= $3 - interval '1 hour'
              AND ts_ingest <= $3 + interval '1 hour'"
         )
-        .bind(&test_source)
+        .bind("chunk_test")
         .bind(format!("event_type_{}", i))
         .bind(ts)
         .fetch_one(pool.as_ref())

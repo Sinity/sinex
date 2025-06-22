@@ -288,7 +288,7 @@ async fn test_system_multi_source_correlation() -> Result<()> {
     let start_time = base_time - chrono::Duration::seconds(1);
     let end_time = base_time + chrono::Duration::seconds(30);
     
-    let window_events = crate::common::get_events_in_time_range(&pool, start_time, end_time).await?;
+    let window_events = queries::get_events_in_time_range(&pool, start_time, end_time).await?;
     
     // Verify we can find correlated events
     let terminal_events: Vec<_> = window_events.iter()

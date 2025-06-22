@@ -58,7 +58,7 @@ async fn test_unbounded_file_descriptor_explosion() {
 }
 
 #[tokio::test]
-async fn test_memory_exhaustion_via_config_reload() {
+async fn test_memory_exhaustion_via_config_reload() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
@@ -122,6 +122,7 @@ watch_paths = {}
     for config in &accumulated_configs {
         assert!(!config.enabled_events.is_empty(), "Config should maintain enabled events");
     }
+    Ok(())
 }
 
 
