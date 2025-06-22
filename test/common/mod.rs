@@ -410,6 +410,16 @@ pub fn test_event_with_payload(source: &str, event_type: &str, payload: Value) -
     RawEventBuilder::new(source, event_type, payload).build()
 }
 
+/// Legacy compatibility alias
+pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::models::RawEvent {
+    test_event_with_payload(source, event_type, payload)
+}
+
+/// Create a simple test event with source and type (legacy compatibility)
+pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::RawEvent {
+    RawEventBuilder::new(source, event_type, json!({"test": true})).build()
+}
+
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
     let manifest = generators::test_agent_manifest(agent_name);
@@ -606,9 +616,11 @@ pub mod resources {
         std::fs::write(&file_path, content)?;
         Ok(file_path)
     }
+}
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
+pub use sinex_db::queries::{get_event_by_id, get_events_by_source, get_recent_events, get_events_by_type};
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
 

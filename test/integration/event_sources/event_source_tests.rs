@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_core::{EventSource, EventSourceContext};
+use sinex_core::EventSource;
 use sinex_events::{
     filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
@@ -30,14 +30,14 @@ async fn test_filesystem_watcher_initialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_filesystem_watcher_captures_events() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": [],
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -71,14 +71,14 @@ async fn test_filesystem_watcher_captures_events() -> Result<()> {
 
 #[tokio::test]
 async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": ["*.tmp", "test_*"],
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -125,7 +125,7 @@ async fn test_kitty_socket_listener_initialization() -> Result<()> {
         "polling_interval_secs": 2
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
     
     assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
@@ -135,7 +135,7 @@ async fn test_kitty_socket_listener_initialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_asciinema_recorder_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "recordings_dir": temp_dir.path().to_str().unwrap(),
         "file_pattern": "*.cast",
@@ -146,7 +146,7 @@ async fn test_asciinema_recorder_initialization() -> Result<()> {
         "auto_annex": false
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _recorder = AsciinemaRecorder::initialize(ctx).await?;
     
     assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
@@ -169,7 +169,7 @@ async fn test_clipboard_monitor_initialization() -> Result<()> {
         "annex_repo_path": null
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _monitor = ClipboardMonitor::initialize(ctx).await?;
     
     assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
@@ -179,7 +179,7 @@ async fn test_clipboard_monitor_initialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     
     // Create a subdirectory to test path-based patterns
     let sub_dir = temp_dir.path().join("logs");
@@ -196,7 +196,7 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(20);
@@ -242,7 +242,7 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
 
 #[tokio::test]
 async fn test_scrollback_capture_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "kitty_socket_path": "/tmp/test-kitty-socket",
         "capture_interval_secs": 15,
@@ -255,7 +255,7 @@ async fn test_scrollback_capture_initialization() -> Result<()> {
         "command_capture_delay_ms": 500
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _capture = ScrollbackCapture::initialize(ctx).await?;
     
     assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");

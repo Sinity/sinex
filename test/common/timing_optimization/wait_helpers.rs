@@ -267,3 +267,93 @@ pub async fn wait_for_agent_status(
 
     anyhow::bail!("Agent {} did not reach status {} within {} seconds", agent_name, expected_status, timeout_secs)
 }
+
+/// Wait for filtered event count based on WHERE condition with parameters
+pub async fn wait_for_filtered_event_count(
+    pool: &sqlx::PgPool,
+    where_condition: &str,
+    params: &[&str],
+    expected_count: i64,
+    timeout_secs: u64,
+) -> anyhow::Result<i64> {
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(timeout_secs);
+
+    while start.elapsed() < timeout_duration {
+        let query = format!("SELECT COUNT(*) FROM raw.events WHERE {}", where_condition);
+        let mut query_builder = sqlx::query_scalar(&query);
+        
+        // Bind parameters
+        for param in params {
+            query_builder = query_builder.bind(param);
+        }
+        
+        let count = query_builder
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0i64);
+
+        if count >= expected_count {
+            return Ok(count);
+        }
+
+        // Use exponential backoff
+        let elapsed = start.elapsed();
+        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        tokio::time::sleep(backoff).await;
+    }
+
+    anyhow::bail!("Expected filtered event count {} not reached within {} seconds", expected_count, timeout_secs)
+}
+
+/// Wait for a generic condition to be met
+pub async fn wait_for_condition<F, Fut>(
+    mut condition: F,
+    timeout_secs: u64,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(timeout_secs);
+
+    while start.elapsed() < timeout_duration {
+        if condition().await? {
+            return Ok(());
+        }
+
+        // Use exponential backoff
+        let elapsed = start.elapsed();
+        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        tokio::time::sleep(backoff).await;
+    }
+
+    anyhow::bail!("Condition not met within {} seconds", timeout_secs)
+}
+
+/// Wait for a condition with timeout, returning whether condition was met
+pub async fn wait_for_condition_or_timeout<F, Fut>(
+    mut condition: F,
+    timeout_secs: u64,
+) -> anyhow::Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(timeout_secs);
+
+    while start.elapsed() < timeout_duration {
+        if condition().await? {
+            return Ok(true);
+        }
+
+        // Use exponential backoff
+        let elapsed = start.elapsed();
+        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        tokio::time::sleep(backoff).await;
+    }
+
+    Ok(false) // Condition not met within timeout
+}

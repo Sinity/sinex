@@ -9,6 +9,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// Deterministic wait utilities for database conditions
 pub mod wait_helpers;
 
+// Compatibility re-export for old import paths
+pub mod replacements {
+    pub use super::wait_helpers::*;
+}
+
 // Re-export everything for convenience
 pub use wait_helpers::*;
 
