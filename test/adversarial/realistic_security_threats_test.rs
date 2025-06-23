@@ -1,13 +1,6 @@
 use crate::common::prelude::*;
 use std::fs;
-use std::time::Duration;
-use tokio::time::timeout;
-use crate::common::database_helpers::{get_shared_test_pool};
 use sinex_db::queries::insert_raw_event;
-use sinex_db::queries;
-use serde_json::json;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Test filesystem monitoring against path traversal attacks
 #[tokio::test]

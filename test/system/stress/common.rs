@@ -1,12 +1,6 @@
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::Duration;
 use tokio::sync::RwLock;
-use crate::common::database_helpers::{get_shared_test_pool};
-use serde_json::json;
-use crate::common::database_helpers;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Comprehensive metrics for tracking concurrency stress patterns
 #[derive(Debug)]
@@ -141,6 +135,7 @@ impl ConcurrencyStressMetrics {
 /// Shared test utilities for stress testing scenarios
 pub struct StressTestUtils;
 
+#[allow(dead_code)]
 impl StressTestUtils {
     /// Setup a clean test environment with agent registration
     pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<PgPool> {
@@ -160,9 +155,8 @@ impl StressTestUtils {
             format!("Stress test agent for {}", source_prefix)
         ).execute(&pool).await?;
 
-        Ok(pool)
-    }
-
+        Ok(pool.clone())
+}
     /// Clean up test data after a stress test
     pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
@@ -211,6 +205,7 @@ impl StressTestUtils {
 
 /// Result structure for individual stress test cycles
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct StressTestResult {
     pub work_cycles_completed: u64,
     pub successful_claims: u64,
@@ -225,6 +220,7 @@ pub struct StressTestResult {
 
 /// Individual work item representation for stress tests
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct WorkItem {
     pub queue_id: String,
     pub event_id: String,
@@ -234,6 +230,7 @@ pub struct WorkItem {
 
 /// Result of a single work cycle attempt
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum CycleResult {
     WorkCompleted { processing_time: Duration },
     NoWorkAvailable,

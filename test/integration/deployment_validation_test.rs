@@ -2,8 +2,7 @@
 //! Ensures the system meets deployment readiness criteria
 
 // use sinex_core::prelude::*; // No prelude module exists
-use std::time::Duration;
-use tokio::time::timeout;
+use crate::common::prelude::*;
 
 #[tokio::test]
 async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
@@ -34,7 +33,7 @@ async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("SystemD notification sequence validation failed: {}", e))?;
     
     let events = notifier.get_events();
-    assert_eq!(events.len(), 6, "Should have recorded all 6 systemd events");
+    pretty_assertions::assert_eq!(events.len(), 6, "Should have recorded all 6 systemd events");
     
     // Verify timing - all events should be within last few seconds
     let now = std::time::Instant::now();
@@ -73,7 +72,7 @@ async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
     
     // Verify the sequence includes the failure scenario
     let events = notifier.get_events();
-    assert_eq!(events.len(), 4, "Should have 4 recorded events (failed watchdog not recorded)");
+    pretty_assertions::assert_eq!(events.len(), 4, "Should have 4 recorded events (failed watchdog not recorded)");
     
     // Verify sequence up to the failure
     let expected_sequence = vec![
@@ -193,7 +192,7 @@ async fn test_health_endpoint_response() -> anyhow::Result<()> {
     
     // Verify response format
     assert!(result.overall_status.is_healthy());
-    assert_eq!(result.checks.len(), 3);
+    pretty_assertions::assert_eq!(result.checks.len(), 3);
     
     // Response time should be fast
     let start = std::time::Instant::now();
@@ -212,7 +211,7 @@ async fn test_configuration_validation() -> anyhow::Result<()> {
     let valid_config = CollectorConfig {
         database_url: "postgresql:///sinex?host=/run/postgresql".to_string(),
         event_batch_size: 1000,
-        batch_timeout_ms: 500,
+        _batch_timeout_ms: 500,
         channel_buffer_size: 10_000,
         sources: vec!["filesystem".to_string()],
         ..Default::default()
@@ -263,7 +262,7 @@ async fn test_database_migration_state() -> anyhow::Result<()> {
     
     // All migrations should be either pending or applied
     let total_migrations = migration_tracker.get_all_migrations()?.len();
-    assert_eq!(pending.len() + applied.len(), total_migrations);
+    pretty_assertions::assert_eq!(pending.len() + applied.len(), total_migrations);
     
     // Migration checksums should be valid
     for migration in migration_tracker.get_all_migrations()? {
@@ -276,7 +275,6 @@ async fn test_database_migration_state() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_backup_directory_structure() -> anyhow::Result<()> {
-    use std::path::Path;
     
     // Verify backup directories can be created
     let backup_paths = vec![
@@ -358,9 +356,9 @@ async fn test_security_hardening_options() -> anyhow::Result<()> {
     let security_config = SecurityConfig::default();
     
     // File permissions
-    assert_eq!(security_config.state_dir_mode, 0o750);
-    assert_eq!(security_config.config_file_mode, 0o640);
-    assert_eq!(security_config.log_file_mode, 0o640);
+    pretty_assertions::assert_eq!(security_config.state_dir_mode, 0o750);
+    pretty_assertions::assert_eq!(security_config.config_file_mode, 0o640);
+    pretty_assertions::assert_eq!(security_config.log_file_mode, 0o640);
     
     // Process restrictions
     assert!(security_config.no_new_privs);
@@ -442,7 +440,7 @@ async fn test_deployment_checklist_automation() -> anyhow::Result<()> {
 // Mock types for testing - these would normally come from the actual codebase
 mod mock_types {
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[derive(Clone, Debug)]
     pub enum SystemdEvent {
@@ -583,6 +581,7 @@ mod mock_types {
         pub checks: Vec<(String, HealthStatus)>,
     }
     
+    #[allow(dead_code)]
     pub enum HealthStatus {
         Healthy,
         Degraded(String),
@@ -599,7 +598,7 @@ mod mock_types {
     pub struct CollectorConfig {
         pub database_url: String,
         pub event_batch_size: usize,
-        pub batch_timeout_ms: u64,
+        pub _batch_timeout_ms: u64,
         pub channel_buffer_size: usize,
         pub sources: Vec<String>,
     }
@@ -651,6 +650,7 @@ mod mock_types {
     pub struct LogRotationConfig {
         pub max_size_mb: u32,
         pub max_files: u32,
+        #[allow(dead_code)]
         pub compress: bool,
     }
     
@@ -734,4 +734,3 @@ mod mock_types {
 }
 
 use mock_types::*;
-use anyhow::Result;

@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
 use chrono::{DateTime, Utc, Duration};
-use sinex_ulid::Ulid;
 
 // Property tests for ULID generation and ordering
 // Agent Alpha - VM Infrastructure (adding quick property test example)

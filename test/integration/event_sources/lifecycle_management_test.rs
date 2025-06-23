@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_events::{
     filesystem::FilesystemMonitor,
@@ -6,16 +6,9 @@ use sinex_events::{
     clipboard::ClipboardMonitor,
 };
 use sinex_db::models::RawEvent;
-use std::time::Duration;
-use tempfile::TempDir;
-use tokio::sync::mpsc;
 use tokio::time::{timeout, sleep};
-use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::common::event_sources;
-
-
 
 /// Mock event source that can be configured to crash after a certain number of events
 pub struct CrashingEventSource {
@@ -29,14 +22,6 @@ impl CrashingEventSource {
         Self {
             crash_after,
             crash_on_event: None,
-            events_sent: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    pub fn new_crash_on_event(crash_on_event: usize) -> Self {
-        Self {
-            crash_after: Duration::from_secs(30), // For testing - we don't actually wait this long
-            crash_on_event: Some(crash_on_event),
             events_sent: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -192,8 +177,8 @@ async fn test_event_source_crash_recovery() -> Result<(), anyhow::Error> {
 
     // Verify event content
     let first_event = &events[0];
-    assert_eq!(first_event.source, "test.crashing_source");
-    assert_eq!(first_event.event_type, "test.event");
+    pretty_assertions::assert_eq!(first_event.source, "test.crashing_source");
+    pretty_assertions::assert_eq!(first_event.event_type, "test.event");
 
     Ok(())
 }
@@ -233,11 +218,11 @@ async fn test_resource_exhaustion_handling() -> Result<(), anyhow::Error> {
     source_handle.abort();
 
     // Verify recovery worked
-    assert_eq!(recovery_events.len(), 5);
+    pretty_assertions::assert_eq!(recovery_events.len(), 5);
     for (i, event) in recovery_events.iter().enumerate() {
-        assert_eq!(event.source, "test.resource_exhausted");
-        assert_eq!(event.event_type, "test.recovery_event");
-        assert_eq!(event.payload["recovery_event"], i);
+        pretty_assertions::assert_eq!(event.source, "test.resource_exhausted");
+        pretty_assertions::assert_eq!(event.event_type, "test.recovery_event");
+        pretty_assertions::assert_eq!(event.payload["recovery_event"], i);
     }
 
     Ok(())

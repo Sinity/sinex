@@ -7,7 +7,6 @@ use sinex_core::RawEventBuilder;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use crate::common::prelude::*;
-use serde_json::json;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]

@@ -1,5 +1,4 @@
-use anyhow::Result;
-use sinex_core::EventSource;
+use crate::common::prelude::*;
 use sinex_events::{
     filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
@@ -7,10 +6,6 @@ use sinex_events::{
     clipboard::ClipboardMonitor,
     scrollback::ScrollbackCapture,
 };
-use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
-use serde_json::json;
 use std::fs;
 use crate::common::{resources, event_sources};
 
@@ -23,7 +18,7 @@ async fn test_filesystem_watcher_initialization() -> Result<(), anyhow::Error> {
     
     // FilesystemMonitor doesn't have name() or version() methods
     // These are provided by the EventSource trait constants
-    assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
+    pretty_assertions::assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
     
     Ok(())
 }
@@ -59,7 +54,7 @@ async fn test_filesystem_watcher_captures_events() -> Result<(), anyhow::Error> 
     assert!(event.is_some());
     
     let event = event.unwrap();
-    assert_eq!(event.source, "filesystem");
+    pretty_assertions::assert_eq!(event.source, "filesystem");
     assert!(event.event_type.contains("created") || event.event_type.contains("modify"));
     
     // Verify payload contains expected fields
@@ -128,7 +123,7 @@ async fn test_kitty_socket_listener_initialization() -> Result<(), anyhow::Error
     let ctx = event_sources::test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
     
-    assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
+    pretty_assertions::assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
     
     Ok(())
 }
@@ -149,7 +144,7 @@ async fn test_asciinema_recorder_initialization() -> Result<(), anyhow::Error> {
     let ctx = event_sources::test_context(config);
     let _recorder = AsciinemaRecorder::initialize(ctx).await?;
     
-    assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
+    pretty_assertions::assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
     
     Ok(())
 }
@@ -172,7 +167,7 @@ async fn test_clipboard_monitor_initialization() -> Result<(), anyhow::Error> {
     let ctx = event_sources::test_context(config);
     let _monitor = ClipboardMonitor::initialize(ctx).await?;
     
-    assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
+    pretty_assertions::assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
     
     Ok(())
 }
@@ -258,7 +253,7 @@ async fn test_scrollback_capture_initialization() -> Result<(), anyhow::Error> {
     let ctx = event_sources::test_context(config);
     let _capture = ScrollbackCapture::initialize(ctx).await?;
     
-    assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
+    pretty_assertions::assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
     
     Ok(())
 }

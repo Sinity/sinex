@@ -1,10 +1,9 @@
-use crate::common::prelude::*;
 use crate::common::{create_test_db_pool, events};
-use sinex_db::{queries, models::RawEvent};
+use sinex_db::queries;
 use std::sync::{Arc, Barrier};
 use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[test]
 fn test_worker_claim_exact_same_microsecond() {
@@ -89,7 +88,7 @@ fn test_worker_claim_exact_same_microsecond() {
         println!("Final payload: {}", final_state.payload);
         
         // Both workers might claim if there's a race condition
-        assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
+        pretty_assertions::assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
     });
 }
 
@@ -206,7 +205,7 @@ fn test_work_queue_thundering_herd() {
         println!("- Database connections stressed: 100");
         
         // Only 1 should succeed, but timing shows stress
-        assert_eq!(claims, 1, "Multiple workers claimed single event");
+        pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single event");
     });
 }
 
@@ -282,7 +281,7 @@ fn test_concurrent_metadata_lost_update() {
         println!("Update array length: {} (expected: 10)", updates);
         
         // Lost updates likely occurred
-        assert_eq!(counter, 10, "Lost updates detected!");
-        assert_eq!(updates, 10, "Lost update records!");
+        pretty_assertions::assert_eq!(counter, 10, "Lost updates detected!");
+        pretty_assertions::assert_eq!(updates, 10, "Lost update records!");
     });
 }

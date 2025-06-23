@@ -2,9 +2,7 @@
 
 pub mod load_testing;
 
-use anyhow::Result;
-use sinex_db::queries;
-use sqlx::PgPool;
+use crate::common::prelude::*;
 use std::time::{Duration, Instant};
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
@@ -55,7 +53,7 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<(), anyhow::Error> {
         10
     ).await.map_err(|e| anyhow::anyhow!("Failed to verify event count: {}", e))?;
     
-    assert_eq!(count, 1000);
+    pretty_assertions::assert_eq!(count, 1000);
     assert!(elapsed < Duration::from_secs(5), "Ingestion took too long: {:?}", elapsed);
     
     Ok(())
@@ -148,7 +146,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyh
     let elapsed = start.elapsed();
     println!("Processed {} events in {:?} with 4 workers", total_processed, elapsed);
     
-    assert_eq!(total_processed, 100);
+    pretty_assertions::assert_eq!(total_processed, 100);
     assert!(elapsed < Duration::from_secs(3), "Processing took too long: {:?}", elapsed);
     
     Ok(())

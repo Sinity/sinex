@@ -1,12 +1,7 @@
 use crate::common::prelude::*;
-use crate::common::events;
-use crate::common::database_helpers;
-
 // Project-specific imports not covered by prelude
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
-use gethostname;
-use anyhow::Result;
 
 // Test setup macros
 
@@ -40,7 +35,7 @@ impl EventSource for PipelineTestSource {
     }
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
-        for i in 0..self.events_to_generate {
+        for _i in 0..self.events_to_generate {
             let event = crate::common::events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
@@ -198,13 +193,13 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
         });
         
         // Wait for pipeline to process all events using optimized coordination
-        use crate::common::timing_optimization::{EventCounter, ProgressTracker};
+        use crate::common::timing_optimization::{EventCounter, };
         
-        let generation_counter = EventCounter::new(events_to_generate as usize);
-        let processing_counter = EventCounter::new(events_to_generate as usize);
+        let _generation_counter = EventCounter::new(events_to_generate as usize);
+        let _processing_counter = EventCounter::new(events_to_generate as usize);
         
         // Wait for both generation and processing to complete
-        let timeout_duration = Duration::from_secs(10);
+        let _timeout_duration = Duration::from_secs(10);
         
         // Wait for pipeline completion using timing utilities
         // First wait for all events to be generated and stored
@@ -229,19 +224,19 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
         storage_handle.abort();
         
         // Verify results
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             source_events_generated.load(Ordering::SeqCst), 
             events_to_generate,
             "All events should be generated"
         );
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             events_processed.load(Ordering::SeqCst), 
             events_to_generate,
             "All events should be processed"
         );
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             derived_events_created.load(Ordering::SeqCst), 
             events_to_generate,
             "Derived events should be created for each processed event"
@@ -256,7 +251,7 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
             10
         ).await.map_err(|e| anyhow::anyhow!("Failed to verify raw events: {}", e))?;
         
-        assert_eq!(raw_event_count, events_to_generate as i64);
+        pretty_assertions::assert_eq!(raw_event_count, events_to_generate as i64);
         
         // Wait for derived events to be processed
         let derived_event_count = wait_for_filtered_event_count(
@@ -267,7 +262,7 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
             10
         ).await.map_err(|e| anyhow::anyhow!("Failed to verify derived events: {}", e))?;
         
-        assert_eq!(derived_event_count, events_to_generate as i64);
+        pretty_assertions::assert_eq!(derived_event_count, events_to_generate as i64);
         
         let remaining_queue: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sinex_schemas.work_queue"
@@ -275,7 +270,7 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
         .fetch_one(&pool)
         .await?;
         
-        assert_eq!(remaining_queue, 0);
+        pretty_assertions::assert_eq!(remaining_queue, 0);
         
         Ok(())
 }
@@ -388,7 +383,7 @@ async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
         .fetch_one(&pool)
         .await?;
         
-        assert_eq!(remaining_queue, 0);
+        pretty_assertions::assert_eq!(remaining_queue, 0);
         
         Ok(())
 }
@@ -489,7 +484,7 @@ async fn test_pipeline_error_recovery() -> Result<(), anyhow::Error> {
         worker_handle.abort();
         
         // Good events should be completed
-        assert_eq!(processed_good.load(Ordering::SeqCst), 3);
+        pretty_assertions::assert_eq!(processed_good.load(Ordering::SeqCst), 3);
         
         // Bad events should have been retried
         assert!(processed_bad.load(Ordering::SeqCst) >= 2); // At least initial + 1 retry

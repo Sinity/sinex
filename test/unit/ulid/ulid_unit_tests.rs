@@ -1,11 +1,10 @@
 use crate::common::prelude::*;
-use std::str::FromStr;
 
 #[test]
 fn test_ulid_creation() {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new();
-    assert_ne!(ulid1, ulid2);
+    pretty_assertions::assert_ne!(ulid1, ulid2);
 }
 
 #[test]
@@ -22,5 +21,5 @@ fn test_uuid_conversion() {
     let ulid = Ulid::new();
     let uuid = ulid.to_uuid();
     let ulid2 = Ulid::from_uuid(uuid);
-    assert_eq!(ulid, ulid2);
+    pretty_assertions::assert_eq!(ulid, ulid2);
 }

@@ -1,11 +1,7 @@
 use crate::common::prelude::*;
 use std::fs;
-use std::time::Duration;
-use sinex_db::{queries::insert_raw_event, create_test_pool, run_migrations};
-use tokio::time::timeout;
-use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_agent_status, wait_for_filtered_event_count};
-use anyhow::Result;
-use sinex_db::queries;
+use sinex_db::{queries::insert_raw_event, run_migrations};
+use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 
 /// Test startup sequence robustness and error handling
 #[tokio::test]
@@ -18,20 +14,20 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
     // Create isolated test database
     let test_db_name = format!("sinex_startup_test_{}", Ulid::new().to_string().to_lowercase());
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = create_test_pool(&base_url).await?;
+    let base_pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Create test database
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool.pool())
         .await?;
     
-    let test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
+    let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
     
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(
         Duration::from_secs(5),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             run_migrations(&pool).await?;
             
             // Verify basic functionality after startup
@@ -39,7 +35,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
                 "SELECT COUNT(*) FROM information_schema.schemata 
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -47,7 +43,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
                 "SELECT COUNT(*) FROM information_schema.tables 
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -80,7 +76,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
     let existing_data_startup = timeout(
         Duration::from_secs(3),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             
             // Add some existing data
             sqlx::query!(
@@ -90,7 +86,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
                 "1.0.0",
                 "Pre-existing agent for startup test"
             )
-            .execute(&pool)
+            .execute(&*pool)
             .await?;
             
             // Insert some events
@@ -114,7 +110,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
             let agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -155,7 +151,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
     let error_recovery_test = timeout(
         Duration::from_secs(5),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             
             // Simulate migration corruption by manually inserting invalid migration record
             sqlx::query!(
@@ -168,7 +164,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
                 vec![0u8; 32], // Invalid checksum
                 0
             )
-            .execute(&pool)
+            .execute(&*pool)
             .await
             .ok(); // Ignore errors if table doesn't exist
             
@@ -207,7 +203,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool.pool())
         .await
         .ok();
 
@@ -673,8 +669,8 @@ channel_buffer_size = 10000
             println!("    Updated buffer size: {}", updated_buffer_size);
             
             // Verify change was detected and parsed correctly
-            assert_ne!(initial_buffer_size, updated_buffer_size, "Config change should be detected");
-            assert_eq!(updated_buffer_size, 2000, "New config value should be correct");
+            pretty_assertions::assert_ne!(initial_buffer_size, updated_buffer_size, "Config change should be detected");
+            pretty_assertions::assert_eq!(updated_buffer_size, 2000, "New config value should be correct");
             
             Ok::<(), anyhow::Error>(())
         }
@@ -716,13 +712,13 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     // Create isolated test database for migration testing
     let test_db_name = format!("sinex_migration_test_{}", Ulid::new().to_string().to_lowercase());
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = create_test_pool(&base_url).await?;
+    let base_pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool.pool())
         .await?;
     
-    let test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
+    let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
 
     // Test 1: Fresh migration safety
     let migration_start = Instant::now();
@@ -730,7 +726,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     let fresh_migration_test = timeout(
         Duration::from_secs(5),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             
             // Run migrations on fresh database
             run_migrations(&pool).await?;
@@ -740,7 +736,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
                 "SELECT schema_name FROM information_schema.schemata 
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
             )
-            .fetch_all(&pool)
+            .fetch_all(&*pool)
             .await?
             .into_iter()
             .filter_map(|s| s)
@@ -750,7 +746,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
                 "SELECT table_name FROM information_schema.tables 
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_all(&pool)
+            .fetch_all(&*pool)
             .await?
             .into_iter()
             .filter_map(|t| t)
@@ -759,7 +755,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
             let extensions: Vec<String> = sqlx::query_scalar!(
                 "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
             )
-            .fetch_all(&pool)
+            .fetch_all(&*pool)
             .await
             .unwrap_or_default();
             
@@ -795,7 +791,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     let idempotency_test = timeout(
         Duration::from_secs(4),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             
             // Run migrations again (should be idempotent)
             run_migrations(&pool).await?;
@@ -808,14 +804,14 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
                 "SELECT COUNT(*) FROM information_schema.tables 
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
             let migration_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM _sqlx_migrations"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -846,7 +842,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     let data_preservation_test = timeout(
         Duration::from_secs(5),
         async {
-            let pool = create_test_pool(&test_db_url).await?;
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
             
             // Insert test data before migration
             sqlx::query!(
@@ -856,7 +852,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
                 "1.0.0",
                 "Agent for testing data preservation"
             )
-            .execute(&pool)
+            .execute(&*pool)
             .await?;
             
             // Insert test events
@@ -878,7 +874,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
             let initial_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -900,7 +896,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
             let final_agent_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await?
             .unwrap_or(0);
             
@@ -918,14 +914,14 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
                 "SELECT description FROM sinex_schemas.agent_manifests 
                  WHERE agent_name = 'migration_test_agent'"
             )
-            .fetch_optional(&pool)
+            .fetch_optional(&*pool)
             .await?
             .flatten();
             
             let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
                 "SELECT payload FROM raw.events WHERE source = 'migration.safety' LIMIT 1"
             )
-            .fetch_optional(&pool)
+            .fetch_optional(&*pool)
             .await?;
             
             Ok::<(i64, i64, i64, i64, Option<String>, Option<serde_json::Value>), anyhow::Error>((
@@ -942,8 +938,8 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
             println!("    Agents: {} -> {}", init_agents, final_agents);
             println!("    Events: {} -> {}", init_events, final_events);
             
-            assert_eq!(init_agents, final_agents, "Agent count should be preserved");
-            assert_eq!(init_events, final_events, "Event count should be preserved");
+            pretty_assertions::assert_eq!(init_agents, final_agents, "Agent count should be preserved");
+            pretty_assertions::assert_eq!(init_events, final_events, "Event count should be preserved");
             assert!(agent_desc.is_some(), "Agent data should be preserved");
             assert!(event_data.is_some(), "Event data should be preserved");
             
@@ -965,7 +961,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     let error_handling_test = timeout(
         Duration::from_secs(5),
         async {
-            let pool = match create_test_pool(&test_db_url).await {
+            let pool = match TestPool::with_strategy(CleanupStrategy::None).await {
                 Ok(pool) => pool,
                 Err(_) => return false,
             };
@@ -974,7 +970,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
             let invalid_migration_result = sqlx::query!(
                 "CREATE TABLE raw.events (id UUID PRIMARY KEY)" // This should fail - table exists
             )
-            .execute(&pool)
+            .execute(&*pool)
             .await;
             
             // Migration should fail gracefully
@@ -1012,7 +1008,7 @@ async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool.pool())
         .await
         .ok();
 

@@ -1,13 +1,9 @@
 // Queue metrics tests - should fail until metrics implementation is complete
 // Tests for queue_depth, dequeue_latency_ms, and per_agent_lag metrics
 
+use crate::common::prelude::*;
 use crate::common::database_helpers::get_shared_test_pool;
-use sinex_db::queries::*;
 // Local function definitions at bottom of file
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use anyhow::Result;
-use serde_json::json;
 use chrono::{Utc, Duration};
 
 #[tokio::test]
@@ -51,19 +47,19 @@ async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
     // Expected: agent1=2 pending, agent2=0 pending (but both should be in results)
     
     // Verify that we get both agents in the results
-    assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents (even if one has 0 pending)");
+    pretty_assertions::assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents (even if one has 0 pending)");
     
     // Sort results by agent name for consistent checking
     let mut sorted_metrics = queue_metrics.clone();
     sorted_metrics.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
     
     // Check agent1 (metrics-agent-1)
-    assert_eq!(sorted_metrics[0].agent_name, agent1);
-    assert_eq!(sorted_metrics[0].queue_depth, 2, "Agent1 should have 2 pending items");
+    pretty_assertions::assert_eq!(sorted_metrics[0].agent_name, agent1);
+    pretty_assertions::assert_eq!(sorted_metrics[0].queue_depth, 2, "Agent1 should have 2 pending items");
     
     // Check agent2 (metrics-agent-2)  
-    assert_eq!(sorted_metrics[1].agent_name, agent2);
-    assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
+    pretty_assertions::assert_eq!(sorted_metrics[1].agent_name, agent2);
+    pretty_assertions::assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
     
     Ok(())
 }
@@ -229,19 +225,16 @@ async fn test_metrics_update_frequency() -> Result<(), anyhow::Error> {
 
 // Helper functions and types
 
-
 #[derive(Debug)]
 pub struct DequeueLatencyMetric {
     pub agent_name: String,
     pub avg_dequeue_latency_ms: f64,
-    pub max_dequeue_latency_ms: f64,
 }
 
 #[derive(Debug)]
 pub struct AgentLagMetric {
     pub agent_name: String,
     pub max_lag_seconds: f64,
-    pub avg_lag_seconds: f64,
 }
 
 // Functions that should exist after implementation
@@ -254,8 +247,7 @@ async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueL
         r#"
         SELECT 
             target_agent_name as agent_name,
-            AVG(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "avg_latency_ms!",
-            MAX(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "max_latency_ms!"
+            AVG(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "avg_latency_ms!"
         FROM sinex_schemas.work_queue 
         WHERE last_attempt_ts IS NOT NULL
         AND created_at IS NOT NULL
@@ -269,7 +261,6 @@ async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueL
         .map(|r| DequeueLatencyMetric {
             agent_name: r.agent_name,
             avg_dequeue_latency_ms: r.avg_latency_ms,
-            max_dequeue_latency_ms: r.max_latency_ms,
         })
         .collect();
     
@@ -283,8 +274,7 @@ async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMe
         r#"
         SELECT 
             target_agent_name as agent_name,
-            MAX(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "max_lag_seconds!",
-            AVG(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "avg_lag_seconds!"
+            MAX(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "max_lag_seconds!"
         FROM sinex_schemas.work_queue
         WHERE status IN ('pending', 'failed_retryable')
         GROUP BY target_agent_name
@@ -297,7 +287,6 @@ async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMe
         .map(|r| AgentLagMetric {
             agent_name: r.agent_name,
             max_lag_seconds: r.max_lag_seconds,
-            avg_lag_seconds: r.avg_lag_seconds,
         })
         .collect();
     

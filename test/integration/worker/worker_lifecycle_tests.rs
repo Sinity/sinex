@@ -1,12 +1,8 @@
 use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
-use std::time::Duration;
-use crate::common::database_helpers;
-
 // Import test setup macros and utilities
 use crate::common::worker_test_utils::{self, insert_test_work_item};
-use anyhow::Result;
 
 struct TestEventProcessor {
     agent_name: String,
@@ -80,7 +76,7 @@ async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
         
         processor.process_event(&pool, &item).await?;
         
-        assert_eq!(process_count.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(process_count.load(Ordering::SeqCst), 1);
         
         Ok(())
 }
@@ -142,9 +138,9 @@ async fn test_worker_metrics_creation() {
     metrics.processing_duration.observe(0.5);
     
     // Just ensure metrics don't panic
-    assert_eq!(metrics.items_claimed.get(), 1.0);
-    assert_eq!(metrics.items_processed.get(), 1.0);
-    assert_eq!(metrics.items_failed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_claimed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_processed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_failed.get(), 1.0);
 }
 
 #[tokio::test]
@@ -182,8 +178,8 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
         processor_a.process_event(&pool, &item_a).await?;
         processor_b.process_event(&pool, &item_b).await?;
         
-        assert_eq!(count_a.load(Ordering::SeqCst), 1);
-        assert_eq!(count_b.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(count_a.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(count_b.load(Ordering::SeqCst), 1);
         
         Ok(())
 }
@@ -192,9 +188,9 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
 async fn test_processor_configuration() {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
-    assert_eq!(processor.agent_name(), "test_agent");
-    assert_eq!(processor.batch_size(), 1);
-    assert_eq!(processor.poll_interval_secs(), 1);
+    pretty_assertions::assert_eq!(processor.agent_name(), "test_agent");
+    pretty_assertions::assert_eq!(processor.batch_size(), 1);
+    pretty_assertions::assert_eq!(processor.poll_interval_secs(), 1);
 }
 
 struct SlowProcessor {
@@ -231,7 +227,7 @@ async fn test_processor_custom_configuration() {
         agent_name: "slow_agent".to_string(),
     };
     
-    assert_eq!(processor.agent_name(), "slow_agent");
-    assert_eq!(processor.batch_size(), 5);
-    assert_eq!(processor.poll_interval_secs(), 2);
+    pretty_assertions::assert_eq!(processor.agent_name(), "slow_agent");
+    pretty_assertions::assert_eq!(processor.batch_size(), 5);
+    pretty_assertions::assert_eq!(processor.poll_interval_secs(), 2);
 }

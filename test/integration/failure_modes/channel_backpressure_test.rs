@@ -1,11 +1,6 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
-use tokio::sync::mpsc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use serde_json::json;
-use anyhow::Result;
 
 /// Test what happens when event channel fills up
 #[tokio::test]
@@ -117,7 +112,7 @@ async fn test_memory_pressure_handling() {
         for i in 0..100 {
             // Increasingly large payloads
             let size = 1024 * (i + 1); // 1KB to 100KB
-            let large_data = "x".repeat(size);
+            let _large_data = "x".repeat(size);
             
             let event = events::large_payload_test_event(size);
             if tx.send(event).await.is_err() {
@@ -253,14 +248,3 @@ fn get_current_memory_usage() -> u64 {
     0
 }
 
-// Placeholder for memory tracking
-trait MemoryTracker {
-    fn used_memory(&self) -> u64;
-}
-
-impl MemoryTracker for std::alloc::System {
-    fn used_memory(&self) -> u64 {
-        // This is a stub - real implementation would read from /proc/self/status
-        0
-    }
-}

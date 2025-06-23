@@ -4,22 +4,14 @@
 //! various failure conditions, including partial failures, network issues, resource
 //! exhaustion, and component crashes.
 
-use anyhow::Result;
+use crate::common::prelude::*;
 use chrono::{Utc, Duration as ChronoDuration};
-use sinex_core::RawEventBuilder;
-use crate::common::database_helpers::create_test_pool;
-use sinex_db::queries;
-use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
-use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_database_disconnection_recovery() -> Result<(), anyhow::Error> {
-    let pool = create_test_pool().await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Test 1: System should handle temporary database unavailability
     let recovery_test = test_database_connection_recovery(&pool).await?;
@@ -122,14 +114,14 @@ async fn test_event_buffering_during_outage(pool: &sqlx::PgPool) -> Result<bool>
     }
     
     // Should successfully process all buffered events
-    assert_eq!(successful_inserts, 50, "All buffered events should be processed on recovery");
+    pretty_assertions::assert_eq!(successful_inserts, 50, "All buffered events should be processed on recovery");
     
     // Verify events are actually in database
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE source = 'buffering_test'"
     ).fetch_one(pool).await?;
     
-    assert_eq!(count, 50, "All events should be persisted in database");
+    pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
     
     Ok(true)
 }
@@ -282,8 +274,8 @@ async fn test_source_state_recovery() -> Result<bool> {
     let recovered_state: serde_json::Value = serde_json::from_str(&recovered_content)?;
     
     // Verify state recovery
-    assert_eq!(recovered_state["last_processed_id"].as_i64().unwrap(), 12345);
-    assert_eq!(recovered_state["sequence_number"].as_i64().unwrap(), 42);
+    pretty_assertions::assert_eq!(recovered_state["last_processed_id"].as_i64().unwrap(), 12345);
+    pretty_assertions::assert_eq!(recovered_state["sequence_number"].as_i64().unwrap(), 42);
     assert!(recovered_state["watermark"].as_str().is_some());
     
     // Phase 3: Simulate state update after recovery
@@ -299,8 +291,8 @@ async fn test_source_state_recovery() -> Result<bool> {
     let final_content = std::fs::read_to_string(&state_file)?;
     let final_state: serde_json::Value = serde_json::from_str(&final_content)?;
     
-    assert_eq!(final_state["last_processed_id"].as_i64().unwrap(), 12350);
-    assert_eq!(final_state["sequence_number"].as_i64().unwrap(), 47);
+    pretty_assertions::assert_eq!(final_state["last_processed_id"].as_i64().unwrap(), 12350);
+    pretty_assertions::assert_eq!(final_state["sequence_number"].as_i64().unwrap(), 47);
     
     Ok(true)
 }
@@ -320,7 +312,7 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
     let monitoring_task = tokio::spawn(async move {
         // Initial health check
         let initial_healthy = healthy.load(Ordering::SeqCst);
-        assert_eq!(initial_healthy, 3, "Should start with 3 healthy sources");
+        pretty_assertions::assert_eq!(initial_healthy, 3, "Should start with 3 healthy sources");
         
         // Simulate one source failing
         healthy.store(2, Ordering::SeqCst);
@@ -337,17 +329,16 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
     monitoring_task.await?;
     
     // Verify monitoring detected failure and recovery
-    assert_eq!(failed_sources.load(Ordering::SeqCst), 0, "No sources should be failed after recovery");
-    assert_eq!(recovered_sources.load(Ordering::SeqCst), 1, "Should have detected one recovery");
-    assert_eq!(healthy_sources.load(Ordering::SeqCst), 3, "All sources should be healthy after recovery");
+    pretty_assertions::assert_eq!(failed_sources.load(Ordering::SeqCst), 0, "No sources should be failed after recovery");
+    pretty_assertions::assert_eq!(recovered_sources.load(Ordering::SeqCst), 1, "Should have detected one recovery");
+    pretty_assertions::assert_eq!(healthy_sources.load(Ordering::SeqCst), 3, "All sources should be healthy after recovery");
     
     Ok(true)
 }
 
 #[tokio::test]
 async fn test_worker_failure_and_retry() -> Result<(), anyhow::Error> {
-    let pool = create_test_pool().await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Test worker failure scenarios and retry logic
     let retry_logic = test_worker_retry_logic(&pool).await?;
@@ -374,8 +365,8 @@ async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
         })
     ).build();
     
-    let event_id = queries::insert_event(&pool, &test_event).await?.id;
-    queries::add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
+    let inserted_event = queries::insert_event(&pool, &test_event).await?;
+    queries::add_to_work_queue(&pool, inserted_event.id, "test-agent", 3).await?;
     
     // Phase 1: Worker claims and simulates failure
     let claimed_items = queries::claim_work_queue_items(&pool, "test-agent", "retry-worker", 1).await?;
@@ -418,8 +409,8 @@ async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
         })
     ).build();
     
-    let event_id = queries::insert_event(&pool, &test_event).await?.id;
-    queries::add_to_work_queue(&pool, event_id, "test-agent", 2).await?; // Only 2 max retries
+    let inserted_event = queries::insert_event(&pool, &test_event).await?;
+    queries::add_to_work_queue(&pool, inserted_event.id, "test-agent", 2).await?; // Only 2 max retries
     
     // Exhaust retries
     for retry in 0..3 {
@@ -460,9 +451,9 @@ async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
             })
         ).build();
         
-        let event_id = queries::insert_event(&pool, &test_event).await?.id;
-        queries::add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
-        event_ids.push(event_id);
+        let inserted_event = queries::insert_event(&pool, &test_event).await?;
+        queries::add_to_work_queue(&pool, inserted_event.id, "test-agent", 3).await?;
+        event_ids.push(inserted_event.id);
     }
     
     let successful_workers = Arc::new(AtomicU32::new(0));

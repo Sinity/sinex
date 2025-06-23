@@ -1,10 +1,8 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use crate::common::events;
-use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
-use chrono::Utc;
-use serde_json::json;
-use std::time::{Duration, Instant};
+use sinex_db::queries;
+use std::time::Instant;
 
 // ==================== FILESYSTEM EVENT ATTACKS ====================
 

@@ -1,12 +1,7 @@
 // Work queue tests - should fail until migration is complete
-use sinex_db::{queries::*, models::WorkQueueItem};
-use sinex_ulid::Ulid;
-use sinex_core::RawEventBuilder;
-use serde_json::json;
+use crate::common::prelude::*;
+use sinex_db::models::WorkQueueItem;
 use chrono::Utc;
-use sqlx::PgPool;
-use anyhow::Result;
-use sinex_db::queries;
 
 #[sqlx::test]
 async fn test_work_queue_table_exists(pool: PgPool) -> Result<(), anyhow::Error> {
@@ -18,7 +13,7 @@ async fn test_work_queue_table_exists(pool: PgPool) -> Result<(), anyhow::Error>
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(result.count.unwrap(), 1, "work_queue table should exist");
+    pretty_assertions::assert_eq!(result.count.unwrap(), 1, "work_queue table should exist");
     Ok(())
 }
 
@@ -38,7 +33,7 @@ async fn test_work_queue_has_new_columns(pool: PgPool) -> Result<(), anyhow::Err
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(columns.len(), 2, "work_queue should have processed_at and failure_reason columns");
+    pretty_assertions::assert_eq!(columns.len(), 2, "work_queue should have processed_at and failure_reason columns");
     
     let column_names: Vec<String> = columns.iter()
         .filter_map(|r| r.column_name.as_ref().map(|s| s.clone()))
@@ -56,7 +51,7 @@ async fn test_work_queue_status_enum_includes_succeeded(pool: PgPool) -> Result<
     
     // First insert a test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "data"})).build();
-    let event_id = insert_event(&pool, &event).await?.id;
+    let event_id = insert_event(&pool, &event).await?;
     
     // Add to work queue
     let _queue_item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;

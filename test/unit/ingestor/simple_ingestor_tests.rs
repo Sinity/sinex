@@ -1,12 +1,6 @@
 use crate::common::prelude::*;
-use std::time::Duration;
-use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
-use serde_json::json;
-use gethostname;
 use crate::common::event_sources;
-use crate::common::events;
-use anyhow::Result;
 #[allow(unused_imports)]
 
 // Import test setup macros
@@ -55,7 +49,7 @@ impl EventSource for TestEventSource {
             return Err(sinex_core::CoreError::Other("Test failure".to_string()));
         }
         
-        for i in 0..self.config.events_to_generate {
+        for _i in 0..self.config.events_to_generate {
             if self.should_error.load(Ordering::SeqCst) {
                 return Err(sinex_core::CoreError::Other("Test error during streaming".to_string()));
             }
@@ -93,8 +87,8 @@ async fn test_event_source_initialization() -> Result<(), anyhow::Error> {
     let ctx = event_sources::test_context(serde_json::to_value(&config)?);
     let source = TestEventSource::initialize(ctx).await?;
     
-    assert_eq!(source.config.events_to_generate, 10);
-    assert_eq!(source.config.generation_delay_ms, 5);
+    pretty_assertions::assert_eq!(source.config.events_to_generate, 10);
+    pretty_assertions::assert_eq!(source.config.generation_delay_ms, 5);
     assert!(!source.config.should_fail);
     
     Ok(())
@@ -153,14 +147,14 @@ async fn test_event_source_streaming() -> Result<(), anyhow::Error> {
     // Cancel streaming
     stream_handle.abort();
     
-    assert_eq!(events.len(), 3);
-    assert_eq!(events_sent.load(Ordering::SeqCst), 3);
+    pretty_assertions::assert_eq!(events.len(), 3);
+    pretty_assertions::assert_eq!(events_sent.load(Ordering::SeqCst), 3);
     
     // Verify event structure
     for (i, event) in events.iter().enumerate() {
-        assert_eq!(event.source, "test_source");
-        assert_eq!(event.event_type, "test_event");
-        assert_eq!(event.payload["sequence"], i);
+        pretty_assertions::assert_eq!(event.source, "test_source");
+        pretty_assertions::assert_eq!(event.event_type, "test_event");
+        pretty_assertions::assert_eq!(event.payload["sequence"], i);
     }
     
     Ok(())
@@ -260,7 +254,7 @@ async fn test_event_source_receiver_drop() -> Result<(), anyhow::Error> {
         true
     });
     
-    assert_eq!(received_count, 3);
+    pretty_assertions::assert_eq!(received_count, 3);
     
     Ok(())
 }
@@ -328,8 +322,8 @@ async fn test_multiple_event_sources() -> Result<(), anyhow::Error> {
     let event1 = tokio::time::timeout(Duration::from_secs(1), rx1.recv()).await?.ok_or_else(|| anyhow::anyhow!("No event received"))?;
     let event2 = tokio::time::timeout(Duration::from_secs(1), rx2.recv()).await?.ok_or_else(|| anyhow::anyhow!("No event received"))?;
     
-    assert_eq!(event1.source, "test_source");
-    assert_eq!(event2.source, "slow_source");
+    pretty_assertions::assert_eq!(event1.source, "test_source");
+    pretty_assertions::assert_eq!(event2.source, "slow_source");
     
     handle1.abort();
     handle2.abort();
@@ -374,7 +368,7 @@ async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(count, 2);
+    pretty_assertions::assert_eq!(count, 2);
     
     Ok(())
 }

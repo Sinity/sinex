@@ -3,9 +3,7 @@ use crate::common::resources;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std::error::Error>> {

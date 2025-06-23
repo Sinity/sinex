@@ -1,16 +1,14 @@
 //! A simple working test to demonstrate the correct pattern
 
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
-use anyhow::Result;
+use crate::common::prelude::*;
 
 #[sinex_test]
 async fn test_basic_database_operations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test 1: Basic query works
-    let result: i32 = sqlx::query_scalar!("SELECT 1 + 1 as sum")
+    let result = sqlx::query_scalar!("SELECT 1 + 1 as sum")
         .fetch_one(ctx.pool())
         .await?;
-    assert_eq!(result, 2);
+    pretty_assertions::assert_eq!(result, Some(2));
     
     // Test 2: Insert an event using TestContext
     let event = ctx.filesystem_event("/test/file.txt");
@@ -58,7 +56,7 @@ async fn test_transaction_isolation(ctx: TestContext) -> Result<(), Box<dyn std:
     
     // Verify they exist in our transaction
     let new_count = ctx.event_count().await?;
-    assert_eq!(new_count - initial_count, 5);
+    pretty_assertions::assert_eq!(new_count - initial_count, 5);
     
     // Note: These will be rolled back after the test
     println!("✓ Transaction isolation works correctly");

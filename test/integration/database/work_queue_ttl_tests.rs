@@ -1,10 +1,6 @@
 // TTL policy tests - should fail until TTL implementation is complete
-use sinex_db::queries::*;
 use crate::common::prelude::*;
-use sinex_core::RawEventBuilder;
 use chrono::{Utc, Duration};
-use serde_json::json;
-use anyhow::Result;
 
 #[sqlx::test]
 async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), anyhow::Error> {
@@ -13,10 +9,10 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), 
     
     // Create test events
     let old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_succeeded"})).build();
-    let old_event_id = insert_event(&pool, &old_event).await?.id;
+    let old_event_id = insert_event(&pool, &old_event).await?;
     
     let recent_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "recent_succeeded"})).build();
-    let recent_event_id = insert_event(&pool, &recent_event).await?.id;
+    let recent_event_id = insert_event(&pool, &recent_event).await?;
     
     // Add to work queue
     let old_item = add_to_work_queue(&pool, old_event_id, "test-agent", 3).await?;
@@ -47,7 +43,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), 
     let purged_count = purge_old_work_queue_items(&pool).await?;
     
     // Should have purged 1 item (the old one)
-    assert_eq!(purged_count, 1, "Should purge exactly 1 old item");
+    pretty_assertions::assert_eq!(purged_count, 1, "Should purge exactly 1 old item");
     
     // Verify the old item is gone
     let old_item_exists = sqlx::query!(
@@ -57,7 +53,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), 
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(old_item_exists.count.unwrap(), 0, "Old item should be purged");
+    pretty_assertions::assert_eq!(old_item_exists.count.unwrap(), 0, "Old item should be purged");
     
     // Verify the recent item still exists
     let recent_item_exists = sqlx::query!(
@@ -67,7 +63,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), 
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(recent_item_exists.count.unwrap(), 1, "Recent item should remain");
+    pretty_assertions::assert_eq!(recent_item_exists.count.unwrap(), 1, "Recent item should remain");
     
     Ok(())
 }
@@ -79,7 +75,7 @@ async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<(), any
     
     // Create test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_failed"})).build();
-    let event_id = insert_event(&pool, &event).await?.id;
+    let event_id = insert_event(&pool, &event).await?;
     
     // Add to work queue
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
@@ -98,7 +94,7 @@ async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<(), any
     let purged_count = purge_old_work_queue_items(&pool).await?;
     
     // Should have purged the failed item
-    assert_eq!(purged_count, 1, "Should purge old failed item");
+    pretty_assertions::assert_eq!(purged_count, 1, "Should purge old failed item");
     
     Ok(())
 }
@@ -110,7 +106,7 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<(), anyhow:
     
     // Create test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "old_pending"})).build();
-    let event_id = insert_event(&pool, &event).await?.id;
+    let event_id = insert_event(&pool, &event).await?;
     
     // Add to work queue (will be in 'pending' status)
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
@@ -129,7 +125,7 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<(), anyhow:
     let purged_count = purge_old_work_queue_items(&pool).await?;
     
     // Should not purge pending items regardless of age
-    assert_eq!(purged_count, 0, "Should not purge pending items");
+    pretty_assertions::assert_eq!(purged_count, 0, "Should not purge pending items");
     
     // Verify item still exists
     let item_exists = sqlx::query!(
@@ -139,7 +135,7 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<(), anyhow:
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(item_exists.count.unwrap(), 1, "Pending item should remain");
+    pretty_assertions::assert_eq!(item_exists.count.unwrap(), 1, "Pending item should remain");
     
     Ok(())
 }
@@ -151,7 +147,7 @@ async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Resul
     
     // Test that items without processed_at are never purged
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "no_processed_at"})).build();
-    let event_id = insert_event(&pool, &event).await?.id;
+    let event_id = insert_event(&pool, &event).await?;
     let item = add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
     
     // Set to succeeded status but without processed_at (edge case)
@@ -166,7 +162,7 @@ async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Resul
     let purged_count = purge_old_work_queue_items(&pool).await?;
     
     // Should not purge items without processed_at
-    assert_eq!(purged_count, 0, "Should not purge items without processed_at");
+    pretty_assertions::assert_eq!(purged_count, 0, "Should not purge items without processed_at");
     
     Ok(())
 }
@@ -178,10 +174,10 @@ async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<(), a
     
     // Test edge cases around the 90-day threshold
     let just_old_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "just_old"})).build();
-    let just_old_event_id = insert_event(&pool, &just_old_event).await?.id;
+    let just_old_event_id = insert_event(&pool, &just_old_event).await?;
     
     let just_new_event = RawEventBuilder::new("test_source", "test_event", json!({"test": "just_new"})).build();
-    let just_new_event_id = insert_event(&pool, &just_new_event).await?.id;
+    let just_new_event_id = insert_event(&pool, &just_new_event).await?;
     
     let just_old_item = add_to_work_queue(&pool, just_old_event_id, "test-agent", 3).await?;
     let just_new_item = add_to_work_queue(&pool, just_new_event_id, "test-agent", 3).await?;
@@ -210,7 +206,7 @@ async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<(), a
     let purged_count = purge_old_work_queue_items(&pool).await?;
     
     // Should purge exactly the one that's over 90 days
-    assert_eq!(purged_count, 1, "Should purge exactly 1 item at 90-day threshold");
+    pretty_assertions::assert_eq!(purged_count, 1, "Should purge exactly 1 item at 90-day threshold");
     
     Ok(())
 }

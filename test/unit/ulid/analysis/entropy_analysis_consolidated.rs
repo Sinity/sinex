@@ -59,6 +59,7 @@
 
 #[cfg(test)]
 mod entropy_analysis {
+    use crate::common::prelude::*;
 
     /// Test the precise entropy calculation with arbitrary precision
     /// This demonstrates the mathematical foundation of our analysis
@@ -174,7 +175,6 @@ print(f"Scientific notation: {result:.25e}")
         // This test verifies our monotonic implementation produces identical
         // bit layouts to the standard ulid library for the same inputs
         
-        use sinex_ulid::Ulid;
         
         // Generate some ULIDs and verify structure
         let ulids: Vec<Ulid> = (0..5).map(|_| Ulid::new()).collect();
@@ -196,7 +196,7 @@ print(f"Scientific notation: {result:.25e}")
             println!("    Reconstructed: {} ms", timestamp_reconstructed);
             
             // Verify timestamp reconstruction matches
-            assert_eq!(timestamp_ms, timestamp_reconstructed, 
+            pretty_assertions::assert_eq!(timestamp_ms, timestamp_reconstructed, 
                       "Timestamp reconstruction should match ULID internal timestamp");
         }
         

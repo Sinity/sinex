@@ -1,8 +1,4 @@
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
-use sinex_db::queries;
-use sinex_core::RawEventBuilder;
-use serde_json::json;
+use crate::common::prelude::*;
 
 // Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 
@@ -115,27 +111,27 @@ async fn test_work_queue_operations(ctx: TestContext) -> Result<(), Box<dyn std:
         3 // max_attempts
     ).await?;
     
-    assert_eq!(queue_item.raw_event_id, inserted_event.id);
-    assert_eq!(queue_item.target_agent_name, "test_agent");
-    assert_eq!(queue_item.status, "pending");
-    assert_eq!(queue_item.attempts, 0);
-    assert_eq!(queue_item.max_attempts, 3);
+    pretty_assertions::assert_eq!(queue_item.raw_event_id, inserted_event.id);
+    pretty_assertions::assert_eq!(queue_item.target_agent_name, "test_agent");
+    pretty_assertions::assert_eq!(queue_item.status, "pending");
+    pretty_assertions::assert_eq!(queue_item.attempts, 0);
+    pretty_assertions::assert_eq!(queue_item.max_attempts, 3);
     
     // Get next item for processing
     let next_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(next_item.is_some());
     
     let item = next_item.unwrap();
-    assert_eq!(item.raw_event_id, inserted_event.id);
-    assert_eq!(item.target_agent_name, "test_agent");
-    assert_eq!(item.status, "processing");
+    pretty_assertions::assert_eq!(item.raw_event_id, inserted_event.id);
+    pretty_assertions::assert_eq!(item.target_agent_name, "test_agent");
+    pretty_assertions::assert_eq!(item.status, "processing");
     
     // Complete processing
     queries::complete_work_item(ctx.pool(), item.queue_id).await?;
     
     // Verify item is completed
     let completed_item = queries::get_work_item_by_id(ctx.pool(), item.queue_id).await?;
-    assert_eq!(completed_item.status, "succeeded");
+    pretty_assertions::assert_eq!(completed_item.status, "succeeded");
     
     Ok(())
 }
@@ -164,7 +160,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std
     let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
     
     // Add to work queue with limited retries
-    let queue_item = queries::add_to_work_queue(
+    let _queue_item = queries::add_to_work_queue(
         ctx.pool(),
         inserted_event.id,
         "test_agent",
@@ -179,7 +175,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std
             // Should get an item
             assert!(next_item.is_some());
             let item = next_item.unwrap();
-            assert_eq!(item.attempts, attempt - 1);
+            pretty_assertions::assert_eq!(item.attempts, attempt - 1);
             
             // Fail the processing
             queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure").await?;
@@ -194,8 +190,8 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std
     assert!(!dlq_items.is_empty());
     
     let dlq_item = &dlq_items[0];
-    assert_eq!(dlq_item.failed_event_id, inserted_event.id);
-    assert_eq!(dlq_item.agent_name, "test_agent");
+    pretty_assertions::assert_eq!(dlq_item.failed_event_id, inserted_event.id);
+    pretty_assertions::assert_eq!(dlq_item.agent_name, "test_agent");
     assert!(!dlq_item.failure_reason.is_empty());
     
     Ok(())
@@ -238,11 +234,9 @@ async fn test_event_validation(ctx: TestContext) -> Result<(), Box<dyn std::erro
 
 #[sinex_test]
 async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::Arc;
-use std::time::Duration;
     use tokio::task::JoinSet;
     
-    let pool = Arc::new(ctx.pool().clone());
+    let _pool = Arc::new(ctx.pool().clone());
     let mut join_set = JoinSet::new();
     
     // Spawn multiple concurrent insertions
@@ -258,7 +252,7 @@ use std::time::Duration;
                 })
             ).build();
             
-            queries::insert_event(&*pool_clone, &event).await
+            queries::insert_event(&pool_clone, &event).await
         });
     }
     
@@ -269,7 +263,7 @@ use std::time::Duration;
     }
     
     // Verify all insertions succeeded
-    assert_eq!(results.len(), 10);
+    pretty_assertions::assert_eq!(results.len(), 10);
     
     // Verify all events are unique
     let mut ids = std::collections::HashSet::new();

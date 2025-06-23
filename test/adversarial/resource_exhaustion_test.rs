@@ -1,12 +1,7 @@
 use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
-use sinex_db::models::RawEvent;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use crate::common::resources;
-use crate::common::events;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +27,6 @@ async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::e
         let handle = tokio::spawn(async move {
             // Simulate watcher creation without actual notify dependency
             use std::fs::File;
-use std::time::Duration;
             
             // Try to open file handle as a proxy for file descriptor usage
             match File::open(&path) {
@@ -129,11 +123,8 @@ watch_paths = {}
     Ok(())
 }
 
-
 #[test]
 fn test_string_concatenation_memory_bomb() {
-    use sinex_db::models::RawEvent;
-    
     // Create event with expanding string pattern
     let mut expanding_string = String::from("a");
     let mut sizes = vec![];
@@ -164,9 +155,7 @@ fn test_string_concatenation_memory_bomb() {
 
 #[tokio::test]
 async fn test_collector_event_queue_overflow() {
-    use tokio::sync::mpsc;
     use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
     
     // Create collector with small channel
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);  // Small buffer

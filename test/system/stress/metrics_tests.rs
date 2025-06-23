@@ -1,17 +1,7 @@
 use crate::common::prelude::*;
 use super::common::*;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use tokio::time::{sleep, interval};
-use futures::future::join_all;
-use crate::common::database_helpers::{get_shared_test_pool};
-use serde_json::json;
-use std::str::FromStr;
-use rand::Rng;
-use crate::common::database_helpers;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {
@@ -44,6 +34,7 @@ impl StressTestWorker {
         }
     }
 
+    #[allow(dead_code)]
     fn stop(&self) {
         self.should_stop.store(true, Ordering::Relaxed);
     }
@@ -245,6 +236,7 @@ struct WorkCycleResult {
 
 #[derive(Debug)]
 struct WorkerStressResult {
+    #[allow(dead_code)]
     worker_id: String,
     items_processed: u64,
     deadlocks_detected: u64,
@@ -489,7 +481,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
     println!("  Processing rate: {:.2} items/sec", processing_rate);
 
     assert!(total_processed > 0, "Should have processed some work items under extreme stress");
-    assert_eq!(final_succeeded, total_processed as i64, "Succeeded count should match processed");
+    pretty_assertions::assert_eq!(final_succeeded, total_processed as i64, "Succeeded count should match processed");
     
     assert!(
         processing_rate > 100.0,

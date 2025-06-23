@@ -11,11 +11,6 @@
 
 use crate::common::prelude::*;
 use crate::common::{self, events, assertions, generators};
-use crate::common::test_context::TestContext;
-use sinex_core::event_type_constants;
-use std::time::Duration;
-use anyhow::Result;
-use sinex_test_macros::sinex_test;
 
 /// Test basic event lifecycle: insert → retrieve → verify
 /// 
@@ -86,7 +81,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std
     assert!(filesystem_events.len() >= 2);
     
     for event in &filesystem_events {
-        assert_eq!(event.source, "filesystem");
+        pretty_assertions::assert_eq!(event.source, "filesystem");
     }
 
     Ok(())

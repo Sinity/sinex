@@ -1,14 +1,8 @@
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use sinex_db::{queries, models::RawEvent};
-use std::sync::Arc;
+use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use tokio::time::timeout;
 use std::net::{TcpListener, TcpStream};
-use futures::future::join_all;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_database_dns_timeout() {

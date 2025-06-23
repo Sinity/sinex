@@ -1,9 +1,10 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
-use serde_json::Value;
 use uuid::Uuid;
 use chrono::{DateTime, Utc, Duration};
 
 /// Helper to compare JSON values with tolerance for floating point precision
+#[allow(dead_code)]
 fn assert_json_values_equivalent(a: &Value, b: &Value) {
     match (a, b) {
         (Value::Number(n1), Value::Number(n2)) => {
@@ -14,27 +15,28 @@ fn assert_json_values_equivalent(a: &Value, b: &Value) {
                     "Numbers not equal within tolerance: {} vs {}", f1, f2);
             } else {
                 // For integers or other number types, require exact match
-                assert_eq!(n1, n2);
+                pretty_assertions::assert_eq!(n1, n2);
             }
         }
         (Value::Array(a1), Value::Array(a2)) => {
-            assert_eq!(a1.len(), a2.len(), "Array lengths differ");
+            pretty_assertions::assert_eq!(a1.len(), a2.len(), "Array lengths differ");
             for (v1, v2) in a1.iter().zip(a2.iter()) {
                 assert_json_values_equivalent(v1, v2);
             }
         }
         (Value::Object(o1), Value::Object(o2)) => {
-            assert_eq!(o1.len(), o2.len(), "Object lengths differ");
+            pretty_assertions::assert_eq!(o1.len(), o2.len(), "Object lengths differ");
             for (k, v1) in o1 {
                 let v2 = o2.get(k).expect(&format!("Key {} missing in second object", k));
                 assert_json_values_equivalent(v1, v2);
             }
         }
-        _ => assert_eq!(a, b),
+        _ => pretty_assertions::assert_eq!(a, b),
     }
 }
 
 /// Generate arbitrary JSON values for testing
+#[allow(dead_code)]
 fn arb_json_value() -> BoxedStrategy<Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
@@ -67,11 +69,13 @@ fn arb_json_value() -> BoxedStrategy<Value> {
 }
 
 /// Generate valid event source strings
+#[allow(dead_code)]
 fn arb_event_source() -> impl Strategy<Value = String> {
     prop::string::string_regex("[a-z]+\\.[a-z]+\\.[a-z]+").unwrap()
 }
 
 /// Generate valid event type strings
+#[allow(dead_code)]
 fn arb_event_type() -> impl Strategy<Value = String> {
     prop::string::string_regex("[a-z_]+_v[0-9]+").unwrap()
 }
@@ -83,11 +87,13 @@ fn arb_agent_name() -> impl Strategy<Value = String> {
 }
 
 /// Generate valid host names
+#[allow(dead_code)]
 fn arb_host_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[a-z][a-z0-9-]{0,62}").unwrap()
 }
 
 /// Generate timestamps within reasonable bounds
+#[allow(dead_code)]
 fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
     // Generate timestamps within last year to next year
     let now = Utc::now();
@@ -102,8 +108,6 @@ fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
 }
 
 proptest! {
-
-
 
     /// Test queue retry timing boundaries
     #[test]
@@ -127,7 +131,7 @@ proptest! {
         
         // When attempts = 0, delay should equal base_delay
         if attempts == 0 {
-            assert_eq!(delay, base_delay);
+            pretty_assertions::assert_eq!(delay, base_delay);
         }
     }
 
@@ -136,7 +140,6 @@ proptest! {
     fn test_ulid_uuid_ordering(
         ulids in prop::collection::vec(any::<u128>(), 2..10)
     ) {
-        use sinex_ulid::Ulid;
         
         // Convert to ULIDs and then to UUIDs
         let mut ulid_pairs: Vec<(Ulid, Uuid)> = ulids.into_iter()
@@ -162,8 +165,8 @@ proptest! {
             // This is expected and acceptable as long as conversion is reversible
             
             // Verify round-trip conversion
-            assert_eq!(*ulid1, Ulid::from_uuid(*uuid1));
-            assert_eq!(*ulid2, Ulid::from_uuid(*uuid2));
+            pretty_assertions::assert_eq!(*ulid1, Ulid::from_uuid(*uuid1));
+            pretty_assertions::assert_eq!(*ulid2, Ulid::from_uuid(*uuid2));
         }
     }
 

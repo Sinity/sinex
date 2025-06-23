@@ -1,17 +1,11 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::task::JoinSet;
-use anyhow::Result;
-use crate::common::database_helpers::create_test_pool;
 use sinex_db::queries::{
     insert_raw_event, insert_work_queue_item, claim_work_queue_items,
     complete_work_queue_item, create_test_agent,
 };
-use sinex_ulid::Ulid;
-use serde_json::json;
-use sinex_db::run_migrations;
 
 /// Shared state to track which items have been processed
 #[derive(Debug, Clone)]
@@ -135,10 +129,10 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
             // Setup test database
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             // Create test agent
@@ -222,7 +216,7 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
                 agent_name
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Operation failed");
             
@@ -230,7 +224,7 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'succeeded'",
                 agent_name
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Operation failed");
             
@@ -247,12 +241,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             Ok(())
         })?
@@ -268,10 +262,10 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             let agent_name = format!("contention_test_{}", Ulid::new());
@@ -289,7 +283,7 @@ proptest! {
                 None,
             ).await.expect("DB operation failed");
             
-            let queue_item = insert_work_queue_item(pool, event.id, &agent_name).await.expect("DB operation failed");
+            let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
             let _target_queue_id = queue_item.queue_id;
             
             let tracker = ProcessingTracker::new();
@@ -341,12 +335,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             Ok(())
         })?
@@ -365,19 +359,19 @@ mod unit_tests {
         
         // First processing should succeed
         assert!(!tracker.mark_processed(id1));
-        assert_eq!(tracker.processed_count(), 1);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 1);
         assert!(tracker.get_duplicates().is_empty());
         
         // Different ID should also succeed
         assert!(!tracker.mark_processed(id2));
-        assert_eq!(tracker.processed_count(), 2);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 2);
         assert!(tracker.get_duplicates().is_empty());
         
         // Same ID again should detect duplicate
         assert!(tracker.mark_processed(id1));
-        assert_eq!(tracker.processed_count(), 2); // Count doesn't increase
-        assert_eq!(tracker.get_duplicates().len(), 1);
-        assert_eq!(tracker.get_duplicates()[0], id1);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 2); // Count doesn't increase
+        pretty_assertions::assert_eq!(tracker.get_duplicates().len(), 1);
+        pretty_assertions::assert_eq!(tracker.get_duplicates()[0], id1);
     }
     
     #[sqlx::test]

@@ -3,7 +3,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use crate::common::prelude::*;
 use crate::common::resources;
 
@@ -160,7 +159,7 @@ async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Err
     println!("  Access attempts: {}", access_attempts.load(Ordering::Relaxed));
     println!("  Permission denials: {}", access_denials.load(Ordering::Relaxed));
     
-    assert_eq!(access_denials.load(Ordering::Relaxed), 1);
+    pretty_assertions::assert_eq!(access_denials.load(Ordering::Relaxed), 1);
     Ok(())
 }
 
@@ -230,7 +229,7 @@ async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>
     println!("  Events after remount: {}", events_after_remount.load(Ordering::Relaxed));
     
     assert!(events_before_unmount.load(Ordering::Relaxed) > 0);
-    assert_eq!(events_during_unavailable.load(Ordering::Relaxed), 0);
+    pretty_assertions::assert_eq!(events_during_unavailable.load(Ordering::Relaxed), 0);
     assert!(events_after_remount.load(Ordering::Relaxed) > 0);
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
-use sinex_core::{EventSource, EventType, EventSourceContext};
+use sinex_core::{EventSource, EventType};
 use crate::common::resources;
 use chrono::Utc;
 use crate::common::event_sources;
@@ -35,12 +35,12 @@ async fn test_kitty_event_structure() {
     
     // Verify serialization works
     let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["command_string"], "echo test");
-    assert_eq!(json["cwd"], "/tmp");
-    assert_eq!(json["exit_code"], 0);
+    pretty_assertions::assert_eq!(json["command_string"], "echo test");
+    pretty_assertions::assert_eq!(json["cwd"], "/tmp");
+    pretty_assertions::assert_eq!(json["exit_code"], 0);
     
     // Verify event type constant
-    assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
+    pretty_assertions::assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
 }
 
 #[tokio::test]

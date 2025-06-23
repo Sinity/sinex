@@ -1,14 +1,8 @@
 use crate::common::prelude::*;
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
 use tokio::time::{timeout, sleep, interval};
 use futures::StreamExt;
-use crate::common::database_helpers::{get_shared_test_pool};
-use crate::common::database_helpers;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Connection health metrics for monitoring pool state
 #[derive(Debug)]
@@ -19,7 +13,6 @@ struct ConnectionMetrics {
     timeout_errors: AtomicU64,
     connection_errors: AtomicU64,
     recovery_cycles: AtomicU64,
-    max_concurrent_reached: AtomicBool,
 }
 
 impl ConnectionMetrics {
@@ -31,7 +24,6 @@ impl ConnectionMetrics {
             timeout_errors: AtomicU64::new(0),
             connection_errors: AtomicU64::new(0),
             recovery_cycles: AtomicU64::new(0),
-            max_concurrent_reached: AtomicBool::new(false),
         }
     }
 
@@ -108,10 +100,6 @@ impl ResilientDbWorker {
             should_stop: Arc::new(AtomicBool::new(false)),
             query_pattern: pattern,
         }
-    }
-
-    fn stop(&self) {
-        self.should_stop.store(true, Ordering::Relaxed);
     }
 
     async fn run(&self, duration: Duration) -> Result<(), anyhow::Error> {
@@ -413,7 +401,7 @@ async fn test_connection_pool_under_sustained_pressure() -> Result<(), anyhow::E
     // Validate results
     assert!(total_queries > 100, "Should have executed many queries");
     assert!(success_rate > 95.0, "Success rate should be > 95%");
-    assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0, 
+    pretty_assertions::assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0, 
                "All connections should be released");
 
     Ok(())
@@ -482,7 +470,7 @@ async fn test_connection_pool_failure_recovery_cycles() -> Result<(), anyhow::Er
     println!("  Completed cycles: {}/{}", total_recoveries, recovery_cycles);
     println!("  {}", metrics.report());
 
-    assert_eq!(total_recoveries, recovery_cycles, 
+    pretty_assertions::assert_eq!(total_recoveries, recovery_cycles, 
                "Should complete all recovery cycles");
 
     Ok(())
@@ -782,7 +770,7 @@ async fn test_connection_pool_memory_pressure_resilience() -> Result<(), anyhow:
     // Pool should remain functional under memory pressure
     assert!(metrics.successful_queries.load(Ordering::Relaxed) > 0,
            "Should maintain some successful operations under memory pressure");
-    assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0,
+    pretty_assertions::assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0,
               "All connections should be properly released");
 
     Ok(())

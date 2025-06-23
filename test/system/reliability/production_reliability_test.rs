@@ -1,8 +1,5 @@
 use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
-use tokio::time::timeout;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Test graceful degradation under database connectivity issues
 #[tokio::test]

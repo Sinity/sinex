@@ -1,14 +1,8 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_db::models::RawEvent;
-use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::time::{timeout, sleep, Instant};
-use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-use crate::common::event_sources;
-use anyhow::Result;
 
 
 
@@ -176,7 +170,7 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
     // Wait for meaningful test progress instead of fixed sleep
     // We want at least 20 events processed to verify backpressure behavior
     let consumer_clone = slow_consumer.clone();
-    let wait_result = wait_for_condition_or_timeout(
+    let _wait_result = wait_for_condition_or_timeout(
         move || {
             let processed = consumer_clone.events_processed();
             Box::pin(async move { Ok(processed >= 20) })
@@ -266,16 +260,16 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<(), anyhow::Err
     println!("Events received: {}", events_received.len());
 
     // With backpressure, we should receive all events that were sent
-    assert_eq!(events_sent, events_received.len(), 
+    pretty_assertions::assert_eq!(events_sent, events_received.len(), 
               "All sent events should be received, no events should be lost");
 
     // Verify event ordering and content
     for (i, event) in events_received.iter().enumerate() {
-        assert_eq!(event.source, "test.high_frequency_source");
-        assert_eq!(event.event_type, "test.high_frequency");
+        pretty_assertions::assert_eq!(event.source, "test.high_frequency_source");
+        pretty_assertions::assert_eq!(event.event_type, "test.high_frequency");
         
         let event_number = event.payload["event_number"].as_u64().unwrap() as usize;
-        assert_eq!(event_number, i, "Events should be received in order");
+        pretty_assertions::assert_eq!(event_number, i, "Events should be received in order");
     }
 
     // Producer should complete successfully
@@ -341,10 +335,10 @@ async fn test_multiple_sources_backpressure() -> Result<(), anyhow::Error> {
     println!("Events processed: {}", events_processed);
 
     // All events should be sent
-    assert_eq!(total_sent, total_expected_events, "All events should be sent");
+    pretty_assertions::assert_eq!(total_sent, total_expected_events, "All events should be sent");
     
     // All events should be processed (no loss)
-    assert_eq!(events_processed, total_sent, "All sent events should be processed");
+    pretty_assertions::assert_eq!(events_processed, total_sent, "All sent events should be processed");
 
     Ok(())
 }
@@ -438,8 +432,8 @@ async fn test_backpressure_recovery() -> Result<(), anyhow::Error> {
     assert!(events_during_backpressure > 0, "Some events should be sent initially");
     assert!(events_after_relief > events_during_backpressure, 
            "More events should be sent after backpressure relief");
-    assert_eq!(total_sent, 200, "All events should eventually be sent");
-    assert_eq!(events_consumed, total_sent, "All sent events should be consumed");
+    pretty_assertions::assert_eq!(total_sent, 200, "All events should eventually be sent");
+    pretty_assertions::assert_eq!(events_consumed, total_sent, "All sent events should be consumed");
     assert!(result.is_ok(), "Producer should complete successfully");
 
     Ok(())

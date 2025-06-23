@@ -1,8 +1,7 @@
 //! Demonstration of streamlined test patterns using the new abstractions
 
+use crate::common::prelude::*;
 use crate::common::{parameterized, scenario_builders, test_dsl};
-use serde_json::json;
-use sinex_core::RawEventBuilder;
 
 #[test]
 fn test_validation_with_parameterized_helper() {
@@ -59,7 +58,7 @@ async fn test_worker_scenario() {
         .unwrap();
     
     // Verify distribution across workers
-    assert_eq!(result.total_processed, 20);
+    pretty_assertions::assert_eq!(result.total_processed, 20);
     assert!(result.worker_stats.len() == 3);
     
     // All workers should have participated
@@ -131,7 +130,6 @@ fn test_multiple_validation_rules_streamlined() {
 #[tokio::test]
 async fn test_concurrent_operations_streamlined() {
     use crate::common::parallelization;
-    use std::sync::Arc;
     
     let pool = Arc::new(crate::common::create_test_db_pool().await.unwrap());
     
@@ -162,6 +160,6 @@ async fn test_concurrent_operations_streamlined() {
     }
     
     // Verify count
-    let count = crate::common::get_event_count(&*pool).await.unwrap();
-    assert_eq!(count, 10);
+    let count = crate::common::get_event_count(&pool).await.unwrap();
+    pretty_assertions::assert_eq!(count, 10);
 }

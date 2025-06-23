@@ -1,7 +1,5 @@
 use crate::common::prelude::*;
-use serde_json::json;
 use std::process::Command;
-use std::time::Duration;
 use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
@@ -77,7 +75,7 @@ async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
     
     let stdout = String::from_utf8_lossy(&output.stdout);
     let event_count = stdout.matches("Event ID:").count();
-    assert_eq!(event_count, 2, "Should return exactly 2 events");
+    pretty_assertions::assert_eq!(event_count, 2, "Should return exactly 2 events");
     
     Ok(())
 }
@@ -138,8 +136,8 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
 /// Test agent monitoring commands
 #[tokio::test]
 async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
     // Insert test agent manifest using helpers
     let mut manifest = generators::test_agent_manifest("test-collector");
@@ -222,8 +220,8 @@ async fn test_exo_cli_error_handling() {
 /// Test advanced query features
 #[tokio::test]
 async fn test_exo_cli_advanced_queries() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
     // Insert events with different timestamps
     let base_time = chrono::Utc::now();
@@ -298,8 +296,8 @@ async fn test_exo_cli_advanced_queries() {
 /// Test output formatting options
 #[tokio::test]
 async fn test_exo_cli_output_formats() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
     // Insert a test event
     let event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);

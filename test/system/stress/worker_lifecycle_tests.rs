@@ -1,10 +1,7 @@
 use crate::common::prelude::*;
-use crate::common::database_helpers;
-use sinex_db::run_migrations;
 
 // Stress test specific imports
 use super::common::*;
-use anyhow::Result;
 
 /// Specialized worker for testing race conditions and competitive scenarios
 struct RaceConditionWorker {
@@ -186,6 +183,7 @@ struct RaceCycleResult {
 
 #[derive(Debug)]
 struct RaceWorkerResult {
+    #[allow(dead_code)]
     worker_id: String,
     items_processed: u64,
     race_conditions: u64,
@@ -412,7 +410,7 @@ async fn test_race_condition_detection() -> Result<(), anyhow::Error> {
         println!("  Race event: {}", event);
     }
 
-    assert_eq!(final_succeeded, unique_completed, 
+    pretty_assertions::assert_eq!(final_succeeded, unique_completed, 
               "No duplicate processing should occur (race condition check)");
     assert!(total_processed > 0, "Should process work items despite race potential");
 

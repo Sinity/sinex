@@ -1,7 +1,5 @@
 use sqlx::postgres::PgPoolOptions;
 use crate::common::prelude::*;
-use serde_json::json;
-use std::time::Duration;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]
@@ -88,7 +86,7 @@ async fn test_agent_heartbeat_generation() {
         5
     ).await.unwrap();
     
-    assert_eq!(heartbeat_count, 1, "Heartbeat event should exist");
+    pretty_assertions::assert_eq!(heartbeat_count, 1, "Heartbeat event should exist");
 }
 
 #[tokio::test]
@@ -147,7 +145,7 @@ async fn test_stale_heartbeat_detection() {
     .await
     .unwrap();
     
-    assert_eq!(stale_agents.len(), 2);
+    pretty_assertions::assert_eq!(stale_agents.len(), 2);
     assert!(stale_agents.contains(&"new_agent".to_string()));
     assert!(stale_agents.contains(&"stale_agent_1".to_string()));
     
@@ -163,7 +161,7 @@ async fn test_stale_heartbeat_detection() {
     .await
     .unwrap();
     
-    assert_eq!(healthy_agents.len(), 2);
+    pretty_assertions::assert_eq!(healthy_agents.len(), 2);
     assert!(healthy_agents.contains(&"healthy_agent".to_string()));
     assert!(healthy_agents.contains(&"stale_agent_2".to_string()));
 }
@@ -235,8 +233,8 @@ async fn test_heartbeat_metrics_tracking() {
     .await
     .unwrap();
     
-    assert_eq!(latest_metrics["events_processed"], 1400);
-    assert_eq!(latest_metrics["error_count"], 4);
+    pretty_assertions::assert_eq!(latest_metrics["events_processed"], 1400);
+    pretty_assertions::assert_eq!(latest_metrics["error_count"], 4);
     
     // Query average metrics over time window
     let avg_cpu: Option<f64> = sqlx::query_scalar(
@@ -262,7 +260,7 @@ async fn test_heartbeat_metrics_tracking() {
         5
     ).await.unwrap();
     
-    assert_eq!(degraded_count, 1);
+    pretty_assertions::assert_eq!(degraded_count, 1);
 }
 
 #[tokio::test]
@@ -338,8 +336,8 @@ async fn test_heartbeat_based_status_updates() {
     .await
     .unwrap();
     
-    assert_eq!(status, "error_state");
-    assert_eq!(error_summary.unwrap(), "Unable to connect to data source");
+    pretty_assertions::assert_eq!(status, "error_state");
+    pretty_assertions::assert_eq!(error_summary.unwrap(), "Unable to connect to data source");
 }
 
 #[tokio::test]
@@ -411,7 +409,7 @@ async fn test_heartbeat_frequency_monitoring() {
     .unwrap();
     
     // Verify we got the expected intervals (with some tolerance for timestamp precision)
-    assert_eq!(intervals.len(), 5); // One less than total heartbeats
+    pretty_assertions::assert_eq!(intervals.len(), 5); // One less than total heartbeats
     
     // Check for irregular interval (the 120 second gap)
     let max_interval = intervals.iter().map(|(i,)| *i).max().unwrap();

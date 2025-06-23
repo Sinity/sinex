@@ -1,5 +1,5 @@
+use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
-use serde_json::json;
 use chrono::{DateTime, Utc};
 
 #[test]
@@ -10,10 +10,10 @@ fn test_raw_event_builder_basic_creation() {
         json!({"path": "/test/file.txt", "size": 1024})
     ).build();
     
-    assert_eq!(event.source, sources::FILESYSTEM);
-    assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
-    assert_eq!(event.payload["path"], "/test/file.txt");
-    assert_eq!(event.payload["size"], 1024);
+    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
+    pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
+    pretty_assertions::assert_eq!(event.payload["size"], 1024);
     
     // Verify timestamps are reasonable
     let now = Utc::now();
@@ -50,10 +50,10 @@ fn test_raw_event_builder_complex_payload() {
         complex_payload.clone()
     ).build();
     
-    assert_eq!(event.payload, complex_payload);
-    assert_eq!(event.payload["nested"]["array"][1], 2);
-    assert_eq!(event.payload["unicode"], "测试文件.txt");
-    assert_eq!(event.payload["nested"]["object"]["number"], 42.5);
+    pretty_assertions::assert_eq!(event.payload, complex_payload);
+    pretty_assertions::assert_eq!(event.payload["nested"]["array"][1], 2);
+    pretty_assertions::assert_eq!(event.payload["unicode"], "测试文件.txt");
+    pretty_assertions::assert_eq!(event.payload["nested"]["object"]["number"], 42.5);
 }
 
 #[test]
@@ -64,9 +64,9 @@ fn test_raw_event_builder_empty_payload() {
         json!({})
     ).build();
     
-    assert_eq!(event.payload, json!({}));
-    assert_eq!(event.source, sources::SINEX);
-    assert_eq!(event.event_type, "system.startup");
+    pretty_assertions::assert_eq!(event.payload, json!({}));
+    pretty_assertions::assert_eq!(event.source, sources::SINEX);
+    pretty_assertions::assert_eq!(event.event_type, "system.startup");
 }
 
 #[test]
@@ -82,13 +82,13 @@ fn test_raw_event_builder_multiple_builds() {
     let event2 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
     
     // Events should have different IDs and timestamps
-    assert_ne!(event1.id, event2.id);
+    pretty_assertions::assert_ne!(event1.id, event2.id);
     assert!(event2.ts_ingest >= event1.ts_ingest);
     
     // But same content
-    assert_eq!(event1.source, event2.source);
-    assert_eq!(event1.event_type, event2.event_type);
-    assert_eq!(event1.payload, event2.payload);
+    pretty_assertions::assert_eq!(event1.source, event2.source);
+    pretty_assertions::assert_eq!(event1.event_type, event2.event_type);
+    pretty_assertions::assert_eq!(event1.payload, event2.payload);
 }
 
 #[test]
@@ -132,13 +132,13 @@ fn test_raw_event_builder_all_fields_set() {
     
     // Verify all fields are properly set
     assert!(!event.id.to_string().is_empty());
-    assert_eq!(event.source, sources::FILESYSTEM);
-    assert_eq!(event.event_type, event_type_constants::filesystem::FILE_MODIFIED);
+    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_MODIFIED);
     assert!(event.ts_ingest <= Utc::now());
-    assert_eq!(event.ts_orig, Some(orig_time));
+    pretty_assertions::assert_eq!(event.ts_orig, Some(orig_time));
     assert!(!event.host.is_empty());
-    assert_eq!(event.ingestor_version, Some("test-1.0.0".to_string()));
-    assert_eq!(event.payload_schema_id, Some(schema_id));
-    assert_eq!(event.payload["path"], "/test/file.txt");
-    assert_eq!(event.payload["size"], 2048);
+    pretty_assertions::assert_eq!(event.ingestor_version, Some("test-1.0.0".to_string()));
+    pretty_assertions::assert_eq!(event.payload_schema_id, Some(schema_id));
+    pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
+    pretty_assertions::assert_eq!(event.payload["size"], 2048);
 }

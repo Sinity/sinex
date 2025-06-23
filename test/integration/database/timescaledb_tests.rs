@@ -1,10 +1,5 @@
 use crate::common::prelude::*;
-use serde_json::json;
 use chrono::{Duration, Utc};
-use sinex_core::RawEventBuilder;
-use sinex_db::queries;
-use crate::common::database_helpers;
-use anyhow::Result;
 
 #[tokio::test]
 async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> {
@@ -22,10 +17,10 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> 
     
     assert!(hypertable_info.is_some(), "raw.events should be a hypertable");
     let (schema, table, dimension_col, dimension_type) = hypertable_info.unwrap();
-    assert_eq!(schema, "raw");
-    assert_eq!(table, "events");
-    assert_eq!(dimension_col, "id");
-    assert_eq!(dimension_type, "Time"); // Time dimension
+    pretty_assertions::assert_eq!(schema, "raw");
+    pretty_assertions::assert_eq!(table, "events");
+    pretty_assertions::assert_eq!(dimension_col, "id");
+    pretty_assertions::assert_eq!(dimension_type, "Time"); // Time dimension
     
     // Check chunk interval (stored as microseconds for ULID-based time dimension)
     let chunk_interval: Option<i64> = sqlx::query_scalar(
@@ -39,7 +34,7 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> 
     assert!(chunk_interval.is_some(), "Expected chunk interval to be set");
     let interval_seconds = chunk_interval.unwrap() / 1_000_000; // Convert microseconds to seconds
     let interval_days = interval_seconds / 86400;
-    assert_eq!(interval_days, 7, "Chunk interval should be 7 days");
+    pretty_assertions::assert_eq!(interval_days, 7, "Chunk interval should be 7 days");
     
     Ok(())
 }
@@ -124,7 +119,7 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
         .await
         .unwrap();
         
-        assert_eq!(count, 1, "Each event should be in its appropriate chunk");
+        pretty_assertions::assert_eq!(count, 1, "Each event should be in its appropriate chunk");
     }
     Ok(())
 }
@@ -277,8 +272,8 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
     
     if !hourly_counts.is_empty() {
         for (hour, source, event_type, count, hosts) in hourly_counts {
-            assert_eq!(source, "app.web");
-            assert_eq!(event_type, "user_action");
+            pretty_assertions::assert_eq!(source, "app.web");
+            pretty_assertions::assert_eq!(event_type, "user_action");
             assert!(count > 0);
             assert!(hosts > 0 && hosts <= 3);
             println!("Hour: {}, Count: {}, Unique hosts: {}", hour, count, hosts);

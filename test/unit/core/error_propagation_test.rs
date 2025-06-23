@@ -74,7 +74,7 @@ async fn test_event_source_error_propagation() {
     
     assert!(result.is_err());
     match result.unwrap_err() {
-        CoreError::Configuration(msg) => assert_eq!(msg, "Missing required field"),
+        CoreError::Configuration(msg) => pretty_assertions::assert_eq!(msg, "Missing required field"),
         _ => panic!("Expected Configuration error"),
     }
 }
@@ -116,7 +116,7 @@ fn test_error_display_implementation() {
     ];
     
     for (error, expected) in errors {
-        assert_eq!(error.to_string(), expected);
+        pretty_assertions::assert_eq!(error.to_string(), expected);
     }
 }
 
@@ -124,7 +124,6 @@ fn test_error_display_implementation() {
 #[tokio::test]
 async fn test_error_propagation_across_tasks() {
     use tokio::task;
-use crate::common::event_sources;
     
     let handle = task::spawn(async {
         // Simulate work that fails
@@ -153,7 +152,7 @@ fn test_error_recovery_with_fallback() {
     
     let result = operation_with_fallback();
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "Fallback value");
+    pretty_assertions::assert_eq!(result.unwrap(), "Fallback value");
 }
 
 // Test nested Result handling

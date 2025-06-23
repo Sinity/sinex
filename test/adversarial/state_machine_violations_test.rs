@@ -1,12 +1,7 @@
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use sinex_db::{queries, models::RawEvent};
-use std::sync::Arc;
+use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use futures::future::join_all;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_shutdown_signal_during_initialization() {
@@ -216,7 +211,7 @@ async fn test_event_router_state_corruption() {
     let mut handles = vec![];
     
     // Process events concurrently to create race conditions
-    for (i, (event_type, payload)) in state_events.into_iter().enumerate() {
+    for (i, (event_type, _payload)) in state_events.into_iter().enumerate() {
         let pool_clone = pool.clone();
         let corruption_flag = corruption_detected.clone();
         

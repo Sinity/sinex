@@ -8,11 +8,8 @@
 
 #![allow(dead_code, unused_imports, unused_variables)]
 
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ValidationReport};
-use serde_json::json;
-use std::collections::HashMap;
-use std::time::Duration;
 use tempfile::{TempDir, NamedTempFile};
 use tokio::fs;
 
@@ -101,14 +98,14 @@ connection_timeout_secs = 60
     
     // Test 1: Load default configuration
     let default_loaded: CollectorConfig = toml::from_str(default_config)?;
-    assert_eq!(default_loaded.enabled_events.len(), 1);
-    assert_eq!(default_loaded.monitoring.health_check_interval_secs, 60);
-    assert_eq!(default_loaded.database.max_connections, 10);
+    pretty_assertions::assert_eq!(default_loaded.enabled_events.len(), 1);
+    pretty_assertions::assert_eq!(default_loaded.monitoring.health_check_interval_secs, 60);
+    pretty_assertions::assert_eq!(default_loaded.database.max_connections, 10);
     
     // Test 2: Load user configuration (should include defaults + user overrides)
     let user_loaded: CollectorConfig = toml::from_str(user_config)?;
-    assert_eq!(user_loaded.enabled_events.len(), 2);
-    assert_eq!(user_loaded.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(user_loaded.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(user_loaded.monitoring.health_check_interval_secs, 30);
     assert!(user_loaded.monitoring.metrics_enabled);
     
     // Test 3: Simulate configuration merging
@@ -118,8 +115,8 @@ connection_timeout_secs = 60
     ]);
     
     // User config should override defaults
-    assert_eq!(merged_config.enabled_events.len(), 2);
-    assert_eq!(merged_config.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(merged_config.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(merged_config.monitoring.health_check_interval_secs, 30);
     assert!(merged_config.monitoring.metrics_enabled);
     
     // Test 4: Load environment configuration (highest precedence)
@@ -130,10 +127,10 @@ connection_timeout_secs = 60
     ]);
     
     // Environment should override everything
-    assert_eq!(final_config.enabled_events.len(), 3);
-    assert_eq!(final_config.monitoring.failure_threshold, 5);
-    assert_eq!(final_config.database.max_connections, 50);
-    assert_eq!(final_config.database.connection_timeout_secs, 60);
+    pretty_assertions::assert_eq!(final_config.enabled_events.len(), 3);
+    pretty_assertions::assert_eq!(final_config.monitoring.failure_threshold, 5);
+    pretty_assertions::assert_eq!(final_config.database.max_connections, 50);
+    pretty_assertions::assert_eq!(final_config.database.connection_timeout_secs, 60);
     
     // Validate final merged configuration
     let validation = final_config.validate();
@@ -381,18 +378,18 @@ polling_interval_secs = 5
     let merged = merge_configurations(vec![base, override_cfg]);
     
     // Verify merge results
-    assert_eq!(merged.enabled_events.len(), 2, "Should have merged enabled events");
+    pretty_assertions::assert_eq!(merged.enabled_events.len(), 2, "Should have merged enabled events");
     assert!(merged.enabled_events.contains(&"filesystem.file.created".to_string()));
     assert!(merged.enabled_events.contains(&"terminal.command.executed".to_string()));
     
     // Override values should be used
-    assert_eq!(merged.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(merged.monitoring.health_check_interval_secs, 30);
     assert!(merged.monitoring.metrics_enabled);
-    assert_eq!(merged.database.max_connections, 50);
+    pretty_assertions::assert_eq!(merged.database.max_connections, 50);
     
     // Base values should be preserved where not overridden
-    assert_eq!(merged.monitoring.failure_threshold, 3);
-    assert_eq!(merged.database.connection_timeout_secs, 30);
+    pretty_assertions::assert_eq!(merged.monitoring.failure_threshold, 3);
+    pretty_assertions::assert_eq!(merged.database.connection_timeout_secs, 30);
     
     // New configurations should be added
     assert!(merged.event.contains_key("shell_command_executed_atuin"));
@@ -426,8 +423,8 @@ metrics_enabled = false
     let initial_content = fs::read_to_string(&config_file).await?;
     let initial: CollectorConfig = toml::from_str(&initial_content)?;
     
-    assert_eq!(initial.enabled_events.len(), 1);
-    assert_eq!(initial.monitoring.health_check_interval_secs, 60);
+    pretty_assertions::assert_eq!(initial.enabled_events.len(), 1);
+    pretty_assertions::assert_eq!(initial.monitoring.health_check_interval_secs, 60);
     assert!(!initial.monitoring.metrics_enabled);
     
     // Simulate time passing
@@ -454,10 +451,10 @@ polling_interval_secs = 5
     let updated: CollectorConfig = toml::from_str(&updated_content)?;
     
     // Verify changes
-    assert_eq!(updated.enabled_events.len(), 2);
-    assert_eq!(updated.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(updated.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(updated.monitoring.health_check_interval_secs, 30);
     assert!(updated.monitoring.metrics_enabled);
-    assert_eq!(updated.monitoring.failure_threshold, 5);
+    pretty_assertions::assert_eq!(updated.monitoring.failure_threshold, 5);
     
     // Validate updated configuration
     let validation = updated.validate();

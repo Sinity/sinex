@@ -2,7 +2,6 @@ use proptest::prelude::*;
 use crate::common::prelude::*;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
 use chrono::{Utc, Duration as ChronoDuration};
 
 /// Test concurrent ULID generation properties
@@ -33,7 +32,7 @@ fn generate_ulids_concurrently(
             
             // Wait for all threads to be ready
             barrier.wait();
-            let start_time = Instant::now();
+            let _start_time = Instant::now();
             
             for _ in 0..ulids_per_thread {
                 let generation_time = Instant::now();
@@ -236,7 +235,6 @@ proptest! {
 mod stress_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
     
     #[test]
     #[ignore] // This is a long-running stress test
@@ -280,8 +278,8 @@ use std::time::Duration;
         }
         
         // Verify results
-        assert_eq!(all_ulids.len(), EXPECTED_TOTAL);
-        assert_eq!(counter.load(Ordering::Relaxed), EXPECTED_TOTAL);
+        pretty_assertions::assert_eq!(all_ulids.len(), EXPECTED_TOTAL);
+        pretty_assertions::assert_eq!(counter.load(Ordering::Relaxed), EXPECTED_TOTAL);
         
         // All ULIDs should be unique
         let mut seen = HashSet::new();

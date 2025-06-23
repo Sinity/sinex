@@ -1,10 +1,7 @@
 use crate::common::prelude::*;
-use crate::common::database_helpers;
-use sinex_db::run_migrations;
 
 // Stress test specific imports
 use super::common::*;
-use anyhow::Result;
 
 #[tokio::test]
 async fn test_coordinated_deadlock_scenario() -> Result<(), anyhow::Error> {
@@ -277,6 +274,7 @@ struct DeadlockStressWorker {
 
 #[derive(Debug)]
 struct DeadlockWorkerResult {
+    #[allow(dead_code)]
     worker_id: String,
     deadlocks_detected: u64,
     items_processed: u64,

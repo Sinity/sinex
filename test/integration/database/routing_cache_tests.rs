@@ -2,13 +2,8 @@
 // Tests for replacing per-row trigger routing with materialized view approach
 
 use crate::common::prelude::*;
-use sinex_db::queries::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
 use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
-use sinex_core::RawEventBuilder;
-use serde_json::json;
-use crate::common::database_helpers;
-use anyhow::Result;
 
 #[tokio::test]
 async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
@@ -25,7 +20,7 @@ async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
+    pretty_assertions::assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
     Ok(())
 }
 
@@ -51,15 +46,15 @@ async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
+    pretty_assertions::assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
     
     let event_type_col = &columns[0];
-    assert_eq!(event_type_col.column_name, "event_type");
-    assert_eq!(event_type_col.data_type, "text");
+    pretty_assertions::assert_eq!(event_type_col.column_name, "event_type");
+    pretty_assertions::assert_eq!(event_type_col.data_type, "text");
     
     let agent_id_col = &columns[1];
-    assert_eq!(agent_id_col.column_name, "agent_id");
-    assert_eq!(agent_id_col.data_type, "text");
+    pretty_assertions::assert_eq!(agent_id_col.column_name, "agent_id");
+    pretty_assertions::assert_eq!(agent_id_col.data_type, "text");
     
     Ok(())
 }
@@ -89,17 +84,17 @@ async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow:
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
+    pretty_assertions::assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
     
     // Verify the specific entries
-    assert_eq!(cache_entries[0].event_type.as_ref(), Some(&"filesystem:file_created".to_string()));
-    assert_eq!(cache_entries[0].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[0].event_type.as_ref(), Some(&"filesystem:file_created".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[0].agent_id.as_ref(), Some(&agent_name.to_string()));
     
-    assert_eq!(cache_entries[1].event_type.as_ref(), Some(&"filesystem:file_modified".to_string()));
-    assert_eq!(cache_entries[1].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[1].event_type.as_ref(), Some(&"filesystem:file_modified".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[1].agent_id.as_ref(), Some(&agent_name.to_string()));
     
-    assert_eq!(cache_entries[2].event_type.as_ref(), Some(&"terminal:command_executed".to_string()));
-    assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[2].event_type.as_ref(), Some(&"terminal:command_executed".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
     
     Ok(())
 }
@@ -127,7 +122,7 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
     let routed_count = run_batch_router(&pool).await?;
     
     // Should have routed 2 events
-    assert_eq!(routed_count, 2, "Should route 2 events to the agent");
+    pretty_assertions::assert_eq!(routed_count, 2, "Should route 2 events to the agent");
     
     // Verify work queue entries were created
     let work_items = sqlx::query!(
@@ -137,7 +132,7 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
+    pretty_assertions::assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
     
     let event_ids: Vec<uuid::Uuid> = work_items.into_iter()
         .filter_map(|item| item.raw_event_id)
@@ -171,8 +166,8 @@ async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Erro
     let second_run = run_batch_router(&pool).await?;
     
     // First run should route 1 event, second run should route 0 (no duplicates)
-    assert_eq!(first_run, 1, "First run should route 1 event");
-    assert_eq!(second_run, 0, "Second run should not create duplicates");
+    pretty_assertions::assert_eq!(first_run, 1, "First run should route 1 event");
+    pretty_assertions::assert_eq!(second_run, 0, "Second run should not create duplicates");
     
     // Verify only one work queue entry exists
     let work_items = sqlx::query!(
@@ -183,7 +178,7 @@ async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Erro
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
+    pretty_assertions::assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
     
     Ok(())
 }
@@ -231,7 +226,6 @@ async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Er
     
     Ok(())
 }
-
 
 // Helper function for creating test events in routing tests
 // This has a different signature (4 args vs 3) from the common insert_test_event function

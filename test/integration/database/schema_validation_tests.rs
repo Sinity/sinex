@@ -1,8 +1,5 @@
-use serde_json::json;
+use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
-use sinex_db::queries;
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
 
 /// Test that validation prevents malformed events from being inserted
 #[sinex_test]

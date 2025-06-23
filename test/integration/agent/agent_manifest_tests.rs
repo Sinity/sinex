@@ -1,6 +1,4 @@
-use serde_json::json;
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
+use crate::common::prelude::*;
 
 #[sinex_test]
 async fn test_agent_manifest_create(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
@@ -66,17 +64,17 @@ async fn test_agent_manifest_create(ctx: TestContext) -> Result<(), Box<dyn std:
     .await
     .unwrap();
     
-    assert_eq!(manifest.0, "test_agent_crud");
-    assert_eq!(manifest.1.unwrap(), "Test agent for CRUD operations");
-    assert_eq!(manifest.2, "1.0.0");
-    assert_eq!(manifest.3, "running");
-    assert_eq!(manifest.4, "ingestor");
+    pretty_assertions::assert_eq!(manifest.0, "test_agent_crud");
+    pretty_assertions::assert_eq!(manifest.1.unwrap(), "Test agent for CRUD operations");
+    pretty_assertions::assert_eq!(manifest.2, "1.0.0");
+    pretty_assertions::assert_eq!(manifest.3, "running");
+    pretty_assertions::assert_eq!(manifest.4, "ingestor");
     assert!(manifest.5.is_some());
     assert!(manifest.6.is_some());
     assert!(manifest.7.is_some());
     assert!(manifest.8.is_some());
     assert!(manifest.9.is_some());
-    assert_eq!(manifest.10.unwrap(), "https://github.com/example/test-agent");
+    pretty_assertions::assert_eq!(manifest.10.unwrap(), "https://github.com/example/test-agent");
     
     Ok(())
 }
@@ -136,10 +134,10 @@ async fn test_agent_manifest_update(ctx: TestContext) -> Result<(), Box<dyn std:
         .await
         .unwrap();
     
-    assert_eq!(version, "1.1.0");
-    assert_eq!(status, "stopped");
+    pretty_assertions::assert_eq!(version, "1.1.0");
+    pretty_assertions::assert_eq!(status, "stopped");
     assert!(updated_new > updated, "updated_at should be updated by trigger");
-    assert_eq!(registered, registered, "registered_at should not change");
+    pretty_assertions::assert_eq!(registered, registered, "registered_at should not change");
     
     Ok(())
 }
@@ -198,7 +196,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> Result<(), Box<dyn std:
     .await
     .unwrap();
     
-    assert_eq!(count, 0, "Agent should be deleted");
+    pretty_assertions::assert_eq!(count, 0, "Agent should be deleted");
     
     // Verify work queue items were cascade deleted
     let queue_count: i64 = sqlx::query_scalar(
@@ -209,7 +207,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> Result<(), Box<dyn std:
     .await
     .unwrap();
     
-    assert_eq!(queue_count, 0, "Work queue items should be cascade deleted");
+    pretty_assertions::assert_eq!(queue_count, 0, "Work queue items should be cascade deleted");
     
     Ok(())
 }
@@ -276,9 +274,9 @@ async fn test_agent_status_transitions(ctx: TestContext) -> Result<(), Box<dyn s
         .await
         .unwrap();
     
-    assert_eq!(status, "error_state");
+    pretty_assertions::assert_eq!(status, "error_state");
     assert!(error_ts.is_some());
-    assert_eq!(error_msg.unwrap(), "Connection timeout to data source");
+    pretty_assertions::assert_eq!(error_msg.unwrap(), "Connection timeout to data source");
     
     Ok(())
 }
@@ -395,7 +393,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<(), B
     .await
     .unwrap();
     
-    assert_eq!(subscribers.len(), 3);
+    pretty_assertions::assert_eq!(subscribers.len(), 3);
     
     // Query agents subscribing to specific event feed
     let raw_feed_subscribers: Vec<String> = sqlx::query_scalar(
@@ -407,7 +405,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<(), B
     .await
     .unwrap();
     
-    assert_eq!(raw_feed_subscribers.len(), 2);
+    pretty_assertions::assert_eq!(raw_feed_subscribers.len(), 2);
     assert!(raw_feed_subscribers.contains(&"subscriber_1".to_string()));
     assert!(raw_feed_subscribers.contains(&"subscriber_2".to_string()));
     

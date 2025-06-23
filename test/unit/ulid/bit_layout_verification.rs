@@ -1,7 +1,7 @@
 //! Critical verification that our ULID implementation produces correct bit layouts
 //! and follows the ULID specification
 
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 
 #[test]
 fn test_bit_layout_matches_standard() {
@@ -42,11 +42,11 @@ fn test_bit_layout_matches_standard() {
     // Verify the ULID can be parsed back correctly
     let ulid_string = our_ulid.to_string();
     let parsed_back = std::str::FromStr::from_str(&ulid_string).expect("Should parse our own ULID");
-    assert_eq!(our_ulid, parsed_back);
+    pretty_assertions::assert_eq!(our_ulid, parsed_back);
     
     // Verify timestamp matches what the inner ULID reports
     let inner_timestamp = our_ulid.inner().timestamp_ms();
-    assert_eq!(our_timestamp, inner_timestamp, 
+    pretty_assertions::assert_eq!(our_timestamp, inner_timestamp, 
                "Our byte extraction {} != inner method {}", 
                our_timestamp, inner_timestamp);
     
@@ -116,7 +116,7 @@ fn test_standard_construction_equivalence() {
     println!("  final u128: 0x{:032x}", our_u128);
     
     // CRITICAL TEST: These should be identical
-    assert_eq!(standard_u128, our_u128, 
+    pretty_assertions::assert_eq!(standard_u128, our_u128, 
                "Our construction doesn't match standard!\nStandard: 0x{:032x}\nOurs:     0x{:032x}",
                standard_u128, our_u128);
     
@@ -151,8 +151,8 @@ fn test_increment_behavior_analysis() {
     println!("Inc random:     0x{:020x}", inc_random_part);
     
     // Should only affect random part unless overflow
-    assert_eq!(timestamp_part, inc_timestamp_part, "Timestamp should not change");
-    assert_eq!(random_part + 1, inc_random_part, "Random should increment by 1");
+    pretty_assertions::assert_eq!(timestamp_part, inc_timestamp_part, "Timestamp should not change");
+    pretty_assertions::assert_eq!(random_part + 1, inc_random_part, "Random should increment by 1");
     
     println!("✅ Standard increment behavior understood");
 }

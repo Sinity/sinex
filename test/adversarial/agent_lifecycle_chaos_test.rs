@@ -1,13 +1,8 @@
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use sinex_db::{queries, models::{RawEvent, AgentManifest}};
-use std::sync::Arc;
+use sinex_db::{queries, models::AgentManifest};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use futures::future::join_all;
 use chrono::Utc;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_agent_registering_from_multiple_instances() {

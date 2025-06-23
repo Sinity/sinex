@@ -1,11 +1,7 @@
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use sinex_db::{queries, models::RawEvent};
+use sinex_db::queries;
 use chrono::Utc;
-use serde_json::json;
-use tokio::time::timeout;
-use futures::future::join_all;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]
@@ -28,7 +24,7 @@ async fn test_event_payload_approaching_1gb_limit() {
         println!("  Testing {} payload...", label);
         
         // Create large string
-        let large_data = "x".repeat(size);
+        let _large_data = "x".repeat(size);
         
         let event = events::large_payload_test_event(1024);
         
@@ -176,7 +172,7 @@ async fn test_concurrent_btree_index_splits() {
             // This forces them into same B-tree pages
             for i in 0..1000 {
                 let event_time = group_time + chrono::Duration::microseconds(i as i64);
-                let ulid = Ulid::from_datetime(event_time);
+                let _ulid = Ulid::from_datetime(event_time);
                 
                 let event = events::indexed_test_event(0, chrono::Utc::now());
                 
@@ -326,7 +322,7 @@ async fn test_query_during_chunk_compression() {
     println!("Testing queries during chunk compression:");
     
     // Insert old events that would be compressed
-    let old_time = Utc::now() - chrono::Duration::days(30);
+    let _old_time = Utc::now() - chrono::Duration::days(30);
     
     // Insert many events to make compression worthwhile
     for i in 0..10000 {

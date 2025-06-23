@@ -13,10 +13,7 @@
 //! - `performance` - Throughput and ordering guarantees
 //! - `properties` - Property-based testing
 
-use sinex_ulid::Ulid;
-use std::str::FromStr;
-use std::collections::HashSet;
-use std::sync::Arc;
+use crate::common::prelude::*;
 use uuid::Uuid;
 use proptest::prelude::*;
 use rstest::rstest;
@@ -29,7 +26,7 @@ mod basic_functionality {
     fn ulid_creation_and_uniqueness() {
         let ulid1 = Ulid::new();
         let ulid2 = Ulid::new();
-        assert_ne!(ulid1, ulid2, "Sequential ULIDs must be unique");
+        pretty_assertions::assert_ne!(ulid1, ulid2, "Sequential ULIDs must be unique");
     }
     
     #[test]
@@ -46,10 +43,10 @@ mod basic_functionality {
             let uuid = original.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             
-            assert_eq!(original, restored, "ULID must survive UUID roundtrip");
-            assert_eq!(original.timestamp(), restored.timestamp());
-            assert_eq!(original.to_string(), restored.to_string());
-            assert_eq!(original.to_bytes(), restored.to_bytes());
+            pretty_assertions::assert_eq!(original, restored, "ULID must survive UUID roundtrip");
+            pretty_assertions::assert_eq!(original.timestamp(), restored.timestamp());
+            pretty_assertions::assert_eq!(original.to_string(), restored.to_string());
+            pretty_assertions::assert_eq!(original.to_bytes(), restored.to_bytes());
         }
     }
     
@@ -59,8 +56,8 @@ mod basic_functionality {
         let ulid_str = ulid.to_string());
         let parsed = ulid_str.parse::<Ulid>().expect("Valid ULID string should parse");
         
-        assert_eq!(ulid, parsed);
-        assert_eq!(ulid_str.len(), 26, "ULID string must be exactly 26 characters");
+        pretty_assertions::assert_eq!(ulid, parsed);
+        pretty_assertions::assert_eq!(ulid_str.len(), 26, "ULID string must be exactly 26 characters");
     }
     
     #[test]
@@ -69,8 +66,8 @@ mod basic_functionality {
         
         // Display trait shows the ULID string
         let display = format!("{}", ulid);
-        assert_eq!(display, ulid.to_string());
-        assert_eq!(display.len(), 26);
+        pretty_assertions::assert_eq!(display, ulid.to_string());
+        pretty_assertions::assert_eq!(display.len(), 26);
         
         // Debug trait is more detailed
         let debug = format!("{:?}", ulid);
@@ -94,7 +91,7 @@ mod basic_functionality {
         ulid.hash(&mut hasher2);
         let hash2 = hasher2.finish();
         
-        assert_eq!(hash1, hash2, "Same ULID must produce same hash");
+        pretty_assertions::assert_eq!(hash1, hash2, "Same ULID must produce same hash");
         
         // Different ULIDs should have different hashes (with high probability)
         let ulid2 = Ulid::new();
@@ -102,7 +99,7 @@ mod basic_functionality {
         ulid2.hash(&mut hasher3);
         let hash3 = hasher3.finish();
         
-        assert_ne!(hash1, hash3, "Different ULIDs should have different hashes");
+        pretty_assertions::assert_ne!(hash1, hash3, "Different ULIDs should have different hashes");
     }
     
     #[test]
@@ -114,11 +111,11 @@ mod basic_functionality {
         
         // Should serialize as a quoted string
         assert!(json.starts_with('"') && json.ends_with('"'));
-        assert_eq!(json.len(), 28); // 26 chars + 2 quotes
+        pretty_assertions::assert_eq!(json.len(), 28); // 26 chars + 2 quotes
         
         // Deserialize back
         let deserialized: Ulid = serde_json::from_str(&json).unwrap();
-        assert_eq!(original, deserialized);
+        pretty_assertions::assert_eq!(original, deserialized);
     }
 }
 
@@ -133,13 +130,13 @@ mod edge_cases {
         // Test minimum timestamp (Unix epoch)
         let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
         let min_ulid = Ulid::from_datetime(min_datetime);
-        assert_eq!(min_ulid.timestamp().timestamp_millis(), 0);
+        pretty_assertions::assert_eq!(min_ulid.timestamp().timestamp_millis(), 0);
         
         // Test maximum valid timestamp (48-bit limit)
         let max_timestamp_ms = (1u64 << 48) - 1;
         let max_datetime = chrono::DateTime::from_timestamp_millis(max_timestamp_ms as i64).unwrap();
         let max_ulid = Ulid::from_datetime(max_datetime);
-        assert_eq!(max_ulid.timestamp().timestamp_millis(), max_timestamp_ms as i64);
+        pretty_assertions::assert_eq!(max_ulid.timestamp().timestamp_millis(), max_timestamp_ms as i64);
         
         // Test current time
         let now = SystemTime::now()
@@ -148,7 +145,7 @@ mod edge_cases {
             .as_millis() as u64;
         let now_datetime = chrono::DateTime::from_timestamp_millis(now as i64).unwrap();
         let now_ulid = Ulid::from_datetime(now_datetime);
-        assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
+        pretty_assertions::assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
     }
     
     #[test]
@@ -162,7 +159,7 @@ mod edge_cases {
         assert!(ulid_result.is_ok(), "ULID generation should handle extreme future dates");
         
         let ulid = ulid_result.unwrap();
-        assert_eq!(ulid.to_string().len(), 26, "ULID must maintain 26-character format");
+        pretty_assertions::assert_eq!(ulid.to_string().len(), 26, "ULID must maintain 26-character format");
     }
     
     #[test]
@@ -170,13 +167,13 @@ mod edge_cases {
         // Test zero ULID
         let zero_bytes = [0u8; 16];
         let zero_ulid = Ulid::from_bytes(zero_bytes).unwrap();
-        assert_eq!(zero_ulid.timestamp().timestamp_millis(), 0);
-        assert_eq!(zero_ulid.to_string(), "00000000000000000000000000");
+        pretty_assertions::assert_eq!(zero_ulid.timestamp().timestamp_millis(), 0);
+        pretty_assertions::assert_eq!(zero_ulid.to_string(), "00000000000000000000000000");
         
         // Test max ULID
         let max_bytes = [0xFFu8; 16];
         let max_ulid = Ulid::from_bytes(max_bytes).unwrap();
-        assert_eq!(max_ulid.to_string(), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ");
+        pretty_assertions::assert_eq!(max_ulid.to_string(), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ");
         
         // Verify ordering
         assert!(zero_ulid < max_ulid);
@@ -187,9 +184,9 @@ mod edge_cases {
         let nil_uuid = Uuid::nil();
         let ulid = Ulid::from_uuid(nil_uuid);
         
-        assert_eq!(ulid.timestamp().timestamp_millis(), 0);
-        assert_eq!(ulid.to_uuid(), nil_uuid);
-        assert_eq!(ulid.to_string(), "00000000000000000000000000");
+        pretty_assertions::assert_eq!(ulid.timestamp().timestamp_millis(), 0);
+        pretty_assertions::assert_eq!(ulid.to_uuid(), nil_uuid);
+        pretty_assertions::assert_eq!(ulid.to_string(), "00000000000000000000000000");
     }
     
     #[test]
@@ -213,9 +210,9 @@ mod edge_cases {
         let parsed_lower = lowercase.parse::<Ulid>().unwrap();
         let parsed_mixed = mixedcase.parse::<Ulid>().unwrap();
         
-        assert_eq!(ulid, parsed_upper);
-        assert_eq!(ulid, parsed_lower);
-        assert_eq!(ulid, parsed_mixed);
+        pretty_assertions::assert_eq!(ulid, parsed_upper);
+        pretty_assertions::assert_eq!(ulid, parsed_lower);
+        pretty_assertions::assert_eq!(ulid, parsed_mixed);
     }
     
     #[rstest]
@@ -248,13 +245,13 @@ mod edge_cases {
         
         // All should have the same timestamp
         for ulid in &ulids {
-            assert_eq!(ulid.timestamp().timestamp_millis(), base_time.timestamp_millis());
+            pretty_assertions::assert_eq!(ulid.timestamp().timestamp_millis(), base_time.timestamp_millis());
         }
         
         // But all should be unique and ordered  
         for i in 1..ulids.len() {
             assert!(ulids[i-1] < ulids[i], "ULIDs must maintain order even within same ms");
-            assert_ne!(ulids[i-1], ulids[i], "ULIDs must be unique even within same ms");
+            pretty_assertions::assert_ne!(ulids[i-1], ulids[i], "ULIDs must be unique even within same ms");
         }
     }
     
@@ -277,7 +274,7 @@ mod edge_cases {
         ulid_sorted.sort();
         
         // Both orderings should be identical
-        assert_eq!(string_sorted, ulid_sorted, 
+        pretty_assertions::assert_eq!(string_sorted, ulid_sorted, 
             "Lexicographic ordering must match temporal ordering");
     }
 }
@@ -291,7 +288,7 @@ mod correctness {
         let ulid = Ulid::new();
         let ulid_str = ulid.to_string());
         
-        assert_eq!(ulid_str.len(), 26, "ULID must be 26 characters");
+        pretty_assertions::assert_eq!(ulid_str.len(), 26, "ULID must be 26 characters");
         assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c);
             "ULID must only contain valid Crockford Base32 characters");
         
@@ -318,7 +315,7 @@ mod correctness {
         
         // Verify timestamp matches
         let ulid_timestamp = ulid.inner().timestamp_ms();
-        assert_eq!(timestamp_reconstructed, ulid_timestamp,
+        pretty_assertions::assert_eq!(timestamp_reconstructed, ulid_timestamp,
             "Reconstructed timestamp must match ULID timestamp");
         
         // Verify timestamp is reasonable (within last hour and next minute)
@@ -343,7 +340,7 @@ mod correctness {
         let uuid_bytes = uuid.as_bytes();
         
         // Bytes should be identical (both use big-endian)
-        assert_eq!(&bytes[..], uuid_bytes,
+        pretty_assertions::assert_eq!(&bytes[..], uuid_bytes,
             "ULID and UUID bytes must be identical");
         
         // Verify timestamp is in first 6 bytes (big-endian)
@@ -358,7 +355,7 @@ mod correctness {
             ((timestamp_bytes[4] as u64) << 8) |
             (timestamp_bytes[5] as u64);
         
-        assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp,
+        pretty_assertions::assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp,
             "Timestamp must be correctly encoded in big-endian format");
     }
     
@@ -409,7 +406,7 @@ mod performance {
         }
         let elapsed = start.elapsed();
         
-        assert_eq!(ulids.len(), generation_count);
+        pretty_assertions::assert_eq!(ulids.len(), generation_count);
         
         // Verify ordering
         let mut sorted_ulids: Vec<_> = ulids.into_iter().collect();
@@ -456,8 +453,8 @@ mod performance {
         let final_count = all_ulids.lock().unwrap().len();
         let operations = counter.load(Ordering::Relaxed);
         
-        assert_eq!(final_count, num_threads * ulids_per_thread);
-        assert_eq!(operations, num_threads * ulids_per_thread as u64);
+        pretty_assertions::assert_eq!(final_count, num_threads * ulids_per_thread);
+        pretty_assertions::assert_eq!(operations, num_threads * ulids_per_thread as u64);
     }
     
     #[test]

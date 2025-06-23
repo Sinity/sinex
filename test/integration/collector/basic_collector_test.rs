@@ -1,8 +1,6 @@
+use crate::common::prelude::*;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
-use std::collections::HashMap;
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
 
 /// Test that collector can be created with valid configuration
 #[tokio::test]
@@ -43,7 +41,7 @@ async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std
     };
     
     // Create collector with database connection
-    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool()), None);
+    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), None);
     
     Ok(())
 }
@@ -144,7 +142,7 @@ async fn test_collector_with_validator(ctx: TestContext) -> Result<(), Box<dyn s
     // Create validator (no await needed, it's synchronous)
     let validator = EventValidator::new();
     
-    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool()), Some(validator));
+    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), Some(validator));
     
     Ok(())
 }

@@ -1,17 +1,13 @@
 use crate::common::prelude::*;
 use crate::common;
 use crate::common::timing_optimization::EventCounter;
-use crate::common::events;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
-use sinex_core::{RawEvent, event_type_constants, sources};
+use sinex_core::RawEvent;
 use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
-use serde_json::json;
 
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
@@ -71,7 +67,7 @@ async fn test_complete_event_pipeline() {
     
     // Verify all events collected
     let collected = collected_events.lock().await;
-    assert_eq!(collected.len(), num_events, "Not all events were collected");
+    pretty_assertions::assert_eq!(collected.len(), num_events, "Not all events were collected");
     
     // Phase 2: Test Database Storage with ULID ordering
     info!("Testing database storage and ULID generation");
@@ -95,7 +91,7 @@ async fn test_complete_event_pipeline() {
     
     // Verify no duplicates
     let unique_ids: HashSet<_> = stored_ids.iter().collect();
-    assert_eq!(stored_ids.len(), unique_ids.len(), "Found duplicate ULIDs");
+    pretty_assertions::assert_eq!(stored_ids.len(), unique_ids.len(), "Found duplicate ULIDs");
     
     // Phase 3: Test Worker Processing (simplified)
     info!("Testing worker processing simulation");
@@ -118,7 +114,7 @@ async fn test_complete_event_pipeline() {
         info!("Worker {} would process {} events", worker_id, assigned);
     }
     
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         work_assignment.values().map(|v| v.len()).sum::<usize>(),
         events_to_process,
         "All events should be assigned"
@@ -171,7 +167,7 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(dlq_check.count.unwrap(), 1, "Bad event should be stored");
+    pretty_assertions::assert_eq!(dlq_check.count.unwrap(), 1, "Bad event should be stored");
     
     // Phase 6: Test Agent Registration and Heartbeats
     info!("Testing agent registration and heartbeats");
@@ -190,10 +186,10 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(manifest.agent_name, agent_name);
+    pretty_assertions::assert_eq!(manifest.agent_name, agent_name);
     
     // Send heartbeat
-    let heartbeat = AgentHeartbeat {
+    let _heartbeat = AgentHeartbeat {
         agent_name: agent_name.to_string(),
         status: "running".to_string(),
         uptime_seconds: 60,
@@ -229,7 +225,7 @@ async fn test_complete_event_pipeline() {
     .unwrap();
     
     let expected_count = num_events + 2; // test events + bad event + heartbeat
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         total_count.count.unwrap(), 
         expected_count as i64,
         "Total event count mismatch"
@@ -260,7 +256,7 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         first_event.payload, 
         first_event_again.payload,
         "Event data should be immutable"

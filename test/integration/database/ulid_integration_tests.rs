@@ -1,11 +1,6 @@
 use crate::common::prelude::*;
-use std::str::FromStr;
-use std::time::Duration;
-use std::collections::HashSet;
-use crate::common::{events, assertions, generators};
+use crate::common::{events, assertions};
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
 
 
 #[sinex_test]
@@ -49,7 +44,7 @@ async fn test_ulid_timestamp_extraction(ctx: TestContext) -> Result<(), Box<dyn 
     
     // Verify ULID timestamp matches
     let extracted_timestamp = retrieved_event.id.timestamp();
-    assert_eq!(expected_timestamp, extracted_timestamp,
+    pretty_assertions::assert_eq!(expected_timestamp, extracted_timestamp,
         "Extracted timestamp should exactly match ULID timestamp");
     
     // Verify timestamp is recent
@@ -114,7 +109,7 @@ async fn test_ulid_monotonic_generation(ctx: TestContext) -> Result<(), Box<dyn 
         5
     ).await.unwrap_or(0);
     
-    assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
+    pretty_assertions::assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
     
     // Verify they're in order in database
     let ordered: Vec<String> = sqlx::query_scalar(
@@ -123,7 +118,7 @@ async fn test_ulid_monotonic_generation(ctx: TestContext) -> Result<(), Box<dyn 
     .fetch_all(ctx.pool())
     .await?;
     
-    assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order in database");
+    pretty_assertions::assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order in database");
     
     // Verify strict monotonic ordering
     for i in 1..ulids.len() {
@@ -225,7 +220,7 @@ async fn test_ulid_range_queries(ctx: TestContext) -> Result<(), Box<dyn std::er
     assert!(count_after_mid >= 4, 
         "Should have at least 4 events after mid time (second batch), got {}", 
         count_after_mid);
-    assert_eq!(count_before_mid + count_after_mid, 10, 
+    pretty_assertions::assert_eq!(count_before_mid + count_after_mid, 10, 
         "Total should be 10 events: {} before + {} after = 10", 
         count_before_mid, count_after_mid);
     
@@ -295,7 +290,7 @@ async fn test_ulid_in_foreign_keys(ctx: TestContext) -> Result<(), Box<dyn std::
     .fetch_one(ctx.pool())
     .await?;
     
-    assert_eq!(event_id.to_string(), found_event_id, "Foreign key should work with ULIDs");
+    pretty_assertions::assert_eq!(event_id.to_string(), found_event_id, "Foreign key should work with ULIDs");
     Ok(())
 }
 
@@ -348,7 +343,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> Result<(), Box<dyn std
     .fetch_optional(ctx.pool())
     .await?;
     
-    assert_eq!(found_event_type, Some("lookup_test".to_string()), 
+    pretty_assertions::assert_eq!(found_event_type, Some("lookup_test".to_string()), 
         "Should efficiently find event by ULID primary key");
     
     // Test that we can lookup the specific payload  
@@ -359,7 +354,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> Result<(), Box<dyn std
     .fetch_one(ctx.pool())
     .await?;
     
-    assert_eq!(found_payload["special"], "target", 
+    pretty_assertions::assert_eq!(found_payload["special"], "target", 
         "Should retrieve correct payload for ULID lookup");
     
     // Test range query performance with ULID ordering
@@ -394,8 +389,8 @@ async fn test_ulid_index_performance(ctx: TestContext) -> Result<(), Box<dyn std
         5
     ).await.unwrap_or(0);
     
-    assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
-    assert_eq!(count_before + count_after, total_count, 
+    pretty_assertions::assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
+    pretty_assertions::assert_eq!(count_before + count_after, total_count, 
         "Range query counts should sum to total: {} + {} = {}", 
         count_before, count_after, total_count);
     

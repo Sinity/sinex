@@ -1,15 +1,9 @@
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use sinex_db::{queries, models::RawEvent};
+use sinex_db::queries;
 use chrono::Utc;
-use serde_json::json;
 use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::time::Duration;
-use tokio::time::timeout;
-use tokio::sync::Notify;
-use futures::future::join_all;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[tokio::test]
 async fn test_worker_claim_exact_same_microsecond() {
@@ -19,7 +13,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     
     // Insert events to be claimed
     let mut event_ids = vec![];
-    for i in 0..10 {
+    for _i in 0..10 {
         let event = crate::common::events::generic_adversarial_event("test", "work.item", json!({"test": true}), None);
         
         queries::insert_event(&pool, &event).await.unwrap();
@@ -335,7 +329,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     }
     
     // Wait for all workers to be ready using proper synchronization
-    let coordinator = Arc::new(crate::common::timing_optimization::replacements::WorkerReadinessCoordinator::new(100));
+    let _coordinator = Arc::new(crate::common::timing_optimization::replacements::WorkerReadinessCoordinator::new(100));
     
     // Use the existing atomic counter pattern but with proper timeout
     let start = Instant::now();

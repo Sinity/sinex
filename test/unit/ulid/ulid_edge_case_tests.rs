@@ -1,6 +1,5 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use uuid::Uuid;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,9 +12,9 @@ fn test_ulid_uuid_roundtrip_preserves_data() {
         let uuid = original.to_uuid();
         let restored = Ulid::from_uuid(uuid);
         
-        assert_eq!(original, restored, "ULID should survive UUID roundtrip");
-        assert_eq!(original.timestamp(), restored.timestamp());
-        assert_eq!(original.to_string(), restored.to_string());
+        pretty_assertions::assert_eq!(original, restored, "ULID should survive UUID roundtrip");
+        pretty_assertions::assert_eq!(original.timestamp(), restored.timestamp());
+        pretty_assertions::assert_eq!(original.to_string(), restored.to_string());
     }
 }
 
@@ -24,13 +23,13 @@ fn test_ulid_boundary_timestamps() {
     // Test minimum timestamp (Unix epoch)
     let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
     let min_ulid = Ulid::from_datetime(min_datetime);
-    assert_eq!(min_ulid.timestamp().timestamp_millis(), 0);
+    pretty_assertions::assert_eq!(min_ulid.timestamp().timestamp_millis(), 0);
     
     // Test maximum valid timestamp (48-bit limit)
     let max_timestamp_ms = (1u64 << 48) - 1; // Maximum 48-bit value
     let max_datetime = chrono::DateTime::from_timestamp_millis(max_timestamp_ms as i64).unwrap();
     let max_ulid = Ulid::from_datetime(max_datetime);
-    assert_eq!(max_ulid.timestamp().timestamp_millis(), max_timestamp_ms as i64);
+    pretty_assertions::assert_eq!(max_ulid.timestamp().timestamp_millis(), max_timestamp_ms as i64);
     
     // Test current time
     let now = SystemTime::now()
@@ -39,7 +38,7 @@ fn test_ulid_boundary_timestamps() {
         .as_millis() as u64;
     let now_datetime = chrono::DateTime::from_timestamp_millis(now as i64).unwrap();
     let now_ulid = Ulid::from_datetime(now_datetime);
-    assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
+    pretty_assertions::assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
 }
 
 #[test]
@@ -59,9 +58,9 @@ fn test_ulid_string_case_insensitive_parsing() {
     let parsed_lower = lowercase.parse::<Ulid>().unwrap();
     let parsed_mixed = mixedcase.parse::<Ulid>().unwrap();
     
-    assert_eq!(ulid, parsed_upper);
-    assert_eq!(ulid, parsed_lower);
-    assert_eq!(ulid, parsed_mixed);
+    pretty_assertions::assert_eq!(ulid, parsed_upper);
+    pretty_assertions::assert_eq!(ulid, parsed_lower);
+    pretty_assertions::assert_eq!(ulid, parsed_mixed);
 }
 
 #[test]
@@ -94,13 +93,13 @@ fn test_ulid_zero_and_max_values() {
     // Test zero ULID
     let zero_bytes = [0u8; 16];
     let zero_ulid = Ulid::from_bytes(zero_bytes).unwrap();
-    assert_eq!(zero_ulid.timestamp().timestamp_millis(), 0);
-    assert_eq!(zero_ulid.to_string(), "00000000000000000000000000");
+    pretty_assertions::assert_eq!(zero_ulid.timestamp().timestamp_millis(), 0);
+    pretty_assertions::assert_eq!(zero_ulid.to_string(), "00000000000000000000000000");
     
     // Test max ULID
     let max_bytes = [0xFFu8; 16];
     let max_ulid = Ulid::from_bytes(max_bytes).unwrap();
-    assert_eq!(max_ulid.to_string(), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ");
+    pretty_assertions::assert_eq!(max_ulid.to_string(), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ");
     
     // Verify ordering
     assert!(zero_ulid < max_ulid);
@@ -111,7 +110,6 @@ fn test_ulid_rapid_generation_same_millisecond() {
     // Test: Generate many ULIDs rapidly and check for collisions
     // This tests whether standard ULID generation is sufficient for rapid generation
     
-    use std::collections::HashSet;
     
     let mut ulids = HashSet::new();
     let generation_count = 10000;
@@ -124,7 +122,7 @@ fn test_ulid_rapid_generation_same_millisecond() {
         assert!(ulids.insert(ulid), "ULID collision detected: {}", ulid);
     }
     
-    assert_eq!(ulids.len(), generation_count);
+    pretty_assertions::assert_eq!(ulids.len(), generation_count);
     
     // Convert to sorted vector to check ordering properties
     let mut sorted_ulids: Vec<_> = ulids.into_iter().collect();
@@ -169,7 +167,7 @@ fn test_ulid_concurrent_generation_uniqueness() {
     }
     
     let final_count = all_ulids.lock().unwrap().len();
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         final_count,
         num_threads * ulids_per_thread,
         "All generated ULIDs should be unique"
@@ -182,15 +180,15 @@ fn test_ulid_uuid_nil_handling() {
     let nil_uuid = Uuid::nil();
     let ulid = Ulid::from_uuid(nil_uuid);
     
-    assert_eq!(ulid.timestamp().timestamp_millis(), 0);
-    assert_eq!(ulid.to_uuid(), nil_uuid);
-    assert_eq!(ulid.to_string(), "00000000000000000000000000");
+    pretty_assertions::assert_eq!(ulid.timestamp().timestamp_millis(), 0);
+    pretty_assertions::assert_eq!(ulid.to_uuid(), nil_uuid);
+    pretty_assertions::assert_eq!(ulid.to_string(), "00000000000000000000000000");
 }
 
 #[test]
 fn test_ulid_time_precision_edge_cases() {
     // Test sub-millisecond precision handling
-    let base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
+    let _base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
     
     // Generate multiple ULIDs rapidly (should trigger monotonic generation)
     let ulids: Vec<_> = (0..10)
@@ -200,7 +198,7 @@ fn test_ulid_time_precision_edge_cases() {
     // All should be unique and monotonically ordered
     for i in 1..ulids.len() {
         assert!(ulids[i-1] < ulids[i], "ULID ordering failed at index {}: {} >= {}", i, ulids[i-1], ulids[i]);
-        assert_ne!(ulids[i-1], ulids[i]);
+        pretty_assertions::assert_ne!(ulids[i-1], ulids[i]);
     }
 }
 
@@ -225,7 +223,7 @@ fn test_ulid_lexicographic_ordering_matches_temporal() {
     ulid_sorted.sort();
     
     // Both orderings should be identical
-    assert_eq!(string_sorted, ulid_sorted, 
+    pretty_assertions::assert_eq!(string_sorted, ulid_sorted, 
         "Lexicographic ordering should match temporal ordering");
 }
 
@@ -237,7 +235,7 @@ fn test_ulid_binary_representation_endianness() {
     let uuid_bytes = uuid.as_bytes();
     
     // Bytes should be identical (both use big-endian)
-    assert_eq!(&bytes[..], uuid_bytes);
+    pretty_assertions::assert_eq!(&bytes[..], uuid_bytes);
     
     // Verify timestamp is in first 6 bytes (big-endian)
     let timestamp = ulid.timestamp();
@@ -251,7 +249,7 @@ fn test_ulid_binary_representation_endianness() {
         ((timestamp_bytes[4] as u64) << 8) |
         (timestamp_bytes[5] as u64);
     
-    assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp);
+    pretty_assertions::assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp);
 }
 
 #[test]
@@ -260,8 +258,8 @@ fn test_ulid_display_debug_traits() {
     
     // Display trait should show the ULID string
     let display = format!("{}", ulid);
-    assert_eq!(display, ulid.to_string());
-    assert_eq!(display.len(), 26);
+    pretty_assertions::assert_eq!(display, ulid.to_string());
+    pretty_assertions::assert_eq!(display.len(), 26);
     
     // Debug trait should be more detailed  
     let debug = format!("{:?}", ulid);
@@ -289,11 +287,11 @@ fn test_ulid_serde_json_roundtrip() {
     
     // Should serialize as a string
     assert!(json.starts_with('"') && json.ends_with('"'));
-    assert_eq!(json.len(), 28); // 26 chars + 2 quotes
+    pretty_assertions::assert_eq!(json.len(), 28); // 26 chars + 2 quotes
     
     // Deserialize back
     let deserialized: Ulid = serde_json::from_str(&json).unwrap();
-    assert_eq!(original, deserialized);
+    pretty_assertions::assert_eq!(original, deserialized);
 }
 
 #[test]
@@ -312,7 +310,7 @@ fn test_ulid_hash_consistency() {
     ulid.hash(&mut hasher2);
     let hash2 = hasher2.finish();
     
-    assert_eq!(hash1, hash2);
+    pretty_assertions::assert_eq!(hash1, hash2);
     
     // Different ULIDs should have different hashes (with high probability)
     let ulid2 = Ulid::new();
@@ -320,5 +318,5 @@ fn test_ulid_hash_consistency() {
     ulid2.hash(&mut hasher3);
     let hash3 = hasher3.finish();
     
-    assert_ne!(hash1, hash3);
+    pretty_assertions::assert_ne!(hash1, hash3);
 }

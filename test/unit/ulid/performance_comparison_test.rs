@@ -1,8 +1,8 @@
 //! Performance validation for monotonic ULID generation
 //! Confirms that our optimized monotonic implementation is fast enough for production use
 
-use sinex_ulid::Ulid;
-use std::time::{Duration, Instant};
+use crate::common::prelude::*;
+use std::time::Instant;
 
 #[test]
 fn test_ulid_monotonic_performance_validation() {
@@ -75,7 +75,6 @@ fn test_ulid_monotonic_performance_validation() {
     println!();
     
     // Uniqueness validation
-    use std::collections::HashSet;
     let unique_ulids: HashSet<_> = all_ulids.iter().collect();
     let uniqueness_rate = (unique_ulids.len() as f64 / all_ulids.len() as f64) * 100.0;
     
@@ -138,7 +137,7 @@ fn test_ulid_monotonic_performance_validation() {
             "ULID generation too slow: {:.0} ops/sec < {:.0} required", 
             ops_per_sec, required_events_per_sec);
     
-    assert_eq!(ordering_violations, 0, 
+    pretty_assertions::assert_eq!(ordering_violations, 0, 
                "Monotonic ULID generation must maintain perfect ordering");
     
     assert!(uniqueness_rate >= 99.999, 

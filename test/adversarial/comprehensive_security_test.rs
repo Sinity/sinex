@@ -1,14 +1,7 @@
 use crate::common::prelude::*;
-use crate::common::database_helpers::get_shared_test_pool;
 use sinex_db::queries::insert_raw_event;
 use sinex_db::validation::EventValidator;
-use sinex_db::queries;
-use std::collections::HashMap;
 use std::fs;
-use std::time::Duration;
-use tokio::time::timeout;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Security test scenario definition
 #[derive(Debug, Clone)]
@@ -20,6 +13,7 @@ struct SecurityScenario {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum SecurityCategory {
     PathTraversal,
     SqlInjection,
@@ -34,6 +28,7 @@ enum SecurityCategory {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum SecurityPayload {
     String(String),
     Json(Value),
@@ -631,7 +626,7 @@ async fn test_filesystem_path_traversal_comprehensive() -> Result<(), anyhow::Er
         }
     }
 
-    assert_eq!(traversal_violations, 0, 
+    pretty_assertions::assert_eq!(traversal_violations, 0, 
                "Path traversal attacks should be blocked");
 
     Ok(())

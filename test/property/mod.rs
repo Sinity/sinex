@@ -18,6 +18,7 @@ pub mod property_tests; // Moved from root level
 pub use proptest::prelude::*;
 
 // Property test strategies for common Sinex types
+#[allow(dead_code)]
 pub mod strategies {
     use super::*;
     use chrono::{DateTime, Utc};

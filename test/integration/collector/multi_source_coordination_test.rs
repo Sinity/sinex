@@ -1,11 +1,8 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, create_registry};
-use async_trait::async_trait;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Barrier};
-use serde_json::json;
-use std::collections::HashMap;
 use crate::common::event_sources;
 
 // Test source that can simulate different behaviors
@@ -13,7 +10,6 @@ struct TestCoordinatedSource {
     source_id: String,
     events_generated: Arc<AtomicU32>,
     should_fail: Arc<AtomicBool>,
-    startup_delay_ms: u64,
     event_delay_ms: u64,
 }
 
@@ -45,7 +41,6 @@ impl EventSource for TestCoordinatedSource {
             source_id,
             events_generated: Arc::new(AtomicU32::new(0)),
             should_fail: Arc::new(AtomicBool::new(false)),
-            startup_delay_ms,
             event_delay_ms,
         })
     }
@@ -127,7 +122,7 @@ async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Erro
     }
     
     // Verify all sources produced events
-    assert_eq!(events_by_source.len(), 3);
+    pretty_assertions::assert_eq!(events_by_source.len(), 3);
     
     for i in 0..3 {
         let source_id = format!("source_{}", i);
@@ -191,7 +186,7 @@ async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
     }
     
     // All sources should have produced some events
-    assert_eq!(event_counts.len(), 3);
+    pretty_assertions::assert_eq!(event_counts.len(), 3);
     
     // Source 1 should have fewer events (failed early)
     assert!(event_counts["source_1"] < event_counts["source_0"]);

@@ -1,13 +1,9 @@
 use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
-use sinex_core::{EventSource, EventType, EventSourceContext};
+use sinex_core::{EventSource, EventType};
 use sinex_db::models::RawEvent;
-use tokio::sync::mpsc;
-use std::path::PathBuf;
-use std::time::Duration;
 use chrono::{Utc, TimeZone};
-use crate::common::{resources, create_test_db_pool, database, event_sources};
-use anyhow::Result;
+use crate::common::{resources, create_test_db_pool, event_sources};
 
 
 
@@ -234,25 +230,25 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     handle.abort();
     
     // Verify events
-    assert_eq!(events.len(), 2, "Should capture both test entries");
+    pretty_assertions::assert_eq!(events.len(), 2, "Should capture both test entries");
     
     // Check first event
     let event1 = &events[0];
-    assert_eq!(event1.event_type, CommandExecutedAtuin::EVENT_NAME);
-    assert_eq!(event1.source, "ingestor.atuin_db_reader");
+    pretty_assertions::assert_eq!(event1.event_type, CommandExecutedAtuin::EVENT_NAME);
+    pretty_assertions::assert_eq!(event1.source, "ingestor.atuin_db_reader");
     
     let payload1: CommandExecutedAtuinPayload = serde_json::from_value(event1.payload.clone()).unwrap();
-    assert_eq!(payload1.command_string, "ls -la");
-    assert_eq!(payload1.cwd, "/home/test");
-    assert_eq!(payload1.exit_code, 0);
-    assert_eq!(payload1.atuin_history_id, "test-id-1");
+    pretty_assertions::assert_eq!(payload1.command_string, "ls -la");
+    pretty_assertions::assert_eq!(payload1.cwd, "/home/test");
+    pretty_assertions::assert_eq!(payload1.exit_code, 0);
+    pretty_assertions::assert_eq!(payload1.atuin_history_id, "test-id-1");
     
     // Check second event
     let event2 = &events[1];
     let payload2: CommandExecutedAtuinPayload = serde_json::from_value(event2.payload.clone()).unwrap();
-    assert_eq!(payload2.command_string, "git status");
-    assert_eq!(payload2.exit_code, 1);
-    assert_eq!(payload2.atuin_history_id, "test-id-2");
+    pretty_assertions::assert_eq!(payload2.command_string, "git status");
+    pretty_assertions::assert_eq!(payload2.exit_code, 1);
+    pretty_assertions::assert_eq!(payload2.atuin_history_id, "test-id-2");
     Ok(())
 }
 
@@ -315,7 +311,7 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     }).await.unwrap();
     
     handle.abort();
-    assert_eq!(events.len(), 2, "Should get both initial entries");
+    pretty_assertions::assert_eq!(events.len(), 2, "Should get both initial entries");
     
     // Now add a new entry to the SQLite database to test watermarking
     let new_entry = TestAtuinEntry::builder()
@@ -373,7 +369,7 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     
     // With proper watermarking, this should get all 3 entries on first run
     // (since no previous watermark exists)
-    assert_eq!(second_events.len(), 3, "Should get all 3 entries including the new one");
+    pretty_assertions::assert_eq!(second_events.len(), 3, "Should get all 3 entries including the new one");
     
     // Verify the new entry is included
     let commands: Vec<String> = second_events.iter()
@@ -445,7 +441,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<(), anyhow::Error> 
     }).await.unwrap();
     
     handle1.abort();
-    assert_eq!(first_run_events.len(), 2, "First run should process both initial entries");
+    pretty_assertions::assert_eq!(first_run_events.len(), 2, "First run should process both initial entries");
     
     // Add a small delay to ensure watermarking is written
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -511,7 +507,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<(), anyhow::Error> 
     handle2.abort();
     
     // Watermarking should ensure only NEW entries are processed
-    assert_eq!(second_run_events.len(), 2, "Second run should only process the 2 new entries");
+    pretty_assertions::assert_eq!(second_run_events.len(), 2, "Second run should only process the 2 new entries");
     
     let second_run_commands: Vec<String> = second_run_events.iter()
         .map(|e| {
@@ -582,12 +578,12 @@ async fn test_atuin_timestamp_conversion() -> Result<(), anyhow::Error> {
     let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload).unwrap();
     
     // Verify timestamps
-    assert_eq!(payload.ts_end_orig, timestamp);
-    assert_eq!(payload.duration_ns, 2_500_000_000);
+    pretty_assertions::assert_eq!(payload.ts_end_orig, timestamp);
+    pretty_assertions::assert_eq!(payload.duration_ns, 2_500_000_000);
     
     // Start time should be 2.5 seconds before end time
     let expected_start = timestamp - chrono::Duration::milliseconds(2500);
-    assert_eq!(payload.ts_start_orig, expected_start);
+    pretty_assertions::assert_eq!(payload.ts_start_orig, expected_start);
     Ok(())
 }
 
@@ -678,7 +674,7 @@ async fn test_atuin_builder_patterns() -> Result<(), anyhow::Error> {
     handle.abort();
     
     // Verify different command types were captured
-    assert_eq!(events.len(), 3);
+    pretty_assertions::assert_eq!(events.len(), 3);
     let commands: Vec<String> = events.iter()
         .map(|e| {
             let payload: CommandExecutedAtuinPayload = serde_json::from_value(e.payload.clone()).unwrap();
@@ -754,7 +750,7 @@ async fn test_atuin_edge_cases() -> Result<(), anyhow::Error> {
     
     handle.abort();
     
-    assert_eq!(events.len(), 4, "Should process all edge case commands");
+    pretty_assertions::assert_eq!(events.len(), 4, "Should process all edge case commands");
     
     // Verify all events have valid structure
     for event in &events {
@@ -840,7 +836,7 @@ async fn test_atuin_global_history() -> Result<(), anyhow::Error> {
     handle.abort();
     
     // Verify we got events from all hosts (global history)
-    assert_eq!(events.len(), 3, "Should capture commands from all hosts");
+    pretty_assertions::assert_eq!(events.len(), 3, "Should capture commands from all hosts");
     
     let hosts: Vec<String> = events.iter()
         .map(|e| e.host.clone())
@@ -903,7 +899,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<(), anyhow::Error>
     let processing_time = processing_start.elapsed();
     handle.abort();
     
-    assert_eq!(events.len(), num_entries as usize, "Should process all {} entries", num_entries);
+    pretty_assertions::assert_eq!(events.len(), num_entries as usize, "Should process all {} entries", num_entries);
     
     // Performance assertions (adjust thresholds as needed for test environment)
     assert!(db_creation_time.as_millis() < 2000, "Database creation should be fast ({}ms)", db_creation_time.as_millis());
@@ -918,7 +914,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<(), anyhow::Error>
         .filter(|cmd| cmd.starts_with("echo 'Command number"))
         .count();
     
-    assert_eq!(command_count, num_entries as usize, "All commands should be captured correctly");
+    pretty_assertions::assert_eq!(command_count, num_entries as usize, "All commands should be captured correctly");
     
     println!("Performance test: {} entries processed in {}ms (DB creation: {}ms)", 
              num_entries, processing_time.as_millis(), db_creation_time.as_millis());
@@ -980,8 +976,8 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
     
     // Verify real events have expected structure
     for (i, event) in events.iter().enumerate() {
-        assert_eq!(event.source, "ingestor.atuin_db_reader");
-        assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
+        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
         
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone()).unwrap();
         
@@ -1074,8 +1070,8 @@ mod test_helpers {
     /// Helper to verify event payload structure
     #[allow(dead_code)]
     pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
-        assert_eq!(event.event_type, "shell.command.executed_atuin");
-        assert_eq!(event.source, "ingestor.atuin_db_reader");
+        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
         
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone())?;
         

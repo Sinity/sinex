@@ -1,11 +1,6 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use std::time::Duration;
-use serde_json::json;
-use anyhow::Result;
 
 /// Test configuration reload during active event processing
 #[tokio::test]

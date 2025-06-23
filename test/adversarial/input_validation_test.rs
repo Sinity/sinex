@@ -1,12 +1,5 @@
 use crate::common::prelude::*;
-use std::time::Duration;
-use tokio::time::timeout;
-use crate::common::database_helpers::{get_shared_test_pool};
 use sinex_db::queries::insert_raw_event;
-use sinex_db::queries;
-use serde_json::json;
-use anyhow::Result;
-use sinex_db::run_migrations;
 
 /// Test input validation for event sources and types
 #[tokio::test]
@@ -358,6 +351,7 @@ async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PayloadValidationResult {
     test_case: usize,
     original_size: usize,
@@ -444,7 +438,7 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
 
         match agent_creation {
             Ok(_) => {
-                agent_validation_results.push((malformed_name.clone(), true));
+                agent_validation_results.push((malformed_name, true));
                 
                 // Clean up immediately
                 sqlx::query!(
@@ -456,7 +450,7 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
                 .ok();
             }
             Err(e) => {
-                agent_validation_results.push((malformed_name.clone(), false));
+                agent_validation_results.push((malformed_name, false));
                 println!("  Malformed agent name '{}' rejected: {}", 
                         malformed_name.chars().take(20).collect::<String>(), e);
             }

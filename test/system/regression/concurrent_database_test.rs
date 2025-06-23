@@ -1,10 +1,6 @@
 use crate::common::prelude::*;
-use sinex_db::{queries, models::RawEvent};
+use sinex_db::queries;
 use crate::common::create_test_db_pool;
-use crate::common::events;
-use std::sync::Arc;
-use tokio::sync::Barrier;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_concurrent_ulid_generation() {
@@ -48,7 +44,7 @@ async fn test_concurrent_ulid_generation() {
     
     // Check for duplicates - this might FAIL under high concurrency
     let unique_ulids: std::collections::HashSet<_> = all_ulids.iter().collect();
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         all_ulids.len(), 
         unique_ulids.len(), 
         "Found {} duplicate ULIDs in {} total", 

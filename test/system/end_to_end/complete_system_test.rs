@@ -1,30 +1,20 @@
-use anyhow::Result;
-use sinex_core::RawEventBuilder;
-use crate::common::database_helpers::get_shared_test_pool;
-use sinex_db::queries;
-use serde_json::json;
+use crate::common::prelude::*;
 use std::process::Command;
-use std::time::Duration;
-use tokio::time::timeout;
-use tempfile::TempDir;
 
-async fn setup_system_test() -> Result<sqlx::PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = sinex_db::create_test_pool(&database_url).await?;
+async fn setup_system_test() -> Result<PgPool> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Clean all tables for isolated test
     sqlx::query("TRUNCATE TABLE raw.events CASCADE")
-        .execute(&pool)
+        .execute(pool.pool())
         .await?;
     
     sqlx::query("TRUNCATE TABLE sinex_schemas.work_queue CASCADE")
-        .execute(&pool)
+        .execute(pool.pool())
         .await?;
     
-    Ok(pool)
+    Ok(pool.pool().clone())
 }
-
 #[sqlx::test]
 async fn test_complete_system_event_capture_to_query() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
@@ -70,9 +60,9 @@ async fn test_complete_system_event_capture_to_query() -> Result<(), anyhow::Err
     // Step 2: Verify events are stored correctly
     for (i, id) in inserted_ids.iter().enumerate() {
         let retrieved = crate::common::get_event_by_id(&pool, *id).await?;
-        assert_eq!(retrieved.source, events[i].source);
-        assert_eq!(retrieved.event_type, events[i].event_type);
-        assert_eq!(retrieved.payload, events[i].payload);
+        pretty_assertions::assert_eq!(retrieved.source, events[i].source);
+        pretty_assertions::assert_eq!(retrieved.event_type, events[i].event_type);
+        pretty_assertions::assert_eq!(retrieved.payload, events[i].payload);
     }
     
     // Step 3: Test querying recent events
@@ -208,7 +198,7 @@ async fn test_system_real_filesystem_simulation() -> Result<(), anyhow::Error> {
             .unwrap_or(false))
         .collect();
     
-    assert_eq!(temp_events.len(), 2, "Should find both file events");
+    pretty_assertions::assert_eq!(temp_events.len(), 2, "Should find both file events");
     
     // Verify event sequence
     let created_event = temp_events.iter().find(|e| e.event_type == "file.created");
@@ -364,7 +354,7 @@ async fn test_system_error_recovery() -> Result<(), anyhow::Error> {
             Ok(_) => {
                 // If insertion succeeds, verify we can retrieve the event
                 let retrieved = crate::common::get_event_by_id(&pool, event.id).await?;
-                assert_eq!(retrieved.id, event.id);
+                pretty_assertions::assert_eq!(retrieved.id, event.id);
             }
             Err(_) => {
                 // If insertion fails, it should be a graceful failure

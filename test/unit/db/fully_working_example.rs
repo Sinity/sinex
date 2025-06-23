@@ -1,9 +1,7 @@
 //! Fully working example of the new test infrastructure
 
-use sinex_test_macros::sinex_test;
-use crate::common::test_context::TestContext;
+use crate::common::prelude::*;
 use crate::common::database_helpers;
-use sqlx::PgPool;
 
 /// Simplest possible test that actually works
 #[tokio::test]
@@ -12,10 +10,10 @@ async fn test_without_macro() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     
     // Run a simple query
-    let result: i32 = sqlx::query_scalar!("SELECT 1 + 1 as sum")
+    let result = sqlx::query_scalar!("SELECT 1 + 1 as sum")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(result, 2);
+    pretty_assertions::assert_eq!(result, Some(2));
     
     println!("✅ Basic test works without macro!");
     Ok(())
@@ -29,10 +27,10 @@ async fn test_with_new_macro(ctx: TestContext) -> Result<(), Box<dyn std::error:
     println!("✅ Test name: {}", ctx.test_name());
     
     // Simple database query
-    let result: i32 = sqlx::query_scalar!("SELECT 2 + 2 as sum")
+    let result = sqlx::query_scalar!("SELECT 2 + 2 as sum")
         .fetch_one(ctx.pool())
         .await?;
-    assert_eq!(result, 4);
+    pretty_assertions::assert_eq!(result, Some(4));
     
     println!("✅ Database query through TestContext works!");
     
@@ -69,7 +67,7 @@ async fn test_transaction_isolation(ctx: TestContext) -> Result<(), Box<dyn std:
     }
     
     let new_count = ctx.event_count().await?;
-    assert_eq!(new_count - initial_count, 3);
+    pretty_assertions::assert_eq!(new_count - initial_count, 3);
     
     println!("✅ Multiple event insertion works!");
     

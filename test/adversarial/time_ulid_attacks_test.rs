@@ -1,9 +1,6 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use chrono::{Utc, TimeZone};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::collections::HashSet;
-
 
 #[test]
 fn test_ulid_extreme_future_date() {
@@ -20,7 +17,7 @@ fn test_ulid_extreme_future_date() {
     let ulid = ulid_result.unwrap();
     
     // Verify ULID format is valid
-    assert_eq!(ulid.to_string().len(), 26, "ULID should maintain 26-character format");
+    pretty_assertions::assert_eq!(ulid.to_string().len(), 26, "ULID should maintain 26-character format");
     
     // Verify timestamp recovery is reasonable
     let recovered_time = ulid.timestamp();
@@ -71,10 +68,8 @@ fn test_ulid_generation_same_nanosecond() {
     println!("Generated {} ULIDs, {} unique", ulids.len(), unique.len());
     
     // This might FAIL if random generation has issues
-    assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
+    pretty_assertions::assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
 }
-
-
 
 #[test]
 fn test_ulid_zero_timestamp() {
@@ -86,7 +81,7 @@ fn test_ulid_zero_timestamp() {
     println!("Recovered timestamp: {:?}", ulid.timestamp());
     
     // This might fail if implementation assumes positive timestamps
-    assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
+    pretty_assertions::assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
 }
 
 #[test] 

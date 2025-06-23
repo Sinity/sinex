@@ -3,7 +3,6 @@ use sinex_core::{EventRegistry, create_registry};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Generate arbitrary event type names that match registry patterns
 fn arb_event_type() -> impl Strategy<Value = String> {
@@ -93,7 +92,7 @@ proptest! {
         test_concurrent_registry_access(
             num_threads,
             operations_per_thread,
-            move |registry, thread_id, op_id| {
+            move |registry, _thread_id, op_id| {
                 let event_type = &event_types[op_id % event_types.len()];
                 
                 // These operations should be thread-safe
@@ -335,7 +334,7 @@ use crate::common::prelude::*;
         let elapsed = start_time.elapsed();
         let final_count = operation_counter.load(Ordering::Relaxed);
         
-        assert_eq!(final_count, TOTAL_OPERATIONS);
+        pretty_assertions::assert_eq!(final_count, TOTAL_OPERATIONS);
         println!("Completed {} operations in {:?} ({:.2} ops/sec)", 
                  final_count, elapsed, 
                  final_count as f64 / elapsed.as_secs_f64());

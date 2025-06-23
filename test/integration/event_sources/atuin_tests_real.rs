@@ -1,11 +1,7 @@
 use crate::common::prelude::*;
-use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
-use sinex_core::{EventSource, EventSourceContext};
-use tokio::sync::mpsc;
-use std::path::PathBuf;
-use std::time::Duration;
-use crate::common::{resources, create_test_db_pool, event_sources};
-use anyhow::Result;
+use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuinPayload};
+use sinex_core::EventSource;
+use crate::common::{create_test_db_pool, event_sources};
 
 /// Get real Atuin database path or create minimal test database if needed
 fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
@@ -160,8 +156,8 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     
     // Check event structure
     for event in &events {
-        assert_eq!(event.event_type, "shell.command.executed_atuin");
-        assert_eq!(event.source, "ingestor.atuin_db_reader");
+        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
         
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone()).unwrap();
         assert!(!payload.command_string.is_empty());
@@ -303,8 +299,8 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
     
     // Verify events have expected structure
     for (i, event) in events.iter().enumerate() {
-        assert_eq!(event.source, "ingestor.atuin_db_reader");
-        assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
+        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
         
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone()).unwrap();
         
@@ -459,8 +455,8 @@ mod test_helpers {
     /// Helper to verify event payload structure
     #[allow(dead_code)]
     pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
-        assert_eq!(event.event_type, "shell.command.executed_atuin");
-        assert_eq!(event.source, "ingestor.atuin_db_reader");
+        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
         
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone())?;
         

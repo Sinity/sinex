@@ -1,15 +1,10 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_collector::config::CollectorConfig;
 use sinex_core::{EventSource, EventSourceContext, RawEvent};
-use async_trait::async_trait;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
-use tempfile::NamedTempFile;
 use std::io::Write;
-use serde_json::json;
 use crate::common::event_sources;
-use std::collections::HashMap;
 
 // Mock event source that can track configuration changes
 struct ConfigurableEventSource {
@@ -147,15 +142,15 @@ async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error>
     assert!(!v2_events.is_empty(), "Should have events from config v2");
     
     // Events should have different intervals
-    assert_eq!(v1_events[0].payload["interval_ms"], 100);
-    assert_eq!(v2_events[0].payload["interval_ms"], 50);
+    pretty_assertions::assert_eq!(v1_events[0].payload["interval_ms"], 100);
+    pretty_assertions::assert_eq!(v2_events[0].payload["interval_ms"], 50);
     
     // Check no events were lost - sequential event numbers
     let mut last_num = None;
     for event in events.iter() {
         let num = event.payload["event_number"].as_u64().unwrap();
         if let Some(last) = last_num {
-            assert_eq!(num, last + 1, "Event sequence broken");
+            pretty_assertions::assert_eq!(num, last + 1, "Event sequence broken");
         }
         last_num = Some(num);
     }
@@ -220,10 +215,10 @@ async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     assert!(events.len() >= 6);
     
     // First events should have 200ms interval
-    assert_eq!(events[0].payload["interval_ms"], 200);
+    pretty_assertions::assert_eq!(events[0].payload["interval_ms"], 200);
     
     // Later events should have 100ms interval
-    assert_eq!(events[events.len() - 1].payload["interval_ms"], 100);
+    pretty_assertions::assert_eq!(events[events.len() - 1].payload["interval_ms"], 100);
     
     Ok(())
 }

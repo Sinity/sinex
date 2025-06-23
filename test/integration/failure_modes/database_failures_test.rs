@@ -1,10 +1,5 @@
-use sqlx::PgPool;
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::timeout;
-use serde_json::json;
-use anyhow::Result;
 
 /// Test transaction rollback scenarios
 #[sqlx::test]
@@ -54,7 +49,7 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
         .await
         .unwrap();
     
-    assert_eq!(count, 0, "Transaction should have rolled back completely");
+    pretty_assertions::assert_eq!(count, 0, "Transaction should have rolled back completely");
     
     // Test 2: Partial batch insert with error
     let mut tx = pool.begin().await.unwrap();
@@ -97,7 +92,7 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
         .await
         .unwrap();
     
-    assert_eq!(count, 0, "Entire batch should have been rolled back");
+    pretty_assertions::assert_eq!(count, 0, "Entire batch should have been rolled back");
     
     // Test 3: Concurrent transaction conflicts
     let conflict_detected = Arc::new(AtomicBool::new(false));
@@ -166,7 +161,6 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
         version: String,
         success: bool,
         error: Option<String>,
-        rolled_back: bool,
     }
     
     let mut results = vec![];
@@ -192,7 +186,6 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
                         version: version.to_string(),
                         success: true,
                         error: None,
-                        rolled_back: false,
                     }, false)
                 } else {
                     // This shouldn't happen - test is broken
@@ -201,7 +194,6 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
                         version: version.to_string(),
                         success: false,
                         error: Some("Expected to fail but succeeded".to_string()),
-                        rolled_back: true,
                     }, false)
                 }
             }
@@ -211,7 +203,6 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
                     version: version.to_string(),
                     success: false,
                     error: Some(e.to_string()),
-                    rolled_back: true,
                 }, true)
             }
         };
@@ -248,7 +239,7 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
         .await;
     
     // Verify the failed migration stopped the sequence
-    assert_eq!(results.len(), 3, "Should stop at failed migration");
+    pretty_assertions::assert_eq!(results.len(), 3, "Should stop at failed migration");
     assert!(!results[2].success, "Third migration should fail");
     
     Ok(())
@@ -271,7 +262,7 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Er
     ) -> Result<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(&pool)
+            sqlx::query("SELECT 1").fetch_one(pool)
         ).await {
             Ok(Ok(_)) => {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -366,7 +357,7 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Erro
     ).await;
     
     let fetch_all_time = fetch_start.elapsed();
-    let fetch_all_count = all_at_once_result.map(|r| r.map(|rows| rows.len())).unwrap_or(Ok(0)).unwrap_or(0i64);
+    let fetch_all_count = all_at_once_result.map(|r| r.map(|rows| rows.len())).unwrap_or(Ok(0)).unwrap_or(0) as i64;
     
     // Strategy 2: Stream results (memory efficient)
     let stream_start = std::time::Instant::now();
@@ -392,7 +383,7 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Erro
     println!("  Memory efficiency: Streaming is {}x faster", 
         fetch_all_time.as_millis() as f64 / stream_time.as_millis() as f64);
     
-    assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
+    pretty_assertions::assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
     
     Ok(())
 }

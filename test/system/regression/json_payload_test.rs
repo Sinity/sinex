@@ -1,8 +1,4 @@
 use crate::common::prelude::*;
-use sinex_db::models::RawEvent;
-use serde_json::json;
-use crate::common::events;
-
 #[test]
 fn test_json_payload_size_limits() {
     // Test extremely large JSON payloads
