@@ -9,6 +9,7 @@ members = [
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
+    "crate/sinex-test-macros",
 ]
 resolver = "2"
 
@@ -65,6 +66,7 @@ proptest.workspace = true
 tempfile = "3"
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-events = { path = "crate/sinex-events" }
+sinex-test-macros = { path = "crate/sinex-test-macros" }
 criterion.workspace = true
 
 [workspace.package]

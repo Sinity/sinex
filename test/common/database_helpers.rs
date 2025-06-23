@@ -6,6 +6,10 @@
 use crate::common::prelude::*;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use std::time::Duration;
+use anyhow::Result;
+use sinex_db::run_migrations;
+use sinex_db::queries;
 
 /// Shared test database pool to reduce resource waste
 /// 
@@ -58,10 +62,10 @@ pub async fn get_shared_test_pool() -> Result<PgPool> {
 /// Usage:
 /// ```rust
 /// #[tokio::test]
-/// async fn my_test() -> Result<()> {
+/// async fn my_test() -> Result<(), anyhow::Error> {
 ///     let mut tx = test_transaction().await?;
 ///     // Use &mut tx instead of &pool
-///     sqlx::query!("INSERT INTO ...").execute(&mut tx).await?;
+///     sqlx::query!("INSERT INTO ...").execute(&mut *tx).await?;
 ///     // Transaction automatically rolls back at end
 /// }
 /// ```
@@ -140,6 +144,27 @@ pub async fn get_integration_test_pool() -> Result<PgPool> {
     Ok(pool)
 }
 
+/// Create a fresh database pool (not shared) for tests that need isolation
+///
+/// Use this for tests that need to test transaction behavior or
+/// need multiple independent connections.
+pub async fn create_test_pool() -> Result<PgPool> {
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+        
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(10)  // Small pool for isolated tests
+        .min_connections(2)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(&database_url)
+        .await?;
+        
+    // Apply migrations
+    run_migrations(&pool).await?;
+    
+    Ok(pool)
+}
+
 /// Insert a batch of test events efficiently
 pub async fn insert_test_event_batch(
     pool: &PgPool,
@@ -148,7 +173,7 @@ pub async fn insert_test_event_batch(
     let mut event_ids = Vec::new();
     
     for event in events {
-        let inserted = queries::insert_event(pool, event).await?;
+        let inserted = queries::insert_event(&pool, event).await?;
         event_ids.push(inserted.id);
     }
     
@@ -244,7 +269,7 @@ macro_rules! workload_test {
 /// Usage:
 /// ```rust
 /// test_with_transaction!(test_name, tx, {
-///     sqlx::query!("INSERT INTO ...").execute(&mut tx).await?;
+///     sqlx::query!("INSERT INTO ...").execute(&mut *tx).await?;
 ///     // Test automatically isolated and cleaned up
 /// });
 /// ```

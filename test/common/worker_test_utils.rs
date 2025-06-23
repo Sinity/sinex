@@ -1,6 +1,7 @@
 //! Worker test utilities
 
 use anyhow::Result;
+use sinex_db::queries;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use sinex_db::models::WorkQueueItem;
@@ -10,7 +11,7 @@ use serde_json::json;
 
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
-    setup_test_worker(pool, "test_worker", item_count).await
+    setup_test_worker(&pool, "test_worker", item_count).await
 }
 
 /// Setup test worker with specified number of work items
@@ -51,7 +52,7 @@ pub async fn insert_test_work_item(
     let event = crate::common::events::generic_adversarial_event("test_source", "test.event", json!({"test": true}), Some("test_1.0"));
     
     // Insert the raw event first
-    sinex_db::queries::insert_event(pool, &event).await?;
+    sinex_db::queries::insert_event(&pool, &event).await?;
     
     // Now insert the work queue item using the real query function
     let work_item = sinex_db::queries::insert_work_queue_item(pool, raw_event_id, target_agent).await?;
@@ -86,7 +87,7 @@ pub async fn create_test_work_item(
 
 /// Get work queue item by ID
 pub async fn get_work_item(pool: &PgPool, queue_id: Ulid) -> Result<Option<WorkQueueItem>> {
-    match sinex_db::queries::get_work_item_by_id(pool, queue_id).await {
+    match sinex_db::queries::get_work_item_by_id(&pool, queue_id).await {
         Ok(item) => Ok(Some(item)),
         Err(e) => {
             // Check if it's a not found error
@@ -99,15 +100,26 @@ pub async fn get_work_item(pool: &PgPool, queue_id: Ulid) -> Result<Option<WorkQ
     }
 }
 
+/// Create a work queue item for an existing event
+pub async fn create_work_item(
+    pool: &PgPool,
+    target_agent: &str,
+    event_id: Ulid,
+) -> Result<Ulid> {
+    // Use the real query function to insert
+    let work_item = sinex_db::queries::insert_work_queue_item(pool, event_id, target_agent).await?;
+    Ok(work_item.queue_id)
+}
+
 /// Count work items by status using timing optimization
 pub async fn count_work_items_by_status(pool: &PgPool, status: &str) -> Result<i64> {
-    wait_for_work_queue_status_count(pool, status, 0, 1)
+    wait_for_work_queue_status_count(&pool, status, 0, 1)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to count work items by status: {}", e))
 }
 
 /// Cleanup all work queue items
-pub async fn cleanup_work_queue(pool: &PgPool) -> Result<()> {
+pub async fn cleanup_work_queue(pool: &PgPool) -> Result<(), anyhow::Error> {
     sqlx::query!("DELETE FROM sinex_schemas.work_queue")
         .execute(pool)
         .await?;
@@ -117,14 +129,14 @@ pub async fn cleanup_work_queue(pool: &PgPool) -> Result<()> {
 
 /// Verify all items have been processed
 pub async fn verify_all_items_processed(pool: &PgPool) -> Result<bool> {
-    let pending_count = count_work_items_by_status(pool, "pending").await?;
+    let pending_count = count_work_items_by_status(&pool, "pending").await?;
     Ok(pending_count == 0)
 }
 
 /// Verify all items have been processed by specific worker (alternative signature)
 pub async fn verify_all_items_processed_by_worker(pool: &PgPool, worker_name: &str) -> Result<bool> {
     // Check if there are any pending items for this worker using timing utility
-    let pending_count = wait_for_work_queue_status_count(pool, "pending", 0, 1)
+    let pending_count = wait_for_work_queue_status_count(&pool, "pending", 0, 1)
         .await
         .unwrap_or(1); // If timeout, assume there are pending items
     
@@ -209,7 +221,7 @@ pub mod lifecycle {
         }
 
         /// Simulate worker startup
-        pub async fn startup(&self) -> Result<()> {
+        pub async fn startup(&self) -> Result<(), anyhow::Error> {
             // Register worker or perform startup tasks
             Ok(())
         }
@@ -249,7 +261,7 @@ pub mod lifecycle {
         }
 
         /// Simulate worker shutdown
-        pub async fn shutdown(&self) -> Result<()> {
+        pub async fn shutdown(&self) -> Result<(), anyhow::Error> {
             // Cleanup or shutdown tasks
             Ok(())
         }
@@ -265,8 +277,8 @@ pub mod assertions {
         pool: &PgPool,
         queue_id: Ulid,
         expected_status: &str
-    ) -> Result<()> {
-        let item = get_work_item(pool, queue_id).await?
+    ) -> Result<(), anyhow::Error> {
+        let item = get_work_item(&pool, queue_id).await?
             .ok_or_else(|| anyhow::anyhow!("Work item not found: {}", queue_id))?;
         
         assert_eq!(
@@ -282,8 +294,8 @@ pub mod assertions {
     pub async fn assert_processed_count(
         pool: &PgPool,
         expected_count: i64
-    ) -> Result<()> {
-        let actual_count = count_work_items_by_status(pool, "succeeded").await?;
+    ) -> Result<(), anyhow::Error> {
+        let actual_count = count_work_items_by_status(&pool, "succeeded").await?;
         
         assert_eq!(
             actual_count, expected_count,
@@ -295,8 +307,8 @@ pub mod assertions {
     }
 
     /// Assert that work queue is empty
-    pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<()> {
-        let count = wait_for_work_queue_count(pool, 0, 1)
+    pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<(), anyhow::Error> {
+        let count = wait_for_work_queue_count(&pool, 0, 1)
             .await
             .unwrap_or(1); // If timeout, assume there are items
         

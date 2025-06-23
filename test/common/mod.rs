@@ -9,9 +9,21 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
+
+// Unified test context for all tests
+pub mod test_context;
+
+// Unified event builder hierarchy
+pub mod event_builders;
+
+// Re-export the procedural macros from sinex-test-macros crate
+pub use sinex_test_macros::{sinex_test, sinex_test_no_tx};
+
 use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
-use sinex_db::{create_test_pool, queries};
+use crate::common::database_helpers::{get_shared_test_pool};
+use sinex_db::queries;
+use anyhow::Result;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -22,13 +34,13 @@ pub fn test_database_url() -> String {
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<PgPool> {
     let db_url = test_database_url();
-    create_test_pool(&db_url).await
+    sinex_db::create_test_pool(&db_url).await
 }
 
 /// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
 pub async fn insert_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
-    let inserted = queries::insert_event(pool, event).await?;
+    let inserted = queries::insert_event(&pool, event).await?;
     Ok(inserted.id)
 }
 
@@ -288,7 +300,7 @@ pub mod assertions {
         pool: &PgPool,
         event: &RawEvent
     ) -> Result<Ulid> {
-        let inserted = queries::insert_event(pool, event).await?;
+        let inserted = queries::insert_event(&pool, event).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
     }
@@ -297,8 +309,8 @@ pub mod assertions {
     pub async fn assert_event_insertion_fails(
         pool: &PgPool,
         event: &RawEvent
-    ) -> Result<()> {
-        let result = queries::insert_event(pool, event).await;
+    ) -> Result<(), anyhow::Error> {
+        let result = queries::insert_event(&pool, event).await;
         assert!(result.is_err(), "Expected event insertion to fail, but it succeeded");
         Ok(())
     }
@@ -307,9 +319,8 @@ pub mod assertions {
     pub async fn assert_manifest_registered(
         pool: &PgPool,
         manifest: &AgentManifest
-    ) -> Result<()> {
-        let result = queries::upsert_agent_manifest(
-            pool,
+    ) -> Result<(), anyhow::Error> {
+        let result = queries::upsert_agent_manifest(&pool,
             &manifest.agent_name,
             &manifest.description.as_deref().unwrap_or(""),
             &manifest.version,
@@ -484,7 +495,7 @@ pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
     let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
         .fetch_one(pool)
         .await?;
-    Ok(record.count.unwrap_or(0))
+    Ok(record.count.unwrap_or(0i64))
 }
 
 /// Helper for checking if an event exists by ULID
@@ -571,10 +582,9 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::Ra
 }
 
 /// Helper for creating a test agent with default settings
-pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    queries::upsert_agent_manifest(
-        pool,
+    queries::upsert_agent_manifest(&pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -590,7 +600,7 @@ pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
 #[allow(dead_code)]
 pub async fn insert_test_event(pool: &PgPool, source: &str, event_type: &str) -> Result<Ulid> {
     let event = RawEventBuilder::new(source, event_type, json!({"test": true})).build();
-    insert_event(pool, &event).await
+    insert_event(&pool, &event).await
 }
 
 /// Helper for creating agent with specific subscriptions
@@ -598,13 +608,12 @@ pub async fn create_agent_with_subscriptions(
     pool: &PgPool, 
     agent_name: &str, 
     subscriptions: &serde_json::Value
-) -> Result<()> {
+) -> Result<(), anyhow::Error> {
     // Create a test agent manifest and add subscriptions
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
     
-    queries::upsert_agent_manifest(
-        pool,
+    queries::upsert_agent_manifest(&pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -630,7 +639,7 @@ pub mod database {
         let mut ids = Vec::new();
         for i in 0..count {
             let event = generators::indexed_event(i);
-            let id = insert_event(pool, &event).await?;
+            let id = insert_event(&pool, &event).await?;
             ids.push(id);
         }
         Ok(ids)
@@ -710,7 +719,7 @@ pub mod cleanup {
     use super::*;
     
     /// Truncate all test tables
-    pub async fn truncate_all_tables(pool: &PgPool) -> Result<()> {
+    pub async fn truncate_all_tables(pool: &PgPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
             .execute(pool).await?;
@@ -722,7 +731,7 @@ pub mod cleanup {
     }
     
     /// Clean up test files and directories
-    pub async fn cleanup_test_files(paths: &[&str]) -> Result<()> {
+    pub async fn cleanup_test_files(paths: &[&str]) -> Result<(), anyhow::Error> {
         for path in paths {
             if std::path::Path::new(path).exists() {
                 if std::path::Path::new(path).is_dir() {

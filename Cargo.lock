@@ -2712,6 +2712,7 @@ dependencies = [
  "sinex-core",
  "sinex-db",
  "sinex-events",
+ "sinex-test-macros",
  "sinex-ulid",
  "sinex-worker",
  "sqlx",
@@ -2896,6 +2897,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "sinex-test-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
