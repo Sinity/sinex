@@ -76,7 +76,7 @@ impl EventSource for TestCoordinatedSource {
 }
 
 #[tokio::test]
-async fn test_multiple_sources_lifecycle_management() -> Result<()> {
+async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources with different configurations
@@ -139,7 +139,7 @@ async fn test_multiple_sources_lifecycle_management() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_source_failure_isolation() -> Result<()> {
+async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources, one will fail
@@ -201,7 +201,7 @@ async fn test_source_failure_isolation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_source_startup_synchronization() -> Result<()> {
+async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let barrier = Arc::new(Barrier::new(3));
     
@@ -275,7 +275,7 @@ async fn test_source_startup_synchronization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_registry_based_source_discovery() -> Result<()> {
+async fn test_registry_based_source_discovery() -> Result<(), anyhow::Error> {
     // Test that sources can be discovered and started from registry
     let registry = create_registry();
     
@@ -302,7 +302,7 @@ async fn test_registry_based_source_discovery() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_dynamic_source_addition() -> Result<()> {
+async fn test_dynamic_source_addition() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let mut handles = Vec::new();
     

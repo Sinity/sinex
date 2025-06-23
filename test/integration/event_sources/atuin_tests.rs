@@ -1,11 +1,13 @@
 use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
 use sinex_core::{EventSource, EventType, EventSourceContext};
-use sinex_db::{models::RawEvent, create_test_pool};
+use sinex_db::models::RawEvent;
 use tokio::sync::mpsc;
 use std::path::PathBuf;
+use std::time::Duration;
 use chrono::{Utc, TimeZone};
 use crate::common::{resources, create_test_db_pool, database, event_sources};
+use anyhow::Result;
 
 
 
@@ -145,7 +147,7 @@ impl TestAtuinEntryBuilder {
 }
 
 #[tokio::test]
-async fn test_atuin_reader_initialization() -> Result<()> {
+async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -176,7 +178,7 @@ async fn test_atuin_reader_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_event_capture() -> Result<()> {
+async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -255,7 +257,7 @@ async fn test_atuin_event_capture() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_watermarking() -> Result<()> {
+async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -386,7 +388,7 @@ async fn test_atuin_watermarking() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
+async fn test_atuin_watermarking_resume_behavior() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -533,7 +535,7 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_timestamp_conversion() -> Result<()> {
+async fn test_atuin_timestamp_conversion() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -624,7 +626,7 @@ async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[tokio::test]
-async fn test_atuin_builder_patterns() -> Result<()> {
+async fn test_atuin_builder_patterns() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -702,7 +704,7 @@ async fn test_atuin_builder_patterns() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_edge_cases() -> Result<()> {
+async fn test_atuin_edge_cases() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -769,7 +771,7 @@ async fn test_atuin_edge_cases() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_global_history() -> Result<()> {
+async fn test_atuin_global_history() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -851,7 +853,7 @@ async fn test_atuin_global_history() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_performance_with_many_entries() -> Result<()> {
+async fn test_atuin_performance_with_many_entries() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     

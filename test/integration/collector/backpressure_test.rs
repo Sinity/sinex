@@ -8,6 +8,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use crate::common::event_sources;
+use anyhow::Result;
 
 
 
@@ -145,7 +146,7 @@ impl SlowEventProcessor {
 }
 
 #[tokio::test]
-async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<()> {
+async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<(), anyhow::Error> {
     // Create a bounded channel with the same capacity as UnifiedCollector
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
     
@@ -227,7 +228,7 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
 }
 
 #[tokio::test]
-async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
+async fn test_channel_saturation_prevents_event_loss() -> Result<(), anyhow::Error> {
     // Test that the channel properly handles saturation without losing events
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100); // Smaller channel for easier testing
     
@@ -284,7 +285,7 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_multiple_sources_backpressure() -> Result<()> {
+async fn test_multiple_sources_backpressure() -> Result<(), anyhow::Error> {
     // Test backpressure with multiple event sources feeding into the same channel
     let (tx, rx) = mpsc::channel::<RawEvent>(1000);
     
@@ -349,7 +350,7 @@ async fn test_multiple_sources_backpressure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_channel_close_during_backpressure() -> Result<()> {
+async fn test_channel_close_during_backpressure() -> Result<(), anyhow::Error> {
     // Test what happens when the channel is closed while producer is backpressured
     let (tx, rx) = mpsc::channel::<RawEvent>(10);
     
@@ -387,7 +388,7 @@ async fn test_channel_close_during_backpressure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_backpressure_recovery() -> Result<()> {
+async fn test_backpressure_recovery() -> Result<(), anyhow::Error> {
     // Test that the system recovers properly when backpressure is relieved
     let (tx, mut rx) = mpsc::channel::<RawEvent>(50);
     
@@ -445,7 +446,7 @@ async fn test_backpressure_recovery() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_memory_pressure_during_backpressure() -> Result<()> {
+async fn test_memory_pressure_during_backpressure() -> Result<(), anyhow::Error> {
     // Test that memory usage stays reasonable even during extended backpressure
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     

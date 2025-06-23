@@ -6,6 +6,7 @@ use serde_json::json;
 use gethostname;
 use crate::common::event_sources;
 use crate::common::events;
+use anyhow::Result;
 #[allow(unused_imports)]
 
 // Import test setup macros
@@ -82,7 +83,7 @@ impl EventSource for TestEventSource {
 }
 
 #[tokio::test]
-async fn test_event_source_initialization() -> Result<()> {
+async fn test_event_source_initialization() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 5,
@@ -100,7 +101,7 @@ async fn test_event_source_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_initialization_failure() -> Result<()> {
+async fn test_event_source_initialization_failure() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 1,
@@ -123,7 +124,7 @@ async fn test_event_source_initialization_failure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_streaming() -> Result<()> {
+async fn test_event_source_streaming() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 3,
         generation_delay_ms: 50,
@@ -166,7 +167,7 @@ async fn test_event_source_streaming() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_runtime_error() -> Result<()> {
+async fn test_event_source_runtime_error() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 10,
@@ -204,7 +205,7 @@ async fn test_event_source_runtime_error() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_graceful_shutdown() -> Result<()> {
+async fn test_event_source_graceful_shutdown() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 10,
@@ -222,7 +223,7 @@ async fn test_event_source_graceful_shutdown() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_receiver_drop() -> Result<()> {
+async fn test_event_source_receiver_drop() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig {
         events_to_generate: 100, // More than we'll receive
         generation_delay_ms: 1,
@@ -302,7 +303,7 @@ impl EventSource for SlowEventSource {
 }
 
 #[tokio::test]
-async fn test_multiple_event_sources() -> Result<()> {
+async fn test_multiple_event_sources() -> Result<(), anyhow::Error> {
     let config = TestSourceConfig::default();
     
     let ctx1 = event_sources::test_context(serde_json::to_value(&config)?);
@@ -337,7 +338,7 @@ async fn test_multiple_event_sources() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_database_integration() -> Result<()> {
+async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     
     let config = TestSourceConfig {

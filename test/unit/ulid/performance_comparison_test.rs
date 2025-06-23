@@ -2,7 +2,7 @@
 //! Confirms that our optimized monotonic implementation is fast enough for production use
 
 use sinex_ulid::Ulid;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[test]
 fn test_ulid_monotonic_performance_validation() {

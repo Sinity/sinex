@@ -6,7 +6,8 @@
 
 use anyhow::Result;
 use sinex_core::EventSourceContext;
-use sinex_db::{create_test_pool, queries};
+use crate::common::database_helpers::get_shared_test_pool;
+use sinex_db::queries;
 use sinex_collector::config::CollectorConfig;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,8 +38,8 @@ fn create_comprehensive_config() -> CollectorConfig {
 }
 
 #[tokio::test]
-async fn test_system_startup_with_all_configurations() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Error> {
+    let pool = sinex_db::create_test_pool().await?;
     
     // Clean database state
     crate::common::cleanup::truncate_all_tables(&pool).await?;
@@ -311,14 +312,13 @@ async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     
     // Insert test work items
     let test_event = crate::common::create_test_event("worker_startup_test", "system.health_check");
-    let event_id = queries::insert_event(pool, &test_event).await?.id;
+    let event_id = queries::insert_event(&pool, &test_event).await?.id;
     
     // Add to promotion queue
-    queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
+    queries::add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
     
     // Test that workers can claim items
-    let claimed_items = queries::claim_work_queue_items(
-        pool, 
+    let claimed_items = queries::claim_work_queue_items(&pool, 
         "test-agent", 
         "startup-worker", 
         1
@@ -327,7 +327,7 @@ async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     assert!(!claimed_items.is_empty(), "Worker should be able to claim items on startup");
     
     // Clean up
-    queries::complete_work_queue_item(pool, claimed_items[0].queue_id).await?;
+    queries::complete_work_queue_item(&pool, claimed_items[0].queue_id).await?;
     
     Ok(true)
 }
@@ -357,7 +357,7 @@ async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<boo
 }
 
 #[tokio::test]
-async fn test_configuration_validation_end_to_end() -> Result<()> {
+async fn test_configuration_validation_end_to_end() -> Result<(), anyhow::Error> {
     // Test comprehensive configuration validation
     
     // Test 1: Valid configuration should pass all checks
@@ -389,8 +389,8 @@ async fn test_configuration_validation_end_to_end() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_graceful_degradation_on_component_failure() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_graceful_degradation_on_component_failure() -> Result<(), anyhow::Error> {
+    let pool = sinex_db::create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let mut config = create_comprehensive_config();
@@ -444,7 +444,7 @@ async fn test_database_recovery_scenario(pool: &sqlx::PgPool) -> Result<bool> {
     
     // Simulate successful database operations
     let test_event = crate::common::create_test_event("recovery_test", "system.test");
-    let insert_result = queries::insert_event(pool, &test_event).await;
+    let insert_result = queries::insert_event(&pool, &test_event).await;
     
     // Should succeed in normal conditions
     assert!(insert_result.is_ok(), "Database insert should succeed in recovery test");
@@ -474,8 +474,8 @@ async fn test_annex_fallback_scenario() -> Result<bool> {
 }
 
 #[tokio::test]
-async fn test_system_health_monitoring_integration() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_system_health_monitoring_integration() -> Result<(), anyhow::Error> {
+    let pool = sinex_db::create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let config = create_comprehensive_config();
@@ -556,8 +556,8 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
 }
 
 #[tokio::test]
-async fn test_comprehensive_error_handling_integration() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_comprehensive_error_handling_integration() -> Result<(), anyhow::Error> {
+    let pool = sinex_db::create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Test 1: Configuration errors should be handled gracefully
@@ -633,22 +633,22 @@ async fn test_worker_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
     let test_event1 = crate::common::create_test_event("worker_error_test_1", "system.test");
     let test_event2 = crate::common::create_test_event("worker_error_test_2", "system.test");
     
-    let event_id1 = queries::insert_event(pool, &test_event1).await?.id;
-    let event_id2 = queries::insert_event(pool, &test_event2).await?.id;
+    let event_id1 = queries::insert_event(&pool, &test_event1).await?.id;
+    let event_id2 = queries::insert_event(&pool, &test_event2).await?.id;
     
     // Add both to promotion queue
-    queries::add_to_work_queue(pool, event_id1, "test-agent", 3).await?;
-    queries::add_to_work_queue(pool, event_id2, "test-agent", 3).await?;
+    queries::add_to_work_queue(&pool, event_id1, "test-agent", 3).await?;
+    queries::add_to_work_queue(&pool, event_id2, "test-agent", 3).await?;
     
     // Simulate one worker succeeding and another failing
-    let claimed_items1 = queries::claim_work_queue_items(pool, "test-agent", "worker1", 1).await?;
-    let claimed_items2 = queries::claim_work_queue_items(pool, "test-agent", "worker2", 1).await?;
+    let claimed_items1 = queries::claim_work_queue_items(&pool, "test-agent", "worker1", 1).await?;
+    let claimed_items2 = queries::claim_work_queue_items(&pool, "test-agent", "worker2", 1).await?;
     
     assert!(!claimed_items1.is_empty(), "Worker1 should claim an item");
     assert!(!claimed_items2.is_empty(), "Worker2 should claim an item");
     
     // Worker1 completes successfully
-    queries::complete_work_queue_item(pool, claimed_items1[0].queue_id).await?;
+    queries::complete_work_queue_item(&pool, claimed_items1[0].queue_id).await?;
     
     // Worker2 simulates failure by not completing
     // (In real scenario, this would timeout and be reclaimed)

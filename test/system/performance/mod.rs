@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[sqlx::test]
-async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
+async fn test_high_volume_ingestion(pool: PgPool) -> Result<(), anyhow::Error> {
     let start = Instant::now();
     let mut handles = vec![];
     
@@ -62,7 +62,7 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
+async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyhow::Error> {
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
@@ -155,7 +155,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_query_latency(pool: PgPool) -> Result<()> {
+async fn test_query_latency(pool: PgPool) -> Result<(), anyhow::Error> {
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(

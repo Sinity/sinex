@@ -1,7 +1,10 @@
 use crate::common::prelude::*;
+use crate::common::database_helpers;
+use sinex_db::run_migrations;
 
 // Stress test specific imports
 use super::common::*;
+use anyhow::Result;
 
 /// Specialized worker for testing race conditions and competitive scenarios
 struct RaceConditionWorker {
@@ -190,7 +193,7 @@ struct RaceWorkerResult {
 }
 
 #[tokio::test]
-async fn test_race_condition_detection() -> Result<()> {
+async fn test_race_condition_detection() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

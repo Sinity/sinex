@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use futures::future::join_all;
 
+use crate::common::database_helpers::create_test_pool;
 #[tokio::test]
-async fn test_connection_pool_max_connections() -> Result<()> {
+async fn test_connection_pool_max_connections() -> Result<(), anyhow::Error> {
     // Create a pool with a small max size
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -59,7 +60,7 @@ async fn test_connection_pool_max_connections() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_timeout_behavior() -> Result<()> {
+async fn test_connection_pool_timeout_behavior() -> Result<(), anyhow::Error> {
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_millis(500))
@@ -83,7 +84,7 @@ async fn test_connection_pool_timeout_behavior() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_recovery_after_database_restart() -> Result<()> {
+async fn test_connection_pool_recovery_after_database_restart() -> Result<(), anyhow::Error> {
     let pool = create_test_pool().await?;
     
     // Verify initial connection works
@@ -109,7 +110,7 @@ async fn test_connection_pool_recovery_after_database_restart() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_concurrent_pressure() -> Result<()> {
+async fn test_connection_pool_concurrent_pressure() -> Result<(), anyhow::Error> {
     let pool = Arc::new(create_test_pool().await?);
     
     // Spawn many concurrent tasks
@@ -141,7 +142,7 @@ async fn test_connection_pool_concurrent_pressure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_max_lifetime() -> Result<()> {
+async fn test_connection_pool_max_lifetime() -> Result<(), anyhow::Error> {
     // Create pool with short max lifetime
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -169,7 +170,7 @@ async fn test_connection_pool_max_lifetime() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_idle_timeout() -> Result<()> {
+async fn test_connection_pool_idle_timeout() -> Result<(), anyhow::Error> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
@@ -200,7 +201,7 @@ async fn test_connection_pool_idle_timeout() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_transaction_isolation() -> Result<()> {
+async fn test_connection_pool_transaction_isolation() -> Result<(), anyhow::Error> {
     let pool = create_test_pool().await?;
     
     // Start a transaction in one task
@@ -245,7 +246,7 @@ async fn test_connection_pool_transaction_isolation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_error_recovery() -> Result<()> {
+async fn test_connection_pool_error_recovery() -> Result<(), anyhow::Error> {
     let pool = create_test_pool().await?;
     
     // Cause an error on a connection
@@ -273,7 +274,7 @@ async fn test_connection_pool_error_recovery() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_statement_cache() -> Result<()> {
+async fn test_connection_pool_statement_cache() -> Result<(), anyhow::Error> {
     let pool = create_test_pool().await?;
     
     // Execute the same prepared statement many times
@@ -304,7 +305,7 @@ async fn test_connection_pool_statement_cache() -> Result<()> {
 }
 
 // Helper function to create test pool
-async fn create_test_pool() -> Result<PgPool> {
+async fn create_test_pool_local() -> Result<PgPool> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
     

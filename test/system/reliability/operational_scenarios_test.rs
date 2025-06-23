@@ -1,12 +1,15 @@
 use crate::common::prelude::*;
 use std::fs;
-use sinex_db::{queries::insert_raw_event, create_test_pool};
+use std::time::Duration;
+use sinex_db::{queries::insert_raw_event, create_test_pool, run_migrations};
 use tokio::time::timeout;
 use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_agent_status, wait_for_filtered_event_count};
+use anyhow::Result;
+use sinex_db::queries;
 
 /// Test startup sequence robustness and error handling
 #[tokio::test]
-async fn test_startup_sequence_robustness() -> Result<()> {
+async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -213,7 +216,7 @@ async fn test_startup_sequence_robustness() -> Result<()> {
 
 /// Test shutdown sequence and graceful termination
 #[tokio::test]
-async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
+async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -440,7 +443,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<()> {
 
 /// Test configuration validation and hot reload scenarios
 #[tokio::test]
-async fn test_configuration_validation_and_reload() -> Result<()> {
+async fn test_configuration_validation_and_reload() -> Result<(), anyhow::Error> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -707,7 +710,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[tokio::test]
-async fn test_data_migration_safety() -> Result<()> {
+async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing

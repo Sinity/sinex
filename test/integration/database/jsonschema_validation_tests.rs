@@ -6,7 +6,7 @@ use crate::common::database_helpers::get_shared_test_pool;
 use crate::common::{schema_test_utils, test_event_with_payload};
 
 #[tokio::test]
-async fn test_json_schema_registration() -> Result<()> {
+async fn test_json_schema_registration() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     
     // Register a JSON Schema
@@ -59,7 +59,7 @@ async fn test_json_schema_registration() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_json_schema_validation_constraint() -> Result<()> {
+async fn test_json_schema_validation_constraint() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     
     // First, register a strict schema
@@ -153,7 +153,7 @@ async fn test_json_schema_validation_constraint() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_schema_versioning() -> Result<()> {
+async fn test_schema_versioning() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts
@@ -318,7 +318,7 @@ async fn test_schema_versioning() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_complex_schema_validation() -> Result<()> {
+async fn test_complex_schema_validation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts
@@ -505,7 +505,7 @@ async fn test_complex_schema_validation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_null_schema_allows_any_payload() -> Result<()> {
+async fn test_null_schema_allows_any_payload() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     
     // Generate unique test identifiers to avoid conflicts

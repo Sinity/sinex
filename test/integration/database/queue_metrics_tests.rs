@@ -11,7 +11,7 @@ use serde_json::json;
 use chrono::{Utc, Duration};
 
 #[tokio::test]
-async fn test_queue_depth_metric_calculation() -> Result<()> {
+async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that queue_depth metric correctly counts pending items per agent
     
@@ -69,7 +69,7 @@ async fn test_queue_depth_metric_calculation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_dequeue_latency_metric_calculation() -> Result<()> {
+async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that dequeue_latency_ms measures time from creation to processing
     
@@ -109,7 +109,7 @@ async fn test_dequeue_latency_metric_calculation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_per_agent_lag_metric_calculation() -> Result<()> {
+async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that per_agent_lag measures how far behind each agent is
     
@@ -154,7 +154,7 @@ async fn test_per_agent_lag_metric_calculation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_prometheus_metrics_exposition() -> Result<()> {
+async fn test_prometheus_metrics_exposition() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that metrics are properly exposed in Prometheus format
     
@@ -198,7 +198,7 @@ async fn test_prometheus_metrics_exposition() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_metrics_update_frequency() -> Result<()> {
+async fn test_metrics_update_frequency() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that metrics are updated efficiently without excessive database queries
     
@@ -347,7 +347,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
@@ -368,8 +368,7 @@ async fn insert_test_event(pool: &PgPool, source: &str, test_data: &str) -> Resu
         "source": source
     });
     
-    let event = insert_raw_event(
-        pool,
+    let event = insert_raw_event(&pool,
         source,
         "test_event",
         "test_host",

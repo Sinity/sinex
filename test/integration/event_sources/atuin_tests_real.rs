@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
 use sinex_core::{EventSource, EventSourceContext};
-use sinex_db::create_test_pool;
 use tokio::sync::mpsc;
 use std::path::PathBuf;
+use std::time::Duration;
 use crate::common::{resources, create_test_db_pool, event_sources};
+use anyhow::Result;
 
 /// Get real Atuin database path or create minimal test database if needed
 fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
@@ -95,7 +96,7 @@ fn generate_test_commands() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_reader_initialization() -> Result<()> {
+async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -122,7 +123,7 @@ async fn test_atuin_reader_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_event_capture() -> Result<()> {
+async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -172,7 +173,7 @@ async fn test_atuin_event_capture() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_atuin_watermarking() -> Result<()> {
+async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -402,7 +403,7 @@ async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[tokio::test]
-async fn test_atuin_production_scale() -> Result<()> {
+async fn test_atuin_production_scale() -> Result<(), anyhow::Error> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {

@@ -2,6 +2,7 @@ use proptest::prelude::*;
 use crate::common::prelude::*;
 use std::sync::{Arc, Barrier};
 use std::thread;
+use std::time::Duration;
 use chrono::{Utc, Duration as ChronoDuration};
 
 /// Test concurrent ULID generation properties
@@ -235,6 +236,7 @@ proptest! {
 mod stress_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
     
     #[test]
     #[ignore] // This is a long-running stress test

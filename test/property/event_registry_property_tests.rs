@@ -3,6 +3,7 @@ use sinex_core::{EventRegistry, create_registry};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// Generate arbitrary event type names that match registry patterns
 fn arb_event_type() -> impl Strategy<Value = String> {
@@ -299,6 +300,7 @@ proptest! {
 mod stress_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use crate::common::prelude::*;
     
     #[test]

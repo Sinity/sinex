@@ -4,13 +4,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task::JoinSet;
 use anyhow::Result;
-use sinex_db::{create_test_pool, run_migrations};
+use crate::common::database_helpers::create_test_pool;
 use sinex_db::queries::{
     insert_raw_event, insert_work_queue_item, claim_work_queue_items,
     complete_work_queue_item, create_test_agent,
 };
 use sinex_ulid::Ulid;
 use serde_json::json;
+use sinex_db::run_migrations;
 
 /// Shared state to track which items have been processed
 #[derive(Debug, Clone)]
@@ -59,7 +60,7 @@ async fn worker_with_crashes(
     crash_probability: f64,
     runtime_seconds: u64,
     seed: u64,
-) -> Result<()> {
+) -> Result<(), anyhow::Error> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     
@@ -234,7 +235,7 @@ proptest! {
             .expect("Operation failed");
             
             // Property: Total items in DB should equal processed + remaining
-            let db_total = remaining_items.count.unwrap_or(0) + completed_items.count.unwrap_or(0);
+            let db_total = remaining_items.count.unwrap_or(0i64) + completed_items.count.unwrap_or(0i64);
             prop_assert!(
                 db_total as usize >= processed_count,
                 "Database inconsistency: processed {} items but only {} total in DB",
@@ -288,7 +289,7 @@ proptest! {
                 None,
             ).await.expect("DB operation failed");
             
-            let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
+            let queue_item = insert_work_queue_item(pool, event.id, &agent_name).await.expect("DB operation failed");
             let _target_queue_id = queue_item.queue_id;
             
             let tracker = ProcessingTracker::new();
@@ -385,8 +386,7 @@ mod unit_tests {
         let tracker = ProcessingTracker::new();
         
         // Test with 100% crash probability (should exit immediately)
-        let result = worker_with_crashes(
-            pool,
+        let result = worker_with_crashes(pool,
             "test_agent".to_string(),
             "crash_test_worker".to_string(),
             tracker,

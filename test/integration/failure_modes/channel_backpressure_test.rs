@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
 use tokio::sync::mpsc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use serde_json::json;
+use anyhow::Result;
 
 /// Test what happens when event channel fills up
 #[tokio::test]
@@ -174,14 +175,14 @@ async fn test_event_source_crash_recovery() {
         type Config = ();
         const SOURCE_NAME: &'static str = "crashing_source";
         
-        async fn initialize(_ctx: EventSourceContext) -> Result<Self> {
+        async fn initialize(_ctx: EventSourceContext) -> Result<Self, CoreError> {
             Ok(Self {
                 crash_after: 50,
                 events_sent: Arc::new(AtomicU64::new(0)),
             })
         }
         
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             for i in 0..100 {
                 let event = crate::common::events::generic_adversarial_event("crashing", "test", json!({"test": true}), None);
                 if tx.send(event).await.is_err() { break; }

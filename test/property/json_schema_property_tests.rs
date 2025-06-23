@@ -2,6 +2,7 @@ use proptest::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_core::event::RawEventBuilder;
 use serde_json::{json, Value};
+use sinex_db::run_migrations;
 
 /// Generate JSON payloads for event validation testing
 fn arb_event_payload() -> impl Strategy<Value = Value> {
@@ -245,11 +246,11 @@ fn test_event_validator_edge_cases() {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use sinex_db::{create_test_pool, run_migrations};
+    use crate::common::database_helpers::create_test_pool;
     
     #[tokio::test]
     async fn test_event_validator_database_integration() {
-        let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await.expect("Failed to create test pool");
+        let pool = create_test_pool().await.expect("Failed to create test pool");
         run_migrations(&pool).await.expect("Failed to run migrations");
         
         // Test loading validator from empty database

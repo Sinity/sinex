@@ -4,7 +4,7 @@ use sinex_db::{queries, models::RawEvent};
 use std::sync::{Arc, Barrier};
 use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[test]
 fn test_worker_claim_exact_same_microsecond() {

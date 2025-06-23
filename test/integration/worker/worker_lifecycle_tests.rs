@@ -2,9 +2,11 @@ use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
 use std::time::Duration;
+use crate::common::database_helpers;
 
 // Import test setup macros and utilities
 use crate::common::worker_test_utils::{self, insert_test_work_item};
+use anyhow::Result;
 
 struct TestEventProcessor {
     agent_name: String,
@@ -30,7 +32,7 @@ impl EventProcessor for TestEventProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
         
         tokio::time::sleep(self.processing_delay).await;
@@ -56,7 +58,7 @@ impl EventProcessor for TestEventProcessor {
 }
 
 #[tokio::test]
-async fn test_event_processor_basic_processing() -> Result<()> {
+async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
@@ -84,7 +86,7 @@ async fn test_event_processor_basic_processing() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_processor_failure_handling() -> Result<()> {
+async fn test_event_processor_failure_handling() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         
@@ -146,7 +148,7 @@ async fn test_worker_metrics_creation() {
 }
 
 #[tokio::test]
-async fn test_multiple_processors_different_agents() -> Result<()> {
+async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
@@ -205,7 +207,7 @@ impl EventProcessor for SlowProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         tokio::time::sleep(Duration::from_millis(200)).await;
         Ok(())
     }

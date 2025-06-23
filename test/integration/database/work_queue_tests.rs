@@ -6,9 +6,10 @@ use serde_json::json;
 use chrono::Utc;
 use sqlx::PgPool;
 use anyhow::Result;
+use sinex_db::queries;
 
 #[sqlx::test]
-async fn test_work_queue_table_exists(pool: PgPool) -> Result<()> {
+async fn test_work_queue_table_exists(pool: PgPool) -> Result<(), anyhow::Error> {
     // This test should fail until the migration is run
     // Check that work_queue table exists
     let result = sqlx::query!(
@@ -22,7 +23,7 @@ async fn test_work_queue_table_exists(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_work_queue_has_new_columns(pool: PgPool) -> Result<()> {
+async fn test_work_queue_has_new_columns(pool: PgPool) -> Result<(), anyhow::Error> {
     // This test should fail until the migration adds new columns
     let columns = sqlx::query!(
         r#"
@@ -49,7 +50,7 @@ async fn test_work_queue_has_new_columns(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_work_queue_status_enum_includes_succeeded(pool: PgPool) -> Result<()> {
+async fn test_work_queue_status_enum_includes_succeeded(pool: PgPool) -> Result<(), anyhow::Error> {
     // Test that the status column supports 'succeeded' and 'failed' values
     // This should work once the new status values are supported
     

@@ -15,7 +15,7 @@ use std::fs;
 use crate::common::{resources, event_sources};
 
 #[tokio::test]
-async fn test_filesystem_watcher_initialization() -> Result<()> {
+async fn test_filesystem_watcher_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
     let ctx = event_sources::test_context(config);
@@ -29,7 +29,7 @@ async fn test_filesystem_watcher_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_captures_events() -> Result<()> {
+async fn test_filesystem_watcher_captures_events() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
@@ -70,7 +70,7 @@ async fn test_filesystem_watcher_captures_events() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
+async fn test_filesystem_watcher_ignores_patterns() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
@@ -119,7 +119,7 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_kitty_socket_listener_initialization() -> Result<()> {
+async fn test_kitty_socket_listener_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "socket_path": "/tmp/test-kitty-socket",
         "polling_interval_secs": 2
@@ -134,7 +134,7 @@ async fn test_kitty_socket_listener_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_asciinema_recorder_initialization() -> Result<()> {
+async fn test_asciinema_recorder_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "recordings_dir": temp_dir.path().to_str().unwrap(),
@@ -155,7 +155,7 @@ async fn test_asciinema_recorder_initialization() -> Result<()> {
 }
 
 #[tokio::test] 
-async fn test_clipboard_monitor_initialization() -> Result<()> {
+async fn test_clipboard_monitor_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "monitor_clipboard": true,
         "monitor_primary": true,
@@ -178,7 +178,7 @@ async fn test_clipboard_monitor_initialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
+async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     
     // Create a subdirectory to test path-based patterns
@@ -241,7 +241,7 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_scrollback_capture_initialization() -> Result<()> {
+async fn test_scrollback_capture_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "kitty_socket_path": "/tmp/test-kitty-socket",

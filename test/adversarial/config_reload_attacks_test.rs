@@ -2,9 +2,10 @@ use sinex_collector::config::{CollectorConfig, ConfigManager};
 use crate::common::prelude::*;
 use std::fs;
 use std::os::unix;
-use tokio::time::{Duration, timeout};
+use tokio::time::timeout;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use crate::common::resources;
 
 #[tokio::test]

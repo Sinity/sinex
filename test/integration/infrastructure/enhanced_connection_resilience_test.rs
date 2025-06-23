@@ -2,9 +2,13 @@ use crate::common::prelude::*;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::time::{timeout, sleep, interval};
 use futures::StreamExt;
-use sinex_db::{create_test_pool, run_migrations};
+use crate::common::database_helpers::{get_shared_test_pool};
+use crate::common::database_helpers;
+use anyhow::Result;
+use sinex_db::run_migrations;
 
 /// Connection health metrics for monitoring pool state
 #[derive(Debug)]
@@ -110,7 +114,7 @@ impl ResilientDbWorker {
         self.should_stop.store(true, Ordering::Relaxed);
     }
 
-    async fn run(&self, duration: Duration) -> Result<()> {
+    async fn run(&self, duration: Duration) -> Result<(), anyhow::Error> {
         let start = Instant::now();
         let mut query_count = 0;
 
@@ -153,7 +157,7 @@ impl ResilientDbWorker {
         Ok(())
     }
 
-    async fn run_simple_query(&self) -> Result<()> {
+    async fn run_simple_query(&self) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
         
         let result = timeout(
@@ -171,7 +175,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_read_write_query(&self, iteration: usize) -> Result<()> {
+    async fn run_read_write_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Create temporary table if it doesn't exist
@@ -218,7 +222,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_transaction_query(&self, iteration: usize) -> Result<()> {
+    async fn run_transaction_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         let mut tx = match self.pool.begin().await {
@@ -283,7 +287,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_streaming_query(&self) -> Result<()> {
+    async fn run_streaming_query(&self) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Generate a series to stream
@@ -310,7 +314,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_prepared_query(&self, iteration: usize) -> Result<()> {
+    async fn run_prepared_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Use the same prepared statement repeatedly
@@ -337,7 +341,7 @@ impl ResilientDbWorker {
 }
 
 #[tokio::test]
-async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
+async fn test_connection_pool_under_sustained_pressure() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -416,7 +420,7 @@ async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_failure_recovery_cycles() -> Result<()> {
+async fn test_connection_pool_failure_recovery_cycles() -> Result<(), anyhow::Error> {
     let metrics = Arc::new(ConnectionMetrics::new());
     let recovery_cycles = 3;
     
@@ -485,7 +489,7 @@ async fn test_connection_pool_failure_recovery_cycles() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<()> {
+async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<(), anyhow::Error> {
     const POOL_SIZE: usize = 3;
     
     let pool = PgPoolOptions::new()
@@ -616,7 +620,7 @@ async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<()> 
 }
 
 #[tokio::test]
-async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
+async fn test_connection_pool_cascade_failure_recovery() -> Result<(), anyhow::Error> {
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Simulate cascade failure: one failure triggers more failures
@@ -702,7 +706,7 @@ async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_memory_pressure_resilience() -> Result<()> {
+async fn test_connection_pool_memory_pressure_resilience() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     let metrics = Arc::new(ConnectionMetrics::new());
     

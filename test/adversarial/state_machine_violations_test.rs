@@ -3,8 +3,8 @@ use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::{queries, models::RawEvent};
 use std::sync::Arc;
-use tokio::time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use futures::future::join_all;
 use serde_json::json;
 

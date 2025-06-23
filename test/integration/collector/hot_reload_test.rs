@@ -64,7 +64,7 @@ impl EventSource for ConfigurableEventSource {
 }
 
 #[tokio::test]
-async fn test_config_hot_reload_without_data_loss() -> Result<()> {
+async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error> {
     // Create initial config file
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
@@ -164,7 +164,7 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_config_reload_with_source_restart() -> Result<()> {
+async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     // Test that sources can be gracefully restarted with new config
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
@@ -229,7 +229,7 @@ async fn test_config_reload_with_source_restart() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_config_validation_before_reload() -> Result<()> {
+async fn test_config_validation_before_reload() -> Result<(), anyhow::Error> {
     // Test that invalid configs are rejected without affecting running sources
     
     let valid_config = CollectorConfig {
@@ -255,7 +255,7 @@ async fn test_config_validation_before_reload() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_partial_reload_capability() -> Result<()> {
+async fn test_partial_reload_capability() -> Result<(), anyhow::Error> {
     // Test that specific sources can be reloaded without affecting others
     
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);

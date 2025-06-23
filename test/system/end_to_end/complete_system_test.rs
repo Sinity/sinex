@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sinex_core::RawEventBuilder;
-use sinex_db::{create_test_pool, queries};
+use crate::common::database_helpers::get_shared_test_pool;
+use sinex_db::queries;
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use tempfile::TempDir;
 async fn setup_system_test() -> Result<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
+    let pool = sinex_db::create_test_pool(&database_url).await?;
     
     // Clean all tables for isolated test
     sqlx::query("TRUNCATE TABLE raw.events CASCADE")
@@ -25,7 +26,7 @@ async fn setup_system_test() -> Result<sqlx::PgPool> {
 }
 
 #[sqlx::test]
-async fn test_complete_system_event_capture_to_query() -> Result<()> {
+async fn test_complete_system_event_capture_to_query() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     // Step 1: Simulate event capture by inserting events
@@ -100,7 +101,7 @@ async fn test_complete_system_event_capture_to_query() -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_system_cli_integration() -> Result<()> {
+async fn test_system_cli_integration() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     // Insert test events
@@ -160,7 +161,7 @@ async fn test_system_cli_integration() -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_system_real_filesystem_simulation() -> Result<()> {
+async fn test_system_real_filesystem_simulation() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     // Create temporary directory for filesystem simulation
@@ -225,7 +226,7 @@ async fn test_system_real_filesystem_simulation() -> Result<()> {
 }
 
 #[sqlx::test] 
-async fn test_system_multi_source_correlation() -> Result<()> {
+async fn test_system_multi_source_correlation() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     // Simulate correlated events from multiple sources
@@ -319,7 +320,7 @@ async fn test_system_multi_source_correlation() -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_system_error_recovery() -> Result<()> {
+async fn test_system_error_recovery() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     // Test system resilience with various edge cases
@@ -389,7 +390,7 @@ async fn test_system_error_recovery() -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_system_performance_baseline() -> Result<()> {
+async fn test_system_performance_baseline() -> Result<(), anyhow::Error> {
     let pool = setup_system_test().await?;
     
     let start_time = std::time::Instant::now();

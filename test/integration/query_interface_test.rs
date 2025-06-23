@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use serde_json::json;
 use std::process::Command;
+use std::time::Duration;
 use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
@@ -96,8 +97,7 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
     });
     
     // Use schema test utilities to insert schema
-    crate::common::schema_test_utils::database::insert_test_schema(
-        &pool,
+    crate::common::schema_test_utils::database::insert_test_schema(&pool,
         "test.filesystem",
         "file_event",
         "1.0.0",

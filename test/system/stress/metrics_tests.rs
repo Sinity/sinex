@@ -2,12 +2,16 @@ use crate::common::prelude::*;
 use super::common::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::time::{sleep, interval};
 use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations};
+use crate::common::database_helpers::{get_shared_test_pool};
 use serde_json::json;
 use std::str::FromStr;
 use rand::Rng;
+use crate::common::database_helpers;
+use anyhow::Result;
+use sinex_db::run_migrations;
 
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {
@@ -252,7 +256,7 @@ struct WorkerStressResult {
 }
 
 #[tokio::test]
-async fn test_extreme_concurrency_stress() -> Result<()> {
+async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

@@ -7,7 +7,8 @@
 use anyhow::Result;
 use chrono::{Utc, Duration as ChronoDuration};
 use sinex_core::RawEventBuilder;
-use sinex_db::{create_test_pool, queries};
+use crate::common::database_helpers::create_test_pool;
+use sinex_db::queries;
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
@@ -16,8 +17,8 @@ use tokio::sync::{mpsc, Mutex};
 use tempfile::TempDir;
 
 #[tokio::test]
-async fn test_database_disconnection_recovery() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_database_disconnection_recovery() -> Result<(), anyhow::Error> {
+    let pool = create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Test 1: System should handle temporary database unavailability
@@ -48,13 +49,13 @@ async fn test_database_connection_recovery(pool: &sqlx::PgPool) -> Result<bool> 
         })
     ).build();
     
-    let normal_insert = queries::insert_event(pool, &test_event).await;
+    let normal_insert = queries::insert_event(&pool, &test_event).await;
     assert!(normal_insert.is_ok(), "Normal database operation should work");
     
     // Phase 2: Simulate connection timeout scenario
     let timeout_result = tokio::time::timeout(
         Duration::from_millis(100),
-        queries::insert_event(pool, &test_event)
+        queries::insert_event(&pool, &test_event)
     ).await;
     
     // Either succeeds quickly or times out (both are acceptable recovery behaviors)
@@ -75,7 +76,7 @@ async fn test_database_connection_recovery(pool: &sqlx::PgPool) -> Result<bool> 
         })
     ).build();
     
-    let recovery_insert = queries::insert_event(pool, &recovery_event).await;
+    let recovery_insert = queries::insert_event(&pool, &recovery_event).await;
     let system_recovered = recovery_insert.is_ok();
     
     Ok(connection_resilient && system_recovered)
@@ -115,7 +116,7 @@ async fn test_event_buffering_during_outage(pool: &sqlx::PgPool) -> Result<bool>
     let mut successful_inserts = 0;
     
     for event in buffered.iter() {
-        if let Ok(_) = queries::insert_event(pool, event).await {
+        if let Ok(_) = queries::insert_event(&pool, event).await {
             successful_inserts += 1;
         }
     }
@@ -170,7 +171,7 @@ async fn test_connection_pool_recovery(pool: &sqlx::PgPool) -> Result<bool> {
 }
 
 #[tokio::test]
-async fn test_event_source_crash_recovery() -> Result<()> {
+async fn test_event_source_crash_recovery() -> Result<(), anyhow::Error> {
     // Test recovery from event source crashes and restarts
     
     let crash_recovery = test_source_crash_and_restart().await?;
@@ -344,8 +345,8 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
 }
 
 #[tokio::test]
-async fn test_worker_failure_and_retry() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_worker_failure_and_retry() -> Result<(), anyhow::Error> {
+    let pool = create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Test worker failure scenarios and retry logic
@@ -373,11 +374,11 @@ async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
         })
     ).build();
     
-    let event_id = queries::insert_event(pool, &test_event).await?.id;
-    queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
+    let event_id = queries::insert_event(&pool, &test_event).await?.id;
+    queries::add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
     
     // Phase 1: Worker claims and simulates failure
-    let claimed_items = queries::claim_work_queue_items(pool, "test-agent", "retry-worker", 1).await?;
+    let claimed_items = queries::claim_work_queue_items(&pool, "test-agent", "retry-worker", 1).await?;
     assert!(!claimed_items.is_empty(), "Worker should claim the item");
     
     let queue_id = claimed_items[0].queue_id;
@@ -387,20 +388,20 @@ async fn test_worker_retry_logic(pool: &sqlx::PgPool) -> Result<bool> {
     
     // Phase 2: Simulate retry - fail the item to increment retry count
     let next_retry = Utc::now() + ChronoDuration::minutes(5);
-    queries::fail_work_queue_item(pool, queue_id, "Simulated processing failure", next_retry).await?;
+    queries::fail_work_queue_item(&pool, queue_id, "Simulated processing failure", next_retry).await?;
     
     // Phase 3: Verify retry count increased by checking if we can claim it again
-    let retry_claim = queries::claim_work_queue_items(pool, "test-agent", "retry-check-worker", 1).await?;
+    let retry_claim = queries::claim_work_queue_items(&pool, "test-agent", "retry-check-worker", 1).await?;
     if !retry_claim.is_empty() {
         assert!(retry_claim[0].attempts > 0, "Attempt count should be incremented");
     }
     
     // Phase 4: Item should be available for retry
-    let retry_claim = queries::claim_work_queue_items(pool, "test-agent", "retry-worker-2", 1).await?;
+    let retry_claim = queries::claim_work_queue_items(&pool, "test-agent", "retry-worker-2", 1).await?;
     assert!(!retry_claim.is_empty(), "Item should be available for retry");
     
     // Clean up
-    queries::complete_work_queue_item(pool, retry_claim[0].queue_id).await?;
+    queries::complete_work_queue_item(&pool, retry_claim[0].queue_id).await?;
     
     Ok(true)
 }
@@ -417,12 +418,12 @@ async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
         })
     ).build();
     
-    let event_id = queries::insert_event(pool, &test_event).await?.id;
-    queries::add_to_work_queue(pool, event_id, "test-agent", 2).await?; // Only 2 max retries
+    let event_id = queries::insert_event(&pool, &test_event).await?.id;
+    queries::add_to_work_queue(&pool, event_id, "test-agent", 2).await?; // Only 2 max retries
     
     // Exhaust retries
     for retry in 0..3 {
-        let claimed = queries::claim_work_queue_items(pool, "test-agent", &format!("dlq-worker-{}", retry), 1).await?;
+        let claimed = queries::claim_work_queue_items(&pool, "test-agent", &format!("dlq-worker-{}", retry), 1).await?;
         if claimed.is_empty() {
             break; // No more items to claim
         }
@@ -431,11 +432,11 @@ async fn test_dead_letter_queue_handling(pool: &sqlx::PgPool) -> Result<bool> {
         
         // Fail the item
         let next_retry = Utc::now() + ChronoDuration::minutes(1);
-        queries::fail_work_queue_item(pool, queue_id, &format!("Retry {} failed", retry), next_retry).await?;
+        queries::fail_work_queue_item(&pool, queue_id, &format!("Retry {} failed", retry), next_retry).await?;
     }
     
     // Verify item is no longer in active queue
-    let final_claim = queries::claim_work_queue_items(pool, "test-agent", "final-worker", 1).await?;
+    let final_claim = queries::claim_work_queue_items(&pool, "test-agent", "final-worker", 1).await?;
     
     // Should either be empty (moved to DLQ) or still claimable but with high retry count
     if !final_claim.is_empty() {
@@ -459,8 +460,8 @@ async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
             })
         ).build();
         
-        let event_id = queries::insert_event(pool, &test_event).await?.id;
-        queries::add_to_work_queue(pool, event_id, "test-agent", 3).await?;
+        let event_id = queries::insert_event(&pool, &test_event).await?.id;
+        queries::add_to_work_queue(&pool, event_id, "test-agent", 3).await?;
         event_ids.push(event_id);
     }
     
@@ -526,7 +527,7 @@ async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
 }
 
 #[tokio::test]
-async fn test_resource_exhaustion_recovery() -> Result<()> {
+async fn test_resource_exhaustion_recovery() -> Result<(), anyhow::Error> {
     // Test recovery from various resource exhaustion scenarios
     
     let memory_recovery = test_memory_pressure_recovery().await?;

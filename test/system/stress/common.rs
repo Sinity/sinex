@@ -2,8 +2,11 @@ use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
-use sinex_db::{create_test_pool, run_migrations};
+use crate::common::database_helpers::{get_shared_test_pool};
 use serde_json::json;
+use crate::common::database_helpers;
+use anyhow::Result;
+use sinex_db::run_migrations;
 
 /// Comprehensive metrics for tracking concurrency stress patterns
 #[derive(Debug)]
@@ -161,7 +164,7 @@ impl StressTestUtils {
     }
 
     /// Clean up test data after a stress test
-    pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<()> {
+    pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name)
             .execute(pool).await?;

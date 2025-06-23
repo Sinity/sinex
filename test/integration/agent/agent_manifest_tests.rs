@@ -1,7 +1,9 @@
 use serde_json::json;
+use sinex_test_macros::sinex_test;
+use crate::common::test_context::TestContext;
 
-#[sqlx::test]
-async fn test_agent_manifest_create(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_manifest_create(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create a complete agent manifest
     let result = sqlx::query(
@@ -41,7 +43,7 @@ async fn test_agent_manifest_create(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         "required_capabilities": ["function_calling"]
     }))
     .bind("https://github.com/example/test-agent")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await;
     
     assert!(result.is_ok(), "Should be able to create agent manifest");
@@ -60,7 +62,7 @@ async fn test_agent_manifest_create(pool: sqlx::PgPool) -> Result<(), Box<dyn st
          WHERE agent_name = $1"
     )
     .bind("test_agent_crud")
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await
     .unwrap();
     
@@ -79,8 +81,8 @@ async fn test_agent_manifest_create(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_manifest_update(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent
     sqlx::query(
@@ -88,7 +90,7 @@ async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     )
     .bind("update_test_agent")
     .bind("1.0.0")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -98,7 +100,7 @@ async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn st
             "SELECT registered_at, updated_at FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
         )
         .bind("update_test_agent")
-        .fetch_one(&pool)
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -120,7 +122,7 @@ async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         "new.events": [{"type": "test_event"}]
     }))
     .bind("update_test_agent")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -130,7 +132,7 @@ async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn st
             "SELECT version, status, updated_at FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
         )
         .bind("update_test_agent")
-        .fetch_one(&pool)
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -142,8 +144,8 @@ async fn test_agent_manifest_update(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_manifest_delete(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent
     sqlx::query(
@@ -151,7 +153,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     )
     .bind("delete_test_agent")
     .bind("1.0.0")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -166,7 +168,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     .bind("test_event")
     .bind("test_host")
     .bind(json!({"test": "data"}))
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -176,14 +178,14 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     )
     .bind(&event_id.to_string())
     .bind("delete_test_agent")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
     // Delete agent - should cascade delete work queue items
     sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
         .bind("delete_test_agent")
-        .execute(&pool)
+        .execute(ctx.pool())
         .await
         .unwrap();
     
@@ -192,7 +194,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         "SELECT COUNT(*) FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
     )
     .bind("delete_test_agent")
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await
     .unwrap();
     
@@ -203,7 +205,7 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
         "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1"
     )
     .bind("delete_test_agent")
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await
     .unwrap();
     
@@ -212,8 +214,8 @@ async fn test_agent_manifest_delete(pool: sqlx::PgPool) -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_status_transitions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent in pending state
     sqlx::query(
@@ -223,7 +225,7 @@ async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn
     .bind("status_test_agent")
     .bind("1.0.0")
     .bind("pending_registration")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -243,7 +245,7 @@ async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn
         )
         .bind(status)
         .bind("status_test_agent")
-        .execute(&pool)
+        .execute(ctx.pool())
         .await;
         
         assert!(result.is_ok(), "Status transition to {} should be valid", status);
@@ -260,7 +262,7 @@ async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn
     .bind(&error_time)
     .bind("Connection timeout to data source")
     .bind("status_test_agent")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -270,7 +272,7 @@ async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn
              FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
         )
         .bind("status_test_agent")
-        .fetch_one(&pool)
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -281,8 +283,8 @@ async fn test_agent_status_transitions(pool: sqlx::PgPool) -> Result<(), Box<dyn
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create agent with complex capabilities
     let capabilities = json!({
@@ -318,7 +320,7 @@ async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<
     .bind("1.0.0")
     .bind(&capabilities)
     .bind(&llm_deps)
-    .execute(&pool)
+    .execute(ctx.pool())
     .await
     .unwrap();
     
@@ -327,7 +329,7 @@ async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<
         "SELECT agent_name FROM sinex_schemas.agent_manifests 
          WHERE required_capabilities ? 'filesystem_write'"
     )
-    .fetch_all(&pool)
+    .fetch_all(ctx.pool())
     .await
     .unwrap();
     
@@ -338,7 +340,7 @@ async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<
         "SELECT agent_name FROM sinex_schemas.agent_manifests 
          WHERE llm_dependencies @> '{\"models_used\": [\"openai/gpt-4-turbo\"]}'"
     )
-    .fetch_all(&pool)
+    .fetch_all(ctx.pool())
     .await
     .unwrap();
     
@@ -347,8 +349,8 @@ async fn test_agent_capabilities_and_dependencies(pool: sqlx::PgPool) -> Result<
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_agent_event_subscription_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Create multiple agents with different subscriptions
     let agents = vec![
@@ -378,7 +380,7 @@ async fn test_agent_event_subscription_queries(pool: sqlx::PgPool) -> Result<(),
         .bind(name)
         .bind("1.0.0")
         .bind(&subscriptions)
-        .execute(&pool)
+        .execute(ctx.pool())
         .await
         .unwrap();
     }
@@ -389,7 +391,7 @@ async fn test_agent_event_subscription_queries(pool: sqlx::PgPool) -> Result<(),
          WHERE subscribes_to_event_types IS NOT NULL 
          ORDER BY agent_name"
     )
-    .fetch_all(&pool)
+    .fetch_all(ctx.pool())
     .await
     .unwrap();
     
@@ -401,7 +403,7 @@ async fn test_agent_event_subscription_queries(pool: sqlx::PgPool) -> Result<(),
          WHERE subscribes_to_event_types ? 'raw.events_feed_all'
          ORDER BY agent_name"
     )
-    .fetch_all(&pool)
+    .fetch_all(ctx.pool())
     .await
     .unwrap();
     

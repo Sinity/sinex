@@ -2,6 +2,7 @@ use sinex_db::models::QueueStatus;
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use crate::common::timing_optimization::TestSynchronizer;
 
 /// Test orphaned worker detection and cleanup

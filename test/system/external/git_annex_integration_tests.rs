@@ -22,7 +22,7 @@ async fn setup_test_annex() -> Result<(GitAnnex, TempDir)> {
 }
 
 #[tokio::test]
-async fn test_file_add_and_retrieve() -> Result<()> {
+async fn test_file_add_and_retrieve() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file
@@ -47,7 +47,7 @@ async fn test_file_add_and_retrieve() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_large_file_handling() -> Result<()> {
+async fn test_large_file_handling() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create 1MB of data
@@ -70,7 +70,7 @@ async fn test_large_file_handling() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_annex_key_lookup() -> Result<()> {
+async fn test_annex_key_lookup() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file with known content
@@ -93,7 +93,7 @@ async fn test_annex_key_lookup() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_drop_content() -> Result<()> {
+async fn test_drop_content() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create and add a file
@@ -113,7 +113,7 @@ async fn test_drop_content() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_fsck() -> Result<()> {
+async fn test_fsck() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Add some files
@@ -133,7 +133,7 @@ async fn test_fsck() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_git_annex_configuration() -> Result<()> {
+async fn test_git_annex_configuration() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
     
@@ -163,7 +163,7 @@ async fn test_git_annex_configuration() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_concurrent_file_operations() -> Result<()> {
+async fn test_concurrent_file_operations() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     let annex = std::sync::Arc::new(annex);
     let mut handles = vec![];
@@ -206,7 +206,7 @@ async fn test_concurrent_file_operations() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_files_in_subdirectories() -> Result<()> {
+async fn test_files_in_subdirectories() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create subdirectory structure
@@ -232,7 +232,7 @@ async fn test_files_in_subdirectories() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_annex_deduplication() -> Result<()> {
+async fn test_annex_deduplication() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     let content = b"Duplicate content for dedup test";

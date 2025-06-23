@@ -1,11 +1,15 @@
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_ulid::Ulid;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
+use crate::common::database_helpers::{get_shared_test_pool, create_test_pool, };
+use sinex_db::queries::insert_raw_event;
+use sinex_db::queries;
 use std::collections::HashSet;
+use std::time::Duration;
 use chrono::{Utc, DateTime, Duration as ChronoDuration};
 use serde_json::json;
 use std::str::FromStr;
+use sinex_db::run_migrations;
 
 /// Generate a strategy for creating lists of ULIDs with controlled time gaps
 fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = Vec<Ulid>> {

@@ -3,9 +3,11 @@ use serde_json::json;
 use chrono::{Duration, Utc};
 use sinex_core::RawEventBuilder;
 use sinex_db::queries;
+use crate::common::database_helpers;
+use anyhow::Result;
 
 #[tokio::test]
-async fn test_raw_events_is_timescale_hypertable() -> Result<()> {
+async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     
     // Verify raw.events is a hypertable

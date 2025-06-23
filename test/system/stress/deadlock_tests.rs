@@ -1,10 +1,13 @@
 use crate::common::prelude::*;
+use crate::common::database_helpers;
+use sinex_db::run_migrations;
 
 // Stress test specific imports
 use super::common::*;
+use anyhow::Result;
 
 #[tokio::test]
-async fn test_coordinated_deadlock_scenario() -> Result<()> {
+async fn test_coordinated_deadlock_scenario() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

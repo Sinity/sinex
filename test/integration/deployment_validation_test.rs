@@ -442,7 +442,7 @@ async fn test_deployment_checklist_automation() -> anyhow::Result<()> {
 // Mock types for testing - these would normally come from the actual codebase
 mod mock_types {
     use std::sync::{Arc, Mutex};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[derive(Clone, Debug)]
     pub enum SystemdEvent {
@@ -734,3 +734,4 @@ mod mock_types {
 }
 
 use mock_types::*;
+use anyhow::Result;

@@ -4,9 +4,10 @@ use crate::common::prelude::*;
 use sinex_core::RawEventBuilder;
 use chrono::{Utc, Duration};
 use serde_json::json;
+use anyhow::Result;
 
 #[sqlx::test]
-async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> {
+async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(&pool, "test-agent").await?;
     
@@ -72,7 +73,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(pool: PgPool) -> Result<()> 
 }
 
 #[sqlx::test]
-async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<()> {
+async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(&pool, "test-agent").await?;
     
@@ -103,7 +104,7 @@ async fn test_ttl_policy_purges_old_failed_items(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<()> {
+async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(&pool, "test-agent").await?;
     
@@ -144,7 +145,7 @@ async fn test_ttl_policy_keeps_pending_items(pool: PgPool) -> Result<()> {
 }
 
 #[sqlx::test]
-async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Result<()> {
+async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(&pool, "test-agent").await?;
     
@@ -171,7 +172,7 @@ async fn test_ttl_policy_keeps_items_without_processed_at(pool: PgPool) -> Resul
 }
 
 #[sqlx::test]
-async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<()> {
+async fn test_ttl_policy_respects_90_day_threshold(pool: PgPool) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(&pool, "test-agent").await?;
     

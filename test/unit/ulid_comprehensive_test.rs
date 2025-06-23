@@ -394,7 +394,7 @@ mod correctness {
 /// Performance validation tests
 mod performance {
     use super::*;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
     use std::sync::atomic::{AtomicU64, Ordering};
     
     #[test]

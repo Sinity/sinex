@@ -4,10 +4,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use serde_json::json;
+use anyhow::Result;
 
 /// Test transaction rollback scenarios
 #[sqlx::test]
-async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::Error> {
     
     // Track transaction outcomes
     let successful_commits = Arc::new(AtomicU64::new(0));
@@ -157,7 +158,7 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), Box<dyn 
 
 /// Test schema migration failure scenarios
 #[sqlx::test]
-async fn test_migration_failure_handling(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Error> {
     // This test simulates what happens when migrations fail partway through
     
     #[derive(Debug)]
@@ -255,7 +256,7 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), Box<dyn std
 
 /// Test connection pool behavior under database restart
 #[sqlx::test]
-async fn test_database_restart_resilience(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Error> {
     
     let queries_before = Arc::new(AtomicU64::new(0));
     let queries_during_outage = Arc::new(AtomicU64::new(0));
@@ -270,7 +271,7 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), Box<dyn st
     ) -> Result<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(pool)
+            sqlx::query("SELECT 1").fetch_one(&pool)
         ).await {
             Ok(Ok(_)) => {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -327,7 +328,7 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), Box<dyn st
 
 /// Test handling of very large result sets
 #[sqlx::test]
-async fn test_large_result_set_handling(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Error> {
     
     // Insert test data
     let mut tx = pool.begin().await.unwrap();
@@ -365,7 +366,7 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), Box<dyn std:
     ).await;
     
     let fetch_all_time = fetch_start.elapsed();
-    let fetch_all_count = all_at_once_result.map(|r| r.map(|rows| rows.len())).unwrap_or(Ok(0)).unwrap_or(0);
+    let fetch_all_count = all_at_once_result.map(|r| r.map(|rows| rows.len())).unwrap_or(Ok(0)).unwrap_or(0i64);
     
     // Strategy 2: Stream results (memory efficient)
     let stream_start = std::time::Instant::now();

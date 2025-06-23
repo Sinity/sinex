@@ -4,7 +4,7 @@ use sinex_db::{queries, models::RawEvent};
 use sinex_ulid::Ulid;
 use chrono::Utc;
 use serde_json::json;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ==================== FILESYSTEM EVENT ATTACKS ====================
 

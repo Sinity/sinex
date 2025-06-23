@@ -2,6 +2,7 @@ use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_db::models::RawEvent;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use crate::common::resources;
 use crate::common::events;
@@ -31,6 +32,7 @@ async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::e
         let handle = tokio::spawn(async move {
             // Simulate watcher creation without actual notify dependency
             use std::fs::File;
+use std::time::Duration;
             
             // Try to open file handle as a proxy for file descriptor usage
             match File::open(&path) {
@@ -164,6 +166,7 @@ fn test_string_concatenation_memory_bomb() {
 async fn test_collector_event_queue_overflow() {
     use tokio::sync::mpsc;
     use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
     
     // Create collector with small channel
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);  // Small buffer

@@ -6,7 +6,8 @@
 
 use anyhow::Result;
 use sinex_core::RawEventBuilder;
-use sinex_db::{create_test_pool, queries};
+use crate::common::database_helpers::create_test_pool;
+use sinex_db::queries;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -99,8 +100,8 @@ impl SystemHealthMonitor {
 }
 
 #[tokio::test]
-async fn test_comprehensive_health_monitoring_system() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_comprehensive_health_monitoring_system() -> Result<(), anyhow::Error> {
+    let pool = create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     // Initialize health monitoring system
@@ -143,7 +144,7 @@ async fn test_comprehensive_health_monitoring_system() -> Result<()> {
     Ok(())
 }
 
-async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<()> {
+async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
     // Test database health check
     let db_health = check_database_health(pool).await?;
     monitor.update_component_health("database", db_health, None).await;
@@ -305,7 +306,7 @@ async fn check_worker_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
     match sqlx::query("SELECT COUNT(*) FROM sinex_schemas.work_queue").fetch_one(pool).await {
         Ok(_) => {
             // Test worker operations by checking if we can claim work
-            match queries::claim_work_queue_items(pool, "health-check-agent", "health-worker", 0).await {
+            match queries::claim_work_queue_items(&pool, "health-check-agent", "health-worker", 0).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
@@ -343,7 +344,7 @@ async fn check_git_annex_health() -> Result<HealthStatus> {
     }
 }
 
-async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<()> {
+async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
     // Test 1: Simulate component failure
     monitor.update_component_health("filesystem_source", HealthStatus::Unhealthy, 
         Some("Simulated filesystem monitoring failure".to_string())).await;
@@ -380,7 +381,7 @@ async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> R
     Ok(())
 }
 
-async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<()> {
+async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
     // Test how system health is calculated from component health
     
     // Scenario 1: All components healthy
@@ -420,7 +421,7 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
 }
 
 #[tokio::test]
-async fn test_health_monitoring_performance_impact() -> Result<()> {
+async fn test_health_monitoring_performance_impact() -> Result<(), anyhow::Error> {
     // Test that health monitoring doesn't significantly impact system performance
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(10), 3);
@@ -486,8 +487,8 @@ impl Clone for SystemHealthMonitor {
 }
 
 #[tokio::test]
-async fn test_health_monitoring_with_real_workload() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
+async fn test_health_monitoring_with_real_workload() -> Result<(), anyhow::Error> {
+    let pool = create_test_pool().await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);

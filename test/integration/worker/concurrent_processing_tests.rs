@@ -12,7 +12,7 @@ use crate::common::worker_test_utils::{self, insert_test_items};
 use crate::common::timing_optimization::replacements::{wait_for_work_queue_count};
 
 #[tokio::test]
-async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> Result<()> {
+async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
         let _items = worker_test_utils::setup_test_worker(&pool, "test_worker", 10).await?;
         
@@ -100,7 +100,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing() -> R
 }
 
 #[tokio::test]
-async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
+async fn test_skip_locked_allows_parallel_processing() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
         let _ = insert_test_items(&pool, 20).await?;
         
@@ -170,7 +170,7 @@ async fn test_skip_locked_allows_parallel_processing() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_concurrent_claiming_prevents_duplicates() -> Result<()> {
+async fn test_concurrent_claiming_prevents_duplicates() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
         let _items = insert_test_items(&pool, 1).await?;
         
@@ -210,7 +210,7 @@ async fn test_concurrent_claiming_prevents_duplicates() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_priority_ordering_with_concurrent_workers() -> Result<()> {
+async fn test_priority_ordering_with_concurrent_workers() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
         // Insert items with different timestamps
         for i in 0..10 {

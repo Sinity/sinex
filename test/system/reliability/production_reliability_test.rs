@@ -1,10 +1,12 @@
 use crate::common::prelude::*;
-use sinex_db::{queries::insert_raw_event, create_test_pool};
+use sinex_db::queries::insert_raw_event;
 use tokio::time::timeout;
+use anyhow::Result;
+use sinex_db::run_migrations;
 
 /// Test graceful degradation under database connectivity issues
 #[tokio::test]
-async fn test_graceful_degradation_database_failure() -> Result<()> {
+async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -183,7 +185,7 @@ async fn test_graceful_degradation_database_failure() -> Result<()> {
 
 /// Test resource limits and monitoring under load
 #[tokio::test]
-async fn test_resource_limits_monitoring() -> Result<()> {
+async fn test_resource_limits_monitoring() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -505,7 +507,7 @@ async fn test_resource_limits_monitoring() -> Result<()> {
 
 /// Test system behavior under resource exhaustion scenarios
 #[tokio::test]
-async fn test_resource_exhaustion_scenarios() -> Result<()> {
+async fn test_resource_exhaustion_scenarios() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
