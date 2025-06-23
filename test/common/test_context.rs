@@ -7,18 +7,15 @@
 //! - Common test utilities in one ergonomic interface
 
 use crate::common::prelude::*;
+use crate::common::database::{TestPool, CleanupStrategy};
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_event_count, wait_for_filtered_event_count, 
     wait_for_work_queue_count, wait_for_condition_or_timeout
 };
-use anyhow::Result;
-use sinex_db::queries;
-use serde_json::Value;
 use sqlx::{PgPool, Transaction, Postgres};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use std::sync::Arc;
 
 /// Configuration for test context behavior
 #[derive(Debug, Clone)]
@@ -46,10 +43,10 @@ impl Default for TestConfig {
 
 /// Database connection type for TestContext
 pub enum DbConnection {
-    /// Shared pool for most tests
+    /// Test pool with cleanup strategy
+    TestPool(TestPool),
+    /// Direct pool access
     Pool(PgPool),
-    /// Transaction for isolated tests
-    Transaction(PgPool),
 }
 
 /// Unified test context providing all common test functionality
@@ -72,10 +69,10 @@ impl TestContext {
 
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> Result<Self> {
-        let pool = database_helpers::get_shared_test_pool().await?;
+        let test_pool = TestPool::new().await?;
         
         Ok(Self {
-            db: DbConnection::Pool(pool),
+            db: DbConnection::TestPool(test_pool),
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
@@ -94,12 +91,11 @@ impl TestContext {
     
     /// Create a test context with a transaction (used by #[sinex_test])
     pub async fn with_transaction(_tx: &mut Transaction<'_, Postgres>, config: TestConfig) -> Result<Self> {
-        // For now, we'll use a shared pool approach even for "transaction" tests
-        // This is a temporary solution until we implement proper transaction support
-        let pool = database_helpers::get_shared_test_pool().await?;
+        // Use TestPool with transaction strategy
+        let test_pool = TestPool::with_strategy(CleanupStrategy::Transaction).await?;
         
         Ok(Self {
-            db: DbConnection::Transaction(pool),
+            db: DbConnection::TestPool(test_pool),
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
@@ -109,8 +105,8 @@ impl TestContext {
     /// Get the database pool
     pub fn pool(&self) -> &PgPool {
         match &self.db {
+            DbConnection::TestPool(test_pool) => test_pool.pool(),
             DbConnection::Pool(pool) => pool,
-            DbConnection::Transaction(pool) => pool,
         }
     }
 
@@ -234,7 +230,7 @@ impl TestContext {
     }
 
     /// Wait for a condition to become true
-    pub async fn wait_for_condition<F, Fut>(&self, mut condition: F) -> Result<()>
+    pub async fn wait_for_condition<F, Fut>(&self, condition: F) -> Result<()>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
@@ -309,7 +305,7 @@ impl TestContext {
     /// Assert that no events exist yet
     pub async fn assert_no_events(&self) -> Result<(), Box<dyn std::error::Error>> {
         let count = self.event_count().await?;
-        assert_eq!(count, 0, "Expected no events but found {}", count);
+        pretty_assertions::assert_eq!(count, 0, "Expected no events but found {}", count);
         Ok(())
     }
 

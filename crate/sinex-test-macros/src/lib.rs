@@ -25,13 +25,13 @@ pub fn sinex_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
             // Import what we need
             use crate::common::test_context::{TestContext, TestConfig};
-            use crate::common::database_helpers;
+            use crate::common::database::{TestPool, CleanupStrategy};
             
-            // Get pool and start transaction
-            let pool = database_helpers::get_shared_test_pool().await?;
+            // Get shared pool and start transaction for isolation
+            let pool = crate::common::database_helpers::get_shared_test_pool().await?;
             let mut tx = pool.begin().await?;
             
-            // Create test context
+            // Create test context that uses the transaction
             let ctx = TestContext::with_transaction(&mut tx, TestConfig {
                 test_name: stringify!(#fn_name).to_string(),
                 ..Default::default()
@@ -42,7 +42,7 @@ pub fn sinex_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 #fn_body
             }.await;
             
-            // Always rollback
+            // Always rollback for perfect isolation
             tx.rollback().await?;
             
             // Return the test result
@@ -71,11 +71,12 @@ pub fn sinex_test_no_tx(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[tokio::test]
         #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
             use crate::common::test_context::{TestContext, TestConfig};
-            use crate::common::database_helpers;
+            use crate::common::database::{TestPool, CleanupStrategy};
             
-            let pool = database_helpers::create_test_pool().await?;
+            // Create test pool with truncate cleanup (for tests that need commits)
+            let test_pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
             
-            let ctx = TestContext::with_pool(pool.clone(), TestConfig {
+            let ctx = TestContext::with_pool(test_pool.pool().clone(), TestConfig {
                 test_name: stringify!(#fn_name).to_string(),
                 ..Default::default()
             }).await?;
@@ -84,7 +85,7 @@ pub fn sinex_test_no_tx(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 #fn_body
             }.await;
             
-            pool.close().await;
+            // TestPool will handle cleanup on drop
             
             test_result
         }

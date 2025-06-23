@@ -9,6 +9,8 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
+// NEW: Unified database access
+pub mod database;
 
 // Unified test context for all tests
 pub mod test_context;
@@ -17,13 +19,8 @@ pub mod test_context;
 pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate
-pub use sinex_test_macros::{sinex_test, sinex_test_no_tx};
-
 use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
-use crate::common::database_helpers::{get_shared_test_pool};
-use sinex_db::queries;
-use anyhow::Result;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -33,8 +30,8 @@ pub fn test_database_url() -> String {
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<PgPool> {
-    let db_url = test_database_url();
-    sinex_db::create_test_pool(&db_url).await
+    let test_pool = database::TestPool::with_strategy(database::CleanupStrategy::None).await?;
+    Ok(test_pool.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
@@ -288,10 +285,10 @@ pub mod assertions {
 
     /// Assert that two events are equivalent (ignoring IDs and timestamps)
     pub fn assert_events_equivalent(actual: &RawEvent, expected: &RawEvent) {
-        assert_eq!(actual.source, expected.source);
-        assert_eq!(actual.event_type, expected.event_type);
-        assert_eq!(actual.payload, expected.payload);
-        assert_eq!(actual.host, expected.host);
+        pretty_assertions::assert_eq!(actual.source, expected.source);
+        pretty_assertions::assert_eq!(actual.event_type, expected.event_type);
+        pretty_assertions::assert_eq!(actual.payload, expected.payload);
+        pretty_assertions::assert_eq!(actual.host, expected.host);
         // Note: Don't compare IDs or timestamps as they're generated
     }
 
@@ -464,7 +461,6 @@ pub mod generators {
 
     /// Generate test agent manifest
     pub fn test_agent_manifest(name: &str) -> AgentManifest {
-        use sinex_db::models::AgentManifest;
         use chrono::Utc;
         
         AgentManifest {
@@ -628,10 +624,9 @@ pub async fn create_agent_with_subscriptions(
     Ok(())
 }
 
-
 /// Simple database test utilities
 #[allow(dead_code)]
-pub mod database {
+pub mod db_utils {
     use super::*;
     
     /// Insert multiple test events quickly
@@ -649,7 +644,7 @@ pub mod database {
 /// Essential assertion helpers
 #[allow(dead_code)]
 pub mod assertions_extra {
-    use super::*;
+    
     use sinex_db::models::RawEvent;
 
     /// Assert events are in chronological order
@@ -802,9 +797,7 @@ pub mod worker_test_utils;
 pub mod event_sources {
     use super::*;
     use sinex_core::{EventSource, EventSourceContext, RawEvent};
-    use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
-    use serde_json::Value;
     
     /// Create EventSourceContext with test configuration
     pub fn test_context(config: Value) -> EventSourceContext {
@@ -876,7 +869,6 @@ pub mod event_sources {
 #[allow(dead_code)]
 pub mod parallelization {
     use super::*;
-    use std::sync::Arc;
     use tokio::task::JoinSet;
 
     /// Parallel test executor for independent test operations

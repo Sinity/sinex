@@ -4,18 +4,15 @@
 //! reducing boilerplate and ensuring consistency.
 
 use crate::common::prelude::*;
+use serde_json::json;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
-use std::time::Duration;
-use anyhow::Result;
-use sinex_db::run_migrations;
-use sinex_db::queries;
 
-/// Shared test database pool to reduce resource waste
-/// 
-/// Creates a single database pool with reasonable connection limits that all tests share.
-/// Tests get transaction isolation automatically to prevent interference.
 lazy_static! {
+    /// Shared test database pool to reduce resource waste
+    /// 
+    /// Creates a single database pool with reasonable connection limits that all tests share.
+    /// Tests get transaction isolation automatically to prevent interference.
     static ref SHARED_TEST_POOL: Mutex<Option<PgPool>> = Mutex::new(None);
 }
 
@@ -35,10 +32,17 @@ pub async fn get_shared_test_pool() -> Result<PgPool> {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-        // Create pool with sensible test limits, not the massive 2000 connection limit
+        // Dynamic pool sizing based on CPU cores
+        // Formula: 2 * num_cpus (allowing 2 connections per concurrent test)
+        // Capped at 80 to leave room for other connections to the database
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8) as u32;
+        let max_connections = (num_cpus * 2).min(80);
+        
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(50)  // Reasonable limit for tests
-            .min_connections(10)
+            .max_connections(max_connections)
+            .min_connections(num_cpus.min(10))
             .acquire_timeout(Duration::from_secs(30))
             .idle_timeout(Duration::from_secs(300))
             .test_before_acquire(false)
@@ -74,6 +78,7 @@ pub async fn test_transaction() -> Result<sqlx::Transaction<'static, sqlx::Postg
     let tx = pool.begin().await?;
     Ok(tx)
 }
+
 
 /// Create multiple test work queue items for a given agent
 pub async fn create_test_work_items(
@@ -121,49 +126,7 @@ pub async fn register_test_agent(pool: &PgPool, suffix: &str) -> Result<String> 
     Ok(agent_name)
 }
 
-/// Get a clean test database pool with automatic cleanup
-/// 
-/// DEPRECATED: Use `test_transaction()` for better isolation or `get_shared_test_pool()` 
-/// for tests that need to share a pool across multiple operations.
-pub async fn get_clean_test_pool() -> Result<PgPool> {
-    let pool = get_shared_test_pool().await?;
-    
-    // Clean up any leftover test data (less needed with transaction isolation)
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
-        .execute(&pool).await?;
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
-        .execute(&pool).await?;
-        
-    Ok(pool)
-}
 
-/// Get an integration test pool with migrations applied
-pub async fn get_integration_test_pool() -> Result<PgPool> {
-    let pool = get_clean_test_pool().await?;
-    run_migrations(&pool).await?;
-    Ok(pool)
-}
-
-/// Create a fresh database pool (not shared) for tests that need isolation
-///
-/// Use this for tests that need to test transaction behavior or
-/// need multiple independent connections.
-pub async fn create_test_pool() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-        
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(10)  // Small pool for isolated tests
-        .min_connections(2)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url)
-        .await?;
-        
-    // Apply migrations
-    run_migrations(&pool).await?;
-    
-    Ok(pool)
-}
 
 /// Insert a batch of test events efficiently
 pub async fn insert_test_event_batch(
@@ -206,7 +169,7 @@ macro_rules! test_with_pool {
     ($test_name:ident, $pool_name:ident, $test_body:block) => {
         #[tokio::test]
         async fn $test_name() -> anyhow::Result<()> {
-            let $pool_name = crate::common::database_helpers::get_clean_test_pool().await?;
+            let $pool_name = crate::common::database::TestPool::new().await?;
             $test_body
         }
     };
@@ -218,7 +181,7 @@ macro_rules! integration_test {
     ($test_name:ident, $pool_name:ident, $test_body:block) => {
         #[tokio::test]
         async fn $test_name() -> anyhow::Result<()> {
-            let $pool_name = crate::common::database_helpers::get_integration_test_pool().await?;
+            let $pool_name = crate::common::database::TestPool::new().await?;
             $test_body
         }
     };
@@ -230,7 +193,7 @@ macro_rules! test_with_agent {
     ($test_name:ident, $pool_name:ident, $agent_name:ident, $test_body:block) => {
         #[tokio::test]
         async fn $test_name() -> anyhow::Result<()> {
-            let $pool_name = crate::common::database_helpers::get_clean_test_pool().await?;
+            let $pool_name = crate::common::database::TestPool::new().await?;
             let $agent_name = crate::common::database_helpers::register_test_agent(
                 &$pool_name, 
                 &format!("{}_{}", stringify!($test_name), line!())
@@ -246,7 +209,7 @@ macro_rules! workload_test {
     ($test_name:ident, $pool_name:ident, $agent_name:ident, $event_count:expr, $test_body:block) => {
         #[tokio::test]
         async fn $test_name() -> anyhow::Result<()> {
-            let $pool_name = crate::common::database_helpers::get_clean_test_pool().await?;
+            let $pool_name = crate::common::database::TestPool::new().await?;
             let $agent_name = crate::common::database_helpers::register_test_agent(
                 &$pool_name, 
                 &format!("{}_{}", stringify!($test_name), line!())

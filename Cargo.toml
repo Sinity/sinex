@@ -68,6 +68,10 @@ rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-events = { path = "crate/sinex-events" }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
 criterion.workspace = true
+pretty_assertions = "1.4"
+serial_test = "3.0"
+test-case = "3.3"
+rstest = "0.18"
 
 [workspace.package]
 version = "0.4.2"

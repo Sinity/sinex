@@ -1,14 +1,8 @@
 //! Worker test utilities
 
-use anyhow::Result;
-use sinex_db::queries;
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
+use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use crate::common::timing_optimization::wait_helpers::{wait_for_work_queue_status_count, wait_for_work_queue_count};
-use crate::common::events;
-use serde_json::json;
-
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(&pool, "test_worker", item_count).await
@@ -201,7 +195,6 @@ pub async fn simulate_worker_processing(
 /// Worker lifecycle test helpers
 pub mod lifecycle {
     use super::*;
-    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     /// Mock worker for testing
@@ -281,7 +274,7 @@ pub mod assertions {
         let item = get_work_item(&pool, queue_id).await?
             .ok_or_else(|| anyhow::anyhow!("Work item not found: {}", queue_id))?;
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             item.status, expected_status,
             "Expected work item {} to have status '{}', but found '{}'",
             queue_id, expected_status, item.status
@@ -297,7 +290,7 @@ pub mod assertions {
     ) -> Result<(), anyhow::Error> {
         let actual_count = count_work_items_by_status(&pool, "succeeded").await?;
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             actual_count, expected_count,
             "Expected {} items to be processed, but found {}",
             expected_count, actual_count
@@ -312,7 +305,7 @@ pub mod assertions {
             .await
             .unwrap_or(1); // If timeout, assume there are items
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             count, 0,
             "Expected work queue to be empty, but found {} items",
             count

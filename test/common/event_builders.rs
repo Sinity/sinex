@@ -7,7 +7,7 @@
 //! domain-specific convenience methods.
 
 use crate::common::prelude::*;
-use serde_json::Value;
+use serde_json::json;
 use chrono::{DateTime, Utc};
 
 /// Main entry point for creating test events
@@ -785,45 +785,260 @@ impl AgentEventBuilder {
     }
 }
 
-// ===== Convenience Functions =====
+// ===== Quick Event Creation =====
+
+/// Quick event creation functions for common test scenarios
+pub mod quick {
+    use super::*;
+    
+    /// Quick filesystem created event
+    pub fn fs_created(path: &str) -> RawEvent {
+        EventBuilder::filesystem()
+            .path(path)
+            .created()
+            .build()
+    }
+    
+    /// Quick filesystem modified event
+    pub fn fs_modified(path: &str) -> RawEvent {
+        EventBuilder::filesystem()
+            .path(path)
+            .modified()
+            .build()
+    }
+    
+    /// Quick filesystem deleted event
+    pub fn fs_deleted(path: &str) -> RawEvent {
+        EventBuilder::filesystem()
+            .path(path)
+            .deleted()
+            .build()
+    }
+    
+    /// Quick terminal command event
+    pub fn terminal_cmd(cmd: &str) -> RawEvent {
+        EventBuilder::terminal()
+            .command(cmd)
+            .success()
+            .build()
+    }
+    
+    /// Quick terminal command with exit code
+    pub fn terminal_cmd_failed(cmd: &str, exit_code: i32) -> RawEvent {
+        EventBuilder::terminal()
+            .command(cmd)
+            .failed(exit_code)
+            .build()
+    }
+    
+    /// Quick clipboard text event
+    pub fn clipboard_text(content: &str) -> RawEvent {
+        EventBuilder::clipboard()
+            .text(content)
+            .build()
+    }
+    
+    /// Quick window created event
+    pub fn window_created(title: &str) -> RawEvent {
+        EventBuilder::hyprland()
+            .window_created()
+            .window_title(title)
+            .build()
+    }
+    
+    /// Quick window focused event
+    pub fn window_focused(title: &str) -> RawEvent {
+        EventBuilder::hyprland()
+            .window_focused()
+            .window_title(title)
+            .build()
+    }
+    
+    /// Quick agent heartbeat event
+    pub fn agent_heartbeat(name: &str) -> RawEvent {
+        EventBuilder::agent()
+            .name(name)
+            .heartbeat()
+            .build()
+    }
+    
+    /// Quick agent error event
+    pub fn agent_error(name: &str, error: &str) -> RawEvent {
+        EventBuilder::agent()
+            .name(name)
+            .error(error)
+            .build()
+    }
+}
+
+// ===== Batch Event Creation =====
+
+/// Batch event creation for performance and stress testing
+pub mod batch {
+    use super::*;
+    
+    /// Create multiple filesystem events for different paths
+    pub fn fs_events(paths: &[&str]) -> Vec<RawEvent> {
+        paths.iter()
+            .map(|path| quick::fs_created(path))
+            .collect()
+    }
+    
+    /// Create a sequence of terminal commands
+    pub fn terminal_sequence(commands: &[&str]) -> Vec<RawEvent> {
+        commands.iter()
+            .map(|cmd| quick::terminal_cmd(cmd))
+            .collect()
+    }
+    
+    /// Create mixed event types for testing
+    pub fn mixed_events(count: usize) -> Vec<RawEvent> {
+        (0..count)
+            .map(|i| match i % 4 {
+                0 => quick::fs_created(&format!("/test/file_{}.txt", i)),
+                1 => quick::terminal_cmd(&format!("command_{}", i)),
+                2 => quick::clipboard_text(&format!("clipboard_{}", i)),
+                _ => quick::agent_heartbeat(&format!("agent_{}", i)),
+            })
+            .collect()
+    }
+    
+    /// Create events with timestamps distributed over time
+    pub fn time_distributed_events(
+        count: usize,
+        start_time: DateTime<Utc>,
+        interval: Duration,
+    ) -> Vec<RawEvent> {
+        (0..count)
+            .map(|i| {
+                let ts = start_time + chrono::Duration::from_std(interval * i as u32).unwrap();
+                EventBuilder::generic("test", "timed.event")
+                    .payload(json!({"sequence": i}))
+                    .timestamp(ts)
+                    .build()
+            })
+            .collect()
+    }
+    
+    /// Create burst pattern events
+    pub fn burst_events(bursts: usize, events_per_burst: usize) -> Vec<RawEvent> {
+        let mut events = Vec::new();
+        let base_time = Utc::now();
+        
+        for burst in 0..bursts {
+            let burst_time = base_time + chrono::Duration::minutes(burst as i64);
+            for i in 0..events_per_burst {
+                let event = EventBuilder::generic("burst", "test.event")
+                    .payload(json!({
+                        "burst": burst,
+                        "index": i,
+                    }))
+                    .timestamp(burst_time + chrono::Duration::milliseconds(i as i64))
+                    .build();
+                events.push(event);
+            }
+        }
+        
+        events
+    }
+}
+
+// ===== Invalid Event Creation =====
+
+/// Create invalid events for error testing
+pub mod invalid {
+    use super::*;
+    
+    /// Event missing source
+    pub fn missing_source() -> RawEvent {
+        RawEvent {
+            id: Ulid::new(),
+            source: "".to_string(), // Invalid empty source
+            event_type: "test.event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!({}),
+        }
+    }
+    
+    /// Event missing event_type
+    pub fn missing_event_type() -> RawEvent {
+        RawEvent {
+            id: Ulid::new(),
+            source: "test".to_string(),
+            event_type: "".to_string(), // Invalid empty event_type
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "test".to_string(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            payload: json!({}),
+        }
+    }
+    
+    /// Event with huge payload
+    pub fn huge_payload(mb: usize) -> RawEvent {
+        let data = "x".repeat(mb * 1024 * 1024);
+        EventBuilder::generic("test", "huge.payload")
+            .payload(json!({"data": data}))
+            .build()
+    }
+    
+    /// Event with deeply nested JSON
+    pub fn deeply_nested(depth: usize) -> RawEvent {
+        fn create_nested(d: usize) -> Value {
+            if d == 0 {
+                json!("bottom")
+            } else {
+                json!({"nested": create_nested(d - 1)})
+            }
+        }
+        
+        EventBuilder::generic("test", "nested.json")
+            .payload(create_nested(depth))
+            .build()
+    }
+    
+    /// Event with malformed JSON characters
+    pub fn malformed_json() -> RawEvent {
+        EventBuilder::generic("test", "malformed")
+            .payload(json!({
+                "null_byte": "\u{0000}",
+                "control_chars": "\u{0001}\u{0002}\u{0003}",
+                "invalid_utf8": "�����",
+            }))
+            .build()
+    }
+}
+
+// ===== Convenience Functions (Legacy) =====
 
 /// Quick filesystem event
 pub fn fs_event(path: &str) -> RawEvent {
-    EventBuilder::filesystem()
-        .path(path)
-        .created()
-        .build()
+    quick::fs_created(path)
 }
 
 /// Quick terminal event
 pub fn term_event(cmd: &str) -> RawEvent {
-    EventBuilder::terminal()
-        .command(cmd)
-        .success()
-        .build()
+    quick::terminal_cmd(cmd)
 }
 
 /// Quick clipboard event
 pub fn clip_event(content: &str) -> RawEvent {
-    EventBuilder::clipboard()
-        .text(content)
-        .build()
+    quick::clipboard_text(content)
 }
 
 /// Quick window event
 pub fn window_event(title: &str) -> RawEvent {
-    EventBuilder::hyprland()
-        .window_created()
-        .window_title(title)
-        .build()
+    quick::window_created(title)
 }
 
 /// Quick agent heartbeat
 pub fn agent_heartbeat(name: &str) -> RawEvent {
-    EventBuilder::agent()
-        .name(name)
-        .heartbeat()
-        .build()
+    quick::agent_heartbeat(name)
 }
 
 #[cfg(test)]
@@ -839,10 +1054,10 @@ mod tests {
             .permissions(0o644)
             .build();
             
-        assert_eq!(event.source, sources::FILESYSTEM);
-        assert_eq!(event.event_type, "file.created");
-        assert_eq!(event.payload["path"], "/home/user/test.txt");
-        assert_eq!(event.payload["size"], 1024);
+        pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+        pretty_assertions::assert_eq!(event.event_type, "file.created");
+        pretty_assertions::assert_eq!(event.payload["path"], "/home/user/test.txt");
+        pretty_assertions::assert_eq!(event.payload["size"], 1024);
     }
     
     #[test]
@@ -854,11 +1069,11 @@ mod tests {
             .working_dir("/home/user")
             .build();
             
-        assert_eq!(event.source, sources::TERMINAL_KITTY);
-        assert_eq!(event.event_type, "command.executed");
-        assert_eq!(event.payload["command"], "ls -la");
-        assert_eq!(event.payload["exit_code"], 0);
-        assert_eq!(event.payload["duration_ms"], 150);
+        pretty_assertions::assert_eq!(event.source, sources::TERMINAL_KITTY);
+        pretty_assertions::assert_eq!(event.event_type, "command.executed");
+        pretty_assertions::assert_eq!(event.payload["command"], "ls -la");
+        pretty_assertions::assert_eq!(event.payload["exit_code"], 0);
+        pretty_assertions::assert_eq!(event.payload["duration_ms"], 150);
     }
     
     #[test]
@@ -867,7 +1082,7 @@ mod tests {
             .payload(json!({"data": "test"}))
             .build();
             
-        assert_eq!(event.source, "test_source");
-        assert_eq!(event.event_type, "test.event");
+        pretty_assertions::assert_eq!(event.source, "test_source");
+        pretty_assertions::assert_eq!(event.event_type, "test.event");
     }
 }

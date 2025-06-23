@@ -1,9 +1,7 @@
 //! Schema test utilities for JSON schema validation
 
-use anyhow::Result;
+use crate::common::prelude::*;
 use serde_json::{json, Value};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
 
 /// Register test schema with event source and type
 pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
@@ -506,7 +504,6 @@ pub mod performance {
         operations_per_task: usize
     ) -> Result<Duration> {
         use tokio::task;
-        use std::sync::Arc;
 
         let compiled_schema = jsonschema::JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;

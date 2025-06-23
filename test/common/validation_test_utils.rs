@@ -2,10 +2,7 @@
 
 use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_core::RawEventBuilder;
 use sinex_db::models::RawEvent;
-use std::time::Duration;
-use anyhow::Result;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {
@@ -206,7 +203,6 @@ pub mod performance {
         operations_per_task: usize
     ) -> Result<Duration> {
         use tokio::task;
-        use std::sync::Arc;
 
         let validator = Arc::new(validator);
         let event = Arc::new(event);

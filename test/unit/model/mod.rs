@@ -1,7 +1,6 @@
 // Model tests for Sinex data structures
 
-use sinex_ulid::Ulid;
-use serde_json::json;
+use crate::common::prelude::*;
 
 #[test]
 fn test_raw_event_validation() {
@@ -32,12 +31,12 @@ fn test_queue_status_transitions() {
         QueueStatus::FailedRetryable,
     ];
     
-    assert_eq!(statuses.len(), 5, "Should have all queue status variants");
+    pretty_assertions::assert_eq!(statuses.len(), 5, "Should have all queue status variants");
     
     // Verify status transitions make logical sense
     // (This is more documentation than validation)
-    assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
-    assert_ne!(QueueStatus::Processing, QueueStatus::Succeeded);
+    pretty_assertions::assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
+    pretty_assertions::assert_ne!(QueueStatus::Processing, QueueStatus::Succeeded);
 }
 
 #[test]
@@ -74,5 +73,5 @@ fn test_json_payload_constraints() {
     let test_payload = json!({"test": "serialization", "number": 42});
     let serialized = serde_json::to_string(&test_payload).expect("Should serialize");
     let deserialized: serde_json::Value = serde_json::from_str(&serialized).expect("Should deserialize");
-    assert_eq!(test_payload, deserialized, "Serialization round-trip should preserve data");
+    pretty_assertions::assert_eq!(test_payload, deserialized, "Serialization round-trip should preserve data");
 }

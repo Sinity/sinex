@@ -1,4 +1,3 @@
-#[macro_use]
 mod common;
 
 // Test categories organized by scope and resource requirements
