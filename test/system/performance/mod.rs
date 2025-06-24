@@ -13,11 +13,11 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
     
     // Spawn multiple tasks to insert events concurrently
     for i in 0..5 {
-        let ctx.pool() = ctx.pool().clone();
+        let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
                 queries::insert_raw_event(
-                    &ctx.pool(),
+                    &pool,
                     &format!("perf_test_{}", i),
                     &format!("test_event_{}", j),
                     "test-host",
@@ -60,7 +60,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 }
 
 #[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
+async fn test_concurrent_processing_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
@@ -80,7 +80,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
     
     // Spawn workers to process events concurrently
     for worker_id in 0..4 {
-        let ctx.pool() = ctx.pool().clone();
+        let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             let mut processed = 0;
             
@@ -103,7 +103,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
                     FOR UPDATE SKIP LOCKED
                     "#
                 )
-                .fetch_optional(&ctx.pool())
+                .fetch_optional(&pool)
                 .await?;
                 
                 if let Some((event_id,)) = maybe_event {
@@ -112,7 +112,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
                     
                     // Mark as processed
                     queries::insert_raw_event(
-                        &ctx.pool(),
+                        &pool,
                         "concurrent_test",
                         "processed",
                         "test-host",
@@ -150,13 +150,10 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
     assert!(elapsed < Duration::from_secs(3), "Processing took too long: {:?}", elapsed);
     
     Ok(())
-apsed);
-    
-    Ok(())
 }
 
 #[sinex_test]
-async fn test_query_la
+async fn test_query_latency(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(
@@ -184,15 +181,11 @@ async fn test_query_la
     
     for (name, query) in queries_to_test {
         let start = Instant::now();
-        let _result = sqlx::query(query).fetch_all(&ctx.pool()).await?;
+        let _result = sqlx::query(query).fetch_all(ctx.pool()).await?;
         let elapsed = start.elapsed();
         
         println!("{}: {:?}", name, elapsed);
         assert!(elapsed < Duration::from_millis(100), "{} query too slow: {:?}", name, elapsed);
-    }
-    
-    Ok(())
-oo slow: {:?}", name, elapsed);
     }
     
     Ok(())

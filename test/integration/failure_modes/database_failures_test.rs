@@ -45,7 +45,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
         .bind("test_source")
         .bind("test_type")
         .bind("v1.0")
-        .fetch_one(&ctx.pool())
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -88,7 +88,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
     
     // Verify entire batch was rolled back
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE event_source = 'batch_source'")
-        .fetch_one(&ctx.pool())
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -153,7 +153,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
 
 /// Test schema migration failure scenarios
 #[sinex_test]
-async fn test_migration_failure_handling(ctx: TestCon
+async fn test_migration_failure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates what happens when migrations fail partway through
     
     #[derive(Debug)]
@@ -219,7 +219,7 @@ async fn test_migration_failure_handling(ctx: TestCon
     let tables_exist = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('test_migration_1', 'test_migration_2')"
     )
-    .fetch_one(&ctx.pool())
+    .fetch_one(ctx.pool())
     .await
     .unwrap();
     
@@ -235,7 +235,7 @@ async fn test_migration_failure_handling(ctx: TestCon
     
     // Cleanup
     let _ = sqlx::query("DROP TABLE IF EXISTS test_migration_2, test_migration_1 CASCADE")
-        .execute(&ctx.pool())
+        .execute(ctx.pool())
         .await;
     
     // Verify the failed migration stopped the sequence
@@ -243,14 +243,11 @@ async fn test_migration_failure_handling(ctx: TestCon
     assert!(!results[2].success, "Third migration should fail");
     
     Ok(())
-tion should fail");
-    
-    Ok(())
 }
 
 /// Test connection pool behavior under database restart
 #[sinex_test]
-async fn test_database_restart_resil
+async fn test_database_restart_resilience(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     let queries_before = Arc::new(AtomicU64::new(0));
     let queries_during_outage = Arc::new(AtomicU64::new(0));
@@ -259,13 +256,13 @@ async fn test_database_restart_resil
     
     // Helper to run a simple query
     async fn try_query(
-        ctx.pool(): &PgPool,
+        pool: &PgPool,
         counter: &Arc<AtomicU64>,
         errors: &Arc<AtomicU64>,
     ) -> Result<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(ctx.pool())
+            sqlx::query("SELECT 1").fetch_one(pool)
         ).await {
             Ok(Ok(_)) => {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -318,13 +315,11 @@ async fn test_database_restart_resil
     assert!(queries_after.load(Ordering::Relaxed) > 0, "Should recover after outage");
     
     Ok(())
- > 0, "Should recover after outage");
-    
-    Ok(())
 }
 
 /// Test handling of very large result sets
-#[sinex_test
+#[sinex_test]
+async fn test_large_result_set_handling(ctx: TestContext) -> Result<(), anyhow::Error> {
     
     // Insert test data
     let mut tx = ctx.pool().begin().await.unwrap();
@@ -358,7 +353,7 @@ async fn test_database_restart_resil
     // Strategy 1: Fetch all at once (memory intensive)
     let all_at_once_result = timeout(
         Duration::from_secs(5),
-        sqlx::query("SELECT * FROM large_data_test").fetch_all(&ctx.pool())
+        sqlx::query("SELECT * FROM large_data_test").fetch_all(ctx.pool())
     ).await;
     
     let fetch_all_time = fetch_start.elapsed();
@@ -369,7 +364,7 @@ async fn test_database_restart_resil
     let mut stream_count = 0;
     
     use futures::TryStreamExt;
-    let mut stream = sqlx::query("SELECT * FROM large_data_test").fetch(&ctx.pool());
+    let mut stream = sqlx::query("SELECT * FROM large_data_test").fetch(ctx.pool());
     
     while let Ok(Some(_row)) = stream.try_next().await {
         stream_count += 1;
@@ -389,9 +384,6 @@ async fn test_database_restart_resil
         fetch_all_time.as_millis() as f64 / stream_time.as_millis() as f64);
     
     pretty_assertions::assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
-    
-    Ok(())
-ions::assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
     
     Ok(())
 }
