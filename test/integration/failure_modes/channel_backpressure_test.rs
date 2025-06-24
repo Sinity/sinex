@@ -1,10 +1,6 @@
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
-use sinex_ulid::Ulid;
-use tokio::sync::mpsc;
+use crate::common::prelude::*;
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use serde_json::json;
 
 /// Test what happens when event channel fills up
 #[tokio::test]
@@ -20,17 +16,7 @@ async fn test_channel_backpressure_handling() {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "fast_producer".to_string(),
-                event_type: "test.event".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: json!({"seq": i}),
-            };
+            let event = crate::common::events::generic_adversarial_event("fast_producer", "test.event", json!({"test": true}), None);
             
             gen_count.fetch_add(1, Ordering::Relaxed);
             
@@ -42,6 +28,10 @@ async fn test_channel_backpressure_handling() {
                     if i < 50 {
                         // Log first few drops
                         eprintln!("Dropped event {}: {:?}", i, e);
+                    }
+                    // Break if channel is closed, continue if just full
+                    if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
+                        break;
                     }
                 }
             }
@@ -122,24 +112,9 @@ async fn test_memory_pressure_handling() {
         for i in 0..100 {
             // Increasingly large payloads
             let size = 1024 * (i + 1); // 1KB to 100KB
-            let large_data = "x".repeat(size);
+            let _large_data = "x".repeat(size);
             
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "memory_test".to_string(),
-                event_type: "large.payload".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({
-                    "seq": i,
-                    "data": large_data,
-                    "size_kb": size / 1024
-                }),
-            };
-            
+            let event = events::large_payload_test_event(size);
             if tx.send(event).await.is_err() {
                 eprintln!("Channel closed at event {}", i);
                 break;
@@ -195,28 +170,17 @@ async fn test_event_source_crash_recovery() {
         type Config = ();
         const SOURCE_NAME: &'static str = "crashing_source";
         
-        async fn initialize(_ctx: EventSourceContext) -> Result<Self> {
+        async fn initialize(_ctx: EventSourceContext) -> Result<Self, CoreError> {
             Ok(Self {
                 crash_after: 50,
                 events_sent: Arc::new(AtomicU64::new(0)),
             })
         }
         
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             for i in 0..100 {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: "crashing".to_string(),
-                    event_type: "test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({"seq": i}),
-                };
-                
-                tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
+                let event = crate::common::events::generic_adversarial_event("crashing", "test", json!({"test": true}), None);
+                if tx.send(event).await.is_err() { break; }
                 self.events_sent.fetch_add(1, Ordering::Relaxed);
                 
                 if i == self.crash_after {
@@ -284,14 +248,3 @@ fn get_current_memory_usage() -> u64 {
     0
 }
 
-// Placeholder for memory tracking
-trait MemoryTracker {
-    fn used_memory(&self) -> u64;
-}
-
-impl MemoryTracker for std::alloc::System {
-    fn used_memory(&self) -> u64 {
-        // This is a stub - real implementation would read from /proc/self/status
-        0
-    }
-}

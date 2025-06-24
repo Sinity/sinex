@@ -9,6 +9,7 @@ members = [
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
+    "crate/sinex-test-macros",
 ]
 resolver = "2"
 
@@ -19,12 +20,8 @@ edition.workspace = true
 authors.workspace = true
 
 [[test]]
-name = "integration"
+name = "tests"
 path = "test/mod.rs"
-
-[[test]]
-name = "property_tests"
-path = "test/property/work_queue_property_tests.rs"
 
 
 [dependencies]
@@ -69,7 +66,12 @@ proptest.workspace = true
 tempfile = "3"
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-events = { path = "crate/sinex-events" }
+sinex-test-macros = { path = "crate/sinex-test-macros" }
 criterion.workspace = true
+pretty_assertions = "1.4"
+serial_test = "3.0"
+test-case = "3.3"
+rstest = "0.18"
 
 [workspace.package]
 version = "0.4.2"

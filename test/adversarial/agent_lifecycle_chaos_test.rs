@@ -1,11 +1,8 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::{RawEvent, AgentManifest}};
-use sinex_ulid::Ulid;
-use std::sync::Arc;
+use sinex_db::{queries, models::AgentManifest};
 use std::sync::atomic::{AtomicU64, Ordering};
-use futures::future::join_all;
 use chrono::Utc;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_agent_registering_from_multiple_instances() {
@@ -126,24 +123,14 @@ async fn test_heartbeat_from_unregistered_agent() {
     let phantom_agent = "phantom-agent";
     
     // Send heartbeat without registration
-    let heartbeat_event = RawEvent {
-        id: Ulid::new(),
-        source: "agent".to_string(),
-        event_type: "agent.heartbeat".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({
+    let heartbeat_event = crate::common::events::generic_adversarial_event("agent", "agent.heartbeat", json!({
             "agent_name": phantom_agent,
             "status": "alive",
             "metrics": {
                 "events_processed": 0,
                 "uptime_seconds": 10
             }
-        }),
-    };
+        }), None);
     
     // This should either:
     // 1. Fail gracefully
@@ -217,20 +204,7 @@ async fn test_agent_downgrade_during_operation() {
     println!("Registered agent v2.0");
     
     // Send some v2.0 events
-    let v2_event = RawEvent {
-        id: Ulid::new(),
-        source: "filesystem".to_string(),
-        event_type: "file.deleted".to_string(), // v2.0 capability
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: Some("2.0.0".to_string()),
-        payload_schema_id: None,
-        payload: json!({
-            "path": "/tmp/deleted.txt",
-            "v2_feature_data": true
-        }),
-    };
+    let v2_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("2.0.0"));
     
     queries::insert_event(&pool, &v2_event).await.unwrap();
     println!("Sent v2.0 event");
@@ -263,6 +237,9 @@ async fn test_agent_downgrade_during_operation() {
         updated_at: Utc::now(),
     };
     
+    // Try to send v1.0 event with old capabilities
+    let v1_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("1.0.0"));
+    
     match queries::upsert_agent_manifest(
         &pool,
         &manifest_v1.agent_name,
@@ -290,21 +267,6 @@ async fn test_agent_downgrade_during_operation() {
             if current_agents.len() > 1 {
                 println!("VERSION CHAOS: Multiple versions of same agent registered!");
             }
-            
-            // Try to send v1.0 event with old capabilities
-            let v1_event = RawEvent {
-                id: Ulid::new(),
-                source: "filesystem".to_string(),
-                event_type: "file.deleted".to_string(), // This capability no longer exists in v1.0
-                ts_ingest: Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: Some("1.0.0".to_string()),
-                payload_schema_id: None,
-                payload: json!({
-                    "path": "/tmp/another_deleted.txt"
-                }),
-            };
             
             match queries::insert_event(&pool, &v1_event).await {
                 Ok(_) => {
@@ -520,21 +482,7 @@ async fn test_agent_zombie_heartbeat_scenario() {
     }
     
     // Try to send heartbeat from "recovered" agent
-    let heartbeat = RawEvent {
-        id: Ulid::new(),
-        source: "agent".to_string(),
-        event_type: "agent.heartbeat".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: Some("1.0.1".to_string()),
-        payload_schema_id: None,
-        payload: json!({
-            "agent_name": agent_name,
-            "status": "alive",
-            "version": "1.0.1"
-        }),
-    };
+    let heartbeat = events::agent_heartbeat_chaos_event(agent_name, Some("1.0.1"));
     
     match queries::insert_event(&pool, &heartbeat).await {
         Ok(_) => {

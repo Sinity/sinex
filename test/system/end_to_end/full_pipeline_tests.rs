@@ -1,20 +1,9 @@
-use anyhow::Result;
-use sinex_core::{RawEvent, RawEventBuilder, EventSource, EventSourceContext};
+use crate::common::prelude::*;
+// Project-specific imports not covered by prelude
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
-use std::time::Duration;
-use tokio::sync::mpsc;
-use serde_json::json;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use gethostname;
 
-// Import test setup macros
-use crate::db_test;
-use crate::common::timing_optimization::replacements::{wait_for_event_count, wait_for_filtered_event_count, wait_for_work_queue_count};
+// Test setup macros
 
 // Test source that generates events at a controlled rate
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,22 +35,8 @@ impl EventSource for PipelineTestSource {
     }
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
-        for i in 0..self.events_to_generate {
-            let event = RawEvent {
-                id: sinex_ulid::Ulid::new(),
-                source: "pipeline_test".to_string(),
-                event_type: "test_event".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: gethostname::gethostname().to_string_lossy().to_string(),
-                ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                payload_schema_id: None,
-                payload: json!({
-                    "sequence": i,
-                    "data": format!("Test event {}", i),
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                }),
-            };
+        for _i in 0..self.events_to_generate {
+            let event = crate::common::events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);
@@ -87,7 +62,7 @@ impl EventProcessor for PipelineTestProcessor {
         &self,
         pool: &PgPool,
         item: &WorkQueueItem,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         // Fetch the raw event
         let event = sqlx::query!(
             r#"
@@ -144,8 +119,9 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-db_test! {
-    async fn test_full_pipeline_end_to_end(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
         let events_processed = Arc::new(AtomicU32::new(0));
@@ -156,7 +132,7 @@ db_test! {
             events_to_generate,
             generation_rate: 50,
         };
-        let ctx = EventSourceContext::new(serde_json::to_value(config)?);
+        let ctx = event_sources::test_context(serde_json::to_value(config)?);
         let mut source = PipelineTestSource::initialize(ctx).await?;
         let source_events_generated = source.events_generated.clone();
         
@@ -217,13 +193,13 @@ db_test! {
         });
         
         // Wait for pipeline to process all events using optimized coordination
-        use crate::common::timing_optimization::{EventCounter, ProgressTracker};
+        use crate::common::timing_optimization::{EventCounter, };
         
-        let generation_counter = EventCounter::new(events_to_generate as usize);
-        let processing_counter = EventCounter::new(events_to_generate as usize);
+        let _generation_counter = EventCounter::new(events_to_generate as usize);
+        let _processing_counter = EventCounter::new(events_to_generate as usize);
         
         // Wait for both generation and processing to complete
-        let timeout_duration = Duration::from_secs(10);
+        let _timeout_duration = Duration::from_secs(10);
         
         // Wait for pipeline completion using timing utilities
         // First wait for all events to be generated and stored
@@ -248,19 +224,19 @@ db_test! {
         storage_handle.abort();
         
         // Verify results
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             source_events_generated.load(Ordering::SeqCst), 
             events_to_generate,
             "All events should be generated"
         );
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             events_processed.load(Ordering::SeqCst), 
             events_to_generate,
             "All events should be processed"
         );
         
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             derived_events_created.load(Ordering::SeqCst), 
             events_to_generate,
             "Derived events should be created for each processed event"
@@ -275,7 +251,7 @@ db_test! {
             10
         ).await.map_err(|e| anyhow::anyhow!("Failed to verify raw events: {}", e))?;
         
-        assert_eq!(raw_event_count, events_to_generate as i64);
+        pretty_assertions::assert_eq!(raw_event_count, events_to_generate as i64);
         
         // Wait for derived events to be processed
         let derived_event_count = wait_for_filtered_event_count(
@@ -286,7 +262,7 @@ db_test! {
             10
         ).await.map_err(|e| anyhow::anyhow!("Failed to verify derived events: {}", e))?;
         
-        assert_eq!(derived_event_count, events_to_generate as i64);
+        pretty_assertions::assert_eq!(derived_event_count, events_to_generate as i64);
         
         let remaining_queue: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sinex_schemas.work_queue"
@@ -294,14 +270,14 @@ db_test! {
         .fetch_one(&pool)
         .await?;
         
-        assert_eq!(remaining_queue, 0);
+        pretty_assertions::assert_eq!(remaining_queue, 0);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_pipeline_with_multiple_workers(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
         
@@ -407,14 +383,14 @@ db_test! {
         .fetch_one(&pool)
         .await?;
         
-        assert_eq!(remaining_queue, 0);
+        pretty_assertions::assert_eq!(remaining_queue, 0);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_pipeline_error_recovery(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_pipeline_error_recovery() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         // Insert some events that will cause errors
         for i in 0..5 {
             let event = RawEventBuilder::new(
@@ -461,7 +437,7 @@ db_test! {
                 &self,
                 pool: &PgPool,
                 item: &WorkQueueItem,
-            ) -> Result<()> {
+            ) -> Result<(), anyhow::Error> {
                 // Fetch the raw event
                 let event = sqlx::query!(
                     r#"
@@ -508,7 +484,7 @@ db_test! {
         worker_handle.abort();
         
         // Good events should be completed
-        assert_eq!(processed_good.load(Ordering::SeqCst), 3);
+        pretty_assertions::assert_eq!(processed_good.load(Ordering::SeqCst), 3);
         
         // Bad events should have been retried
         assert!(processed_bad.load(Ordering::SeqCst) >= 2); // At least initial + 1 retry
@@ -534,5 +510,4 @@ db_test! {
         assert!(dlq >= 0);
         
         Ok(())
-    }
 }

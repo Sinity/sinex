@@ -1,6 +1,4 @@
-use sinex_db::models::RawEvent;
-use serde_json::json;
-
+use crate::common::prelude::*;
 #[test]
 fn test_json_payload_size_limits() {
     // Test extremely large JSON payloads
@@ -12,19 +10,7 @@ fn test_json_payload_size_limits() {
         }));
     }
     
-    let event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: "test".to_string(),
-        event_type: "huge.payload".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({
-            "huge_array": huge_array
-        }),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "huge.payload", json!({"huge_array": huge_array}), None);
     
     // This might cause issues with serialization or database storage
     let serialized = serde_json::to_string(&event);
@@ -49,17 +35,8 @@ fn test_json_special_characters() {
     ];
     
     for (i, payload) in evil_payloads.iter().enumerate() {
-        let event = RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: format!("special.char.{}", i),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: payload.clone(),
-        };
+        let mut event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
+        event.payload = payload.clone();
         
         // These might fail serialization or cause database issues
         match serde_json::to_string(&event) {
@@ -80,17 +57,7 @@ fn test_recursive_json_structure() {
         });
     }
     
-    let event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: "test".to_string(),
-        event_type: "deeply.nested".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: nested,
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "deeply.nested", nested, None);
     
     // This might cause stack overflow or other issues
     let result = serde_json::to_string(&event);

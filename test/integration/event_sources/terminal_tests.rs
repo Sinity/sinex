@@ -1,11 +1,13 @@
+use crate::common::prelude::*;
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
-use sinex_core::{EventSource, EventType, EventSourceContext};
-use tempfile::TempDir;
+use sinex_core::{EventSource, EventType};
+use crate::common::resources;
 use chrono::Utc;
+use crate::common::event_sources;
 
 #[tokio::test]
-async fn test_kitty_listener_initialization() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let socket_path = temp_dir.path().join("kitty-test-*");
     
     let config = KittyConfig {
@@ -13,10 +15,11 @@ async fn test_kitty_listener_initialization() {
         polling_interval_secs: 1,
     };
     
-    let ctx = EventSourceContext::new(serde_json::to_value(&config).unwrap());
+    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
     let listener = KittySocketListener::initialize(ctx).await;
     // Should succeed even if no socket exists (will wait for socket)
     assert!(listener.is_ok(), "Should initialize even without active socket");
+    Ok(())
 }
 
 #[tokio::test]
@@ -32,12 +35,12 @@ async fn test_kitty_event_structure() {
     
     // Verify serialization works
     let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["command_string"], "echo test");
-    assert_eq!(json["cwd"], "/tmp");
-    assert_eq!(json["exit_code"], 0);
+    pretty_assertions::assert_eq!(json["command_string"], "echo test");
+    pretty_assertions::assert_eq!(json["cwd"], "/tmp");
+    pretty_assertions::assert_eq!(json["exit_code"], 0);
     
     // Verify event type constant
-    assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
+    pretty_assertions::assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
 }
 
 #[tokio::test]

@@ -1,9 +1,8 @@
 //! Tests demonstrating that streamlined tests maintain coverage
 
+use crate::common::prelude::*;
 use crate::common::{scenario_builders, coverage_assurance, parameterized};
 use crate::common::coverage_assurance::{CoverageTracker, CoverageAssertion};
-use serde_json::json;
-use sinex_core::RawEventBuilder;
 
 #[test]
 fn test_coverage_tracking_in_streamlined_tests() {
@@ -105,7 +104,6 @@ fn simulate_comprehensive_test_suite() {
 #[test]
 fn test_coverage_comparison_shows_improvement() {
     use coverage_assurance::{CoverageSnapshot, CoverageComparison};
-    use std::collections::HashSet;
     
     // Original verbose test coverage
     let before = CoverageSnapshot {
@@ -180,9 +178,9 @@ fn test_coverage_tracking_macro() {
     track_test_coverage!(edge_case: "unicode", "emoji_in_path");
     
     let report = CoverageTracker::get_coverage_report();
-    assert_eq!(report.event_types_count, 1);
-    assert_eq!(report.validation_rules_count, 1);
-    assert_eq!(report.error_conditions_count, 1);
-    assert_eq!(report.concurrency_scenarios_count, 1);
-    assert_eq!(report.total_edge_cases, 1);
+    pretty_assertions::assert_eq!(report.event_types_count, 1);
+    pretty_assertions::assert_eq!(report.validation_rules_count, 1);
+    pretty_assertions::assert_eq!(report.error_conditions_count, 1);
+    pretty_assertions::assert_eq!(report.concurrency_scenarios_count, 1);
+    pretty_assertions::assert_eq!(report.total_edge_cases, 1);
 }

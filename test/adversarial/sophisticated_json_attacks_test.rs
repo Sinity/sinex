@@ -1,4 +1,4 @@
-use serde_json::json;
+use crate::common::prelude::*;
 use std::time::{Duration, Instant};
 use sinex_db::validation::EventValidator;
 
@@ -106,7 +106,6 @@ fn test_json_billion_laughs_attack() {
     assert!(successful_levels >= 3, "Should handle at least 3 levels of exponential expansion");
     assert!(max_serialization_time < Duration::from_secs(5), "Serialization should not take excessively long");
 }
-
 
 #[test]
 fn test_json_unicode_normalization_bypass() {

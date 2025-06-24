@@ -1,11 +1,7 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
-use std::sync::Arc;
-use tokio::time::Duration;
+use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
-use futures::future::join_all;
-use serde_json::json;
 
 #[tokio::test]
 async fn test_shutdown_signal_during_initialization() {
@@ -215,22 +211,12 @@ async fn test_event_router_state_corruption() {
     let mut handles = vec![];
     
     // Process events concurrently to create race conditions
-    for (i, (event_type, payload)) in state_events.into_iter().enumerate() {
+    for (i, (event_type, _payload)) in state_events.into_iter().enumerate() {
         let pool_clone = pool.clone();
         let corruption_flag = corruption_detected.clone();
         
         let handle = tokio::spawn(async move {
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "filesystem".to_string(),
-                event_type: event_type.to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload,
-            };
+            let event = events::filesystem_chaos_event("test.event", "/test/path", None);
             
             match queries::insert_event(&pool_clone, &event).await {
                 Ok(_) => {
@@ -300,17 +286,7 @@ async fn test_worker_state_machine_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create a job that will be processed by workers
-    let test_event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "worker.test".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"job_id": "test_job_123"}),
-    };
+    let test_event = crate::common::events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
     
     queries::insert_event(&pool, &test_event).await.unwrap();
     

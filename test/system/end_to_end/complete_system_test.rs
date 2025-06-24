@@ -1,32 +1,23 @@
-use anyhow::Result;
-use sinex_core::RawEventBuilder;
-use sinex_db::{create_test_pool, queries};
-use serde_json::json;
+use crate::common::prelude::*;
 use std::process::Command;
-use std::time::Duration;
-use tokio::time::timeout;
-use tempfile::TempDir;
 
-async fn setup_system_test() -> Result<sqlx::PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    let pool = create_test_pool(&database_url).await?;
+async fn _setup_system_test() -> Result<PgPool> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Clean all tables for isolated test
     sqlx::query("TRUNCATE TABLE raw.events CASCADE")
-        .execute(&pool)
+        .execute(pool.pool())
         .await?;
     
     sqlx::query("TRUNCATE TABLE sinex_schemas.work_queue CASCADE")
-        .execute(&pool)
+        .execute(pool.pool())
         .await?;
     
-    Ok(pool)
+    Ok(pool.pool().clone())
 }
-
-#[sqlx::test]
-async fn test_complete_system_event_capture_to_query() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     // Step 1: Simulate event capture by inserting events
     let events = vec![
@@ -62,20 +53,20 @@ async fn test_complete_system_event_capture_to_query() -> Result<()> {
     // Insert events
     let mut inserted_ids = Vec::new();
     for event in &events {
-        let inserted = queries::insert_event(&pool, event).await?;
+        let inserted = queries::insert_event(&ctx.pool(), event).await?;
         inserted_ids.push(inserted.id);
     }
     
     // Step 2: Verify events are stored correctly
     for (i, id) in inserted_ids.iter().enumerate() {
-        let retrieved = crate::common::get_event_by_id(&pool, *id).await?;
-        assert_eq!(retrieved.source, events[i].source);
-        assert_eq!(retrieved.event_type, events[i].event_type);
-        assert_eq!(retrieved.payload, events[i].payload);
+        let retrieved = crate::common::get_event_by_id(&ctx.pool(), *id).await?;
+        pretty_assertions::assert_eq!(retrieved.source, events[i].source);
+        pretty_assertions::assert_eq!(retrieved.event_type, events[i].event_type);
+        pretty_assertions::assert_eq!(retrieved.payload, events[i].payload);
     }
     
     // Step 3: Test querying recent events
-    let recent_events = crate::common::get_recent_events(&pool, 10).await?;
+    let recent_events = crate::common::get_recent_events(&ctx.pool(), 10).await?;
     assert!(recent_events.len() >= 3);
     
     // Verify we can find our test events
@@ -88,20 +79,20 @@ async fn test_complete_system_event_capture_to_query() -> Result<()> {
     assert!(wm_found, "Window manager event should be queryable");
     
     // Step 4: Test filtered queries
-    let fs_events = crate::common::get_events_by_source(&pool, "filesystem", 10).await?;
+    let fs_events = crate::common::get_events_by_source(&ctx.pool(), "filesystem", 10).await?;
     assert!(!fs_events.is_empty());
     assert!(fs_events.iter().all(|e| e.source == "filesystem"));
     
-    let file_created_events = crate::common::get_events_by_type(&pool, "file.created", 10).await?;
+    let file_created_events = crate::common::get_events_by_type(&ctx.pool(), "file.created", 10).await?;
     assert!(!file_created_events.is_empty());
     assert!(file_created_events.iter().all(|e| e.event_type == "file.created"));
     
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_system_cli_integration() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_system_cli_integration(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     // Insert test events
     let test_events = vec![
@@ -124,7 +115,7 @@ async fn test_system_cli_integration() -> Result<()> {
     ];
     
     for event in &test_events {
-        queries::insert_event(&pool, event).await?;
+        queries::insert_event(&ctx.pool(), event).await?;
     }
     
     // Give events time to be committed
@@ -159,9 +150,9 @@ async fn test_system_cli_integration() -> Result<()> {
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_system_real_filesystem_simulation() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     // Create temporary directory for filesystem simulation
     let temp_dir = TempDir::new()?;
@@ -195,11 +186,11 @@ async fn test_system_real_filesystem_simulation() -> Result<()> {
     
     // Insert filesystem events
     for event in &fs_events {
-        queries::insert_event(&pool, event).await?;
+        queries::insert_event(&ctx.pool(), event).await?;
     }
     
     // Verify events can be queried by path pattern
-    let all_events = crate::common::get_recent_events(&pool, 10).await?;
+    let all_events = crate::common::get_recent_events(&ctx.pool(), 10).await?;
     let temp_events: Vec<_> = all_events.iter()
         .filter(|e| e.payload.get("path")
             .and_then(|p| p.as_str())
@@ -207,7 +198,7 @@ async fn test_system_real_filesystem_simulation() -> Result<()> {
             .unwrap_or(false))
         .collect();
     
-    assert_eq!(temp_events.len(), 2, "Should find both file events");
+    pretty_assertions::assert_eq!(temp_events.len(), 2, "Should find both file events");
     
     // Verify event sequence
     let created_event = temp_events.iter().find(|e| e.event_type == "file.created");
@@ -224,9 +215,9 @@ async fn test_system_real_filesystem_simulation() -> Result<()> {
     Ok(())
 }
 
-#[sqlx::test] 
-async fn test_system_multi_source_correlation() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     // Simulate correlated events from multiple sources
     let base_time = chrono::Utc::now();
@@ -281,14 +272,14 @@ async fn test_system_multi_source_correlation() -> Result<()> {
     
     // Insert all events
     for event in &correlated_events {
-        queries::insert_event(&pool, event).await?;
+        queries::insert_event(&ctx.pool(), event).await?;
     }
     
     // Query events in time window
     let start_time = base_time - chrono::Duration::seconds(1);
     let end_time = base_time + chrono::Duration::seconds(30);
     
-    let window_events = crate::common::get_events_in_time_range(&pool, start_time, end_time).await?;
+    let window_events = queries::get_events_in_time_range(&ctx.pool(), start_time, end_time).await?;
     
     // Verify we can find correlated events
     let terminal_events: Vec<_> = window_events.iter()
@@ -318,9 +309,9 @@ async fn test_system_multi_source_correlation() -> Result<()> {
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_system_error_recovery() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_system_error_recovery(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     // Test system resilience with various edge cases
     let edge_case_events = vec![
@@ -356,14 +347,14 @@ async fn test_system_error_recovery() -> Result<()> {
     
     // Insert all edge case events
     for event in &edge_case_events {
-        let result = queries::insert_event(&pool, event).await;
+        let result = queries::insert_event(&ctx.pool(), event).await;
         
         // System should handle edge cases gracefully
         match result {
             Ok(_) => {
                 // If insertion succeeds, verify we can retrieve the event
-                let retrieved = crate::common::get_event_by_id(&pool, event.id).await?;
-                assert_eq!(retrieved.id, event.id);
+                let retrieved = crate::common::get_event_by_id(&ctx.pool(), event.id).await?;
+                pretty_assertions::assert_eq!(retrieved.id, event.id);
             }
             Err(_) => {
                 // If insertion fails, it should be a graceful failure
@@ -382,15 +373,15 @@ async fn test_system_error_recovery() -> Result<()> {
         })
     ).build();
     
-    let result = queries::insert_event(&pool, &normal_event).await;
+    let result = queries::insert_event(&ctx.pool(), &normal_event).await;
     assert!(result.is_ok(), "System should handle normal events after edge cases");
     
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_system_performance_baseline() -> Result<()> {
-    let pool = setup_system_test().await?;
+#[sinex_test]
+async fn test_system_performance_baseline(ctx: TestContext) -> Result<(), anyhow::Error> {
+    // setup_system_test() functionality moved to TestContext
     
     let start_time = std::time::Instant::now();
     let event_count = 100;
@@ -407,14 +398,14 @@ async fn test_system_performance_baseline() -> Result<()> {
             })
         ).build();
         
-        queries::insert_event(&pool, &event).await?;
+        queries::insert_event(&ctx.pool(), &event).await?;
     }
     
     let insert_duration = start_time.elapsed();
     
     // Query events
     let query_start = std::time::Instant::now();
-    let retrieved_events = crate::common::get_recent_events(&pool, event_count as i64).await?;
+    let retrieved_events = crate::common::get_recent_events(&ctx.pool(), event_count as i64).await?;
     let query_duration = query_start.elapsed();
     
     // Verify performance is reasonable

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_events::{
     filesystem::FilesystemMonitor,
@@ -6,17 +6,9 @@ use sinex_events::{
     clipboard::ClipboardMonitor,
 };
 use sinex_db::models::RawEvent;
-use std::time::Duration;
-use tempfile::TempDir;
-use tokio::sync::mpsc;
 use tokio::time::{timeout, sleep};
-use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-fn create_test_context(config: serde_json::Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+use crate::common::event_sources;
 
 /// Mock event source that can be configured to crash after a certain number of events
 pub struct CrashingEventSource {
@@ -30,14 +22,6 @@ impl CrashingEventSource {
         Self {
             crash_after,
             crash_on_event: None,
-            events_sent: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    pub fn new_crash_on_event(crash_on_event: usize) -> Self {
-        Self {
-            crash_after: Duration::from_secs(30), // For testing - we don't actually wait this long
-            crash_on_event: Some(crash_on_event),
             events_sent: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -154,7 +138,7 @@ impl EventSource for ResourceExhaustedSource {
 }
 
 #[tokio::test]
-async fn test_event_source_crash_recovery() -> Result<()> {
+async fn test_event_source_crash_recovery() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel(100);
     let mut crashing_source = CrashingEventSource::new(Duration::from_millis(200));
 
@@ -193,14 +177,14 @@ async fn test_event_source_crash_recovery() -> Result<()> {
 
     // Verify event content
     let first_event = &events[0];
-    assert_eq!(first_event.source, "test.crashing_source");
-    assert_eq!(first_event.event_type, "test.event");
+    pretty_assertions::assert_eq!(first_event.source, "test.crashing_source");
+    pretty_assertions::assert_eq!(first_event.event_type, "test.event");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_resource_exhaustion_handling() -> Result<()> {
+async fn test_resource_exhaustion_handling() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel(100);
     let mut resource_source = ResourceExhaustedSource {
         fd_limit_reached: false,
@@ -234,18 +218,18 @@ async fn test_resource_exhaustion_handling() -> Result<()> {
     source_handle.abort();
 
     // Verify recovery worked
-    assert_eq!(recovery_events.len(), 5);
+    pretty_assertions::assert_eq!(recovery_events.len(), 5);
     for (i, event) in recovery_events.iter().enumerate() {
-        assert_eq!(event.source, "test.resource_exhausted");
-        assert_eq!(event.event_type, "test.recovery_event");
-        assert_eq!(event.payload["recovery_event"], i);
+        pretty_assertions::assert_eq!(event.source, "test.resource_exhausted");
+        pretty_assertions::assert_eq!(event.event_type, "test.recovery_event");
+        pretty_assertions::assert_eq!(event.payload["recovery_event"], i);
     }
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_filesystem_source_permission_denied() -> Result<()> {
+async fn test_filesystem_source_permission_denied() -> Result<(), anyhow::Error> {
     // Create a directory we can't read (simulated permission denied)
     let temp_dir = TempDir::new()?;
     let protected_dir = temp_dir.path().join("protected");
@@ -263,7 +247,7 @@ async fn test_filesystem_source_permission_denied() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // This should either fail gracefully or succeed with warnings
     match FilesystemMonitor::initialize(ctx).await {
@@ -294,14 +278,14 @@ async fn test_filesystem_source_permission_denied() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_kitty_socket_unavailable() -> Result<()> {
+async fn test_kitty_socket_unavailable() -> Result<(), anyhow::Error> {
     // Try to connect to a non-existent socket
     let config = json!({
         "socket_path": "/tmp/non-existent-kitty-socket-12345",
         "polling_interval_secs": 1
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // Should handle missing socket gracefully
     match KittySocketListener::initialize(ctx).await {
@@ -332,7 +316,7 @@ async fn test_kitty_socket_unavailable() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_clipboard_source_access_denied() -> Result<()> {
+async fn test_clipboard_source_access_denied() -> Result<(), anyhow::Error> {
     // Test clipboard source when X11/Wayland access is denied
     let config = json!({
         "monitor_clipboard": true,
@@ -341,7 +325,7 @@ async fn test_clipboard_source_access_denied() -> Result<()> {
         "max_content_size": 1024
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     
     // This might fail in CI/headless environments, which is expected
     match ClipboardMonitor::initialize(ctx).await {
@@ -371,7 +355,7 @@ async fn test_clipboard_source_access_denied() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_coordination_failures() -> Result<()> {
+async fn test_event_source_coordination_failures() -> Result<(), anyhow::Error> {
     // Test what happens when multiple sources try to access shared resources
     let temp_dir = TempDir::new()?;
     
@@ -383,8 +367,8 @@ async fn test_event_source_coordination_failures() -> Result<()> {
     
     let config2 = config1.clone();
 
-    let ctx1 = create_test_context(config1);
-    let ctx2 = create_test_context(config2);
+    let ctx1 = event_sources::test_context(config1);
+    let ctx2 = event_sources::test_context(config2);
 
     // Start two filesystem monitors on the same directory
     let mut monitor1 = FilesystemMonitor::initialize(ctx1).await?;
@@ -449,7 +433,7 @@ async fn test_event_source_coordination_failures() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_event_source_invalid_configuration() -> Result<()> {
+async fn test_event_source_invalid_configuration() -> Result<(), anyhow::Error> {
     // Test various invalid configurations
     
     // Empty watch patterns
@@ -459,7 +443,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx1 = create_test_context(invalid_config1);
+    let ctx1 = event_sources::test_context(invalid_config1);
     match FilesystemMonitor::initialize(ctx1).await {
         Ok(_) => {
             // Some sources might handle empty patterns gracefully
@@ -477,7 +461,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         "debounce_ms": -1
     });
 
-    let ctx2 = create_test_context(invalid_config2);
+    let ctx2 = event_sources::test_context(invalid_config2);
     match FilesystemMonitor::initialize(ctx2).await {
         Ok(_) => {
             eprintln!("FilesystemMonitor accepted negative debounce (might use default)");
@@ -493,7 +477,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
         // Missing watch_patterns
     });
 
-    let ctx3 = create_test_context(invalid_config3);
+    let ctx3 = event_sources::test_context(invalid_config3);
     match FilesystemMonitor::initialize(ctx3).await {
         Ok(_) => {
             eprintln!("FilesystemMonitor used defaults for missing fields");
@@ -507,7 +491,7 @@ async fn test_event_source_invalid_configuration() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_source_shutdown_during_active_streaming() -> Result<()> {
+async fn test_source_shutdown_during_active_streaming() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let config = json!({
         "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],
@@ -515,7 +499,7 @@ async fn test_source_shutdown_during_active_streaming() -> Result<()> {
         "debounce_ms": 50
     });
 
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut monitor = FilesystemMonitor::initialize(ctx).await?;
 
     let (tx, mut rx) = mpsc::channel(100);

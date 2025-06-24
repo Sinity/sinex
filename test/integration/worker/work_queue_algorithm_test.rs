@@ -1,15 +1,5 @@
-use anyhow::Result;
-use sqlx::PgPool;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use std::str::FromStr;
-use tokio::time::{sleep, interval};
-use futures::future::join_all;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
-use serde_json::json;
+use crate::common::prelude::*;
+use sinex_db::queries::insert_raw_event;
 use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
 
 /// Metrics for tracking work distribution algorithm performance
@@ -22,7 +12,6 @@ struct WorkDistributionMetrics {
     successful_claims: AtomicU64,
     failed_claims: AtomicU64,
     processing_time_ms: AtomicU64,
-    queue_depth_samples: Vec<AtomicU64>,
 }
 
 impl WorkDistributionMetrics {
@@ -43,7 +32,6 @@ impl WorkDistributionMetrics {
             successful_claims: AtomicU64::new(0),
             failed_claims: AtomicU64::new(0),
             processing_time_ms: AtomicU64::new(0),
-            queue_depth_samples: Vec::new(),
         }
     }
 
@@ -129,10 +117,6 @@ impl SelectForUpdateWorker {
             agent_name,
             processing_delay,
         }
-    }
-
-    fn stop(&self) {
-        self.should_stop.store(true, Ordering::Relaxed);
     }
 
     async fn run_work_loop(&self, duration: Duration) -> Result<u64> {
@@ -237,8 +221,8 @@ impl SelectForUpdateWorker {
 }
 
 #[tokio::test]
-async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_select_for_update_skip_locked_fairness() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("algorithm_test_{}", Ulid::new());
@@ -324,7 +308,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
 
     // Monitor queue depth during the test
     let monitor_pool = pool.clone();
-    let monitor_agent = agent_name.clone();
+    let _monitor_agent = agent_name.clone();
     let monitor_handle = tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(1));
         let mut samples = Vec::new();
@@ -412,7 +396,7 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
 
     // Assertions
     assert!(total_processed > 0, "Should have processed some work items");
-    assert_eq!(final_succeeded as u64, total_processed, "Succeeded count should match processed count");
+    pretty_assertions::assert_eq!(final_succeeded as u64, total_processed, "Succeeded count should match processed count");
     assert!(fairness_ratio < 3.0, "Work distribution should be reasonably fair (ratio < 3.0)");
     
     // Algorithm efficiency checks
@@ -439,8 +423,8 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_select_for_update_skip_locked_under_contention() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("contention_test_{}", Ulid::new());
@@ -554,8 +538,8 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
     println!("{}", metrics.report());
 
     // Algorithm correctness under high contention
-    assert_eq!(total_processed, work_items, "All work items should be processed exactly once");
-    assert_eq!(remaining_work, 0, "No work should remain unprocessed");
+    pretty_assertions::assert_eq!(total_processed, work_items, "All work items should be processed exactly once");
+    pretty_assertions::assert_eq!(remaining_work, 0, "No work should remain unprocessed");
     assert!(workers_with_work > 0, "At least some workers should have gotten work");
 
     // Check for proper lock behavior
@@ -563,7 +547,7 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
     let successful_claims = metrics.successful_claims.load(Ordering::Relaxed);
     
     println!("  Lock conflicts detected: {}", lock_conflicts);
-    assert_eq!(successful_claims, work_items, "Should have exactly as many successful claims as work items");
+    pretty_assertions::assert_eq!(successful_claims, work_items, "Should have exactly as many successful claims as work items");
 
     // Under high contention, we expect some lock conflicts
     // but the algorithm should still work correctly
@@ -583,8 +567,8 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_work_queue_ordering_properties() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_work_queue_ordering_properties() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("ordering_test_{}", Ulid::new());
@@ -675,10 +659,10 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
     println!("  Actual order: {} items", actual_order.len());
 
     // Algorithm should preserve FIFO ordering
-    assert_eq!(actual_order.len(), expected_order.len(), "Should process all items");
+    pretty_assertions::assert_eq!(actual_order.len(), expected_order.len(), "Should process all items");
     
     for (i, (expected, actual)) in expected_order.iter().zip(actual_order.iter()).enumerate() {
-        assert_eq!(expected, actual, "Item at position {} should match expected order", i);
+        pretty_assertions::assert_eq!(expected, actual, "Item at position {} should match expected order", i);
     }
 
     println!("  ✓ FIFO ordering preserved by SELECT FOR UPDATE SKIP LOCKED");
@@ -742,7 +726,7 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
     let processed2 = result2??;
 
     println!("  Concurrent processing: worker1={}, worker2={}", processed1, processed2);
-    assert_eq!(processed1 + processed2, remaining_items as u64, "Should process all remaining items exactly once");
+    pretty_assertions::assert_eq!(processed1 + processed2, remaining_items as u64, "Should process all remaining items exactly once");
 
     // Cleanup
     sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name)
@@ -756,8 +740,8 @@ async fn test_work_queue_ordering_properties() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_work_queue_retry_mechanism() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_work_queue_retry_mechanism() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let agent_name = format!("retry_test_{}", Ulid::new());
@@ -829,7 +813,7 @@ async fn test_work_queue_retry_mechanism() -> Result<()> {
             .fetch_one(&pool)
             .await?;
 
-            assert_eq!(claimed.attempts, attempt as i32, "Attempt count should match");
+            pretty_assertions::assert_eq!(claimed.attempts, attempt as i32, "Attempt count should match");
 
             if attempt < *max_attempts {
                 // Simulate failure - reset to Pending for retry

@@ -1,97 +1,54 @@
-use sinex_ulid::Ulid;
-use std::str::FromStr;
-use std::collections::HashSet;
-use crate::common::{events, insert_test_event_raw};
-use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use crate::common::prelude::*;
+use crate::common::{events, assertions};
+use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 
 
-#[sqlx::test]
-async fn test_ulid_ordering_in_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    // Insert multiple events with monotonic ULID ordering
+#[sinex_test]
+async fn test_ulid_ordering_in_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
     
     for i in 0..5 {
-        // Create event with monotonic ULID - small delay ensures ordering within same millisecond
-        let event = events::filesystem_event(
-            "file.created",
-            &format!("/test/file_{}.txt", i)
-        );
-        
-        let id = insert_test_event_raw(&pool, &event).await?;
-        ulids.push(id.to_string());
+        let event = events::file_created_event(&format!("/test/file_{}.txt", i));
+        let id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
+        ulids.push(id);
         
         // Small delay to ensure ULID monotonic ordering
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
     
-    // Query events ordered by ID
-    let ordered_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id::text FROM raw.events 
-         WHERE source = 'filesystem' 
-         ORDER BY id DESC
-         LIMIT 5"
-    )
-    .fetch_all(&pool)
-    .await?;
+    // Query filesystem events to verify ordering
+    let filesystem_events = crate::common::get_events_by_source(ctx.pool(), "filesystem", 5).await?;
+    let retrieved_ulids: Vec<Ulid> = filesystem_events.iter().map(|e| e.id).collect();
     
-    // Reverse to match insertion order
-    let mut ordered_ids = ordered_ids;
-    ordered_ids.reverse();
-    
-    // Verify they're in the same order as inserted
-    assert_eq!(ulids, ordered_ids, "ULIDs should maintain insertion order when sorted");
-    
-    // Also verify strict ordering by comparing ULIDs directly
-    for i in 1..ulids.len() {
-        let prev_ulid = Ulid::from_str(&ulids[i-1])?;
-        let curr_ulid = Ulid::from_str(&ulids[i])?;
-        assert!(curr_ulid > prev_ulid, 
+    // Verify strict ordering by comparing ULIDs directly
+    for i in 1..retrieved_ulids.len() {
+        assert!(retrieved_ulids[i] > retrieved_ulids[i-1], 
             "Each ULID should be greater than the previous: {} > {}", 
-            curr_ulid, prev_ulid);
+            retrieved_ulids[i], retrieved_ulids[i-1]);
     }
     
     Ok(())
 }
 
 
-#[sqlx::test]
-async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    let ulid = Ulid::new();
-    let expected_timestamp = ulid.timestamp();
+#[sinex_test]
+async fn test_ulid_timestamp_extraction(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Create an event with a known ULID
+    let event = crate::common::create_test_event("timestamp_test_v2", "test_type_v2");
+    let expected_timestamp = event.id.timestamp();
     
-    // Insert ULID
-    sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)"
-    )
-    .bind(&ulid.to_string())
-    .bind("timestamp_test_v2")
-    .bind("test_type_v2")
-    .bind("test_host")
-    .bind(serde_json::json!({"test": "data"}))
-    .execute(&pool)
-    .await?;
+    // Insert the event and retrieve it
+    let event_id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
+    let retrieved_event = crate::common::get_event_by_id(ctx.pool(), event_id).await?;
     
-    // Extract ULID as string and parse timestamp in Rust
-    let stored_ulid_str: String = sqlx::query_scalar(
-        "SELECT id::text FROM raw.events WHERE source = 'timestamp_test_v2'"
-    )
-    .fetch_one(&pool)
-    .await?;
+    // Verify ULID timestamp matches
+    let extracted_timestamp = retrieved_event.id.timestamp();
+    pretty_assertions::assert_eq!(expected_timestamp, extracted_timestamp,
+        "Extracted timestamp should exactly match ULID timestamp");
     
-    let stored_ulid = Ulid::from_str(&stored_ulid_str)
-        .map_err(|e| format!("Failed to parse stored ULID: {}", e))?;
-    let extracted_timestamp = stored_ulid.timestamp();
-    
-    // Compare timestamps (should be identical since it's the same ULID)
-    assert_eq!(expected_timestamp, extracted_timestamp,
-        "Extracted timestamp should exactly match ULID timestamp: expected {:?}, got {:?}",
-        expected_timestamp, extracted_timestamp
-    );
-    
-    // Also verify that the extracted timestamp is reasonable (within last few seconds)
-    let now = chrono::Utc::now();
-    let age = now.signed_duration_since(extracted_timestamp);
+    // Verify timestamp is recent
+    let age = chrono::Utc::now().signed_duration_since(extracted_timestamp);
     assert!(age.num_seconds() < 10, 
         "ULID timestamp should be recent (within 10 seconds): age = {} seconds", 
         age.num_seconds());
@@ -100,7 +57,7 @@ async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dy
     let ts_ingest: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
         "SELECT ts_ingest FROM raw.events WHERE source = 'timestamp_test_v2'"
     )
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     // ts_ingest is generated from id::timestamp, should match our extraction
@@ -112,8 +69,8 @@ async fn test_ulid_timestamp_extraction(pool: sqlx::PgPool) -> Result<(), Box<dy
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_ulid_monotonic_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Generate multiple ULIDs rapidly to test monotonic behavior
     let mut _prev_ulid = None;
     let mut ulids = Vec::new();
@@ -140,29 +97,28 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
         .bind("test_type_v2")
         .bind("test_host")
         .bind(serde_json::json!({"seq": i}))
-        .execute(&pool)
+        .execute(ctx.pool())
         .await?;
     }
     
     // Verify all ULIDs are unique in database using timing utility
-    let unique_count = wait_for_filtered_event_count(
-        &pool,
+    let unique_count = wait_for_filtered_event_count(ctx.pool(),
         "source = $1",
         &["monotonic_test_v2"],
         10,
         5
     ).await.unwrap_or(0);
     
-    assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
+    pretty_assertions::assert_eq!(unique_count, 10, "All monotonic ULIDs should be unique in database");
     
     // Verify they're in order in database
     let ordered: Vec<String> = sqlx::query_scalar(
         "SELECT id::text FROM raw.events WHERE source = 'monotonic_test_v2' ORDER BY id"
     )
-    .fetch_all(&pool)
+    .fetch_all(ctx.pool())
     .await?;
     
-    assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order in database");
+    pretty_assertions::assert_eq!(ulids, ordered, "Monotonic ULIDs should maintain order in database");
     
     // Verify strict monotonic ordering
     for i in 1..ulids.len() {
@@ -176,8 +132,8 @@ async fn test_ulid_monotonic_generation(pool: sqlx::PgPool) -> Result<(), Box<dy
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_ulid_range_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert events with significant time separation to ensure reliable range queries
     let mut first_batch_ulids = Vec::new();
     
@@ -195,7 +151,7 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         .bind("first_batch")
         .bind("test_host")
         .bind(serde_json::json!({"seq": i, "batch": "first"}))
-        .execute(&pool)
+        .execute(ctx.pool())
         .await?;
         
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -221,15 +177,14 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         .bind("second_batch")
         .bind("test_host")
         .bind(serde_json::json!({"seq": i, "batch": "second"}))
-        .execute(&pool)
+        .execute(ctx.pool())
         .await?;
         
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
     
     // Wait for all events to be available for range queries
-    wait_for_filtered_event_count(
-        &pool,
+    wait_for_filtered_event_count(ctx.pool(),
         "source = $1",
         &["range_test_v2"],
         10, // Total expected events from both batches
@@ -246,7 +201,7 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
          AND id < $1::ulid"
     )
     .bind(mid_ulid.to_string())
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     let count_after_mid: i64 = sqlx::query_scalar(
@@ -255,7 +210,7 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
          AND id >= $1::ulid"
     )
     .bind(mid_ulid.to_string())
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     // Verify range query behavior with better timing separation
@@ -265,7 +220,7 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     assert!(count_after_mid >= 4, 
         "Should have at least 4 events after mid time (second batch), got {}", 
         count_after_mid);
-    assert_eq!(count_before_mid + count_after_mid, 10, 
+    pretty_assertions::assert_eq!(count_before_mid + count_after_mid, 10, 
         "Total should be 10 events: {} before + {} after = 10", 
         count_before_mid, count_after_mid);
     
@@ -286,8 +241,8 @@ async fn test_ulid_range_queries(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_ulid_in_foreign_keys(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Insert agent
     sqlx::query(
@@ -295,7 +250,7 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     )
     .bind("fk_ulid_test_agent_v2")
     .bind("1.0.0")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await?;
     
     // Insert event
@@ -309,7 +264,7 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     .bind("test_type_v2")
     .bind("test_host")
     .bind(serde_json::json!({"test": "data"}))
-    .execute(&pool)
+    .execute(ctx.pool())
     .await?;
     
     // Insert work queue item with ULID foreign key
@@ -321,7 +276,7 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     .bind(&queue_id.to_string())
     .bind(&event_id.to_string())
     .bind("fk_ulid_test_agent_v2")
-    .execute(&pool)
+    .execute(ctx.pool())
     .await?;
     
     // Verify we can query through the foreign key
@@ -332,15 +287,15 @@ async fn test_ulid_in_foreign_keys(pool: sqlx::PgPool) -> Result<(), Box<dyn std
          WHERE pq.queue_id = $1::ulid"
     )
     .bind(&queue_id.to_string())
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
-    assert_eq!(event_id.to_string(), found_event_id, "Foreign key should work with ULIDs");
+    pretty_assertions::assert_eq!(event_id.to_string(), found_event_id, "Foreign key should work with ULIDs");
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_ulid_index_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert events to test indexing and lookup performance
     let mut test_ulids = Vec::new();
     
@@ -357,7 +312,7 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
         .bind(format!("type_{}", i % 10))
         .bind("test_host")
         .bind(serde_json::json!({"seq": i}))
-        .execute(&pool)
+        .execute(ctx.pool())
         .await?;
     }
     
@@ -372,12 +327,12 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     .bind("lookup_test")
     .bind("test_host")
     .bind(serde_json::json!({"lookup": true, "special": "target"}))
-    .execute(&pool)
+    .execute(ctx.pool())
     .await?;
     
     // Update table statistics for accurate query planning
     sqlx::query("ANALYZE raw.events")
-        .execute(&pool)
+        .execute(ctx.pool())
         .await?;
     
     // Test primary key lookup efficiency
@@ -385,10 +340,10 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
         "SELECT event_type FROM raw.events WHERE id = $1::ulid"
     )
     .bind(&lookup_ulid.to_string())
-    .fetch_optional(&pool)
+    .fetch_optional(ctx.pool())
     .await?;
     
-    assert_eq!(found_event_type, Some("lookup_test".to_string()), 
+    pretty_assertions::assert_eq!(found_event_type, Some("lookup_test".to_string()), 
         "Should efficiently find event by ULID primary key");
     
     // Test that we can lookup the specific payload  
@@ -396,10 +351,10 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
         "SELECT payload FROM raw.events WHERE id = $1::ulid"
     )
     .bind(&lookup_ulid.to_string())
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
-    assert_eq!(found_payload["special"], "target", 
+    pretty_assertions::assert_eq!(found_payload["special"], "target", 
         "Should retrieve correct payload for ULID lookup");
     
     // Test range query performance with ULID ordering
@@ -411,7 +366,7 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
          WHERE source = 'perf_test_v2' AND id < $1::ulid"
     )
     .bind(mid_ulid)
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     let count_after: i64 = sqlx::query_scalar(
@@ -419,7 +374,7 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
          WHERE source = 'perf_test_v2' AND id >= $1::ulid"
     )
     .bind(mid_ulid)
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     // Verify range queries work correctly
@@ -427,16 +382,15 @@ async fn test_ulid_index_performance(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     assert!(count_after > 0, "Should find events after mid ULID");
     
     // Total count should be our inserted events - use timing utility
-    let total_count = wait_for_filtered_event_count(
-        &pool,
+    let total_count = wait_for_filtered_event_count(ctx.pool(),
         "source = $1",
         &["perf_test_v2"],
         51, // 50 test events + 1 lookup event
         5
     ).await.unwrap_or(0);
     
-    assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
-    assert_eq!(count_before + count_after, total_count, 
+    pretty_assertions::assert_eq!(total_count, 51, "Should have 50 test events + 1 lookup event = 51 total");
+    pretty_assertions::assert_eq!(count_before + count_after, total_count, 
         "Range query counts should sum to total: {} + {} = {}", 
         count_before, count_after, total_count);
     

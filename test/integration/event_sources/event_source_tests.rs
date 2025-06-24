@@ -1,5 +1,4 @@
-use anyhow::Result;
-use sinex_core::{EventSource, EventSourceContext};
+use crate::common::prelude::*;
 use sinex_events::{
     filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
@@ -7,46 +6,33 @@ use sinex_events::{
     clipboard::ClipboardMonitor,
     scrollback::ScrollbackCapture,
 };
-use std::time::Duration;
-use tempfile::TempDir;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
-use serde_json::{json, Value};
 use std::fs;
-
-fn create_test_context(config: Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+use crate::common::{resources, event_sources};
 
 #[tokio::test]
-async fn test_filesystem_watcher_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let config = json!({
-        "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],
-        "ignore_patterns": ["*.tmp", "*.log"],
-        "debounce_ms": 100
-    });
-    
-    let ctx = create_test_context(config);
+async fn test_filesystem_watcher_initialization() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
+    let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
+    let ctx = event_sources::test_context(config);
     let _watcher = FilesystemMonitor::initialize(ctx).await?;
     
     // FilesystemMonitor doesn't have name() or version() methods
     // These are provided by the EventSource trait constants
-    assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
+    pretty_assertions::assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_captures_events() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+async fn test_filesystem_watcher_captures_events() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": [],
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -68,7 +54,7 @@ async fn test_filesystem_watcher_captures_events() -> Result<()> {
     assert!(event.is_some());
     
     let event = event.unwrap();
-    assert_eq!(event.source, "filesystem");
+    pretty_assertions::assert_eq!(event.source, "filesystem");
     assert!(event.event_type.contains("created") || event.event_type.contains("modify"));
     
     // Verify payload contains expected fields
@@ -79,15 +65,15 @@ async fn test_filesystem_watcher_captures_events() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+async fn test_filesystem_watcher_ignores_patterns() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": ["*.tmp", "test_*"],
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -128,23 +114,23 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_kitty_socket_listener_initialization() -> Result<()> {
+async fn test_kitty_socket_listener_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "socket_path": "/tmp/test-kitty-socket",
         "polling_interval_secs": 2
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
     
-    assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
+    pretty_assertions::assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_asciinema_recorder_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+async fn test_asciinema_recorder_initialization() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "recordings_dir": temp_dir.path().to_str().unwrap(),
         "file_pattern": "*.cast",
@@ -155,16 +141,16 @@ async fn test_asciinema_recorder_initialization() -> Result<()> {
         "auto_annex": false
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _recorder = AsciinemaRecorder::initialize(ctx).await?;
     
-    assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
+    pretty_assertions::assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
     
     Ok(())
 }
 
 #[tokio::test] 
-async fn test_clipboard_monitor_initialization() -> Result<()> {
+async fn test_clipboard_monitor_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "monitor_clipboard": true,
         "monitor_primary": true,
@@ -178,17 +164,17 @@ async fn test_clipboard_monitor_initialization() -> Result<()> {
         "annex_repo_path": null
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _monitor = ClipboardMonitor::initialize(ctx).await?;
     
-    assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
+    pretty_assertions::assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
     
     // Create a subdirectory to test path-based patterns
     let sub_dir = temp_dir.path().join("logs");
@@ -205,7 +191,7 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
         "debounce_ms": 50
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
     
     let (tx, mut rx) = mpsc::channel(20);
@@ -250,8 +236,8 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_scrollback_capture_initialization() -> Result<()> {
-    let temp_dir = TempDir::new()?;
+async fn test_scrollback_capture_initialization() -> Result<(), anyhow::Error> {
+    let temp_dir = resources::temp_dir()?;
     let config = json!({
         "kitty_socket_path": "/tmp/test-kitty-socket",
         "capture_interval_secs": 15,
@@ -264,10 +250,10 @@ async fn test_scrollback_capture_initialization() -> Result<()> {
         "command_capture_delay_ms": 500
     });
     
-    let ctx = create_test_context(config);
+    let ctx = event_sources::test_context(config);
     let _capture = ScrollbackCapture::initialize(ctx).await?;
     
-    assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
+    pretty_assertions::assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
     
     Ok(())
 }

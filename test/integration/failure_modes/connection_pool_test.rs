@@ -1,8 +1,7 @@
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, RwLock};
-use tokio::time::timeout;
 use crate::common::timing_optimization::EventCounter;
 
 /// Test connection pool exhaustion scenarios
@@ -424,6 +423,6 @@ async fn test_connection_deadlock_prevention() {
     
     // In this scenario, we expect deadlock to be detected
     assert!(was_deadlock, "Expected deadlock scenario to be detected");
-    assert_eq!(pool.available_permits(), POOL_SIZE, 
+    pretty_assertions::assert_eq!(pool.available_permits(), POOL_SIZE, 
         "All connections should be released after deadlock resolution");
 }

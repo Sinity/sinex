@@ -1,3 +1,4 @@
+use crate::common::prelude::*;
 use sinex_core::create_registry;
 
 #[test]
@@ -20,7 +21,7 @@ fn test_event_registry_get_event_type() {
     // Test getting source for event type
     let source = registry.source_for_event("file.created");
     assert!(source.is_some());
-    assert_eq!(source.unwrap(), "filesystem");
+    pretty_assertions::assert_eq!(source.unwrap(), "filesystem");
     
     // Test getting non-existent event type
     let unknown = registry.source_for_event("nonexistent.event");
@@ -76,7 +77,7 @@ fn test_event_registry_event_type_properties() {
     // Test file.created event type
     let source = registry.source_for_event("file.created");
     assert!(source.is_some());
-    assert_eq!(source.unwrap(), "filesystem");
+    pretty_assertions::assert_eq!(source.unwrap(), "filesystem");
     
     // Test that we can get schema for event type
     let schema = registry.schema_for_event("file.created");
@@ -85,7 +86,7 @@ fn test_event_registry_event_type_properties() {
     // Test command.executed event type
     let cmd_source = registry.source_for_event("command.executed");
     assert!(cmd_source.is_some());
-    assert_eq!(cmd_source.unwrap(), "terminal.kitty");
+    pretty_assertions::assert_eq!(cmd_source.unwrap(), "terminal.kitty");
 }
 
 #[test]
@@ -109,7 +110,7 @@ fn test_event_registry_immutability() {
     let registry2 = create_registry();
     
     // Registries should have consistent content
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         registry1.event_types.len(),
         registry2.event_types.len()
     );
@@ -117,7 +118,7 @@ fn test_event_registry_immutability() {
     // Test that sources are consistent
     let source1 = registry1.source_for_event("file.created");
     let source2 = registry2.source_for_event("file.created");
-    assert_eq!(source1, source2);
+    pretty_assertions::assert_eq!(source1, source2);
 }
 
 #[test]
@@ -143,19 +144,18 @@ fn test_event_registry_event_source_mapping() {
     // Verify filesystem events are mapped to filesystem source
     for event in &fs_events {
         let source = registry.source_for_event(event);
-        assert_eq!(source, Some("filesystem"));
+        pretty_assertions::assert_eq!(source, Some("filesystem"));
     }
     
     // Verify terminal events are mapped to terminal source
     for event in &terminal_events {
         let source = registry.source_for_event(event);
-        assert_eq!(source, Some("terminal_kitty"));
+        pretty_assertions::assert_eq!(source, Some("terminal_kitty"));
     }
 }
 
 #[test]
 fn test_event_registry_concurrent_access() {
-    use std::sync::Arc;
     use std::thread;
     
     let registry = Arc::new(create_registry());
@@ -198,7 +198,7 @@ fn test_event_registry_with_real_events() {
     for event_name in filesystem_events {
         let source = registry.source_for_event(event_name);
         if source.is_some() {
-            assert_eq!(source.unwrap(), "filesystem");
+            pretty_assertions::assert_eq!(source.unwrap(), "filesystem");
         }
     }
     
@@ -211,7 +211,7 @@ fn test_event_registry_with_real_events() {
     for event_name in terminal_events {
         let source = registry.source_for_event(event_name);
         if source.is_some() {
-            assert_eq!(source.unwrap(), "terminal.kitty");
+            pretty_assertions::assert_eq!(source.unwrap(), "terminal.kitty");
         }
     }
 }

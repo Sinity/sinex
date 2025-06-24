@@ -1,9 +1,8 @@
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 
 /// Test gradual memory leak detection
 #[tokio::test]
@@ -243,11 +242,11 @@ async fn test_cpu_throttling_detection() {
 
 /// Test I/O saturation handling
 #[tokio::test]
-async fn test_io_saturation_handling() {
+async fn test_io_saturation_handling() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::fs::OpenOptions;
     use tokio::io::AsyncWriteExt;
     
-    let temp_dir = tempfile::TempDir::new().unwrap();
+    let temp_dir = tempfile::TempDir::new()?;
     let test_file = temp_dir.path().join("io_test.dat");
     
     // Track I/O performance
@@ -400,6 +399,7 @@ async fn test_io_saturation_handling() {
     }
     
     println!("✅ I/O saturation test completed with performance validation");
+    Ok(())
 }
 
 /// Test resource usage pattern analysis

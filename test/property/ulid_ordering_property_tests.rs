@@ -1,11 +1,8 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_ulid::Ulid;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use std::collections::HashSet;
+use sinex_db::queries::insert_raw_event;
 use chrono::{Utc, DateTime, Duration as ChronoDuration};
-use serde_json::json;
-use std::str::FromStr;
 
 /// Generate a strategy for creating lists of ULIDs with controlled time gaps
 fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = Vec<Ulid>> {
@@ -75,10 +72,10 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             // Insert events with time delays and collect their generated ULIDs
@@ -116,7 +113,7 @@ proptest! {
                  WHERE source = 'property.ulid_ordering' 
                  ORDER BY id"
             )
-            .fetch_all(&pool)
+            .fetch_all(&*pool)
             .await
             .expect("Query failed");
             
@@ -130,7 +127,7 @@ proptest! {
                  WHERE source = 'property.ulid_ordering' 
                  ORDER BY ts_ingest"
             )
-            .fetch_all(&pool)
+            .fetch_all(&*pool)
             .await
             .expect("Query failed");
             
@@ -139,7 +136,7 @@ proptest! {
             
             // Cleanup
             sqlx::query("DELETE FROM raw.events WHERE source = 'property.ulid_ordering'")
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Cleanup failed");
             
@@ -157,10 +154,10 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             let source_name = format!("property.range_test_{}", Ulid::new());
@@ -222,7 +219,7 @@ proptest! {
             )
             .bind(&source_name)
             .bind(cutoff_ulid.to_string())
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Query failed");
             
@@ -232,7 +229,7 @@ proptest! {
             )
             .bind(&source_name) 
             .bind(cutoff_ulid.to_string())
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Query failed");
             
@@ -259,7 +256,7 @@ proptest! {
                 "SELECT COUNT(*) FROM raw.events WHERE source = $1"
             )
             .bind(&source_name)
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Query failed");
             
@@ -271,7 +268,7 @@ proptest! {
             // Cleanup
             sqlx::query("DELETE FROM raw.events WHERE source = $1")
                 .bind(&source_name)
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Cleanup failed");
             
@@ -379,10 +376,10 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             let agent_name = format!("property_fk_test_{}", Ulid::new());
@@ -395,7 +392,7 @@ proptest! {
             .bind(&agent_name)
             .bind("1.0.0")
             .bind("Property test agent")
-            .execute(&pool)
+            .execute(&*pool)
             .await
             .expect("Agent creation failed");
             
@@ -431,7 +428,7 @@ proptest! {
                 .bind(queue_ulid.to_string())
                 .bind(event_ulid.to_string())
                 .bind(&agent_name)
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Queue insert failed");
                 
@@ -447,7 +444,7 @@ proptest! {
                      WHERE q.queue_id = $1::ulid"
                 )
                 .bind(queue_ulids[i].to_string())
-                .fetch_one(&pool)
+                .fetch_one(&*pool)
                 .await
                 .expect("FK query failed");
                 
@@ -463,7 +460,7 @@ proptest! {
                      WHERE q.raw_event_id = $1::ulid"
                 )
                 .bind(event_ulids[i].to_string())
-                .fetch_one(&pool)
+                .fetch_one(&*pool)
                 .await
                 .expect("Reverse FK query failed");
                 
@@ -478,7 +475,7 @@ proptest! {
                  JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id 
                  WHERE e.source = 'property.fk_test'"
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Join count query failed");
             
@@ -488,18 +485,18 @@ proptest! {
             // Cleanup
             sqlx::query("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1")
                 .bind(&agent_name)
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Queue cleanup failed");
                 
             sqlx::query("DELETE FROM raw.events WHERE source = 'property.fk_test'")
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Event cleanup failed");
                 
             sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
                 .bind(&agent_name)
-                .execute(&pool)
+                .execute(&*pool)
                 .await
                 .expect("Agent cleanup failed");
             

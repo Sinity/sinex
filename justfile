@@ -6,16 +6,29 @@ test:
     cargo test
 
 test-unit:
-    cargo test --test integration unit::
+    cargo test --test tests unit::
 
 test-integration:
-    cargo test --test integration integration::
+    cargo test --test tests integration::
 
 test-system:
-    cargo test --test integration system::
+    cargo test --test tests system::
 
-test-dlq:
-    cargo test --test integration ingestor::dlq_tests
+test-adversarial:
+    cargo test --test tests adversarial::
+
+test-property:
+    cargo test --test tests property::
+
+# Run test binary directly (workaround for cargo test hang)
+test-direct *ARGS:
+    #!/usr/bin/env bash
+    test_bin=$(find target/debug/deps -name "tests-*" -type f -executable | head -1)
+    if [ -z "$test_bin" ]; then
+        echo "No test binary found. Run 'cargo build --tests' first."
+        exit 1
+    fi
+    DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" "$test_bin" {{ARGS}}
 
 # NixOS VM tests with enhanced runner
 test-vm:
@@ -79,14 +92,6 @@ test-vm-parallel:
 test-vm-debug TEST="basic-flow":
     ./test/nixos-vm/run-vm-tests.sh -d {{TEST}}
 
-test-e2e:
-    cargo test --test integration system::end_to_end:: -- --nocapture
-
-test-e2e-full:
-    cargo test --test integration system::end_to_end::full_pipeline_tests::test_full_system -- --ignored --nocapture
-
-test-e2e-dry-run:
-    cargo test --test integration system::end_to_end::full_pipeline_tests::test_full_system_dry_run -- --nocapture
 
 test-cli:
     python3 -m pytest test/cli/test_exo_cli.py -v
@@ -97,69 +102,16 @@ test-cli-integration:
 test-cli-all:
     python3 -m pytest test/cli/ -v
 
-# Focused test categories
+# Library tests  
 test-core:
     cargo test --lib --workspace
 
-test-database:
-    cargo test --test integration integration::database::
-
-test-adversarial:
-    cargo test --test integration adversarial::
-
-test-worker:
-    cargo test --test integration integration::worker::
-
-test-regression:
-    cargo test --test integration system::regression::
-
-# System integration tests
-test-system-startup:
-    cargo test --test integration integration::full_system_startup_test:: -- --nocapture
-
-test-failure-recovery:
-    cargo test --test integration integration::failure_recovery_integration_test:: -- --nocapture
-
-test-health-monitoring:
-    cargo test --test integration integration::health_monitoring_integration_test:: -- --nocapture
-
-test-git-annex-integration:
-    cargo test --test integration integration::git_annex_full_integration_test:: -- --nocapture
-
-test-config-validation:
-    cargo test --test integration integration::configuration_validation_integration_test:: -- --nocapture
-
-# Comprehensive integration test suite
-test-integration-comprehensive:
-    echo "🧪 Running comprehensive integration test suite..."
-    just test-system-startup
-    echo "✅ System startup tests completed"
-    just test-failure-recovery  
-    echo "✅ Failure recovery tests completed"
-    just test-health-monitoring
-    echo "✅ Health monitoring tests completed"
-    just test-config-validation
-    echo "✅ Configuration validation tests completed"
-    just test-git-annex-integration
-    echo "✅ Git-annex integration tests completed"
-    echo "🎉 All comprehensive integration tests passed!"
-
-test-all:
-    echo "🧪 Running comprehensive test suite..."
+test-full:
+    echo "🧪 Running complete test suite (Rust + CLI + VM)..."
     just test
     echo "✅ Rust tests completed"
     just test-cli
-    echo "✅ CLI tests completed"
-    just test-e2e-dry-run
-    echo "✅ E2E tests completed"
-    echo "🎉 All core tests passed!"
-
-test-full:
-    echo "🧪 Running complete test suite..."
-    just test-all
-    echo "✅ Core test suite completed"
-    just test-integration-comprehensive
-    echo "✅ System integration tests completed"
+    echo "✅ CLI tests completed"  
     just test-vm-all
     echo "✅ VM tests completed"
     echo "🎉 All tests passed - system fully validated!"
@@ -238,8 +190,8 @@ update:
     cargo update
 
 # Database utilities
-psql:
-    psql "$DATABASE_URL"
+psql *ARGS:
+    psql "$DATABASE_URL" {{ARGS}}
 
 # Coverage
 coverage:

@@ -1,14 +1,7 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
-use sqlx::PgPool;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
-use std::time::Duration;
-use sinex_ulid::Ulid;
-use async_trait::async_trait;
-
 // Import test setup macros and utilities
-use crate::db_test;
 use crate::common::worker_test_utils::{self, insert_test_work_item};
 
 struct TestEventProcessor {
@@ -35,7 +28,7 @@ impl EventProcessor for TestEventProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
         
         tokio::time::sleep(self.processing_delay).await;
@@ -60,8 +53,9 @@ impl EventProcessor for TestEventProcessor {
     }
 }
 
-db_test! {
-    async fn test_event_processor_basic_processing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
         
@@ -82,14 +76,14 @@ db_test! {
         
         processor.process_event(&pool, &item).await?;
         
-        assert_eq!(process_count.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(process_count.load(Ordering::SeqCst), 1);
         
         Ok(())
-    }
 }
 
-db_test! {
-    async fn test_event_processor_failure_handling(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_event_processor_failure_handling() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         
         processor.should_fail.store(true, Ordering::SeqCst);
@@ -110,7 +104,6 @@ db_test! {
         assert!(result.is_err());
         
         Ok(())
-    }
 }
 
 #[tokio::test]
@@ -145,13 +138,14 @@ async fn test_worker_metrics_creation() {
     metrics.processing_duration.observe(0.5);
     
     // Just ensure metrics don't panic
-    assert_eq!(metrics.items_claimed.get(), 1.0);
-    assert_eq!(metrics.items_processed.get(), 1.0);
-    assert_eq!(metrics.items_failed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_claimed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_processed.get(), 1.0);
+    pretty_assertions::assert_eq!(metrics.items_failed.get(), 1.0);
 }
 
-db_test! {
-    async fn test_multiple_processors_different_agents(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
         
@@ -184,20 +178,19 @@ db_test! {
         processor_a.process_event(&pool, &item_a).await?;
         processor_b.process_event(&pool, &item_b).await?;
         
-        assert_eq!(count_a.load(Ordering::SeqCst), 1);
-        assert_eq!(count_b.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(count_a.load(Ordering::SeqCst), 1);
+        pretty_assertions::assert_eq!(count_b.load(Ordering::SeqCst), 1);
         
         Ok(())
-    }
 }
 
 #[tokio::test]
 async fn test_processor_configuration() {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
-    assert_eq!(processor.agent_name(), "test_agent");
-    assert_eq!(processor.batch_size(), 1);
-    assert_eq!(processor.poll_interval_secs(), 1);
+    pretty_assertions::assert_eq!(processor.agent_name(), "test_agent");
+    pretty_assertions::assert_eq!(processor.batch_size(), 1);
+    pretty_assertions::assert_eq!(processor.poll_interval_secs(), 1);
 }
 
 struct SlowProcessor {
@@ -210,7 +203,7 @@ impl EventProcessor for SlowProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         tokio::time::sleep(Duration::from_millis(200)).await;
         Ok(())
     }
@@ -234,7 +227,7 @@ async fn test_processor_custom_configuration() {
         agent_name: "slow_agent".to_string(),
     };
     
-    assert_eq!(processor.agent_name(), "slow_agent");
-    assert_eq!(processor.batch_size(), 5);
-    assert_eq!(processor.poll_interval_secs(), 2);
+    pretty_assertions::assert_eq!(processor.agent_name(), "slow_agent");
+    pretty_assertions::assert_eq!(processor.batch_size(), 5);
+    pretty_assertions::assert_eq!(processor.poll_interval_secs(), 2);
 }

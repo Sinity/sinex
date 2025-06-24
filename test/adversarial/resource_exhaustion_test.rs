@@ -1,14 +1,12 @@
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
-use sinex_db::models::RawEvent;
-use sinex_ulid::Ulid;
-use std::sync::Arc;
 use tokio::sync::Mutex;
-use tempfile::TempDir;
+use crate::common::resources;
 
 #[tokio::test]
-async fn test_unbounded_file_descriptor_explosion() {
+async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
     // Try to watch a directory with thousands of files
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];
     
     // Create many files
@@ -54,11 +52,12 @@ async fn test_unbounded_file_descriptor_explosion() {
     if watcher_count < 100 {
         println!("RESOURCE LIMIT: System restricted file watchers to {}", watcher_count);
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_memory_exhaustion_via_config_reload() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_memory_exhaustion_via_config_reload() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config
@@ -121,14 +120,11 @@ watch_paths = {}
     for config in &accumulated_configs {
         assert!(!config.enabled_events.is_empty(), "Config should maintain enabled events");
     }
+    Ok(())
 }
-
 
 #[test]
 fn test_string_concatenation_memory_bomb() {
-    use sinex_db::models::RawEvent;
-    use sinex_ulid::Ulid;
-    
     // Create event with expanding string pattern
     let mut expanding_string = String::from("a");
     let mut sizes = vec![];
@@ -137,21 +133,7 @@ fn test_string_concatenation_memory_bomb() {
         expanding_string = expanding_string.repeat(2);  // Exponential growth
         sizes.push(expanding_string.len());
         
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "memory".to_string(),
-            event_type: "bomb.test".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: serde_json::json!({
-                "iteration": i,
-                "data": &expanding_string[..expanding_string.len().min(1000)], // Cap for test
-                "actual_size": expanding_string.len()
-            }),
-        };
+        let event = crate::common::events::generic_adversarial_event("memory", "bomb.test", json!({"test": true}), None);
         
         match serde_json::to_string(&event) {
             Ok(_) => println!("Iteration {}: String size {} - OK", i, expanding_string.len()),
@@ -173,7 +155,6 @@ fn test_string_concatenation_memory_bomb() {
 
 #[tokio::test]
 async fn test_collector_event_queue_overflow() {
-    use tokio::sync::mpsc;
     use std::sync::atomic::{AtomicU64, Ordering};
     
     // Create collector with small channel
@@ -189,17 +170,7 @@ async fn test_collector_event_queue_overflow() {
     
     let producer = tokio::spawn(async move {
         for i in 0..10000 {
-            let event = RawEvent {
-                id: Ulid::new(),
-                source: "overflow".to_string(),
-                event_type: "test".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({"seq": i}),
-            };
+            let event = crate::common::events::generic_adversarial_event("overflow", "test", json!({"test": true}), None);
             
             // try_send doesn't block
             match tx_clone.try_send(event) {

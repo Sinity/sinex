@@ -1,11 +1,8 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
 use tokio::time::{timeout, sleep, interval};
 use futures::StreamExt;
-use sinex_db::{create_test_pool, run_migrations};
 
 /// Connection health metrics for monitoring pool state
 #[derive(Debug)]
@@ -16,7 +13,6 @@ struct ConnectionMetrics {
     timeout_errors: AtomicU64,
     connection_errors: AtomicU64,
     recovery_cycles: AtomicU64,
-    max_concurrent_reached: AtomicBool,
 }
 
 impl ConnectionMetrics {
@@ -28,7 +24,6 @@ impl ConnectionMetrics {
             timeout_errors: AtomicU64::new(0),
             connection_errors: AtomicU64::new(0),
             recovery_cycles: AtomicU64::new(0),
-            max_concurrent_reached: AtomicBool::new(false),
         }
     }
 
@@ -107,11 +102,7 @@ impl ResilientDbWorker {
         }
     }
 
-    fn stop(&self) {
-        self.should_stop.store(true, Ordering::Relaxed);
-    }
-
-    async fn run(&self, duration: Duration) -> Result<()> {
+    async fn run(&self, duration: Duration) -> Result<(), anyhow::Error> {
         let start = Instant::now();
         let mut query_count = 0;
 
@@ -154,7 +145,7 @@ impl ResilientDbWorker {
         Ok(())
     }
 
-    async fn run_simple_query(&self) -> Result<()> {
+    async fn run_simple_query(&self) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
         
         let result = timeout(
@@ -172,7 +163,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_read_write_query(&self, iteration: usize) -> Result<()> {
+    async fn run_read_write_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Create temporary table if it doesn't exist
@@ -219,7 +210,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_transaction_query(&self, iteration: usize) -> Result<()> {
+    async fn run_transaction_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         let mut tx = match self.pool.begin().await {
@@ -284,7 +275,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_streaming_query(&self) -> Result<()> {
+    async fn run_streaming_query(&self) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Generate a series to stream
@@ -311,7 +302,7 @@ impl ResilientDbWorker {
         }
     }
 
-    async fn run_prepared_query(&self, iteration: usize) -> Result<()> {
+    async fn run_prepared_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
         // Use the same prepared statement repeatedly
@@ -338,8 +329,8 @@ impl ResilientDbWorker {
 }
 
 #[tokio::test]
-async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_connection_pool_under_sustained_pressure() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     let metrics = Arc::new(ConnectionMetrics::new());
@@ -410,14 +401,14 @@ async fn test_connection_pool_under_sustained_pressure() -> Result<()> {
     // Validate results
     assert!(total_queries > 100, "Should have executed many queries");
     assert!(success_rate > 95.0, "Success rate should be > 95%");
-    assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0, 
+    pretty_assertions::assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0, 
                "All connections should be released");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_failure_recovery_cycles() -> Result<()> {
+async fn test_connection_pool_failure_recovery_cycles() -> Result<(), anyhow::Error> {
     let metrics = Arc::new(ConnectionMetrics::new());
     let recovery_cycles = 3;
     
@@ -479,14 +470,14 @@ async fn test_connection_pool_failure_recovery_cycles() -> Result<()> {
     println!("  Completed cycles: {}/{}", total_recoveries, recovery_cycles);
     println!("  {}", metrics.report());
 
-    assert_eq!(total_recoveries, recovery_cycles, 
+    pretty_assertions::assert_eq!(total_recoveries, recovery_cycles, 
                "Should complete all recovery cycles");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<()> {
+async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<(), anyhow::Error> {
     const POOL_SIZE: usize = 3;
     
     let pool = PgPoolOptions::new()
@@ -617,7 +608,7 @@ async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<()> 
 }
 
 #[tokio::test]
-async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
+async fn test_connection_pool_cascade_failure_recovery() -> Result<(), anyhow::Error> {
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Simulate cascade failure: one failure triggers more failures
@@ -703,8 +694,8 @@ async fn test_connection_pool_cascade_failure_recovery() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_memory_pressure_resilience() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_connection_pool_memory_pressure_resilience() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Test large query results under memory pressure
@@ -779,7 +770,7 @@ async fn test_connection_pool_memory_pressure_resilience() -> Result<()> {
     // Pool should remain functional under memory pressure
     assert!(metrics.successful_queries.load(Ordering::Relaxed) > 0,
            "Should maintain some successful operations under memory pressure");
-    assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0,
+    pretty_assertions::assert_eq!(metrics.active_connections.load(Ordering::Relaxed), 0,
               "All connections should be properly released");
 
     Ok(())

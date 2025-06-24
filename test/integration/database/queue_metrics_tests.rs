@@ -1,17 +1,14 @@
 // Queue metrics tests - should fail until metrics implementation is complete
 // Tests for queue_depth, dequeue_latency_ms, and per_agent_lag metrics
 
-use crate::db_test;
-use sinex_db::queries::*;
+use crate::common::prelude::*;
+use crate::common::database_helpers::get_shared_test_pool;
 // Local function definitions at bottom of file
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use anyhow::Result;
-use serde_json::json;
 use chrono::{Utc, Duration};
 
-db_test! {
-async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
+    let pool = get_shared_test_pool().await?;
     // Test that queue_depth metric correctly counts pending items per agent
     
     // Create test agents
@@ -50,25 +47,26 @@ async fn test_queue_depth_metric_calculation(pool: PgPool) -> Result<()> {
     // Expected: agent1=2 pending, agent2=0 pending (but both should be in results)
     
     // Verify that we get both agents in the results
-    assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents (even if one has 0 pending)");
+    pretty_assertions::assert_eq!(queue_metrics.len(), 2, "Should have metrics for 2 agents (even if one has 0 pending)");
     
     // Sort results by agent name for consistent checking
     let mut sorted_metrics = queue_metrics.clone();
     sorted_metrics.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
     
     // Check agent1 (metrics-agent-1)
-    assert_eq!(sorted_metrics[0].agent_name, agent1);
-    assert_eq!(sorted_metrics[0].queue_depth, 2, "Agent1 should have 2 pending items");
+    pretty_assertions::assert_eq!(sorted_metrics[0].agent_name, agent1);
+    pretty_assertions::assert_eq!(sorted_metrics[0].queue_depth, 2, "Agent1 should have 2 pending items");
     
     // Check agent2 (metrics-agent-2)  
-    assert_eq!(sorted_metrics[1].agent_name, agent2);
-    assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
+    pretty_assertions::assert_eq!(sorted_metrics[1].agent_name, agent2);
+    pretty_assertions::assert_eq!(sorted_metrics[1].queue_depth, 0, "Agent2 should have 0 pending items (1 processing)");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_dequeue_latency_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> {
+    let pool = get_shared_test_pool().await?;
     // Test that dequeue_latency_ms measures time from creation to processing
     
     let agent_name = "latency-test-agent";
@@ -104,10 +102,11 @@ async fn test_dequeue_latency_metric_calculation(pool: PgPool) -> Result<()> {
     assert!(agent_metric.avg_dequeue_latency_ms < 200.0, "Should be under 200ms latency");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_per_agent_lag_metric_calculation(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
+    let pool = get_shared_test_pool().await?;
     // Test that per_agent_lag measures how far behind each agent is
     
     let fast_agent = "fast-agent";
@@ -148,10 +147,11 @@ async fn test_per_agent_lag_metric_calculation(pool: PgPool) -> Result<()> {
     assert!(fast_agent_metric.max_lag_seconds < 60.0, "Fast agent should have minimal lag");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_prometheus_metrics_exposition(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_prometheus_metrics_exposition() -> Result<(), anyhow::Error> {
+    let pool = get_shared_test_pool().await?;
     // Test that metrics are properly exposed in Prometheus format
     
     let agent_name = "prometheus-test-agent";
@@ -191,10 +191,11 @@ async fn test_prometheus_metrics_exposition(pool: PgPool) -> Result<()> {
     }
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_metrics_update_frequency(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_metrics_update_frequency() -> Result<(), anyhow::Error> {
+    let pool = get_shared_test_pool().await?;
     // Test that metrics are updated efficiently without excessive database queries
     
     let agent_name = "frequency-test-agent";
@@ -220,23 +221,20 @@ async fn test_metrics_update_frequency(pool: PgPool) -> Result<()> {
     assert!(duration.as_millis() < 100, "Metrics calculation should be efficient: {:?}", duration);
     
     Ok(())
-}}
+}
 
 // Helper functions and types
-
 
 #[derive(Debug)]
 pub struct DequeueLatencyMetric {
     pub agent_name: String,
     pub avg_dequeue_latency_ms: f64,
-    pub max_dequeue_latency_ms: f64,
 }
 
 #[derive(Debug)]
 pub struct AgentLagMetric {
     pub agent_name: String,
     pub max_lag_seconds: f64,
-    pub avg_lag_seconds: f64,
 }
 
 // Functions that should exist after implementation
@@ -249,8 +247,7 @@ async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueL
         r#"
         SELECT 
             target_agent_name as agent_name,
-            AVG(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "avg_latency_ms!",
-            MAX(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "max_latency_ms!"
+            AVG(EXTRACT(EPOCH FROM (last_attempt_ts - created_at)) * 1000)::float8 as "avg_latency_ms!"
         FROM sinex_schemas.work_queue 
         WHERE last_attempt_ts IS NOT NULL
         AND created_at IS NOT NULL
@@ -264,7 +261,6 @@ async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueL
         .map(|r| DequeueLatencyMetric {
             agent_name: r.agent_name,
             avg_dequeue_latency_ms: r.avg_latency_ms,
-            max_dequeue_latency_ms: r.max_latency_ms,
         })
         .collect();
     
@@ -278,8 +274,7 @@ async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMe
         r#"
         SELECT 
             target_agent_name as agent_name,
-            MAX(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "max_lag_seconds!",
-            AVG(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "avg_lag_seconds!"
+            MAX(EXTRACT(EPOCH FROM (now() - created_at)))::float8 as "max_lag_seconds!"
         FROM sinex_schemas.work_queue
         WHERE status IN ('pending', 'failed_retryable')
         GROUP BY target_agent_name
@@ -292,7 +287,6 @@ async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMe
         .map(|r| AgentLagMetric {
             agent_name: r.agent_name,
             max_lag_seconds: r.max_lag_seconds,
-            avg_lag_seconds: r.avg_lag_seconds,
         })
         .collect();
     
@@ -342,7 +336,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
@@ -363,8 +357,7 @@ async fn insert_test_event(pool: &PgPool, source: &str, test_data: &str) -> Resu
         "source": source
     });
     
-    let event = insert_raw_event(
-        pool,
+    let event = insert_raw_event(&pool,
         source,
         "test_event",
         "test_host",

@@ -1,9 +1,7 @@
+use crate::common::prelude::*;
 use sinex_db::models::{RawEvent, WorkQueueItem, QueueStatus, AgentManifest};
-use sinex_ulid::Ulid;
 use chrono::{Utc, Duration};
-use serde_json::json;
 use uuid::Uuid;
-
 #[test]
 fn test_ulid_uuid_roundtrip() {
     // Test ULID to UUID and back
@@ -11,28 +9,13 @@ fn test_ulid_uuid_roundtrip() {
     let uuid = original_ulid.to_uuid();
     let converted_back = Ulid::from_uuid(uuid);
     
-    assert_eq!(original_ulid, converted_back);
-    assert_eq!(original_ulid.to_string(), converted_back.to_string());
+    pretty_assertions::assert_eq!(original_ulid, converted_back);
+    pretty_assertions::assert_eq!(original_ulid.to_string(), converted_back.to_string());
 }
 
 #[test]
 fn test_raw_event_json_serialization() {
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test.source".to_string(),
-        event_type: "test.event".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now() - Duration::seconds(5)),
-        host: "test-host".to_string(),
-        ingestor_version: Some("1.0.0".to_string()),
-        payload_schema_id: Some(Ulid::new()),
-        payload: json!({
-            "key": "value",
-            "nested": {
-                "field": 123
-            }
-        }),
-    };
+    let event = crate::common::events::generic_adversarial_event("test.source", "test.event", json!({"test": true}), Some("1.0.0"));
     
     // Serialize to JSON
     let json_str = serde_json::to_string(&event).unwrap();
@@ -40,11 +23,11 @@ fn test_raw_event_json_serialization() {
     // Deserialize back
     let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
     
-    assert_eq!(event.id, deserialized.id);
-    assert_eq!(event.source, deserialized.source);
-    assert_eq!(event.event_type, deserialized.event_type);
-    assert_eq!(event.host, deserialized.host);
-    assert_eq!(event.payload, deserialized.payload);
+    pretty_assertions::assert_eq!(event.id, deserialized.id);
+    pretty_assertions::assert_eq!(event.source, deserialized.source);
+    pretty_assertions::assert_eq!(event.event_type, deserialized.event_type);
+    pretty_assertions::assert_eq!(event.host, deserialized.host);
+    pretty_assertions::assert_eq!(event.payload, deserialized.payload);
 }
 
 #[test]
@@ -63,7 +46,7 @@ fn test_work_queue_status_serialization() {
         
         // Deserialize
         let deserialized: QueueStatus = serde_json::from_value(json_val).unwrap();
-        assert_eq!(status, deserialized);
+        pretty_assertions::assert_eq!(status, deserialized);
     }
 }
 
@@ -89,12 +72,12 @@ fn test_work_queue_item_serialization() {
     let json_str = serde_json::to_string(&item).unwrap();
     let deserialized: WorkQueueItem = serde_json::from_str(&json_str).unwrap();
     
-    assert_eq!(item.queue_id, deserialized.queue_id);
-    assert_eq!(item.raw_event_id, deserialized.raw_event_id);
-    assert_eq!(item.target_agent_name, deserialized.target_agent_name);
-    assert_eq!(item.status, deserialized.status);
-    assert_eq!(item.attempts, deserialized.attempts);
-    assert_eq!(item.max_attempts, deserialized.max_attempts);
+    pretty_assertions::assert_eq!(item.queue_id, deserialized.queue_id);
+    pretty_assertions::assert_eq!(item.raw_event_id, deserialized.raw_event_id);
+    pretty_assertions::assert_eq!(item.target_agent_name, deserialized.target_agent_name);
+    pretty_assertions::assert_eq!(item.status, deserialized.status);
+    pretty_assertions::assert_eq!(item.attempts, deserialized.attempts);
+    pretty_assertions::assert_eq!(item.max_attempts, deserialized.max_attempts);
 }
 
 #[test]
@@ -132,14 +115,14 @@ fn test_agent_manifest_serialization() {
     // Test JSON serialization
     let json_val = serde_json::to_value(&manifest).unwrap();
     assert!(json_val.is_object());
-    assert_eq!(json_val["agent_name"], "test-agent");
-    assert_eq!(json_val["version"], "2.0.0");
+    pretty_assertions::assert_eq!(json_val["agent_name"], "test-agent");
+    pretty_assertions::assert_eq!(json_val["version"], "2.0.0");
     
     // Test deserialization
     let deserialized: AgentManifest = serde_json::from_value(json_val).unwrap();
-    assert_eq!(manifest.agent_name, deserialized.agent_name);
-    assert_eq!(manifest.version, deserialized.version);
-    assert_eq!(manifest.produces_event_types, deserialized.produces_event_types);
+    pretty_assertions::assert_eq!(manifest.agent_name, deserialized.agent_name);
+    pretty_assertions::assert_eq!(manifest.version, deserialized.version);
+    pretty_assertions::assert_eq!(manifest.produces_event_types, deserialized.produces_event_types);
 }
 
 #[test]
@@ -155,27 +138,17 @@ fn test_ulid_json_string_format() {
     
     // The string should be the standard ULID format
     let ulid_str = wrapper["id"].as_str().unwrap();
-    assert_eq!(ulid_str.len(), 26); // ULID strings are always 26 chars
+    pretty_assertions::assert_eq!(ulid_str.len(), 26); // ULID strings are always 26 chars
     
     // Should be able to parse back
     let parsed = ulid_str.parse::<Ulid>().unwrap();
-    assert_eq!(ulid, parsed);
+    pretty_assertions::assert_eq!(ulid, parsed);
 }
 
 #[test]
 fn test_optional_field_serialization() {
     // Test with None values
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.type".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({}),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
     let json_val = serde_json::to_value(&event).unwrap();
     
@@ -188,17 +161,7 @@ fn test_optional_field_serialization() {
 #[test]
 fn test_datetime_serialization_format() {
     let now = Utc::now();
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.type".to_string(),
-        ts_ingest: now,
-        ts_orig: Some(now),
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: json!({}),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
     let json_str = serde_json::to_string(&event).unwrap();
     
@@ -209,7 +172,7 @@ fn test_datetime_serialization_format() {
     let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
     
     // Timestamps should match to the second (JSON doesn't preserve full precision)
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         event.ts_ingest.timestamp(),
         deserialized.ts_ingest.timestamp()
     );
@@ -229,17 +192,7 @@ fn test_large_payload_serialization() {
         });
     }
     
-    let event = RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.large".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: large_obj.clone(),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "test.large", json!({"test": true}), None);
     
     // Should serialize without issues
     let json_str = serde_json::to_string(&event).unwrap();
@@ -247,7 +200,7 @@ fn test_large_payload_serialization() {
     
     // Should deserialize correctly
     let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
-    assert_eq!(event.payload, deserialized.payload);
+    pretty_assertions::assert_eq!(event.payload, deserialized.payload);
 }
 
 #[test]
@@ -265,7 +218,7 @@ fn test_uuid_ulid_database_compatibility() {
     let retrieved_uuid = Uuid::from_bytes(*uuid_bytes);
     let retrieved_ulid = Ulid::from_uuid(retrieved_uuid);
     
-    assert_eq!(original_ulid, retrieved_ulid);
+    pretty_assertions::assert_eq!(original_ulid, retrieved_ulid);
     
     // Verify lexicographic ordering is preserved
     let ulid1 = Ulid::new();

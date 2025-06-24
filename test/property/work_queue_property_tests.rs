@@ -1,16 +1,11 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::task::JoinSet;
-use anyhow::Result;
-use sinex_db::{create_test_pool, run_migrations};
 use sinex_db::queries::{
     insert_raw_event, insert_work_queue_item, claim_work_queue_items,
     complete_work_queue_item, create_test_agent,
 };
-use sinex_ulid::Ulid;
-use serde_json::json;
 
 /// Shared state to track which items have been processed
 #[derive(Debug, Clone)]
@@ -59,7 +54,7 @@ async fn worker_with_crashes(
     crash_probability: f64,
     runtime_seconds: u64,
     seed: u64,
-) -> Result<()> {
+) -> Result<(), anyhow::Error> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     
@@ -134,10 +129,10 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
             // Setup test database
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             // Create test agent
@@ -221,7 +216,7 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
                 agent_name
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Operation failed");
             
@@ -229,12 +224,12 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'succeeded'",
                 agent_name
             )
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .expect("Operation failed");
             
             // Property: Total items in DB should equal processed + remaining
-            let db_total = remaining_items.count.unwrap_or(0) + completed_items.count.unwrap_or(0);
+            let db_total = remaining_items.count.unwrap_or(0i64) + completed_items.count.unwrap_or(0i64);
             prop_assert!(
                 db_total as usize >= processed_count,
                 "Database inconsistency: processed {} items but only {} total in DB",
@@ -246,12 +241,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             Ok(())
         })?
@@ -267,10 +262,10 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let database_url = std::env::var("DATABASE_URL")
+            let _database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
-            let pool = create_test_pool(&database_url).await.expect("Failed to create pool");
+            let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
             run_migrations(&pool).await.expect("Failed to run migrations");
             
             let agent_name = format!("contention_test_{}", Ulid::new());
@@ -340,12 +335,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(&pool).await;
+            ).execute(&*pool).await;
             
             Ok(())
         })?
@@ -364,33 +359,28 @@ mod unit_tests {
         
         // First processing should succeed
         assert!(!tracker.mark_processed(id1));
-        assert_eq!(tracker.processed_count(), 1);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 1);
         assert!(tracker.get_duplicates().is_empty());
         
         // Different ID should also succeed
         assert!(!tracker.mark_processed(id2));
-        assert_eq!(tracker.processed_count(), 2);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 2);
         assert!(tracker.get_duplicates().is_empty());
         
         // Same ID again should detect duplicate
         assert!(tracker.mark_processed(id1));
-        assert_eq!(tracker.processed_count(), 2); // Count doesn't increase
-        assert_eq!(tracker.get_duplicates().len(), 1);
-        assert_eq!(tracker.get_duplicates()[0], id1);
+        pretty_assertions::assert_eq!(tracker.processed_count(), 2); // Count doesn't increase
+        pretty_assertions::assert_eq!(tracker.get_duplicates().len(), 1);
+        pretty_assertions::assert_eq!(tracker.get_duplicates()[0], id1);
     }
     
-    #[tokio::test]
-    async fn test_worker_crash_simulation() {
+    #[sinex_test]
+    async fn test_worker_crash_simulation(pool: sqlx::PgPool) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-        
-        let pool = create_test_pool(&database_url).await.expect("DB operation failed");
         let tracker = ProcessingTracker::new();
         
         // Test with 100% crash probability (should exit immediately)
-        let result = worker_with_crashes(
-            pool,
+        let result = worker_with_crashes(pool,
             "test_agent".to_string(),
             "crash_test_worker".to_string(),
             tracker,
@@ -400,5 +390,6 @@ mod unit_tests {
         ).await;
         
         assert!(result.is_ok());
+        Ok(())
     }
 }

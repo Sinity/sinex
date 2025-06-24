@@ -1,11 +1,8 @@
-use anyhow::Result;
-use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::sync::Arc;
+use crate::common::prelude::*;
+use sqlx::postgres::PgPoolOptions;
 use std::time::{Duration, Instant};
-use futures::future::join_all;
-
 #[tokio::test]
-async fn test_connection_pool_max_connections() -> Result<()> {
+async fn test_connection_pool_max_connections() -> Result<(), anyhow::Error> {
     // Create a pool with a small max size
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -59,7 +56,7 @@ async fn test_connection_pool_max_connections() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_timeout_behavior() -> Result<()> {
+async fn test_connection_pool_timeout_behavior() -> Result<(), anyhow::Error> {
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_millis(500))
@@ -83,34 +80,34 @@ async fn test_connection_pool_timeout_behavior() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_recovery_after_database_restart() -> Result<()> {
-    let pool = create_test_pool().await?;
+async fn test_connection_pool_recovery_after_database_restart() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Verify initial connection works
     let result: i32 = sqlx::query_scalar("SELECT 1")
-        .fetch_one(&pool)
+        .fetch_one(pool.pool())
         .await?;
-    assert_eq!(result, 1);
+    pretty_assertions::assert_eq!(result, 1);
     
     // Simulate brief network issue by using invalid query
     // In real scenario, we'd restart the database
     let bad_result = sqlx::query("INVALID SQL SYNTAX")
-        .execute(&pool)
+        .execute(pool.pool())
         .await;
     assert!(bad_result.is_err());
     
     // Pool should recover and work again
     let result: i32 = sqlx::query_scalar("SELECT 2")
-        .fetch_one(&pool)
+        .fetch_one(pool.pool())
         .await?;
-    assert_eq!(result, 2);
+    pretty_assertions::assert_eq!(result, 2);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_concurrent_pressure() -> Result<()> {
-    let pool = Arc::new(create_test_pool().await?);
+async fn test_connection_pool_concurrent_pressure() -> Result<(), anyhow::Error> {
+    let pool = Arc::new(TestPool::with_strategy(CleanupStrategy::None).await?);
     
     // Spawn many concurrent tasks
     let mut handles = vec![];
@@ -121,7 +118,7 @@ async fn test_connection_pool_concurrent_pressure() -> Result<()> {
             // Each task does a quick query
             let result: i32 = sqlx::query_scalar("SELECT $1::int")
                 .bind(i)
-                .fetch_one(&*pool)
+                .fetch_one(pool.pool())
                 .await?;
             
             Ok::<_, sqlx::Error>(result)
@@ -134,14 +131,14 @@ async fn test_connection_pool_concurrent_pressure() -> Result<()> {
     
     for (i, result) in results.into_iter().enumerate() {
         let value = result??;
-        assert_eq!(value, i as i32);
+        pretty_assertions::assert_eq!(value, i as i32);
     }
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_max_lifetime() -> Result<()> {
+async fn test_connection_pool_max_lifetime() -> Result<(), anyhow::Error> {
     // Create pool with short max lifetime
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -163,13 +160,13 @@ async fn test_connection_pool_max_lifetime() -> Result<()> {
         .await?;
     
     // Connection should have been recycled
-    assert_ne!(conn_id_1, conn_id_2);
+    pretty_assertions::assert_ne!(conn_id_1, conn_id_2);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_idle_timeout() -> Result<()> {
+async fn test_connection_pool_idle_timeout() -> Result<(), anyhow::Error> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
@@ -194,14 +191,14 @@ async fn test_connection_pool_idle_timeout() -> Result<()> {
     let result: i32 = sqlx::query_scalar("SELECT 1")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(result, 1);
+    pretty_assertions::assert_eq!(result, 1);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_transaction_isolation() -> Result<()> {
-    let pool = create_test_pool().await?;
+async fn test_connection_pool_transaction_isolation() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Start a transaction in one task
     let pool1 = pool.clone();
@@ -245,36 +242,36 @@ async fn test_connection_pool_transaction_isolation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_connection_pool_error_recovery() -> Result<()> {
-    let pool = create_test_pool().await?;
+async fn test_connection_pool_error_recovery() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Cause an error on a connection
     let result = sqlx::query("SELECT * FROM nonexistent_table")
-        .fetch_all(&pool)
+        .fetch_all(pool.pool())
         .await;
     assert!(result.is_err());
     
     // Pool should still be usable
     let working: i32 = sqlx::query_scalar("SELECT 42")
-        .fetch_one(&pool)
+        .fetch_one(pool.pool())
         .await?;
-    assert_eq!(working, 42);
+    pretty_assertions::assert_eq!(working, 42);
     
     // Try multiple operations to ensure pool is healthy
     for i in 0..10 {
         let result: i32 = sqlx::query_scalar("SELECT $1::int")
             .bind(i)
-            .fetch_one(&pool)
+            .fetch_one(pool.pool())
             .await?;
-        assert_eq!(result, i);
+        pretty_assertions::assert_eq!(result, i);
     }
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_connection_pool_statement_cache() -> Result<()> {
-    let pool = create_test_pool().await?;
+async fn test_connection_pool_statement_cache() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Execute the same prepared statement many times
     let start = Instant::now();
@@ -282,7 +279,7 @@ async fn test_connection_pool_statement_cache() -> Result<()> {
         let _result: i32 = sqlx::query_scalar("SELECT $1::int + $2::int")
             .bind(i)
             .bind(10)
-            .fetch_one(&pool)
+            .fetch_one(pool.pool())
             .await?;
     }
     let cached_duration = start.elapsed();
@@ -292,7 +289,7 @@ async fn test_connection_pool_statement_cache() -> Result<()> {
     for i in 0..100 {
         let query = format!("SELECT {}::int + 10", i);
         let _result: i32 = sqlx::query_scalar(&query)
-            .fetch_one(&pool)
+            .fetch_one(pool.pool())
             .await?;
     }
     let uncached_duration = start.elapsed();
@@ -303,15 +300,3 @@ async fn test_connection_pool_statement_cache() -> Result<()> {
     Ok(())
 }
 
-// Helper function to create test pool
-async fn create_test_pool() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
-        .await?;
-    
-    Ok(pool)
-}

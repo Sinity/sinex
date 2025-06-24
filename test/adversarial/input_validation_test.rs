@@ -1,14 +1,10 @@
-use anyhow::Result;
-use std::time::Duration;
-use tokio::time::timeout;
-use sinex_db::{create_test_pool, run_migrations, queries::insert_raw_event};
-use sinex_ulid::Ulid;
-use serde_json::json;
+use crate::common::prelude::*;
+use sinex_db::queries::insert_raw_event;
 
 /// Test input validation for event sources and types
 #[tokio::test]
-async fn test_event_source_validation() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_event_source_validation() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test various malicious source names
@@ -180,8 +176,8 @@ struct ValidationResult {
 
 /// Test JSON payload validation and sanitization
 #[tokio::test]
-async fn test_json_payload_validation() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test various malicious JSON structures
@@ -355,6 +351,7 @@ async fn test_json_payload_validation() -> Result<()> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PayloadValidationResult {
     test_case: usize,
     original_size: usize,
@@ -395,8 +392,8 @@ fn check_dangerous_content(content: &str) -> bool {
 
 /// Test error handling for malformed inputs
 #[tokio::test]
-async fn test_malformed_input_handling() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test agent creation with malformed names
@@ -441,7 +438,7 @@ async fn test_malformed_input_handling() -> Result<()> {
 
         match agent_creation {
             Ok(_) => {
-                agent_validation_results.push((malformed_name.clone(), true));
+                agent_validation_results.push((malformed_name, true));
                 
                 // Clean up immediately
                 sqlx::query!(
@@ -453,7 +450,7 @@ async fn test_malformed_input_handling() -> Result<()> {
                 .ok();
             }
             Err(e) => {
-                agent_validation_results.push((malformed_name.clone(), false));
+                agent_validation_results.push((malformed_name, false));
                 println!("  Malformed agent name '{}' rejected: {}", 
                         malformed_name.chars().take(20).collect::<String>(), e);
             }
@@ -473,12 +470,12 @@ async fn test_malformed_input_handling() -> Result<()> {
     .await?;
 
     // Test malformed event creation
-    let malformed_events = vec!{
+    let malformed_events = vec![
         ("", "empty_source", "localhost", json!({})),
         ("test", "", "localhost", json!({})), // Empty event type
         ("test", "type", "", json!({})), // Empty host
         ("test", "type", "localhost", serde_json::Value::Null), // Null payload
-    };
+    ];
 
     let mut event_validation_results = Vec::new();
 
@@ -540,8 +537,8 @@ async fn test_malformed_input_handling() -> Result<()> {
 
 /// Test boundary conditions and edge cases
 #[tokio::test]
-async fn test_input_boundary_conditions() -> Result<()> {
-    let pool = create_test_pool(&std::env::var("DATABASE_URL")?).await?;
+async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
     // Test size boundaries

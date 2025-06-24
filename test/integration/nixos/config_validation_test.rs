@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::common::prelude::*;
 use std::process::Command;
 
 #[test]

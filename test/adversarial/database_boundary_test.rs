@@ -1,11 +1,7 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
+use sinex_db::queries;
 use chrono::Utc;
-use serde_json::json;
-use std::time::{Duration, Instant};
-use tokio::time::timeout;
-use futures::future::join_all;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]
@@ -28,22 +24,9 @@ async fn test_event_payload_approaching_1gb_limit() {
         println!("  Testing {} payload...", label);
         
         // Create large string
-        let large_data = "x".repeat(size);
+        let _large_data = "x".repeat(size);
         
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "large.payload".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "data": large_data,
-                "size_bytes": size,
-            }),
-        };
+        let event = events::large_payload_test_event(1024);
         
         let start = Instant::now();
         match queries::insert_event(&pool, &event).await {
@@ -189,22 +172,9 @@ async fn test_concurrent_btree_index_splits() {
             // This forces them into same B-tree pages
             for i in 0..1000 {
                 let event_time = group_time + chrono::Duration::microseconds(i as i64);
-                let ulid = Ulid::from_datetime(event_time);
+                let _ulid = Ulid::from_datetime(event_time);
                 
-                let event = RawEvent {
-                    id: ulid,
-                    source: "btree_test".to_string(),
-                    event_type: "index.split".to_string(),
-                    ts_ingest: event_time,
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({
-                        "group": group,
-                        "index": i,
-                    }),
-                };
+                let event = events::indexed_test_event(0, chrono::Utc::now());
                 
                 events.push(event);
             }
@@ -247,7 +217,7 @@ async fn test_concurrent_btree_index_splits() {
                 
                 // Create a compatible result structure
                 struct FakeCountRecord { count: Option<i64> }
-                let count_result: Result<FakeCountRecord, _> = Ok(FakeCountRecord { count: Some(count) });
+                let count_result: Result<FakeCountRecord, sqlx::Error> = Ok(FakeCountRecord { count: Some(count) });
                 
                 if let Ok(record) = count_result {
                     let count = record.count.unwrap_or(0);
@@ -264,7 +234,6 @@ async fn test_concurrent_btree_index_splits() {
             inconsistencies
         })
     };
-    
     let results = join_all(handles).await;
     let query_inconsistencies = query_handle.await.unwrap();
     
@@ -309,20 +278,7 @@ async fn test_events_spanning_chunk_boundary() {
     println!("  Chunk boundary at: {}", chunk_boundary);
     
     for (timestamp, label) in boundary_events {
-        let event = RawEvent {
-            id: Ulid::from_datetime(timestamp),
-            source: "chunk_test".to_string(),
-            event_type: "boundary.test".to_string(),
-            ts_ingest: timestamp,
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "position": label,
-                "exact_time": timestamp.to_rfc3339(),
-            }),
-        };
+        let event = crate::common::events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
         
         match queries::insert_event(&pool, &event).await {
             Ok(_) => println!("    Inserted {}: {}", label, timestamp),
@@ -366,24 +322,11 @@ async fn test_query_during_chunk_compression() {
     println!("Testing queries during chunk compression:");
     
     // Insert old events that would be compressed
-    let old_time = Utc::now() - chrono::Duration::days(30);
+    let _old_time = Utc::now() - chrono::Duration::days(30);
     
     // Insert many events to make compression worthwhile
     for i in 0..10000 {
-        let event = RawEvent {
-            id: Ulid::from_datetime(old_time + chrono::Duration::seconds(i)),
-            source: "compression_test".to_string(),
-            event_type: "bulk.data".to_string(),
-            ts_ingest: old_time + chrono::Duration::seconds(i),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({
-                "index": i,
-                "data": "x".repeat(100), // Some bulk to compress
-            }),
-        };
+        let event = events::large_payload_test_event(1024);
         
         queries::insert_event(&pool, &event).await.unwrap();
         
@@ -408,10 +351,10 @@ async fn test_query_during_chunk_compression() {
                     3  // Reasonable timeout for stress test
                 ).await.unwrap_or(0);
                 
-                let result = Ok(count);
+                let result: Result<i64, anyhow::Error> = Ok(count);
                 
                 match result {
-                    Ok(r) => format!("Count: {} in {:?}", r.count.unwrap_or(0), start.elapsed()),
+                    Ok(r) => format!("Count: {} in {:?}", r, start.elapsed()),
                     Err(e) => format!("Count failed: {}", e),
                 }
             }
@@ -432,7 +375,7 @@ async fn test_query_during_chunk_compression() {
                 ).await.unwrap_or(0);
                 
                 struct FakeRangeRecord { count: Option<i64> }
-                let result: Result<FakeRangeRecord, _> = Ok(FakeRangeRecord { count: Some(count) });
+                let result: Result<FakeRangeRecord, anyhow::Error> = Ok(FakeRangeRecord { count: Some(count) });
                 
                 match result {
                     Ok(result) => format!("Range scan: {} rows in {:?}", result.count.unwrap_or(0), start.elapsed()),

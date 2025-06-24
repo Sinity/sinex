@@ -8,16 +8,13 @@
 
 #![allow(dead_code, unused_imports, unused_variables)]
 
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ValidationReport};
-use serde_json::json;
-use std::collections::HashMap;
-use std::time::Duration;
 use tempfile::{TempDir, NamedTempFile};
 use tokio::fs;
 
 #[tokio::test]
-async fn test_comprehensive_configuration_validation_pipeline() -> Result<()> {
+async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), anyhow::Error> {
     // NOTE: This test is currently disabled due to config structure simplification
     // The CollectorConfig structure was simplified to only include:
     // - enabled_events: Vec<String>
@@ -47,7 +44,7 @@ async fn test_comprehensive_configuration_validation_pipeline() -> Result<()> {
     */
 }
 
-async fn test_configuration_loading_sources() -> Result<()> {
+async fn test_configuration_loading_sources() -> Result<(), anyhow::Error> {
     // DISABLED: Config structure simplified - this test needs rewrite
     Ok(())
     /*
@@ -101,14 +98,14 @@ connection_timeout_secs = 60
     
     // Test 1: Load default configuration
     let default_loaded: CollectorConfig = toml::from_str(default_config)?;
-    assert_eq!(default_loaded.enabled_events.len(), 1);
-    assert_eq!(default_loaded.monitoring.health_check_interval_secs, 60);
-    assert_eq!(default_loaded.database.max_connections, 10);
+    pretty_assertions::assert_eq!(default_loaded.enabled_events.len(), 1);
+    pretty_assertions::assert_eq!(default_loaded.monitoring.health_check_interval_secs, 60);
+    pretty_assertions::assert_eq!(default_loaded.database.max_connections, 10);
     
     // Test 2: Load user configuration (should include defaults + user overrides)
     let user_loaded: CollectorConfig = toml::from_str(user_config)?;
-    assert_eq!(user_loaded.enabled_events.len(), 2);
-    assert_eq!(user_loaded.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(user_loaded.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(user_loaded.monitoring.health_check_interval_secs, 30);
     assert!(user_loaded.monitoring.metrics_enabled);
     
     // Test 3: Simulate configuration merging
@@ -118,8 +115,8 @@ connection_timeout_secs = 60
     ]);
     
     // User config should override defaults
-    assert_eq!(merged_config.enabled_events.len(), 2);
-    assert_eq!(merged_config.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(merged_config.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(merged_config.monitoring.health_check_interval_secs, 30);
     assert!(merged_config.monitoring.metrics_enabled);
     
     // Test 4: Load environment configuration (highest precedence)
@@ -130,10 +127,10 @@ connection_timeout_secs = 60
     ]);
     
     // Environment should override everything
-    assert_eq!(final_config.enabled_events.len(), 3);
-    assert_eq!(final_config.monitoring.failure_threshold, 5);
-    assert_eq!(final_config.database.max_connections, 50);
-    assert_eq!(final_config.database.connection_timeout_secs, 60);
+    pretty_assertions::assert_eq!(final_config.enabled_events.len(), 3);
+    pretty_assertions::assert_eq!(final_config.monitoring.failure_threshold, 5);
+    pretty_assertions::assert_eq!(final_config.database.max_connections, 50);
+    pretty_assertions::assert_eq!(final_config.database.connection_timeout_secs, 60);
     
     // Validate final merged configuration
     let validation = final_config.validate();
@@ -174,7 +171,7 @@ fn merge_configurations(configs: Vec<CollectorConfig>) -> CollectorConfig {
     result
 }
 
-async fn test_comprehensive_validation_rules() -> Result<()> {
+async fn test_comprehensive_validation_rules() -> Result<(), anyhow::Error> {
     // Test all validation rules comprehensively
     
     // Test 1: Valid configuration should pass all validations
@@ -231,7 +228,7 @@ fn create_comprehensive_valid_config() -> CollectorConfig {
     config
 }
 
-async fn test_invalid_event_types() -> Result<()> {
+async fn test_invalid_event_types() -> Result<(), anyhow::Error> {
     let invalid_event_types = vec![
         ("no_category", "Event type must have category.subcategory format"),
         ("1invalid.event", "Event type cannot start with number"),
@@ -249,7 +246,7 @@ async fn test_invalid_event_types() -> Result<()> {
         let validation = config.validate();
         assert!(validation.is_err(), "Invalid event type '{}' should fail validation", invalid_type);
         
-        let error_message = validation.unwrap_err().to_string();
+        let error_message = validation.unwrap_err().to_string());
         // Check that error message contains relevant information
         assert!(error_message.contains("Event type") || error_message.contains("format"), 
                "Error message should be descriptive for '{}': {}", invalid_type, error_message);
@@ -259,7 +256,7 @@ async fn test_invalid_event_types() -> Result<()> {
     Ok(())
 }
 
-async fn test_invalid_configuration_values() -> Result<()> {
+async fn test_invalid_configuration_values() -> Result<(), anyhow::Error> {
     // Test invalid monitoring values
     let mut invalid_monitoring = CollectorConfig::default();
     invalid_monitoring.monitoring.health_check_interval_secs = 0; // Invalid: must be > 0
@@ -277,7 +274,7 @@ async fn test_invalid_configuration_values() -> Result<()> {
     // Test invalid git-annex values
     let mut invalid_annex = CollectorConfig::default();
     invalid_annex.git_annex.enabled = true;
-    invalid_annex.git_annex.repository_path = "relative/path".to_string(); // Invalid: must be absolute
+    invalid_annex.git_annex.repository_path = "relative/path".to_string()); // Invalid: must be absolute
     
     let validation = invalid_annex.validate();
     assert!(validation.is_err(), "Relative path should fail validation");
@@ -286,7 +283,7 @@ async fn test_invalid_configuration_values() -> Result<()> {
     Ok(())
 }
 
-async fn test_missing_required_configurations() -> Result<()> {
+async fn test_missing_required_configurations() -> Result<(), anyhow::Error> {
     // Test missing required event configurations
     let mut missing_config = CollectorConfig::default();
     missing_config.enabled_events.push("shell.command.executed_atuin".to_string());
@@ -295,7 +292,7 @@ async fn test_missing_required_configurations() -> Result<()> {
     let cross_validation = missing_config.cross_validate();
     assert!(cross_validation.is_err(), "Missing required config should fail cross-validation");
     
-    let error_message = cross_validation.unwrap_err().to_string();
+    let error_message = cross_validation.unwrap_err().to_string());
     assert!(error_message.contains("missing") || error_message.contains("required"), 
            "Error should mention missing requirement: {}", error_message);
     
@@ -303,7 +300,7 @@ async fn test_missing_required_configurations() -> Result<()> {
     Ok(())
 }
 
-async fn test_cross_validation_failures() -> Result<()> {
+async fn test_cross_validation_failures() -> Result<(), anyhow::Error> {
     // Test various cross-validation scenarios
     
     // Test 1: Event enabled but no configuration provided
@@ -319,7 +316,7 @@ async fn test_cross_validation_failures() -> Result<()> {
     invalid_paths.event.insert("shell_command_executed_atuin".to_string(), json!({
         "db_path": "relative/path/to/db", // Should be absolute
         "polling_interval_secs": 5
-    }));
+    });
     
     let validation = invalid_paths.cross_validate();
     assert!(validation.is_err(), "Relative paths should fail cross-validation");
@@ -337,7 +334,7 @@ async fn test_cross_validation_failures() -> Result<()> {
     Ok(())
 }
 
-async fn test_configuration_merging_precedence() -> Result<()> {
+async fn test_configuration_merging_precedence() -> Result<(), anyhow::Error> {
     // Test configuration merging with proper precedence rules
     
     let temp_dir = TempDir::new()?;
@@ -381,18 +378,18 @@ polling_interval_secs = 5
     let merged = merge_configurations(vec![base, override_cfg]);
     
     // Verify merge results
-    assert_eq!(merged.enabled_events.len(), 2, "Should have merged enabled events");
+    pretty_assertions::assert_eq!(merged.enabled_events.len(), 2, "Should have merged enabled events");
     assert!(merged.enabled_events.contains(&"filesystem.file.created".to_string()));
     assert!(merged.enabled_events.contains(&"terminal.command.executed".to_string()));
     
     // Override values should be used
-    assert_eq!(merged.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(merged.monitoring.health_check_interval_secs, 30);
     assert!(merged.monitoring.metrics_enabled);
-    assert_eq!(merged.database.max_connections, 50);
+    pretty_assertions::assert_eq!(merged.database.max_connections, 50);
     
     // Base values should be preserved where not overridden
-    assert_eq!(merged.monitoring.failure_threshold, 3);
-    assert_eq!(merged.database.connection_timeout_secs, 30);
+    pretty_assertions::assert_eq!(merged.monitoring.failure_threshold, 3);
+    pretty_assertions::assert_eq!(merged.database.connection_timeout_secs, 30);
     
     // New configurations should be added
     assert!(merged.event.contains_key("shell_command_executed_atuin"));
@@ -405,7 +402,7 @@ polling_interval_secs = 5
     Ok(())
 }
 
-async fn test_configuration_hot_reload() -> Result<()> {
+async fn test_configuration_hot_reload() -> Result<(), anyhow::Error> {
     // Test hot-reloading configuration changes
     
     let temp_dir = TempDir::new()?;
@@ -426,8 +423,8 @@ metrics_enabled = false
     let initial_content = fs::read_to_string(&config_file).await?;
     let initial: CollectorConfig = toml::from_str(&initial_content)?;
     
-    assert_eq!(initial.enabled_events.len(), 1);
-    assert_eq!(initial.monitoring.health_check_interval_secs, 60);
+    pretty_assertions::assert_eq!(initial.enabled_events.len(), 1);
+    pretty_assertions::assert_eq!(initial.monitoring.health_check_interval_secs, 60);
     assert!(!initial.monitoring.metrics_enabled);
     
     // Simulate time passing
@@ -454,10 +451,10 @@ polling_interval_secs = 5
     let updated: CollectorConfig = toml::from_str(&updated_content)?;
     
     // Verify changes
-    assert_eq!(updated.enabled_events.len(), 2);
-    assert_eq!(updated.monitoring.health_check_interval_secs, 30);
+    pretty_assertions::assert_eq!(updated.enabled_events.len(), 2);
+    pretty_assertions::assert_eq!(updated.monitoring.health_check_interval_secs, 30);
     assert!(updated.monitoring.metrics_enabled);
-    assert_eq!(updated.monitoring.failure_threshold, 5);
+    pretty_assertions::assert_eq!(updated.monitoring.failure_threshold, 5);
     
     // Validate updated configuration
     let validation = updated.validate();
@@ -471,7 +468,7 @@ polling_interval_secs = 5
     Ok(())
 }
 
-async fn test_configuration_error_handling() -> Result<()> {
+async fn test_configuration_error_handling() -> Result<(), anyhow::Error> {
     // Test various error scenarios and recovery
     
     // Test 1: Malformed TOML
@@ -532,7 +529,7 @@ enabled_events = ["filesystem.file.created"]
 }
 
 #[tokio::test]
-async fn test_configuration_performance_and_scale() -> Result<()> {
+async fn test_configuration_performance_and_scale() -> Result<(), anyhow::Error> {
     // Test configuration system performance with large configurations
     
     // Test 1: Large number of enabled events
@@ -547,7 +544,7 @@ async fn test_configuration_performance_and_scale() -> Result<()> {
     Ok(())
 }
 
-async fn test_large_event_configuration() -> Result<()> {
+async fn test_large_event_configuration() -> Result<(), anyhow::Error> {
     // Test with many enabled events
     
     let mut large_config = CollectorConfig::default();
@@ -564,7 +561,7 @@ async fn test_large_event_configuration() -> Result<()> {
             "setting1": format!("value_{}", i),
             "setting2": i * 10,
             "setting3": true
-        }));
+        });
     }
     
     // Test validation performance
@@ -584,7 +581,7 @@ async fn test_large_event_configuration() -> Result<()> {
     Ok(())
 }
 
-async fn test_complex_event_configurations() -> Result<()> {
+async fn test_complex_event_configurations() -> Result<(), anyhow::Error> {
     // Test with complex nested event configurations
     
     let mut complex_config = CollectorConfig::default();
@@ -627,7 +624,7 @@ async fn test_complex_event_configurations() -> Result<()> {
                 {"type": "webhook", "url": "https://api.example.com/events"}
             ]
         }
-    }));
+    });
     
     // Test validation with complex configuration
     let validation = complex_config.validate();
@@ -641,7 +638,7 @@ async fn test_complex_event_configurations() -> Result<()> {
     Ok(())
 }
 
-async fn test_configuration_validation_performance() -> Result<()> {
+async fn test_configuration_validation_performance() -> Result<(), anyhow::Error> {
     // Test validation performance with various configuration sizes
     
     let test_cases = vec![
@@ -664,7 +661,7 @@ async fn test_configuration_validation_performance() -> Result<()> {
             config.event.insert(format!("config_{}", i), json!({
                 "value": i,
                 "name": format!("config_{}", i)
-            }));
+            });
         }
         
         // Measure validation time

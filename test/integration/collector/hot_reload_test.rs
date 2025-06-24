@@ -1,14 +1,10 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_collector::config::CollectorConfig;
 use sinex_core::{EventSource, EventSourceContext, RawEvent};
-use async_trait::async_trait;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
-use tempfile::NamedTempFile;
 use std::io::Write;
-use serde_json::json;
-use std::collections::HashMap;
+use crate::common::event_sources;
 
 // Mock event source that can track configuration changes
 struct ConfigurableEventSource {
@@ -63,7 +59,7 @@ impl EventSource for ConfigurableEventSource {
 }
 
 #[tokio::test]
-async fn test_config_hot_reload_without_data_loss() -> Result<()> {
+async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error> {
     // Create initial config file
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
@@ -99,7 +95,7 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
     });
     
     // Simulate collector behavior - start source
-    let ctx = EventSourceContext::new(json!({
+    let ctx = event_sources::test_context(json!({
         "event_interval_ms": 100
     }));
     let mut source = ConfigurableEventSource::initialize(ctx).await?;
@@ -146,15 +142,15 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
     assert!(!v2_events.is_empty(), "Should have events from config v2");
     
     // Events should have different intervals
-    assert_eq!(v1_events[0].payload["interval_ms"], 100);
-    assert_eq!(v2_events[0].payload["interval_ms"], 50);
+    pretty_assertions::assert_eq!(v1_events[0].payload["interval_ms"], 100);
+    pretty_assertions::assert_eq!(v2_events[0].payload["interval_ms"], 50);
     
     // Check no events were lost - sequential event numbers
     let mut last_num = None;
     for event in events.iter() {
         let num = event.payload["event_number"].as_u64().unwrap();
         if let Some(last) = last_num {
-            assert_eq!(num, last + 1, "Event sequence broken");
+            pretty_assertions::assert_eq!(num, last + 1, "Event sequence broken");
         }
         last_num = Some(num);
     }
@@ -163,12 +159,12 @@ async fn test_config_hot_reload_without_data_loss() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_config_reload_with_source_restart() -> Result<()> {
+async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     // Test that sources can be gracefully restarted with new config
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
     // Start with one configuration
-    let ctx1 = EventSourceContext::new(json!({
+    let ctx1 = event_sources::test_context(json!({
         "event_interval_ms": 200,
         "source_id": "instance_1"
     }));
@@ -193,7 +189,7 @@ async fn test_config_reload_with_source_restart() -> Result<()> {
     handle1.await??;
     
     // Start new source with different config
-    let ctx2 = EventSourceContext::new(json!({
+    let ctx2 = event_sources::test_context(json!({
         "event_interval_ms": 100,
         "source_id": "instance_2"
     }));
@@ -219,16 +215,16 @@ async fn test_config_reload_with_source_restart() -> Result<()> {
     assert!(events.len() >= 6);
     
     // First events should have 200ms interval
-    assert_eq!(events[0].payload["interval_ms"], 200);
+    pretty_assertions::assert_eq!(events[0].payload["interval_ms"], 200);
     
     // Later events should have 100ms interval
-    assert_eq!(events[events.len() - 1].payload["interval_ms"], 100);
+    pretty_assertions::assert_eq!(events[events.len() - 1].payload["interval_ms"], 100);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_config_validation_before_reload() -> Result<()> {
+async fn test_config_validation_before_reload() -> Result<(), anyhow::Error> {
     // Test that invalid configs are rejected without affecting running sources
     
     let valid_config = CollectorConfig {
@@ -254,7 +250,7 @@ async fn test_config_validation_before_reload() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_partial_reload_capability() -> Result<()> {
+async fn test_partial_reload_capability() -> Result<(), anyhow::Error> {
     // Test that specific sources can be reloaded without affecting others
     
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
@@ -264,7 +260,7 @@ async fn test_partial_reload_capability() -> Result<()> {
     let mut stop_flags = Vec::new();
     
     for i in 0..2 {
-        let ctx = EventSourceContext::new(json!({
+        let ctx = event_sources::test_context(json!({
             "event_interval_ms": 100,
             "source_id": format!("source_{}", i)
         }));

@@ -1,4 +1,4 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use chrono::{DateTime, Utc, Datelike};
 
 #[test]
@@ -91,7 +91,7 @@ fn test_clipboard_copy_count_overflow() {
     let max_count: u32 = u32::MAX;
     let next_count = max_count.wrapping_add(1);
     
-    assert_eq!(next_count, 0, "Counter wrapped to zero!");
+    pretty_assertions::assert_eq!(next_count, 0, "Counter wrapped to zero!");
     
     // In production code at line 547:
     // entry.copy_count += 1;  // This can overflow!
@@ -111,7 +111,7 @@ fn test_retry_attempts_overflow() {
     
     // In release mode, this silently wraps to negative!
     let wrapped = max_attempts.wrapping_add(1);
-    assert_eq!(wrapped, i32::MIN);
+    pretty_assertions::assert_eq!(wrapped, i32::MIN);
     
     // This breaks retry logic - negative attempts!
 }
@@ -156,7 +156,7 @@ fn test_file_size_cast_truncation() {
     // Better approach:
     let size: usize = 1_000_000;
     let safe_cast: i64 = size.try_into().expect("Size too large for i64");
-    assert_eq!(safe_cast, 1_000_000);
+    pretty_assertions::assert_eq!(safe_cast, 1_000_000);
 }
 
 #[test]
@@ -199,13 +199,13 @@ fn test_process_id_truncation() {
     let truncated: u16 = large_pid as u16;
     
     // This gives wrong value
-    assert_ne!(truncated as u32, large_pid);
-    assert_eq!(truncated, 34464); // 100000 % 65536
+    pretty_assertions::assert_ne!(truncated as u32, large_pid);
+    pretty_assertions::assert_eq!(truncated, 34464); // 100000 % 65536
     
     // Two different processes could get same truncated ID!
     let pid1: u32 = 65536;
     let pid2: u32 = 131072;
-    assert_eq!(pid1 as u16, pid2 as u16); // Collision!
+    pretty_assertions::assert_eq!(pid1 as u16, pid2 as u16); // Collision!
 }
 
 #[test]
@@ -213,17 +213,16 @@ fn test_duration_to_seconds_precision_loss() {
     // BUG 9: Duration conversions losing precision
     // Found in multiple places converting Duration to seconds
     
-    use std::time::Duration;
     
     let precise_duration = Duration::from_nanos(1_500_000_000); // 1.5 seconds
     
     // Converting to integer seconds loses fractional part
     let seconds = precise_duration.as_secs(); // Returns 1, losing 0.5s
-    assert_eq!(seconds, 1);
+    pretty_assertions::assert_eq!(seconds, 1);
     
     // Better to use as_secs_f64() for precision
     let precise_seconds = precise_duration.as_secs_f64();
-    assert_eq!(precise_seconds, 1.5);
+    pretty_assertions::assert_eq!(precise_seconds, 1.5);
 }
 
 #[test]
@@ -277,6 +276,6 @@ mod panic_tests {
         // In release mode, overflow wraps silently
         let max: u32 = u32::MAX;
         let wrapped = max.wrapping_add(1);
-        assert_eq!(wrapped, 0); // Silent wraparound!
+        pretty_assertions::assert_eq!(wrapped, 0); // Silent wraparound!
     }
 }

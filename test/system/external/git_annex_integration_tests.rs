@@ -1,6 +1,5 @@
-use anyhow::Result;
+use crate::common::prelude::*;
 use sinex_annex::{GitAnnex, AnnexConfig};
-use tempfile::TempDir;
 use tokio::fs;
 
 async fn setup_test_annex() -> Result<(GitAnnex, TempDir)> {
@@ -22,7 +21,7 @@ async fn setup_test_annex() -> Result<(GitAnnex, TempDir)> {
 }
 
 #[tokio::test]
-async fn test_file_add_and_retrieve() -> Result<()> {
+async fn test_file_add_and_retrieve() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file
@@ -35,7 +34,7 @@ async fn test_file_add_and_retrieve() -> Result<()> {
     
     // Verify key was generated
     assert!(!annex_key.key.is_empty());
-    assert_eq!(annex_key.size, content.len() as u64);
+    pretty_assertions::assert_eq!(annex_key.size, content.len() as u64);
     
     // Ensure content is available
     annex.get_content(&test_file.to_string_lossy()).await?;
@@ -47,7 +46,7 @@ async fn test_file_add_and_retrieve() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_large_file_handling() -> Result<()> {
+async fn test_large_file_handling() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create 1MB of data
@@ -59,7 +58,7 @@ async fn test_large_file_handling() -> Result<()> {
     let annex_key = annex.add_file(&large_file).await?;
     
     // Verify git-annex handled it
-    assert_eq!(annex_key.size, content.len() as u64);
+    pretty_assertions::assert_eq!(annex_key.size, content.len() as u64);
     assert!(!annex_key.backend.is_empty());
     
     // Check status
@@ -70,7 +69,7 @@ async fn test_large_file_handling() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_annex_key_lookup() -> Result<()> {
+async fn test_annex_key_lookup() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file with known content
@@ -85,15 +84,15 @@ async fn test_annex_key_lookup() -> Result<()> {
     let looked_up_key = annex.get_key(&test_file).await?;
     
     // Keys should match
-    assert_eq!(original_key.key, looked_up_key.key);
-    assert_eq!(original_key.size, looked_up_key.size);
-    assert_eq!(original_key.backend, looked_up_key.backend);
+    pretty_assertions::assert_eq!(original_key.key, looked_up_key.key);
+    pretty_assertions::assert_eq!(original_key.size, looked_up_key.size);
+    pretty_assertions::assert_eq!(original_key.backend, looked_up_key.backend);
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_drop_content() -> Result<()> {
+async fn test_drop_content() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create and add a file
@@ -113,7 +112,7 @@ async fn test_drop_content() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_fsck() -> Result<()> {
+async fn test_fsck() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Add some files
@@ -133,7 +132,7 @@ async fn test_fsck() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_git_annex_configuration() -> Result<()> {
+async fn test_git_annex_configuration() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
     
@@ -157,13 +156,13 @@ async fn test_git_annex_configuration() -> Result<()> {
         .await?;
     
     let num_copies = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert_eq!(num_copies, "2");
+    pretty_assertions::assert_eq!(num_copies, "2");
     
     Ok(())
 }
 
 #[tokio::test]
-async fn test_concurrent_file_operations() -> Result<()> {
+async fn test_concurrent_file_operations() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     let annex = std::sync::Arc::new(annex);
     let mut handles = vec![];
@@ -197,7 +196,7 @@ async fn test_concurrent_file_operations() -> Result<()> {
     }
     
     // Verify all files were added
-    assert_eq!(keys.len(), 5);
+    pretty_assertions::assert_eq!(keys.len(), 5);
     for key in keys {
         assert!(!key.key.is_empty());
     }
@@ -206,7 +205,7 @@ async fn test_concurrent_file_operations() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_files_in_subdirectories() -> Result<()> {
+async fn test_files_in_subdirectories() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create subdirectory structure
@@ -223,7 +222,7 @@ async fn test_files_in_subdirectories() -> Result<()> {
     
     // Verify path structure
     assert!(nested_file.exists());
-    assert_eq!(key.size, content.len() as u64);
+    pretty_assertions::assert_eq!(key.size, content.len() as u64);
     
     // Get content to ensure it's accessible
     annex.get_content(&nested_file.to_string_lossy()).await?;
@@ -232,7 +231,7 @@ async fn test_files_in_subdirectories() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_annex_deduplication() -> Result<()> {
+async fn test_annex_deduplication() -> Result<(), anyhow::Error> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     let content = b"Duplicate content for dedup test";
@@ -253,8 +252,8 @@ async fn test_annex_deduplication() -> Result<()> {
     assert!(file2.exists());
     
     // Keys should be identical (git-annex deduplicates by content)
-    assert_eq!(key1.key, key2.key);
-    assert_eq!(key1.hash, key2.hash);
+    pretty_assertions::assert_eq!(key1.key, key2.key);
+    pretty_assertions::assert_eq!(key1.hash, key2.hash);
     
     // Check that git-annex recognizes the deduplication
     let output = tokio::process::Command::new("git")

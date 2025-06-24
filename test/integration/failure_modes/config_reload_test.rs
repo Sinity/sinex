@@ -1,10 +1,6 @@
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError, Result};
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
+use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use std::time::Duration;
-use serde_json::json;
 
 /// Test configuration reload during active event processing
 #[tokio::test]
@@ -48,7 +44,7 @@ async fn test_config_reload_during_processing() {
         type Config = serde_json::Value;
         const SOURCE_NAME: &'static str = "configurable";
         
-        async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+        async fn initialize(ctx: EventSourceContext) -> Result<Self, CoreError> {
             let interval_ms = ctx.config
                 .get("interval_ms")
                 .and_then(|v| v.as_u64())
@@ -62,24 +58,10 @@ async fn test_config_reload_during_processing() {
             })
         }
         
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             loop {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: Self::SOURCE_NAME.to_string(),
-                    event_type: "config.test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "test".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: json!({
-                        "interval_ms": self.interval_ms,
-                        "reloaded": self.reload_flag.load(Ordering::Relaxed)
-                    }),
-                };
-                
-                tx.send(event).await.map_err(|e| CoreError::Other(e.to_string()))?;
+                let event = crate::common::events::generic_adversarial_event("test", "config.test", json!({"test": true}), None);
+                if tx.send(event).await.is_err() { return Ok(()); }
                 
                 if self.reload_flag.load(Ordering::Relaxed) {
                     self.events_after.fetch_add(1, Ordering::Relaxed);

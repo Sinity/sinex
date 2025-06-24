@@ -1,8 +1,6 @@
 use sinex_db::models::QueueStatus;
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use crate::common::timing_optimization::TestSynchronizer;
 
 /// Test orphaned worker detection and cleanup
@@ -48,10 +46,6 @@ async fn test_orphaned_worker_detection() {
             let _ = self.heartbeat_tx.send(now);
         }
         
-        async fn seconds_since_heartbeat(&self) -> u64 {
-            let last = self.last_heartbeat.read().await;
-            last.elapsed().as_secs()
-        }
         
         fn mark_dead(&self) {
             self.is_alive.store(false, Ordering::Relaxed);
@@ -147,8 +141,6 @@ async fn test_orphaned_worker_detection() {
             let worker_clone = worker.clone();
             
             let monitor = tokio::spawn(async move {
-                let mut orphan_detected = false;
-                
                 loop {
                     // Wait for heartbeat or timeout
                     match tokio::time::timeout(orphan_timeout, heartbeat_rx.changed()).await {
@@ -165,11 +157,10 @@ async fn test_orphaned_worker_detection() {
                             let has_work = worker_clone.items_processing.load(Ordering::Relaxed) > 0;
                             let is_alive = worker_clone.is_alive.load(Ordering::Relaxed);
                             
-                            if has_work && !orphan_detected {
+                            if has_work {
                                 println!("ORPHAN DETECTED: {} (no heartbeat for {:?}, has {} items in progress)",
                                     worker_clone.id, orphan_timeout, 
                                     worker_clone.items_processing.load(Ordering::Relaxed));
-                                orphan_detected = true;
                                 return Some(worker_clone.id.clone());
                             }
                             
@@ -362,9 +353,9 @@ async fn test_orphaned_work_recovery() {
     }
     
     // Verify recovery worked
-    assert_eq!(recovered_count, 2, "Should have recovered 2 orphaned items");
-    assert_eq!(completed, 3, "All items should eventually complete");
-    assert_eq!(orphaned, 0, "No items should remain orphaned");
+    pretty_assertions::assert_eq!(recovered_count, 2, "Should have recovered 2 orphaned items");
+    pretty_assertions::assert_eq!(completed, 3, "All items should eventually complete");
+    pretty_assertions::assert_eq!(orphaned, 0, "No items should remain orphaned");
 }
 
 /// Test preventing zombie workers
@@ -428,9 +419,9 @@ async fn test_zombie_worker_prevention() {
     println!("  Zombie after abort: {} (should be same)", zombie_count_final);
     
     // Verify behaviors
-    assert_eq!(good_count_at_shutdown, good_count_final, 
+    pretty_assertions::assert_eq!(good_count_at_shutdown, good_count_final, 
         "Good worker should not process after shutdown");
-    assert_eq!(zombie_count_at_shutdown, zombie_count_final,
+    pretty_assertions::assert_eq!(zombie_count_at_shutdown, zombie_count_final,
         "Zombie worker should be stopped by abort");
     assert!(good_count_at_shutdown > 0 && zombie_count_at_shutdown > 0,
         "Both workers should have done some work");
