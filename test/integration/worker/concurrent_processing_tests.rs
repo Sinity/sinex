@@ -6,17 +6,17 @@
 //! - Better event and worker management
 
 use crate::common::prelude::*;
-use crate::common::event_builders::EventBuilder;
 use crate::common::worker_test_utils;
 use sinex_db::queries::{claim_work_queue_items, complete_work_queue_item};
 use tokio::task::JoinSet;
+use std::sync::Mutex;
 
 #[sinex_test]
 async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Setup test worker with items
-    let _items = worker_test_utils::setup_test_worker(&ctx.pool, "test_worker", 10).await?;
+    let _items = worker_test_utils::setup_test_worker(ctx.pool(), "test_worker", 10).await?;
     
-    let pool = Arc::new(ctx.ctx.pool().clone());
+    let pool = Arc::new(ctx.pool().clone());
     let barrier = Arc::new(Barrier::new(3));
     let processed_count = Arc::new(tokio::sync::Mutex::new(0));
     
@@ -76,12 +76,12 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
     pretty_assertions::assert_eq!(total_processed, 10, "All items should be processed exactly once");
     
     // Verify no items remain
-    worker_test_utils::verify_all_items_processed_by_worker(&ctx.pool, "test_worker").await?;
+    worker_test_utils::verify_all_items_processed_by_worker(ctx.pool(), "test_worker").await?;
     
     // Verify work distribution
     let mut workers_that_worked = 0;
     for (worker_id, count) in worker_results {
-        if ctx.config.verbose {
+        if ctx.is_verbose() {
             println!("Worker {} processed {} items", worker_id, count);
         }
         if count > 0 {
@@ -102,9 +102,9 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
 #[sinex_test]
 async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert test items
-    let _ = worker_test_utils::insert_test_items(&ctx.pool, 20).await?;
+    let _ = worker_test_utils::insert_test_items(ctx.pool(), 20).await?;
     
-    let pool = Arc::new(ctx.ctx.pool().clone());
+    let pool = Arc::new(ctx.pool().clone());
     let start = Instant::now();
     let barrier = Arc::new(Barrier::new(4));
     
@@ -114,7 +114,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
     for worker_id in 0..4 {
         let pool = ctx.pool().clone();
         let barrier = barrier.clone();
-        let test_ctx = ctx.config.clone();
+        let test_config = ctx.config().clone();
         
         tasks.spawn(async move {
             barrier.wait().await;
@@ -142,7 +142,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
                 }
             }
             
-            if test_ctx.verbose {
+            if test_config.verbose {
                 println!("Worker {} processed {} items", worker_id, processed);
             }
             
@@ -164,7 +164,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
     ctx.run_step("verify_processing_time", || async {
         // Reasonable timeout check
         assert!(
-            elapsed < ctx.config.default_timeout,
+            elapsed < ctx.default_timeout(),
             "Processing took too long ({:?}) - possible deadlock",
             elapsed
         );
@@ -177,11 +177,11 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
 #[sinex_test]
 async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert single test item
-    let _ = worker_test_utils::insert_test_items(&ctx.pool, 1).await?;
+    let _ = worker_test_utils::insert_test_items(ctx.pool(), 1).await?;
     
     // Worker 1: Claim the item
     let claimed = claim_work_queue_items(
-        &ctx.pool,
+        ctx.pool(),
         "test_worker",
         "worker-1",
         1
@@ -191,7 +191,7 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> Resul
     
     // Worker 2: Try to claim - should get nothing
     let items = claim_work_queue_items(
-        &ctx.pool,
+        ctx.pool(),
         "test_worker",
         "worker-2",
         1
@@ -223,7 +223,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
         worker_test_utils::create_work_item(&ctx.pool, "stress_worker", event.id).await?;
     }
     
-    let pool = Arc::new(ctx.ctx.pool().clone());
+    let pool = Arc::new(ctx.pool().clone());
     let barrier = Arc::new(Barrier::new(worker_count));
     let processing_stats = Arc::new(Mutex::new(HashMap::new()));
     
@@ -307,7 +307,7 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> Result<(), Box<dyn st
     
     // Worker 1 claims items but "crashes"
     let claimed = claim_work_queue_items(
-        &ctx.pool,
+        ctx.pool(),
         "test_worker",
         "worker-failing",
         5
@@ -323,16 +323,16 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> Result<(), Box<dyn st
         sqlx::query!(
             "UPDATE sinex_schemas.work_queue 
              SET status = 'pending', processing_worker_id = NULL 
-             WHERE queue_id = $1",
-            item.queue_id
+             WHERE queue_id = $1::uuid::ulid",
+            item.queue_id.to_uuid()
         )
-        .execute(&ctx.pool)
+        .execute(ctx.pool())
         .await?;
     }
     
     // Worker 2 should be able to claim them
     let reclaimed = claim_work_queue_items(
-        &ctx.pool,
+        ctx.pool(),
         "test_worker",
         "worker-recovery",
         5

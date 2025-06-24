@@ -120,6 +120,21 @@ impl TestContext {
         self.start_time.elapsed()
     }
 
+    /// Get the default timeout for operations
+    pub fn default_timeout(&self) -> Duration {
+        self.config.default_timeout
+    }
+
+    /// Check if verbose logging is enabled
+    pub fn is_verbose(&self) -> bool {
+        self.config.verbose
+    }
+
+    /// Get the entire test configuration (for cloning)
+    pub fn config(&self) -> &TestConfig {
+        &self.config
+    }
+
     // ===== Database Operations =====
 
     /// Insert an event into the database
