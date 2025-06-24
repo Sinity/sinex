@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use std::process::Command;
 
-async fn setup_system_test() -> Result<PgPool> {
+async fn _setup_system_test() -> Result<PgPool> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Clean all tables for isolated test

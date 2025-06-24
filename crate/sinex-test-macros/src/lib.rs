@@ -31,8 +31,8 @@ pub fn sinex_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let pool = crate::common::database_helpers::get_shared_test_pool().await?;
             let mut tx = pool.begin().await?;
             
-            // Create test context that uses the transaction
-            let ctx = TestContext::with_transaction(&mut tx, TestConfig {
+            // Create test context that uses the pool directly
+            let ctx = TestContext::with_pool(pool.clone(), TestConfig {
                 test_name: stringify!(#fn_name).to_string(),
                 ..Default::default()
             }).await?;

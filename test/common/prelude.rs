@@ -65,7 +65,6 @@ pub use crate::common::insert_event;
 // Query shortcuts
 pub use sinex_db::queries::{
     add_to_work_queue,
-    purge_old_work_queue_items,
     // Other missing functions
     insert_raw_event,
     calculate_queue_depth_metrics,

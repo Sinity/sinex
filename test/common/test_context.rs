@@ -7,7 +7,7 @@
 //! - Common test utilities in one ergonomic interface
 
 use crate::common::prelude::*;
-use crate::common::database::{TestPool, CleanupStrategy};
+use crate::common::database::TestPool;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_event_count, wait_for_filtered_event_count, 
@@ -91,15 +91,9 @@ impl TestContext {
     
     /// Create a test context with a transaction (used by #[sinex_test])
     pub async fn with_transaction(_tx: &mut Transaction<'_, Postgres>, config: TestConfig) -> Result<Self> {
-        // Use TestPool with transaction strategy
-        let test_pool = TestPool::with_strategy(CleanupStrategy::Transaction).await?;
-        
-        Ok(Self {
-            db: DbConnection::TestPool(test_pool),
-            config,
-            start_time: Instant::now(),
-            created_events: Arc::new(Mutex::new(Vec::new())),
-        })
+        // This method is deprecated - use with_pool instead
+        // The macro now passes the pool directly to avoid deadlocks
+        panic!("TestContext::with_transaction is deprecated - use with_pool instead");
     }
     
     /// Get the database pool

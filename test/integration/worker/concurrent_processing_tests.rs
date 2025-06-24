@@ -16,7 +16,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
     // Setup test worker with items
     let _items = worker_test_utils::setup_test_worker(ctx.pool(), "test_worker", 10).await?;
     
-    let pool = Arc::new(ctx.pool().clone());
+    let _pool = Arc::new(ctx.pool().clone());
     let barrier = Arc::new(Barrier::new(3));
     let processed_count = Arc::new(tokio::sync::Mutex::new(0));
     
@@ -104,7 +104,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
     // Insert test items
     let _ = worker_test_utils::insert_test_items(ctx.pool(), 20).await?;
     
-    let pool = Arc::new(ctx.pool().clone());
+    let _pool = Arc::new(ctx.pool().clone());
     let start = Instant::now();
     let barrier = Arc::new(Barrier::new(4));
     
@@ -223,7 +223,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
         worker_test_utils::create_work_item(&ctx.pool(), "stress_worker", event.id).await?;
     }
     
-    let pool = Arc::new(ctx.pool().clone());
+    let _pool = Arc::new(ctx.pool().clone());
     let barrier = Arc::new(Barrier::new(worker_count));
     let processing_stats = Arc::new(Mutex::new(HashMap::new()));
     
