@@ -38,7 +38,7 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> Result<()> 
         .build();
     
     // Context manages pool internally
-    schema_test_utils::assert_schema_valid_event(&ctx.pool, &valid_event, schema_id).await?;
+    schema_test_utils::assert_schema_valid_event(&ctx.pool(), &valid_event, schema_id).await?;
     
     Ok(())
 }

@@ -36,7 +36,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
             
             loop {
                 // Try to claim items using the production function
-                let items = claim_work_queue_items(ctx.pool(),
+                let items = claim_work_queue_items(&pool,
                     "test_worker",
                     &format!("worker-{}", worker_id),
                     1
@@ -52,7 +52,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
                     tokio::task::yield_now().await;
                     
                     // Mark as processed by completing it
-                    complete_work_queue_item(ctx.pool(), item.queue_id).await?;
+                    complete_work_queue_item(&pool, item.queue_id).await?;
                     
                     local_processed += 1;
                 }
@@ -123,7 +123,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
             
             loop {
                 // Try to claim items
-                let items = claim_work_queue_items(ctx.pool(),
+                let items = claim_work_queue_items(&pool,
                     "test_worker",
                     &format!("worker-{}", worker_id),
                     1
@@ -137,7 +137,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
                     // Simulate work with smart waiting instead of fixed sleep
                     tokio::task::yield_now().await;
                     
-                    complete_work_queue_item(ctx.pool(), item.queue_id).await?;
+                    complete_work_queue_item(&pool, item.queue_id).await?;
                     processed += 1;
                 }
             }
@@ -200,7 +200,7 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> Resul
     pretty_assertions::assert_eq!(items.len(), 0, "Worker 2 should not get any items");
     
     // Complete the item
-    complete_work_queue_item(&ctx.pool, claimed[0].queue_id).await?;
+    complete_work_queue_item(&ctx.pool(), claimed[0].queue_id).await?;
     
     // Wait for completion using context helper
     ctx.wait_for_work_queue(0).await?;
@@ -220,7 +220,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
     
     // Create work queue items from events
     for event in &events {
-        worker_test_utils::create_work_item(&ctx.pool, "stress_worker", event.id).await?;
+        worker_test_utils::create_work_item(&ctx.pool(), "stress_worker", event.id).await?;
     }
     
     let pool = Arc::new(ctx.pool().clone());
@@ -243,7 +243,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
             
             loop {
                 // Claim in batches for efficiency
-                let items = claim_work_queue_items(ctx.pool(),
+                let items = claim_work_queue_items(&pool,
                     "stress_worker",
                     &format!("worker-{}", worker_id),
                     5  // Batch size
@@ -257,14 +257,14 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
                 
                 for item in items {
                     // Process without delay
-                    complete_work_queue_item(ctx.pool(), item.queue_id).await?;
+                    complete_work_queue_item(&pool, item.queue_id).await?;
                     *local_stats.entry("processed").or_insert(0) += 1;
                 }
             }
             
             local_stats.insert("batches", batch_count);
             
-            let mut stats_guard = stats.lock().await;
+            let mut stats_guard = stats.lock().unwrap();
             stats_guard.insert(worker_id, local_stats);
             
             Ok::<(), anyhow::Error>(())
@@ -277,7 +277,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
     }
     
     // Analyze results
-    let stats = processing_stats.lock().await;
+    let stats = processing_stats.lock().unwrap();
     let total_processed: i32 = stats.values()
         .filter_map(|s| s.get("processed"))
         .sum();
@@ -303,7 +303,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
 #[sinex_test]
 async fn test_worker_failure_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that items can be reclaimed after worker failure
-    let _ = worker_test_utils::insert_test_items(&ctx.pool, 5).await?;
+    let _ = worker_test_utils::insert_test_items(&ctx.pool(), 5).await?;
     
     // Worker 1 claims items but "crashes"
     let claimed = claim_work_queue_items(
@@ -342,7 +342,7 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> Result<(), Box<dyn st
     
     // Complete processing
     for item in reclaimed {
-        complete_work_queue_item(&ctx.pool, item.queue_id).await?;
+        complete_work_queue_item(&ctx.pool(), item.queue_id).await?;
     }
     
     // Verify all completed
