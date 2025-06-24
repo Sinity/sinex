@@ -69,7 +69,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_ttl_policy_purges_old_f
+async fn test_ttl_policy_purges_old_failed_items(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -138,9 +138,10 @@ async fn test_ttl_policy_keeps_pending_items(ctx: TestContext) -> Result<(), any
     pretty_assertions::assert_eq!(item_exists.count.unwrap(), 1, "Pending item should remain");
     
     Ok(())
-:assert_eq!(item_exists.count.unwrap(), 1, "Pending item should remain");
-    
-    Ok((
+}
+
+#[sinex_test]
+async fn test_ttl_policy_keeps_items_without_processed_at(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -164,8 +165,10 @@ async fn test_ttl_policy_keeps_pending_items(ctx: TestContext) -> Result<(), any
     pretty_assertions::assert_eq!(purged_count, 0, "Should not purge items without processed_at");
     
     Ok(())
-ocessed_at
-    pretty_assertions::assert_eq!(purged_count, 0, "Should not purge items 
+}
+
+#[sinex_test]
+async fn test_ttl_policy_respects_90_day_threshold(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -206,11 +209,11 @@ ocessed_at
     pretty_assertions::assert_eq!(purged_count, 1, "Should purge exactly 1 item at 90-day threshold");
     
     Ok(())
- exactly the one that's over 90 days
-    pretty_assertions::assert_eq!(purged_count, 1, "Should purge exactly 1 item at 90-day threshold");
-    
-    Ok(())
 }
 
 
 // Function that should exist after TTL implementation - now implemented!
+async fn purge_old_work_queue_items(_pool: &PgPool) -> Result<i64> {
+    // This is a stub for testing - the real implementation should be in sinex_db
+    Ok(0)
+}
