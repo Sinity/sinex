@@ -20,6 +20,16 @@ test-adversarial:
 test-property:
     cargo test --test tests property::
 
+# Run test binary directly (workaround for cargo test hang)
+test-direct *ARGS:
+    #!/usr/bin/env bash
+    test_bin=$(find target/debug/deps -name "tests-*" -type f -executable | head -1)
+    if [ -z "$test_bin" ]; then
+        echo "No test binary found. Run 'cargo build --tests' first."
+        exit 1
+    fi
+    DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" "$test_bin" {{ARGS}}
+
 # NixOS VM tests with enhanced runner
 test-vm:
     ./test/nixos-vm/run-vm-tests.sh -c smoke
@@ -180,8 +190,8 @@ update:
     cargo update
 
 # Database utilities
-psql:
-    psql "$DATABASE_URL"
+psql *ARGS:
+    psql "$DATABASE_URL" {{ARGS}}
 
 # Coverage
 coverage:
