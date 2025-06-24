@@ -7,7 +7,7 @@
 //! - Schema validation
 //! - Concurrent access patterns
 //!
-//! Uses #[sqlx::test] for automatic transaction isolation
+//! Uses #[sinex_test] for automatic transaction isolation
 
 use crate::common::prelude::*;
 use crate::common::{self, events, assertions, generators};
@@ -29,10 +29,10 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> Result<(), Box<dyn 
     );
 
     // Insert and verify using shared assertion helpers
-    let event_id = assertions::assert_event_inserted(ctx.ctx.pool()(), &event).await?;
+    let event_id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
 
     // Query it back using our helper that encapsulates the UUID conversion
-    let retrieved = common::get_event_by_id(ctx.ctx.pool()(), event_id).await?;
+    let retrieved = common::get_event_by_id(ctx.pool(), event_id).await?;
 
     // Verify it matches what we inserted (ignoring generated fields)
     assertions::assert_events_equivalent(&retrieved, &event);
@@ -42,44 +42,42 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> Result<(), Box<dyn 
 
 /// Test batch insertion of multiple events
 #[sinex_test]
-async fn test_batch_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::erro
+async fn test_batch_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let events = generators::test_events(10);
     
     let mut inserted_ids = Vec::new();
     for event in &events {
-        let id = assertions::assert_event_inserted(ctx.ctx.pool()(), event).await?;
+        let id = assertions::assert_event_inserted(ctx.pool(), event).await?;
         inserted_ids.push(id);
     }
     
     // Verify all events exist
     for id in inserted_ids {
-        assert!(common::event_exists(ctx.ctx.pool()(), id).await?);
+        assert!(common::event_exists(ctx.pool(), id).await?);
     }
 
     // Check total count
-    let count = common::get_event_count(ctx.ctx.pool()()).await?;
+    let count = common::get_event_count(ctx.pool()).await?;
     assert!(count >= 10);
-
-    Ok(())
 
     Ok(())
 }
 
 /// Test querying events by source
 #[sinex_test]
-async fn test_query_events_by_source(ctx: TestContext) -> Result<(),
+async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert filesystem events
     let fs_event1 = events::file_created_event("/test/file1.txt");
     let fs_event2 = events::file_modified_event("/test/file2.txt");
-    assertions::assert_event_inserted(ctx.ctx.pool()(), &fs_event1).await?;
-    assertions::assert_event_inserted(ctx.ctx.pool()(), &fs_event2).await?;
+    assertions::assert_event_inserted(ctx.pool(), &fs_event1).await?;
+    assertions::assert_event_inserted(ctx.pool(), &fs_event2).await?;
     
     // Insert terminal event
     let term_event = events::kitty_event("ls -la");
-    assertions::assert_event_inserted(ctx.ctx.pool()(), &term_event).await?;
+    assertions::assert_event_inserted(ctx.pool(), &term_event).await?;
     
     // Query using our helper function
-    let filesystem_events = common::get_events_by_source(ctx.ctx.pool()(), "filesystem", 10).await?;
+    let filesystem_events = common::get_events_by_source(ctx.pool(), "filesystem", 10).await?;
     assert!(filesystem_events.len() >= 2);
     
     for event in &filesystem_events {
@@ -87,39 +85,30 @@ async fn test_query_events_by_source(ctx: TestContext) -> Result<(),
     }
 
     Ok(())
-lesystem");
-    }
-
-    Ok(())
 }
 
 /// Test invalid event insertion fails appropriately
 #[sinex_test]
-async fn test_invalid_event_insertion_fails(ctx: Te
+async fn test_invalid_event_insertion_fails(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let invalid_event = events::invalid_event();
-    assertions::assert_event_insertion_fails(ctx.ctx.pool()(), &invalid_event).await?;
-    Ok(())
-_fails(ctx.pool(), &invalid_event).await?;
+    assertions::assert_event_insertion_fails(ctx.pool(), &invalid_event).await?;
     Ok(())
 }
 
 /// Test ULID ordering in time-based queries
 #[sinex_test]
-async fn test_ulid_time_ordering(c
+async fn test_ulid_time_ordering(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert events with a small delay to ensure different timestamps
     let event1 = events::file_created_event("/test/first.txt");
-    let id1 = assertions::assert_event_inserted(ctx.ctx.pool()(), &event1).await?;
+    let id1 = assertions::assert_event_inserted(ctx.pool(), &event1).await?;
     
     tokio::task::yield_now().await;
     
     let event2 = events::file_created_event("/test/second.txt");
-    let id2 = assertions::assert_event_inserted(ctx.ctx.pool()(), &event2).await?;
+    let id2 = assertions::assert_event_inserted(ctx.pool(), &event2).await?;
     
     // Verify ULIDs are in time order (later ULID should be larger)
     assert!(id2.to_string() > id1.to_string());
-    
-    Ok(())
-assert!(id2.to_string() > id1.to_string());
     
     Ok(())
 }
