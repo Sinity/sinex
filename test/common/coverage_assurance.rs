@@ -1,5 +1,6 @@
 //! Coverage assurance utilities to ensure test streamlining doesn't reduce scope
 
+use crate::common::prelude::*;
 use std::collections::{HashSet, HashMap};
 use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;

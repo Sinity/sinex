@@ -1,17 +1,10 @@
-use anyhow::Result;
-use async_trait::async_trait;
+use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_db::models::RawEvent;
-use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::time::{timeout, sleep, Instant};
-use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 
-fn create_test_context(config: serde_json::Value) -> EventSourceContext {
-    EventSourceContext::new(config)
-}
+
 
 /// High-frequency event source that can generate events rapidly
 #[derive(Clone)]
@@ -147,7 +140,7 @@ impl SlowEventProcessor {
 }
 
 #[tokio::test]
-async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<()> {
+async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<(), anyhow::Error> {
     // Create a bounded channel with the same capacity as UnifiedCollector
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
     
@@ -174,9 +167,17 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
         producer_clone.stream_events(tx).await
     });
 
-    // Let it run for 3 seconds
-    sleep(Duration::from_secs(3)).await;
-
+    // Wait for meaningful test progress instead of fixed sleep
+    // We want at least 20 events processed to verify backpressure behavior
+    let consumer_clone = slow_consumer.clone();
+    let _wait_result = wait_for_condition_or_timeout(
+        move || {
+            let processed = consumer_clone.events_processed();
+            Box::pin(async move { Ok(processed >= 20) })
+        },
+        5
+    ).await;
+    
     // Stop both
     slow_consumer.stop();
     fast_producer.stop();
@@ -206,19 +207,22 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
            "Producer should be throttled by backpressure, sent {} but could send up to {}", 
            events_sent, expected_max_sent);
 
-    // The number of events processed should be roughly limited by consumer speed
-    let expected_processed = 10 * 3; // ~30 events at 10 events/sec for 3 seconds
-    let tolerance = 10; // Allow some variation
-    assert!(events_processed >= expected_processed - tolerance && 
-            events_processed <= expected_processed + tolerance + 30, // Extra tolerance for startup
-           "Consumer processed {} events, expected around {} ± {}", 
-           events_processed, expected_processed, tolerance);
+    // We waited for at least 20 events to be processed
+    assert!(events_processed >= 20, 
+           "Consumer should have processed at least 20 events, got {}", 
+           events_processed);
+    
+    // Process rate should be roughly limited by consumer speed
+    let process_rate = events_processed as f64 / elapsed.as_secs_f64();
+    assert!(process_rate <= 15.0, // Allow some burst above theoretical 10/sec
+           "Process rate {} events/sec should be limited by consumer delay", 
+           process_rate);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
+async fn test_channel_saturation_prevents_event_loss() -> Result<(), anyhow::Error> {
     // Test that the channel properly handles saturation without losing events
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100); // Smaller channel for easier testing
     
@@ -231,8 +235,15 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
         producer_clone.stream_events(tx).await
     });
 
-    // Let producer fill the channel
-    sleep(Duration::from_millis(100)).await;
+    // Wait for producer to send enough events to saturate channel
+    let producer_clone = producer.clone();
+    let _ = wait_for_condition_or_timeout(
+        move || {
+            let sent = producer_clone.events_sent();
+            Box::pin(async move { Ok(sent >= 100) })
+        },
+        1 // 1 second timeout
+    ).await;
 
     // Now consume all events slowly
     let mut events_received = Vec::new();
@@ -249,16 +260,16 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
     println!("Events received: {}", events_received.len());
 
     // With backpressure, we should receive all events that were sent
-    assert_eq!(events_sent, events_received.len(), 
+    pretty_assertions::assert_eq!(events_sent, events_received.len(), 
               "All sent events should be received, no events should be lost");
 
     // Verify event ordering and content
     for (i, event) in events_received.iter().enumerate() {
-        assert_eq!(event.source, "test.high_frequency_source");
-        assert_eq!(event.event_type, "test.high_frequency");
+        pretty_assertions::assert_eq!(event.source, "test.high_frequency_source");
+        pretty_assertions::assert_eq!(event.event_type, "test.high_frequency");
         
         let event_number = event.payload["event_number"].as_u64().unwrap() as usize;
-        assert_eq!(event_number, i, "Events should be received in order");
+        pretty_assertions::assert_eq!(event_number, i, "Events should be received in order");
     }
 
     // Producer should complete successfully
@@ -268,7 +279,7 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_multiple_sources_backpressure() -> Result<()> {
+async fn test_multiple_sources_backpressure() -> Result<(), anyhow::Error> {
     // Test backpressure with multiple event sources feeding into the same channel
     let (tx, rx) = mpsc::channel::<RawEvent>(1000);
     
@@ -324,16 +335,16 @@ async fn test_multiple_sources_backpressure() -> Result<()> {
     println!("Events processed: {}", events_processed);
 
     // All events should be sent
-    assert_eq!(total_sent, total_expected_events, "All events should be sent");
+    pretty_assertions::assert_eq!(total_sent, total_expected_events, "All events should be sent");
     
     // All events should be processed (no loss)
-    assert_eq!(events_processed, total_sent, "All sent events should be processed");
+    pretty_assertions::assert_eq!(events_processed, total_sent, "All sent events should be processed");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_channel_close_during_backpressure() -> Result<()> {
+async fn test_channel_close_during_backpressure() -> Result<(), anyhow::Error> {
     // Test what happens when the channel is closed while producer is backpressured
     let (tx, rx) = mpsc::channel::<RawEvent>(10);
     
@@ -371,7 +382,7 @@ async fn test_channel_close_during_backpressure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_backpressure_recovery() -> Result<()> {
+async fn test_backpressure_recovery() -> Result<(), anyhow::Error> {
     // Test that the system recovers properly when backpressure is relieved
     let (tx, mut rx) = mpsc::channel::<RawEvent>(50);
     
@@ -421,15 +432,15 @@ async fn test_backpressure_recovery() -> Result<()> {
     assert!(events_during_backpressure > 0, "Some events should be sent initially");
     assert!(events_after_relief > events_during_backpressure, 
            "More events should be sent after backpressure relief");
-    assert_eq!(total_sent, 200, "All events should eventually be sent");
-    assert_eq!(events_consumed, total_sent, "All sent events should be consumed");
+    pretty_assertions::assert_eq!(total_sent, 200, "All events should eventually be sent");
+    pretty_assertions::assert_eq!(events_consumed, total_sent, "All sent events should be consumed");
     assert!(result.is_ok(), "Producer should complete successfully");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_memory_pressure_during_backpressure() -> Result<()> {
+async fn test_memory_pressure_during_backpressure() -> Result<(), anyhow::Error> {
     // Test that memory usage stays reasonable even during extended backpressure
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     

@@ -1,17 +1,13 @@
 // Routing cache tests - should fail until materialized view implementation is complete
 // Tests for replacing per-row trigger routing with materialized view approach
 
-use crate::db_test;
-use sinex_db::queries::*;
+use crate::common::prelude::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
-use crate::common::{create_agent_with_subscriptions, insert_test_event_with_data};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use anyhow::Result;
-use serde_json::json;
+use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
 
-db_test! {
-async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
         r#"
@@ -24,12 +20,13 @@ async fn test_routing_cache_view_exists(pool: PgPool) -> Result<()> {
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
+    pretty_assertions::assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing_cache has the correct columns (event_type, agent_id)
     // For materialized views, we need to query pg_attribute directly
     let columns = sqlx::query!(
@@ -49,21 +46,22 @@ async fn test_routing_cache_structure(pool: PgPool) -> Result<()> {
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
+    pretty_assertions::assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
     
     let event_type_col = &columns[0];
-    assert_eq!(event_type_col.column_name, "event_type");
-    assert_eq!(event_type_col.data_type, "text");
+    pretty_assertions::assert_eq!(event_type_col.column_name, "event_type");
+    pretty_assertions::assert_eq!(event_type_col.data_type, "text");
     
     let agent_id_col = &columns[1];
-    assert_eq!(agent_id_col.column_name, "agent_id");
-    assert_eq!(agent_id_col.data_type, "text");
+    pretty_assertions::assert_eq!(agent_id_col.column_name, "agent_id");
+    pretty_assertions::assert_eq!(agent_id_col.data_type, "text");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing_cache is automatically refreshed when agent_manifests change
     
     // Create an agent with specific event subscriptions
@@ -86,23 +84,24 @@ async fn test_routing_cache_auto_refresh_on_agent_change(pool: PgPool) -> Result
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
+    pretty_assertions::assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
     
     // Verify the specific entries
-    assert_eq!(cache_entries[0].event_type.as_ref(), Some(&"filesystem:file_created".to_string()));
-    assert_eq!(cache_entries[0].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[0].event_type.as_ref(), Some(&"filesystem:file_created".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[0].agent_id.as_ref(), Some(&agent_name.to_string()));
     
-    assert_eq!(cache_entries[1].event_type.as_ref(), Some(&"filesystem:file_modified".to_string()));
-    assert_eq!(cache_entries[1].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[1].event_type.as_ref(), Some(&"filesystem:file_modified".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[1].agent_id.as_ref(), Some(&agent_name.to_string()));
     
-    assert_eq!(cache_entries[2].event_type.as_ref(), Some(&"terminal:command_executed".to_string()));
-    assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
+    pretty_assertions::assert_eq!(cache_entries[2].event_type.as_ref(), Some(&"terminal:command_executed".to_string()));
+    pretty_assertions::assert_eq!(cache_entries[2].agent_id.as_ref(), Some(&agent_name.to_string()));
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that the batch router function creates work queue entries based on routing cache
     
     // Create an agent
@@ -113,8 +112,8 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
     
     // Create some test events
-    let event1_id = insert_test_event_with_data(&pool, "test_source", "test_event", "test data 1").await?;
-    let event2_id = insert_test_event_with_data(&pool, "test_source", "test_event", "test data 2").await?;
+    let event1_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 1"}))).await?;
+    let event2_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 2"}))).await?;
     
     // Refresh routing cache
     refresh_routing_cache(&pool).await?;
@@ -123,7 +122,7 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     let routed_count = run_batch_router(&pool).await?;
     
     // Should have routed 2 events
-    assert_eq!(routed_count, 2, "Should route 2 events to the agent");
+    pretty_assertions::assert_eq!(routed_count, 2, "Should route 2 events to the agent");
     
     // Verify work queue entries were created
     let work_items = sqlx::query!(
@@ -133,7 +132,7 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     .fetch_all(&pool)
     .await?;
     
-    assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
+    pretty_assertions::assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
     
     let event_ids: Vec<uuid::Uuid> = work_items.into_iter()
         .filter_map(|item| item.raw_event_id)
@@ -143,10 +142,11 @@ async fn test_batch_router_creates_work_queue_entries(pool: PgPool) -> Result<()
     assert!(event_ids.contains(&event2_id.to_uuid()));
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that batch router doesn't create duplicate work queue entries
     
     let agent_name = "dedup-test-agent";
@@ -156,7 +156,7 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
     
     // Create a test event
-    let event_id = insert_test_event_with_data(&pool, "test_source", "test_event", "dedup test").await?;
+    let event_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "dedup test"}))).await?;
     
     // Refresh routing cache
     refresh_routing_cache(&pool).await?;
@@ -166,8 +166,8 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     let second_run = run_batch_router(&pool).await?;
     
     // First run should route 1 event, second run should route 0 (no duplicates)
-    assert_eq!(first_run, 1, "First run should route 1 event");
-    assert_eq!(second_run, 0, "Second run should not create duplicates");
+    pretty_assertions::assert_eq!(first_run, 1, "First run should route 1 event");
+    pretty_assertions::assert_eq!(second_run, 0, "Second run should not create duplicates");
     
     // Verify only one work queue entry exists
     let work_items = sqlx::query!(
@@ -178,13 +178,14 @@ async fn test_batch_router_avoids_duplicate_routing(pool: PgPool) -> Result<()> 
     .fetch_one(&pool)
     .await?;
     
-    assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
+    pretty_assertions::assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
     
     Ok(())
-}}
+}
 
-db_test! {
-async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()> {
+#[tokio::test]
+async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Error> {
+    let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing cache approach performs better than per-row triggers
     // This is a conceptual test - in practice we'd measure timing
     
@@ -224,8 +225,7 @@ async fn test_routing_cache_performance_over_triggers(pool: PgPool) -> Result<()
     assert!(duration.as_millis() < 1000, "Batch routing should complete quickly");
     
     Ok(())
-}}
-
+}
 
 // Helper function for creating test events in routing tests
 // This has a different signature (4 args vs 3) from the common insert_test_event function
@@ -241,8 +241,7 @@ async fn insert_test_event(
         "event_type": event_type
     });
     
-    let event = insert_raw_event(
-        pool,
+    let event = insert_raw_event(&pool,
         source,
         event_type,
         "test_host",

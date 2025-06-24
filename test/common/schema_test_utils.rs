@@ -1,19 +1,17 @@
 //! Schema test utilities for JSON schema validation
 
-use anyhow::Result;
+use crate::common::prelude::*;
 use serde_json::{json, Value};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
 
 /// Register test schema with event source and type
 pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
-    database::insert_test_schema(pool, event_source, event_type, "1.0", schema).await
+    database::insert_test_schema(&pool, event_source, event_type, "1.0", schema).await
 }
 
 /// Assert schema validates event successfully
-pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<()> {
+pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
-    let schema = database::get_schema(pool, schema_id).await?
+    let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
     
     // Validate using jsonschema
@@ -26,9 +24,9 @@ pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::
 }
 
 /// Assert schema invalidates event
-pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<()> {
+pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
-    let schema = database::get_schema(pool, schema_id).await?
+    let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
     
     // Validate using jsonschema - expect it to fail
@@ -339,8 +337,7 @@ pub mod database {
         let mut schema_ids = Vec::new();
 
         // Insert filesystem schema
-        let fs_id = insert_test_schema(
-            pool,
+        let fs_id = insert_test_schema(&pool,
             "filesystem",
             "file.created",
             "1.0",
@@ -349,8 +346,7 @@ pub mod database {
         schema_ids.push(("filesystem.file.created".to_string(), fs_id));
 
         // Insert terminal schema
-        let term_id = insert_test_schema(
-            pool,
+        let term_id = insert_test_schema(&pool,
             "terminal.kitty",
             "command.executed",
             "1.0",
@@ -359,8 +355,7 @@ pub mod database {
         schema_ids.push(("terminal.command.executed".to_string(), term_id));
 
         // Insert window manager schema
-        let wm_id = insert_test_schema(
-            pool,
+        let wm_id = insert_test_schema(&pool,
             "hyprland",
             "window.focused",
             "1.0",
@@ -372,9 +367,9 @@ pub mod database {
     }
 
     /// Cleanup test schemas from database
-    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<()> {
+    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), anyhow::Error> {
         for &schema_id in schema_ids {
-            delete_schema(pool, schema_id).await?;
+            delete_schema(&pool, schema_id).await?;
         }
         Ok(())
     }
@@ -411,14 +406,14 @@ pub mod validation {
     }
 
     /// Test schema compilation
-    pub fn test_schema_compilation(schema: &Value) -> Result<()> {
+    pub fn test_schema_compilation(schema: &Value) -> Result<(), anyhow::Error> {
         JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Schema compilation failed: {}", e))?;
         Ok(())
     }
 
     /// Run comprehensive validation tests
-    pub fn run_schema_validation_tests() -> Result<()> {
+    pub fn run_schema_validation_tests() -> Result<(), anyhow::Error> {
         // Test filesystem schema
         let fs_schema = schemas::filesystem_event_schema();
         test_schema_compilation(&fs_schema)?;
@@ -509,7 +504,6 @@ pub mod performance {
         operations_per_task: usize
     ) -> Result<Duration> {
         use tokio::task;
-        use std::sync::Arc;
 
         let compiled_schema = jsonschema::JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;

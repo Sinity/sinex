@@ -1,12 +1,8 @@
 //! Validation test utilities
 
-use anyhow::Result;
-use serde_json::{json, Value};
+use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_core::RawEventBuilder;
 use sinex_db::models::RawEvent;
-use sqlx::PgPool;
-use std::time::Duration;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {
@@ -47,60 +43,27 @@ pub mod events {
 
     /// Create a valid filesystem event for testing
     pub fn valid_filesystem_event() -> RawEvent {
-        RawEventBuilder::new(
-            "filesystem",
-            "file.created",
-            json!({
-                "path": "/home/user/test.txt",
-                "size": 1024,
-                "timestamp": "2024-06-20T10:00:00Z"
-            })
-        ).build()
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an invalid filesystem event (missing required fields)
     pub fn invalid_filesystem_event() -> RawEvent {
-        RawEventBuilder::new(
-            "filesystem",
-            "file.created",
-            json!({
-                "path": "",
-                "size": -1
-            })
-        ).build()
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create a valid terminal event for testing
     pub fn valid_terminal_event() -> RawEvent {
-        RawEventBuilder::new(
-            "terminal.kitty",
-            "command.executed",
-            json!({
-                "command": "ls -la",
-                "exit_code": 0,
-                "duration_ms": 150
-            })
-        ).build()
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an event with unknown source/type
     pub fn unknown_event() -> RawEvent {
-        RawEventBuilder::new(
-            "unknown_source",
-            "unknown.event",
-            json!({
-                "data": "test"
-            })
-        ).build()
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 
     /// Create an event with malformed payload
     pub fn malformed_payload_event() -> RawEvent {
-        RawEventBuilder::new(
-            "test_source",
-            "test.event",
-            json!(null)
-        ).build()
+        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
     }
 }
 
@@ -109,7 +72,7 @@ pub mod assertions {
     use super::*;
 
     /// Assert that validation passes
-    pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<()> {
+    pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
         match validator.validate(event) {
             Ok(()) => Ok(()),
             Err(e) => anyhow::bail!("Expected validation to pass, but got error: {}", e),
@@ -134,14 +97,14 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with unknown event type error
-    pub fn assert_validation_fails_unknown_type(validator: &EventValidator, event: &RawEvent) -> Result<()> {
+    pub fn assert_validation_fails_unknown_type(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| {
             matches!(e, ValidationError::UnknownEventType { .. })
         })
     }
 
     /// Assert that validation fails with missing field error
-    pub fn assert_validation_fails_missing_field(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<()> {
+    pub fn assert_validation_fails_missing_field(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| {
             match e {
                 ValidationError::MissingField { field } => field == expected_field,
@@ -151,7 +114,7 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with invalid type error
-    pub fn assert_validation_fails_invalid_type(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<()> {
+    pub fn assert_validation_fails_invalid_type(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| {
             match e {
                 ValidationError::InvalidType { field, .. } => field == expected_field,
@@ -213,7 +176,6 @@ pub mod generators {
 /// Performance testing utilities for validation
 pub mod performance {
     use super::*;
-    use std::time::{Duration, Instant};
 
     /// Measure validation performance
     pub fn measure_validation_time(validator: &EventValidator, event: &RawEvent, iterations: usize) -> Duration {
@@ -241,7 +203,6 @@ pub mod performance {
         operations_per_task: usize
     ) -> Result<Duration> {
         use tokio::task;
-        use std::sync::Arc;
 
         let validator = Arc::new(validator);
         let event = Arc::new(event);
@@ -276,7 +237,7 @@ pub mod integration {
     use super::*;
 
     /// Test validation with database schemas
-    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<()> {
+    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         
         // Test various events
@@ -304,7 +265,7 @@ pub mod integration {
     }
 
     /// Test validation performance in realistic scenarios
-    pub async fn performance_integration_test(pool: &PgPool) -> Result<()> {
+    pub async fn performance_integration_test(pool: &PgPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         let events = generators::validation_test_events()
             .into_iter()

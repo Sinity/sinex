@@ -1,6 +1,5 @@
-use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
+use crate::common::{create_test_db_pool, events};
+use sinex_db::queries;
 use std::sync::{Arc, Barrier};
 use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,17 +13,7 @@ fn test_worker_claim_exact_same_microsecond() {
         let pool = create_test_db_pool().await.unwrap();
         
         // Insert event to be claimed
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "race.test".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: serde_json::json!({"target": "race"}),
-        };
+        let event = events::race_test_event("race");
         
         let inserted = queries::insert_event(&pool, &event).await.unwrap();
         let event_id = inserted.id;
@@ -99,7 +88,7 @@ fn test_worker_claim_exact_same_microsecond() {
         println!("Final payload: {}", final_state.payload);
         
         // Both workers might claim if there's a race condition
-        assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
+        pretty_assertions::assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
     });
 }
 
@@ -118,37 +107,10 @@ fn test_event_causality_violation() {
             let violations = order_violations.clone();
             
             // Event A: Create file
-            let event_a = RawEvent {
-                id: Ulid::new(),
-                source: "filesystem".to_string(),
-                event_type: "file.created".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({
-                    "path": "/tmp/test.txt",
-                    "sequence": "A"
-                }),
-            };
+            let event_a = events::file_created_event("/tmp/test.txt");
             
             // Event B: Modify file (depends on A)
-            let event_b = RawEvent {
-                id: Ulid::new(),
-                source: "filesystem".to_string(),
-                event_type: "file.modified".to_string(),
-                ts_ingest: chrono::Utc::now(),
-                ts_orig: None,
-                host: "test".to_string(),
-                ingestor_version: None,
-                payload_schema_id: None,
-                payload: serde_json::json!({
-                    "path": "/tmp/test.txt",
-                    "sequence": "B",
-                    "depends_on": "A"
-                }),
-            };
+            let event_b = events::file_modified_event("/tmp/test.txt");
             
             // Use deterministic barrier for precise race condition timing
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
@@ -195,17 +157,7 @@ fn test_work_queue_thundering_herd() {
         let pool = create_test_db_pool().await.unwrap();
         
         // Insert single event
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "herd.test".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: serde_json::json!({"value": "prize"}),
-        };
+        let event = events::adversarial_test_event("herd.test", serde_json::json!({"value": "prize"}));
         
         queries::insert_event(&pool, &event).await.unwrap();
         
@@ -253,7 +205,7 @@ fn test_work_queue_thundering_herd() {
         println!("- Database connections stressed: 100");
         
         // Only 1 should succeed, but timing shows stress
-        assert_eq!(claims, 1, "Multiple workers claimed single event");
+        pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single event");
     });
 }
 
@@ -265,20 +217,10 @@ fn test_concurrent_metadata_lost_update() {
         let pool = create_test_db_pool().await.unwrap();
         
         // Insert test event
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "metadata.test".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: serde_json::json!({
-                "counter": 0,
-                "updates": []
-            }),
-        };
+        let event = events::adversarial_test_event("metadata.test", serde_json::json!({
+            "counter": 0,
+            "updates": []
+        }));
         
         let inserted = queries::insert_event(&pool, &event).await.unwrap();
         let event_id = inserted.id;
@@ -339,7 +281,7 @@ fn test_concurrent_metadata_lost_update() {
         println!("Update array length: {} (expected: 10)", updates);
         
         // Lost updates likely occurred
-        assert_eq!(counter, 10, "Lost updates detected!");
-        assert_eq!(updates, 10, "Lost update records!");
+        pretty_assertions::assert_eq!(counter, 10, "Lost updates detected!");
+        pretty_assertions::assert_eq!(updates, 10, "Lost update records!");
     });
 }

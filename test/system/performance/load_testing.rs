@@ -6,8 +6,7 @@ use sinex_db::{queries, run_migrations};
 use sinex_core::RawEventBuilder;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use serde_json::json;
+use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[tokio::test]

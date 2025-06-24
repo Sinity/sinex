@@ -4,8 +4,8 @@
 //! Simplified end-to-end update process tests
 //! Note: Complex system coordination tests disabled until test infrastructure is complete
 
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use sinex_db::run_migrations;
 
 #[tokio::test]
 async fn test_database_migration_process() -> anyhow::Result<()> {
@@ -43,7 +43,7 @@ async fn test_configuration_reload_simulation() -> anyhow::Result<()> {
     let log_level = std::env::var("RUST_LOG").unwrap_or_default();
     
     // Should maintain the explicitly set value
-    assert_eq!(log_level, "info", "Configuration reload failed");
+    pretty_assertions::assert_eq!(log_level, "info", "Configuration reload failed");
     
     println!("Configuration reload simulation completed");
     Ok(())

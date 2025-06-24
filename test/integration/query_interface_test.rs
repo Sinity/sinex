@@ -1,35 +1,25 @@
-use sinex_ulid::Ulid;
-use serde_json::json;
+use crate::common::prelude::*;
 use std::process::Command;
-use std::time::Duration;
-use tokio::time::sleep;
+use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
-#[sqlx::test]
-async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
     
-    // Insert test events
+    // Insert test events using helpers
     let test_events = vec![
-        ("filesystem", "file.created", json!({"path": "/test/file1.txt", "size": 1024})),
-        ("filesystem", "file.modified", json!({"path": "/test/file2.txt", "size": 2048})),
-        ("terminal", "command.executed", json!({"command": "ls -la", "exit_code": 0})),
-        ("clipboard", "content.changed", json!({"content": "test data", "format": "text"})),
+        events::file_created_event("/test/file1.txt"),
+        events::file_modified_event("/test/file2.txt"),
+        events::kitty_event("ls -la"),
+        crate::common::create_test_event_with_payload(
+            "clipboard",
+            "content.changed",
+            json!({"content": "test data", "format": "text"})
+        ),
     ];
     
-    for (source, event_type, payload) in test_events {
-        let event = sinex_core::RawEvent {
-            id: Ulid::new(),
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test-host".to_string(),
-            ingestor_version: Some("test-1.0".to_string()),
-            payload_schema_id: None,
-            payload,
-        };
-        
-        sinex_db::queries::insert_event(&pool, &event).await.unwrap();
+    for event in test_events {
+        assertions::assert_event_inserted(&ctx.pool(), &event).await.unwrap();
     }
     
     // Test various CLI commands
@@ -85,14 +75,14 @@ async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
     
     let stdout = String::from_utf8_lossy(&output.stdout);
     let event_count = stdout.matches("Event ID:").count();
-    assert_eq!(event_count, 2, "Should return exactly 2 events");
+    pretty_assertions::assert_eq!(event_count, 2, "Should return exactly 2 events");
     
     Ok(())
 }
 
 /// Test schema management commands
-#[sqlx::test]
-async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
     
     // Insert test schema
     let test_schema = json!({
@@ -104,12 +94,13 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
         "required": ["path"]
     });
     
-    sqlx::query("INSERT INTO sinex_schemas.event_payload_schemas (schema_id, schema_json) VALUES ($1, $2)")
-        .bind("test.filesystem.v1")
-        .bind(&test_schema)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Use schema test utilities to insert schema
+    crate::common::schema_test_utils::database::insert_test_schema(&ctx.pool(),
+        "test.filesystem",
+        "file_event",
+        "1.0.0",
+        test_schema
+    ).await.unwrap();
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
@@ -144,23 +135,15 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
 
 /// Test agent monitoring commands
 #[tokio::test]
-async fn test_exo_cli_agent_commands() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
-    // Insert test agent manifest
-    sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests (name, version, capabilities, status, last_heartbeat) 
-         VALUES ($1, $2, $3, $4, $5)"
-    )
-        .bind("test-collector")
-        .bind("1.0.0")
-        .bind(json!(["filesystem", "terminal"]))
-        .bind("active")
-        .bind(chrono::Utc::now())
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Insert test agent manifest using helpers
+    let mut manifest = generators::test_agent_manifest("test-collector");
+    manifest.status = "active".to_string();
+    manifest.produces_event_types = Some(json!(["filesystem", "terminal"]));
+    assertions::assert_manifest_registered(&pool, &manifest).await?;
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
@@ -190,6 +173,7 @@ async fn test_exo_cli_agent_commands() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("test-collector"), "Should show agent details");
     assert!(stdout.contains("filesystem"), "Should show capabilities");
+    Ok(())
 }
 
 /// Test error handling in CLI
@@ -236,33 +220,28 @@ async fn test_exo_cli_error_handling() {
 /// Test advanced query features
 #[tokio::test]
 async fn test_exo_cli_advanced_queries() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
     // Insert events with different timestamps
     let base_time = chrono::Utc::now();
     
     for i in 0..20 {
-        let event = sinex_core::RawEvent {
-            id: Ulid::new(),
-            source: if i % 2 == 0 { "source_a" } else { "source_b" }.to_string(),
-            event_type: format!("event.type_{}", i % 3),
-            ts_ingest: base_time - chrono::Duration::minutes(i),
-            ts_orig: Some(base_time - chrono::Duration::minutes(i + 1)),
-            host: "test-host".to_string(),
-            ingestor_version: Some("test-1.0".to_string()),
-            payload_schema_id: None,
-            payload: json!({
+        let event = crate::common::events::generic_adversarial_event(
+            &format!("source_{}", if i % 2 == 0 { "a" } else { "b" }),
+            &format!("event.type_{}", i % 3),
+            json!({
                 "index": i,
                 "data": format!("test data {}", i),
                 "important": i % 5 == 0
             }),
-        };
+            Some(&(base_time - chrono::Duration::minutes(i + 1)).to_rfc3339())
+        );
         
         sinex_db::queries::insert_event(&pool, &event).await.unwrap();
         
         // Small delay to ensure different timestamps
-        sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
     
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
@@ -317,25 +296,11 @@ async fn test_exo_cli_advanced_queries() {
 /// Test output formatting options
 #[tokio::test]
 async fn test_exo_cli_output_formats() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = sinex_db::create_test_pool(&database_url).await.expect("Failed to create pool");
+    let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
     // Insert a test event
-    let event = sinex_core::RawEvent {
-        id: Ulid::new(),
-        source: "test".to_string(),
-        event_type: "test.event".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("test-1.0".to_string()),
-        payload_schema_id: None,
-        payload: json!({
-            "message": "Test message",
-            "level": "info",
-            "tags": ["test", "cli"]
-        }),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
     
     sinex_db::queries::insert_event(&pool, &event).await.unwrap();
     

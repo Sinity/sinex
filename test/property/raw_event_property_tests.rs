@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use proptest::prelude::*;
 use sinex_core::event::{RawEvent, RawEventBuilder};
-use sinex_ulid::Ulid;
 use chrono::{DateTime, Utc, Duration as ChronoDuration};
 use serde_json::{json, Value};
 
@@ -271,9 +271,9 @@ mod unit_tests {
         let event = RawEventBuilder::new("test_source", "test.event", json!({"key": "value"}))
             .build();
         
-        assert_eq!(event.source, "test_source");
-        assert_eq!(event.event_type, "test.event");
-        assert_eq!(event.payload, json!({"key": "value"}));
+        pretty_assertions::assert_eq!(event.source, "test_source");
+        pretty_assertions::assert_eq!(event.event_type, "test.event");
+        pretty_assertions::assert_eq!(event.payload, json!({"key": "value"}));
         assert!(event.ts_orig.is_none());
         assert!(!event.host.is_empty()); // Should get hostname
         assert!(event.ingestor_version.is_none());

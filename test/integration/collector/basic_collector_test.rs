@@ -1,6 +1,6 @@
+use crate::common::prelude::*;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
-use std::collections::HashMap;
 
 /// Test that collector can be created with valid configuration
 #[tokio::test]
@@ -24,8 +24,8 @@ async fn test_collector_creation() {
 }
 
 /// Test output configuration options
-#[sqlx::test]
-async fn test_output_config_database(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -41,7 +41,7 @@ async fn test_output_config_database(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     };
     
     // Create collector with database connection
-    let _collector = UnifiedCollector::new(config, output_config, Some(pool), None);
+    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), None);
     
     Ok(())
 }
@@ -123,8 +123,8 @@ async fn test_collector_file_output() {
 }
 
 /// Test collector with validator
-#[sqlx::test]
-async fn test_collector_with_validator(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_collector_with_validator(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -142,7 +142,7 @@ async fn test_collector_with_validator(pool: sqlx::PgPool) -> Result<(), Box<dyn
     // Create validator (no await needed, it's synchronous)
     let validator = EventValidator::new();
     
-    let _collector = UnifiedCollector::new(config, output_config, Some(pool), Some(validator));
+    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), Some(validator));
     
     Ok(())
 }

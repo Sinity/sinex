@@ -1,13 +1,11 @@
+use crate::common::prelude::*;
 use crate::common;
 use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
-use sinex_core::{RawEvent, event_type_constants, sources};
+use sinex_core::RawEvent;
 use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
 
@@ -69,7 +67,7 @@ async fn test_complete_event_pipeline() {
     
     // Verify all events collected
     let collected = collected_events.lock().await;
-    assert_eq!(collected.len(), num_events, "Not all events were collected");
+    pretty_assertions::assert_eq!(collected.len(), num_events, "Not all events were collected");
     
     // Phase 2: Test Database Storage with ULID ordering
     info!("Testing database storage and ULID generation");
@@ -93,7 +91,7 @@ async fn test_complete_event_pipeline() {
     
     // Verify no duplicates
     let unique_ids: HashSet<_> = stored_ids.iter().collect();
-    assert_eq!(stored_ids.len(), unique_ids.len(), "Found duplicate ULIDs");
+    pretty_assertions::assert_eq!(stored_ids.len(), unique_ids.len(), "Found duplicate ULIDs");
     
     // Phase 3: Test Worker Processing (simplified)
     info!("Testing worker processing simulation");
@@ -116,7 +114,7 @@ async fn test_complete_event_pipeline() {
         info!("Worker {} would process {} events", worker_id, assigned);
     }
     
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         work_assignment.values().map(|v| v.len()).sum::<usize>(),
         events_to_process,
         "All events should be assigned"
@@ -155,20 +153,7 @@ async fn test_complete_event_pipeline() {
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: "test".to_string(),
-        event_type: "invalid.event".to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("test".to_string()),
-        payload_schema_id: None,
-        payload: serde_json::json!({
-            "invalid": "data",
-            "will_fail": true
-        }),
-    };
+    let bad_event = crate::common::events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
     
     queries::insert_event(&pool, &bad_event).await.unwrap();
     
@@ -182,7 +167,7 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(dlq_check.count.unwrap(), 1, "Bad event should be stored");
+    pretty_assertions::assert_eq!(dlq_check.count.unwrap(), 1, "Bad event should be stored");
     
     // Phase 6: Test Agent Registration and Heartbeats
     info!("Testing agent registration and heartbeats");
@@ -201,10 +186,10 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(manifest.agent_name, agent_name);
+    pretty_assertions::assert_eq!(manifest.agent_name, agent_name);
     
     // Send heartbeat
-    let heartbeat = AgentHeartbeat {
+    let _heartbeat = AgentHeartbeat {
         agent_name: agent_name.to_string(),
         status: "running".to_string(),
         uptime_seconds: 60,
@@ -213,17 +198,7 @@ async fn test_complete_event_pipeline() {
         version: "0.1.0".to_string(),
     };
     
-    let heartbeat_event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: sources::SINEX.to_string(),
-        event_type: event_type_constants::sinex::AGENT_HEARTBEAT.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: Some("0.1.0".to_string()),
-        payload_schema_id: None,
-        payload: serde_json::to_value(&heartbeat).unwrap(),
-    };
+    let heartbeat_event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
     
     queries::insert_event(&pool, &heartbeat_event).await.unwrap();
     
@@ -250,7 +225,7 @@ async fn test_complete_event_pipeline() {
     .unwrap();
     
     let expected_count = num_events + 2; // test events + bad event + heartbeat
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         total_count.count.unwrap(), 
         expected_count as i64,
         "Total event count mismatch"
@@ -281,7 +256,7 @@ async fn test_complete_event_pipeline() {
     .await
     .unwrap();
     
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         first_event.payload, 
         first_event_again.payload,
         "Event data should be immutable"
@@ -300,7 +275,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     let base_time = Utc::now();
     
     // Filesystem events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.created",
         serde_json::json!({
@@ -311,7 +286,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time,
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.modified",
         serde_json::json!({
@@ -323,7 +298,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(1),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "filesystem",
         "file.deleted",
         serde_json::json!({
@@ -334,7 +309,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     ));
     
     // Terminal events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -345,7 +320,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(3),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -359,7 +334,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     ));
     
     // Window manager events
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "window_manager.hyprland",
         "window.focused",
         serde_json::json!({
@@ -373,7 +348,7 @@ fn generate_test_events() -> Vec<RawEvent> {
         base_time + ChronoDuration::seconds(5),
     ));
     
-    events.push(create_raw_event(
+    events.push(events::create_raw_event(
         "window_manager.hyprland",
         "workspace.changed",
         serde_json::json!({
@@ -385,7 +360,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     
     // Add more events for stress testing
     for i in 7..20 {
-        events.push(create_raw_event(
+        events.push(events::create_raw_event(
             "filesystem",
             "file.created",
             serde_json::json!({
@@ -400,21 +375,3 @@ fn generate_test_events() -> Vec<RawEvent> {
     events
 }
 
-fn create_raw_event(
-    source: &str, 
-    event_type: &str, 
-    payload: serde_json::Value,
-    timestamp: chrono::DateTime<Utc>,
-) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: source.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: timestamp,
-        ts_orig: Some(timestamp),
-        host: "test-host".to_string(),
-        ingestor_version: Some("test-v1".to_string()),
-        payload_schema_id: None,
-        payload,
-    }
-}

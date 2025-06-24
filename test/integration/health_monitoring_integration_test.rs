@@ -4,13 +4,8 @@
 //! tracks component health, detects failures, and triggers appropriate
 //! recovery actions across the entire Sinex system.
 
-use anyhow::Result;
-use sinex_core::RawEventBuilder;
-use sinex_db::{create_test_pool, queries};
-use serde_json::json;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use crate::common::prelude::*;
+use crate::common::database::CleanupStrategy;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 
@@ -99,9 +94,8 @@ impl SystemHealthMonitor {
 }
 
 #[tokio::test]
-async fn test_comprehensive_health_monitoring_system() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+async fn test_comprehensive_health_monitoring_system() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Initialize health monitoring system
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
@@ -124,11 +118,11 @@ async fn test_comprehensive_health_monitoring_system() -> Result<()> {
     
     // Test 1: Initial health state should be unknown
     let initial_health = monitor.get_system_health().await;
-    assert_eq!(initial_health.len(), components.len(), "All components should be registered");
+    pretty_assertions::assert_eq!(initial_health.len(), components.len(), "All components should be registered");
     
     for component in &components {
         assert!(initial_health.contains_key(*component), "Component {} should be registered", component);
-        assert_eq!(initial_health[*component].status, HealthStatus::Unknown, "Initial status should be unknown");
+        pretty_assertions::assert_eq!(initial_health[*component].status, HealthStatus::Unknown, "Initial status should be unknown");
     }
     
     // Test 2: Simulate health checks for all components
@@ -143,7 +137,7 @@ async fn test_comprehensive_health_monitoring_system() -> Result<()> {
     Ok(())
 }
 
-async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<()> {
+async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
     // Test database health check
     let db_health = check_database_health(pool).await?;
     monitor.update_component_health("database", db_health, None).await;
@@ -179,7 +173,7 @@ async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx
     // Verify all components have been checked
     let health_status = monitor.get_system_health().await;
     for (name, component) in health_status {
-        assert_ne!(component.status, HealthStatus::Unknown, "Component {} should have known health status", name);
+        pretty_assertions::assert_ne!(component.status, HealthStatus::Unknown, "Component {} should have known health status", name);
         assert!(component.last_check.elapsed() < Duration::from_secs(1), "Health check should be recent");
     }
     
@@ -202,7 +196,6 @@ async fn check_database_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
 
 async fn check_filesystem_source_health() -> Result<HealthStatus> {
     // Test filesystem monitoring capabilities
-    use tempfile::TempDir;
     
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("health_check.txt");
@@ -305,7 +298,7 @@ async fn check_worker_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
     match sqlx::query("SELECT COUNT(*) FROM sinex_schemas.work_queue").fetch_one(pool).await {
         Ok(_) => {
             // Test worker operations by checking if we can claim work
-            match queries::claim_work_queue_items(pool, "health-check-agent", "health-worker", 0).await {
+            match queries::claim_work_queue_items(&pool, "health-check-agent", "health-worker", 0).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
@@ -317,7 +310,6 @@ async fn check_worker_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
 async fn check_git_annex_health() -> Result<HealthStatus> {
     // Test git-annex availability
     use std::process::Command;
-    use tempfile::TempDir;
     
     // Check if git-annex is available
     match Command::new("git").args(["annex", "version"]).output() {
@@ -343,7 +335,7 @@ async fn check_git_annex_health() -> Result<HealthStatus> {
     }
 }
 
-async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<()> {
+async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
     // Test 1: Simulate component failure
     monitor.update_component_health("filesystem_source", HealthStatus::Unhealthy, 
         Some("Simulated filesystem monitoring failure".to_string())).await;
@@ -362,7 +354,7 @@ async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> R
     
     let health_status = monitor.get_system_health().await;
     let terminal_health = &health_status["terminal_source"];
-    assert_eq!(terminal_health.status, HealthStatus::Unhealthy);
+    pretty_assertions::assert_eq!(terminal_health.status, HealthStatus::Unhealthy);
     assert!(terminal_health.failure_count >= 5, "Should track multiple failures");
     
     // Test 3: Simulate recovery
@@ -370,9 +362,9 @@ async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> R
     monitor.update_component_health("terminal_source", HealthStatus::Healthy, None).await;
     
     let recovered_health = monitor.get_system_health().await;
-    assert_eq!(recovered_health["filesystem_source"].status, HealthStatus::Healthy);
-    assert_eq!(recovered_health["terminal_source"].status, HealthStatus::Healthy);
-    assert_eq!(recovered_health["terminal_source"].failure_count, 0, "Failure count should reset on recovery");
+    pretty_assertions::assert_eq!(recovered_health["filesystem_source"].status, HealthStatus::Healthy);
+    pretty_assertions::assert_eq!(recovered_health["terminal_source"].status, HealthStatus::Healthy);
+    pretty_assertions::assert_eq!(recovered_health["terminal_source"].failure_count, 0, "Failure count should reset on recovery");
     
     let system_recovered = monitor.is_system_healthy().await;
     assert!(system_recovered, "System should be healthy after all components recover");
@@ -380,7 +372,7 @@ async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> R
     Ok(())
 }
 
-async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<()> {
+async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
     // Test how system health is calculated from component health
     
     // Scenario 1: All components healthy
@@ -420,7 +412,7 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
 }
 
 #[tokio::test]
-async fn test_health_monitoring_performance_impact() -> Result<()> {
+async fn test_health_monitoring_performance_impact() -> Result<(), anyhow::Error> {
     // Test that health monitoring doesn't significantly impact system performance
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(10), 3);
@@ -486,9 +478,8 @@ impl Clone for SystemHealthMonitor {
 }
 
 #[tokio::test]
-async fn test_health_monitoring_with_real_workload() -> Result<()> {
-    let pool = create_test_pool("postgresql:///sinex_dev?host=/run/postgresql").await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+async fn test_health_monitoring_with_real_workload() -> Result<(), anyhow::Error> {
+    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
     
@@ -589,9 +580,9 @@ async fn test_health_monitoring_with_real_workload() -> Result<()> {
     // Verify final event count
     let final_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE source = 'health_monitoring_test'"
-    ).fetch_one(&pool).await?;
+    ).fetch_one(&*pool).await?;
     
-    assert_eq!(final_count, 100, "All events should be processed despite health monitoring");
+    pretty_assertions::assert_eq!(final_count, 100, "All events should be processed despite health monitoring");
     
     Ok(())
 }

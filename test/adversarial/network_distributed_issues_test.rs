@@ -1,11 +1,8 @@
+use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
-use sinex_db::{queries, models::RawEvent};
-use sinex_ulid::Ulid;
-use std::sync::Arc;
-use tokio::time::{Duration, timeout};
+use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
-use futures::future::join_all;
 
 #[tokio::test]
 async fn test_database_dns_timeout() {
@@ -58,17 +55,7 @@ async fn test_network_partition_during_processing() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create test event to be processed
-    let test_event = RawEvent {
-        id: Ulid::new(),
-        source: "partition_test".to_string(),
-        event_type: "network.test".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"data": "test_partition"}),
-    };
+    let test_event = crate::common::events::generic_adversarial_event("partition_test", "network.test", json!({"test": true}), None);
     
     queries::insert_event(&pool, &test_event).await.unwrap();
     
@@ -188,22 +175,7 @@ async fn test_split_brain_scenario() {
         
         tokio::spawn(async move {
             for i in 0..10 {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: "brain_a".to_string(),
-                    event_type: "primary.operation".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "primary-a".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: serde_json::json!({
-                        "brain": "A",
-                        "operation": i,
-                        "resource_id": shared_resource_id.to_string(),
-                        "assumes_primary": true
-                    }),
-                };
+                let event = crate::common::events::generic_adversarial_event("brain_a", "primary.operation", json!({"test": true}), None);
                 
                 match queries::insert_event(&pool, &event).await {
                     Ok(_) => {
@@ -232,22 +204,7 @@ async fn test_split_brain_scenario() {
             tokio::time::sleep(Duration::from_millis(100)).await;
             
             for i in 0..10 {
-                let event = RawEvent {
-                    id: Ulid::new(),
-                    source: "brain_b".to_string(),
-                    event_type: "primary.operation".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: "primary-b".to_string(),
-                    ingestor_version: None,
-                    payload_schema_id: None,
-                    payload: serde_json::json!({
-                        "brain": "B",
-                        "operation": i,
-                        "resource_id": shared_resource_id.to_string(),
-                        "assumes_primary": true
-                    }),
-                };
+                let event = crate::common::events::generic_adversarial_event("brain_b", "primary.operation", json!({"test": true}), None);
                 
                 match queries::insert_event(&pool, &event).await {
                     Ok(_) => {

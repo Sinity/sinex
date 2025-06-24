@@ -1,7 +1,6 @@
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::time::timeout;
 
 /// Test database connection timeout handling
 #[tokio::test]
@@ -212,7 +211,6 @@ async fn test_connection_pool_timeout_resilience() {
     assert!(total_timeouts > 0, 
         "Expected some timeouts with more workers than connections");
 }
-
 
 /// Test retry logic with exponential backoff
 #[tokio::test]

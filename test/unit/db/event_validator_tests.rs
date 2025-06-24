@@ -1,6 +1,5 @@
+use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
-use sinex_core::RawEventBuilder;
-use serde_json::json;
 use crate::common::{events, validation_test_utils};
 
 #[test]
@@ -213,7 +212,6 @@ fn test_event_validator_unicode_content() {
 
 #[test]
 fn test_event_validator_concurrent_validation() {
-    use std::sync::Arc;
     use std::thread;
     
     let validator = Arc::new(EventValidator::new());

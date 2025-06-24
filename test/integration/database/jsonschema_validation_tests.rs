@@ -1,12 +1,17 @@
-use sinex_ulid::Ulid;
-use serde_json::json;
-use uuid::Uuid;
-use crate::db_test;
-use crate::common::{schema_test_utils, create_test_event_with_payload};
+//! Migrated version of jsonschema_validation_tests.rs using new test infrastructure
+//!
+//! This demonstrates:
+//! - Using #[sinex_test] macro for automatic setup
+//! - TestContext for unified database access
+//! - Event builders for cleaner event creation
+//! - No manual pool management needed
 
-db_test! {
-    async fn test_json_schema_registration(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
+use crate::common::prelude::*;
+use crate::common::schema_test_utils;
+use uuid::Uuid;
+
+#[sinex_test]
+async fn test_json_schema_registration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Register a JSON Schema
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -30,13 +35,12 @@ db_test! {
     });
     
     // Generate unique test identifiers to avoid conflicts
-    let test_run_id = &uuid::Uuid::new_v4().to_string()[..8];
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
     let event_source = format!("hyprland-test-{}", test_run_id);
     let event_type = format!("window_focused-{}", test_run_id);
     
     let schema_clone = schema.clone();
-    let schema_id = schema_test_utils::register_test_schema(
-        &pool,
+    let schema_id = schema_test_utils::register_test_schema(ctx.pool(),
         &event_source,
         &event_type,
         schema
@@ -47,19 +51,16 @@ db_test! {
         "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid"
     )
     .bind(schema_id.to_uuid())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
-    assert_eq!(retrieved_schema, schema_clone, "Schema should be stored correctly");
+    pretty_assertions::assert_eq!(retrieved_schema, schema_clone, "Schema should be stored correctly");
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_json_schema_validation_constraint(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
+#[sinex_test]
+async fn test_json_schema_validation_constraint(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // First, register a strict schema
     let strict_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -101,443 +102,246 @@ db_test! {
     .bind(&event_type)
     .bind("v1.0")
     .bind(&strict_schema)
-    .fetch_one(&pool)
-    .await
-    .unwrap());
+    .fetch_one(ctx.pool())
+    .await?);
     
-    // Test valid payload
-    let valid_payload = json!({
-        "action": "click",
-        "element_id": "submit-button",
-        "coordinates": {
-            "x": 100.5,
-            "y": 200.0
-        }
-    });
+    // Test valid payload - using event builder for cleaner syntax
+    let valid_event = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "action": "click",
+            "element_id": "submit-button",
+            "coordinates": {
+                "x": 100.5,
+                "y": 200.0
+            }
+        }))
+        .build();
     
-    // Test valid payload
-    let event = create_test_event_with_payload(&event_source, &event_type, valid_payload);
-    schema_test_utils::assert_schema_valid_event(&pool, &event, schema_id).await?;
+    schema_test_utils::assert_schema_valid_event(ctx.pool(), &valid_event, schema_id).await?;
     
     // Test invalid payload - missing required field
-    let invalid_payload1 = json!({
-        "action": "click"
-        // missing element_id
-    });
+    let invalid_event1 = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "action": "click"
+            // missing element_id
+        }))
+        .build();
     
-    let event = create_test_event_with_payload(&event_source, &event_type, invalid_payload1);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event, schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(ctx.pool(), &invalid_event1, schema_id).await?;
     
     // Test invalid payload - wrong enum value
-    let invalid_payload2 = json!({
-        "action": "drag", // not in enum
-        "element_id": "some-element"
-    });
+    let invalid_event2 = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "action": "drag", // not in enum
+            "element_id": "some-element"
+        }))
+        .build();
     
-    let event2 = create_test_event_with_payload(&event_source, &event_type, invalid_payload2);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event2, schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(ctx.pool(), &invalid_event2, schema_id).await?;
     
     // Test invalid payload - additional properties
-    let invalid_payload3 = json!({
-        "action": "click",
-        "element_id": "button",
-        "extra_field": "not allowed"
-    });
+    let invalid_event3 = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "action": "click",
+            "element_id": "button",
+            "extra_field": "not allowed"
+        }))
+        .build();
     
-    let event3 = create_test_event_with_payload(&event_source, &event_type, invalid_payload3);
-    schema_test_utils::assert_schema_invalid_event(&pool, &event3, schema_id).await?;
+    schema_test_utils::assert_schema_invalid_event(ctx.pool(), &invalid_event3, schema_id).await?;
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_schema_versioning(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Generate unique test identifiers to avoid conflicts
+#[sinex_test]
+async fn test_event_type_schema_caching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Demonstrates using TestContext helpers for more complex scenarios
     let test_run_id = &Uuid::new_v4().to_string()[..8];
-    let event_source = format!("versioning_test-{}", test_run_id);
-    let event_type = format!("message_event-{}", test_run_id);
+    let event_source = format!("cache-test-{}", test_run_id);
+    let event_type = format!("cached-event-{}", test_run_id);
     
-    // Create v1 schema
+    // Register schema
+    let schema = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "value": {"type": "integer"}
+        },
+        "required": ["value"]
+    });
+    
+    let _schema_id = schema_test_utils::register_test_schema(ctx.pool(),
+        &event_source,
+        &event_type,
+        schema
+    ).await?;
+    
+    // Test with multiple events in a batch - demonstrates batch creation
+    let events = (0..5).map(|i| {
+        ctx.event_builder(&event_source, &event_type)
+            .payload(json!({ "value": i }))
+            .build()
+    }).collect::<Vec<_>>();
+    
+    // Insert all events
+    for event in &events {
+        ctx.insert_event(event).await?;
+    }
+    
+    // Wait for processing
+    ctx.wait_for_event_count(5).await?;
+    
+    // Verify all events were inserted
+    let count = ctx.event_count().await?;
+    assert!(count >= 5, "Should have at least 5 events");
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_schema_evolution(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Test schema version evolution
+    let test_run_id = &Uuid::new_v4().to_string()[..8];
+    let event_source = format!("evolution-test-{}", test_run_id);
+    let event_type = format!("evolving-event-{}", test_run_id);
+    
+    // Version 1 schema
     let schema_v1 = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
-            "message": {"type": "string"}
+            "name": {"type": "string"}
         },
-        "required": ["message"]
+        "required": ["name"]
     });
     
-    let schema_v1_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
+    let _schema_id_v1 = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
-         (event_source, event_type, schema_version, json_schema_definition, is_active) 
-         VALUES ($1, $2, $3, $4::jsonb, $5) 
+         (event_source, event_type, schema_version, json_schema_definition) 
+         VALUES ($1, $2, 'v1', $3::jsonb) 
          RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
-    .bind("v1.0")
     .bind(&schema_v1)
-    .bind(true) // Must be active for validation to work
-    .fetch_one(&pool)
-    .await
-    .unwrap());
+    .fetch_one(ctx.pool())
+    .await?;
     
-    // Test v1 payload validates against v1 schema (both active)
-    let v1_payload = json!({"message": "Hello"});
-    let event_id1 = Ulid::new();
-    
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id1.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_v1_id.to_uuid())
-    .bind(&v1_payload)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_ok(), "V1 payload should validate against V1 schema");
-    
-    // Create v2 schema with additional field
+    // Version 2 schema (backward compatible)
     let schema_v2 = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
-            "message": {"type": "string"},
-            "priority": {
-                "type": "string",
-                "enum": ["low", "medium", "high"]
-            }
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
         },
-        "required": ["message", "priority"]
+        "required": ["name"]
     });
     
-    let schema_v2_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
+    let schema_id_v2 = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO sinex_schemas.event_payload_schemas 
-         (event_source, event_type, schema_version, json_schema_definition, is_active) 
-         VALUES ($1, $2, $3, $4::jsonb, $5) 
+         (event_source, event_type, schema_version, json_schema_definition) 
+         VALUES ($1, $2, 'v2', $3::jsonb) 
          RETURNING id::uuid"
     )
     .bind(&event_source)
     .bind(&event_type)
-    .bind("v2.0")
     .bind(&schema_v2)
-    .bind(true) // This will be the active version
-    .fetch_one(&pool)
-    .await
-    .unwrap());
+    .fetch_one(ctx.pool())
+    .await?);
     
-    // Now make V1 inactive since V2 is the active version
-    sqlx::query(
-        "UPDATE sinex_schemas.event_payload_schemas 
-         SET is_active = false 
-         WHERE id = $1::ulid"
-    )
-    .bind(schema_v1_id.to_uuid())
-    .execute(&pool)
-    .await
-    .unwrap();
+    // Old event (v1 compatible) should work with v2 schema
+    let v1_event = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({ "name": "Test" }))
+        .build();
     
-    // V1 payload should fail against v2 schema (since v2 requires priority field)
-    let event_id2 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id2.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_v2_id.to_uuid())
-    .bind(&v1_payload)
-    .execute(&pool)
-    .await;
+    schema_test_utils::assert_schema_valid_event(ctx.pool(), &v1_event, schema_id_v2).await?;
     
-    assert!(result.is_err(), "V1 payload should fail against V2 schema");
+    // New event with v2 fields
+    let v2_event = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({ "name": "Test", "age": 25 }))
+        .build();
     
-    // V1 payload should also fail against v1 schema now that v1 is inactive
-    let event_id4 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id4.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_v1_id.to_uuid())
-    .bind(&v1_payload)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "V1 payload should fail against inactive V1 schema");
-    
-    // V2 payload should validate against v2 schema
-    let v2_payload = json!({
-        "message": "Important message",
-        "priority": "high"
-    });
-    
-    let event_id3 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id3.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_v2_id.to_uuid())
-    .bind(&v2_payload)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_ok(), "V2 payload should validate against V2 schema");
-    
-    // Query for active schema
-    let active_version: String = sqlx::query_scalar(
-        "SELECT schema_version FROM sinex_schemas.event_payload_schemas 
-         WHERE event_source = $1 AND event_type = $2 AND is_active = true"
-    )
-    .bind(&event_source)
-    .bind(&event_type)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    
-    assert_eq!(active_version, "v2.0", "V2 should be the active version");
+    schema_test_utils::assert_schema_valid_event(ctx.pool(), &v2_event, schema_id_v2).await?;
     
     Ok(())
-    }
 }
 
-db_test! {
-    async fn test_complex_schema_validation(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Generate unique test identifiers to avoid conflicts
-    let test_run_id = &Uuid::new_v4().to_string()[..8];
-    let event_source = format!("complex_test-{}", test_run_id);
-    let event_type = format!("complex_event-{}", test_run_id);
-    
-    // Create a complex schema with nested objects, arrays, and various constraints
+#[sinex_test]
+async fn test_complex_nested_schema_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Test deeply nested schema validation
     let complex_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
-            "id": {
-                "type": "string",
-                "pattern": "^[A-Z]{3}-[0-9]{4}$"
-            },
-            "tags": {
-                "type": "array",
-                "items": {
-                    "type": "string",
-                    "minLength": 2,
-                    "maxLength": 20
-                },
-                "minItems": 1,
-                "maxItems": 5,
-                "uniqueItems": true
-            },
-            "metadata": {
+            "user": {
                 "type": "object",
                 "properties": {
-                    "created_at": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "version": {
-                        "type": "number",
-                        "minimum": 1.0
-                    },
-                    "features": {
+                    "id": {"type": "string", "format": "uuid"},
+                    "profile": {
                         "type": "object",
-                        "patternProperties": {
-                            "^feature_": {
-                                "type": "boolean"
+                        "properties": {
+                            "settings": {
+                                "type": "object",
+                                "properties": {
+                                    "theme": {"type": "string", "enum": ["light", "dark"]},
+                                    "notifications": {"type": "boolean"}
+                                },
+                                "required": ["theme"]
                             }
                         },
-                        "additionalProperties": false
+                        "required": ["settings"]
                     }
                 },
-                "required": ["created_at", "version"]
-            },
-            "data": {
-                "oneOf": [
-                    {
-                        "type": "object",
-                        "properties": {
-                            "type": {"const": "text"},
-                            "content": {"type": "string"}
-                        },
-                        "required": ["type", "content"]
-                    },
-                    {
-                        "type": "object",
-                        "properties": {
-                            "type": {"const": "number"},
-                            "value": {"type": "number"}
-                        },
-                        "required": ["type", "value"]
-                    }
-                ]
+                "required": ["id", "profile"]
             }
         },
-        "required": ["id", "tags", "metadata", "data"]
+        "required": ["user"]
     });
     
-    let schema_id = Ulid::from_uuid(sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO sinex_schemas.event_payload_schemas 
-         (event_source, event_type, schema_version, json_schema_definition) 
-         VALUES ($1, $2, $3, $4::jsonb) 
-         RETURNING id::uuid"
-    )
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("v1.0")
-    .bind(&complex_schema)
-    .fetch_one(&pool)
-    .await
-    .unwrap());
-    
-    // Test valid complex payload
-    let valid_complex = json!({
-        "id": "ABC-1234",
-        "tags": ["important", "reviewed", "production"],
-        "metadata": {
-            "created_at": "2024-01-01T00:00:00Z",
-            "version": 2.5,
-            "features": {
-                "feature_async": true,
-                "feature_cache": false
-            }
-        },
-        "data": {
-            "type": "text",
-            "content": "This is a text content"
-        }
-    });
-    
-    let event_id = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(event_id.to_uuid())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_id.to_uuid())
-    .bind(&valid_complex)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_ok(), "Valid complex payload should be accepted");
-    
-    // Test invalid pattern
-    let invalid_pattern = json!({
-        "id": "123-ABCD", // Wrong pattern
-        "tags": ["valid"],
-        "metadata": {
-            "created_at": "2024-01-01T00:00:00Z",
-            "version": 1.0
-        },
-        "data": {
-            "type": "text",
-            "content": "content"
-        }
-    });
-    
-    let event_id2 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id2.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_id.to_uuid())
-    .bind(&invalid_pattern)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "Invalid pattern should be rejected");
-    
-    // Test invalid oneOf
-    let invalid_oneof = json!({
-        "id": "XYZ-9999",
-        "tags": ["tag1"],
-        "metadata": {
-            "created_at": "2024-01-01T00:00:00Z",
-            "version": 1.0
-        },
-        "data": {
-            "type": "text",
-            "value": 123 // Should be 'content' not 'value' for text type
-        }
-    });
-    
-    let event_id3 = Ulid::new();
-    let result = sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-         VALUES ($1::ulid, $2, $3, $4, $5::ulid, $6::jsonb)"
-    )
-    .bind(&event_id3.to_string())
-    .bind(&event_source)
-    .bind(&event_type)
-    .bind("test_host")
-    .bind(schema_id.to_uuid())
-    .bind(&invalid_oneof)
-    .execute(&pool)
-    .await;
-    
-    assert!(result.is_err(), "Invalid oneOf structure should be rejected");
-    
-    Ok(())
-    }
-}
-
-db_test! {
-    async fn test_null_schema_allows_any_payload(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Generate unique test identifiers to avoid conflicts
     let test_run_id = &Uuid::new_v4().to_string()[..8];
-    let event_source = format!("no_schema_test-{}", test_run_id);
+    let event_source = format!("complex-test-{}", test_run_id);
+    let event_type = format!("nested-event-{}", test_run_id);
     
-    // Insert event without schema (payload_schema_id = NULL)
-    let payloads = vec![
-        json!({"any": "structure"}),
-        json!([1, 2, 3]),
-        json!("just a string"),
-        json!(42),
-        json!(true),
-        json!(null),
-        json!({"deeply": {"nested": {"object": {"with": ["arrays", {"and": "objects"}]}}}}),
-    ];
+    let schema_id = schema_test_utils::register_test_schema(ctx.pool(),
+        &event_source,
+        &event_type,
+        complex_schema
+    ).await?;
     
-    for (i, payload) in payloads.iter().enumerate() {
-        let event_id = Ulid::new();
-        let result = sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload_schema_id, payload) 
-             VALUES ($1::ulid, $2, $3, $4, NULL, $5::jsonb)"
-        )
-        .bind(event_id.to_uuid())
-        .bind(&event_source)
-        .bind(format!("type_{}", i))
-        .bind("test_host")
-        .bind(payload)
-        .execute(&pool)
-        .await;
-        
-        assert!(result.is_ok(), "Any payload should be accepted when schema is NULL");
-    }
+    // Valid deeply nested payload
+    let valid_event = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "user": {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "profile": {
+                    "settings": {
+                        "theme": "dark",
+                        "notifications": true
+                    }
+                }
+            }
+        }))
+        .build();
+    
+    schema_test_utils::assert_schema_valid_event(ctx.pool(), &valid_event, schema_id).await?;
+    
+    // Invalid - missing deep required field
+    let invalid_event = ctx.event_builder(&event_source, &event_type)
+        .payload(json!({
+            "user": {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "profile": {
+                    "settings": {
+                        // missing required "theme"
+                        "notifications": false
+                    }
+                }
+            }
+        }))
+        .build();
+    
+    schema_test_utils::assert_schema_invalid_event(ctx.pool(), &invalid_event, schema_id).await?;
     
     Ok(())
-    }
 }

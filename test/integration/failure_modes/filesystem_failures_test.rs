@@ -3,12 +3,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tempfile::TempDir;
+use crate::common::prelude::*;
+use crate::common::resources;
 
 /// Test disk full scenarios during event capture
 #[tokio::test]
-async fn test_disk_full_handling() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_disk_full_handling() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
     
     // Track write attempts and failures
@@ -89,12 +90,13 @@ async fn test_disk_full_handling() {
     
     // In a real scenario with limited disk, we'd expect some failures
     assert!(write_attempts.load(Ordering::Relaxed) > 0);
+    Ok(())
 }
 
 /// Test permission changes during filesystem monitoring
 #[tokio::test]
-async fn test_permission_change_handling() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
     
@@ -157,14 +159,15 @@ async fn test_permission_change_handling() {
     println!("  Access attempts: {}", access_attempts.load(Ordering::Relaxed));
     println!("  Permission denials: {}", access_denials.load(Ordering::Relaxed));
     
-    assert_eq!(access_denials.load(Ordering::Relaxed), 1);
+    pretty_assertions::assert_eq!(access_denials.load(Ordering::Relaxed), 1);
+    Ok(())
 }
 
 /// Test filesystem unmount/remount scenarios
 #[tokio::test]
-async fn test_filesystem_availability() {
+async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates monitoring a path that becomes unavailable
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount");
     fs::create_dir(&mount_point).unwrap();
     
@@ -226,14 +229,15 @@ async fn test_filesystem_availability() {
     println!("  Events after remount: {}", events_after_remount.load(Ordering::Relaxed));
     
     assert!(events_before_unmount.load(Ordering::Relaxed) > 0);
-    assert_eq!(events_during_unavailable.load(Ordering::Relaxed), 0);
+    pretty_assertions::assert_eq!(events_during_unavailable.load(Ordering::Relaxed), 0);
     assert!(events_after_remount.load(Ordering::Relaxed) > 0);
+    Ok(())
 }
 
 /// Test handling of symbolic link edge cases
 #[tokio::test]
-async fn test_symlink_edge_cases() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_symlink_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let base_path = temp_dir.path();
     
     // Create directory structure
@@ -324,12 +328,13 @@ async fn test_symlink_edge_cases() {
     
     // Verify expected behaviors
     // Normal should work, broken should fail, circular should fail
+    Ok(())
 }
 
 /// Test rapid file creation/deletion patterns
 #[tokio::test]
-async fn test_rapid_filesystem_changes() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_rapid_filesystem_changes() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let test_dir = temp_dir.path();
     
     let files_created = Arc::new(AtomicU64::new(0));
@@ -404,4 +409,5 @@ async fn test_rapid_filesystem_changes() {
     println!("  Potential missed events: {}", missed);
     
     assert!(created > 0, "Should have created files");
+    Ok(())
 }

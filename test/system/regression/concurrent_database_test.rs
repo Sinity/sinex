@@ -1,7 +1,6 @@
-use sinex_db::{queries, models::RawEvent};
+use crate::common::prelude::*;
+use sinex_db::queries;
 use crate::common::create_test_db_pool;
-use std::sync::Arc;
-use tokio::sync::Barrier;
 
 #[tokio::test]
 async fn test_concurrent_ulid_generation() {
@@ -22,20 +21,10 @@ async fn test_concurrent_ulid_generation() {
             
             let mut ulids = vec![];
             for i in 0..events_per_task {
-                let event = RawEvent {
-                    id: sinex_ulid::Ulid::new(),
-                    source: "test".to_string(),
-                    event_type: "concurrent.test".to_string(),
-                    ts_ingest: chrono::Utc::now(),
-                    ts_orig: None,
-                    host: format!("task-{}", task_id),
-                    ingestor_version: Some("test".to_string()),
-                    payload_schema_id: None,
-                    payload: serde_json::json!({
+                let event = crate::common::events::generic_adversarial_event("test", "concurrent.test", json!({
                         "task": task_id,
                         "event": i
-                    }),
-                };
+                    }), None);
                 
                 let result = queries::insert_event(&pool, &event).await.unwrap();
                 ulids.push(result.id);
@@ -55,7 +44,7 @@ async fn test_concurrent_ulid_generation() {
     
     // Check for duplicates - this might FAIL under high concurrency
     let unique_ulids: std::collections::HashSet<_> = all_ulids.iter().collect();
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         all_ulids.len(), 
         unique_ulids.len(), 
         "Found {} duplicate ULIDs in {} total", 
@@ -69,19 +58,7 @@ async fn test_worker_double_processing() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Insert a test event
-    let event = RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: "test".to_string(),
-        event_type: "worker.test".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test-host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({
-            "test_data": "worker processing test"
-        }),
-    };
+    let event = crate::common::events::generic_adversarial_event("test", "worker_test", json!({"test": true}), None);
     let inserted = queries::insert_event(&pool, &event).await.unwrap();
     
     // Simulate two workers trying to claim the same event
@@ -97,8 +74,7 @@ async fn test_worker_double_processing() {
         b1.wait().await;
         // Try to claim event for processing
         sqlx::query!(
-            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb 
-             WHERE id::uuid = $1::uuid",
+            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb WHERE id::uuid = $1::uuid",
             event_id.to_uuid()
         )
         .execute(&pool1)
@@ -109,8 +85,7 @@ async fn test_worker_double_processing() {
         b2.wait().await;
         // Try to claim same event
         sqlx::query!(
-            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb 
-             WHERE id::uuid = $1::uuid",
+            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb WHERE id::uuid = $1::uuid",
             event_id.to_uuid()
         )
         .execute(&pool2)

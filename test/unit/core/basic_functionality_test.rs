@@ -5,8 +5,8 @@
 //! - Event constants and source identifiers
 //! - ULID generation and properties
 
+use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
-use serde_json::json;
 
 /// Test basic event creation with RawEventBuilder
 /// 
@@ -23,9 +23,9 @@ fn test_raw_event_builder_basic() {
         json!({"path": "/test/file.txt"})
     ).build();
     
-    assert_eq!(event.source, sources::FILESYSTEM);
-    assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
-    assert_eq!(event.payload["path"], "/test/file.txt");
+    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
+    pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
     assert!(!event.host.is_empty());
     assert!(event.id.to_string().len() == 26); // ULID length
 }
@@ -57,13 +57,13 @@ fn test_multiple_event_creation() {
         ).build(),
     ];
     
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[0].source, "filesystem");
-    assert_eq!(events[1].source, "terminal.kitty");
-    assert_eq!(events[2].source, "sinex");
+    pretty_assertions::assert_eq!(events.len(), 3);
+    pretty_assertions::assert_eq!(events[0].source, "filesystem");
+    pretty_assertions::assert_eq!(events[1].source, "terminal.kitty");
+    pretty_assertions::assert_eq!(events[2].source, "sinex");
     
     // All events should have unique IDs
-    assert_ne!(events[0].id, events[1].id);
-    assert_ne!(events[1].id, events[2].id);
-    assert_ne!(events[0].id, events[2].id);
+    pretty_assertions::assert_ne!(events[0].id, events[1].id);
+    pretty_assertions::assert_ne!(events[1].id, events[2].id);
+    pretty_assertions::assert_ne!(events[0].id, events[2].id);
 }

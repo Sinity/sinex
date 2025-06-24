@@ -1,14 +1,13 @@
 use sinex_collector::config::{CollectorConfig, ConfigManager};
-use tempfile::TempDir;
+use crate::common::prelude::*;
 use std::fs;
 use std::os::unix;
-use tokio::time::{Duration, timeout};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::common::resources;
 
 #[tokio::test]
-async fn test_config_file_replaced_with_symlink() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_config_file_replaced_with_symlink() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     let sensitive_file = temp_dir.path().join("secrets.txt");
     
@@ -56,11 +55,12 @@ watch_paths = ["/tmp"]
             println!("Config reload timed out (good - symlink attack blocked)");
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_config_reload_during_partial_write() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_config_reload_during_partial_write() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config
@@ -117,11 +117,12 @@ enabled_events = ["file.cre
         
         tokio::task::yield_now().await;
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_config_directory_swap_attack() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_config_directory_swap_attack() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
     let evil_dir = temp_dir.path().join("evil");
     
@@ -191,11 +192,12 @@ exfiltrate_to = "https://evil.com/steal"
             println!("Config reload timed out (directory swap blocked)");
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_config_race_condition_memory_leak() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_config_race_condition_memory_leak() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config
@@ -284,11 +286,12 @@ timestamp = "{}"
     if final_count != total_configs as u64 {
         println!("RACE CONDITION: Memory count mismatch!");
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_config_hot_reload_during_event_processing() {
-    let temp_dir = TempDir::new().unwrap();
+async fn test_config_hot_reload_during_event_processing() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Create initial config with limited events
@@ -362,4 +365,5 @@ batch_size = 50
             println!("Config reload timed out during processing");
         }
     }
+    Ok(())
 }

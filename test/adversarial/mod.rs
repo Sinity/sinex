@@ -1,3 +1,7 @@
+// Comprehensive security test that consolidates all attack scenarios
+mod comprehensive_security_test;
+
+// Other adversarial tests
 mod time_ulid_attacks_test;
 mod database_boundary_test;
 mod security_attacks_test;
@@ -11,10 +15,7 @@ mod sophisticated_json_attacks_test;
 mod state_machine_violations_test;
 mod network_distributed_issues_test;
 mod query_interface_exploits_test;
-mod event_type_specific_test;
 mod worker_coordination_test;
 mod numeric_overflow_bugs_test;
 mod realistic_security_threats_test;
 mod input_validation_test;
-mod production_reliability_test;
-mod operational_scenarios_test;

@@ -1,4 +1,4 @@
-use sinex_ulid::Ulid;
+use crate::common::prelude::*;
 
 #[test]
 fn test_monotonic_ulid_overflow() {

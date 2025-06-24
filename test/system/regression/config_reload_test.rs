@@ -1,6 +1,5 @@
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
-use std::time::Duration;
-use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_config_reload_race_condition() {
@@ -76,5 +75,5 @@ async fn test_config_malformed_handling() {
     
     // Should still have the old valid config
     let current_config = manager.get_config().await;
-    assert_eq!(current_config.enabled_events.len(), 1);
+    pretty_assertions::assert_eq!(current_config.enabled_events.len(), 1);
 }

@@ -4,21 +4,21 @@
 //! a wide range of inputs, providing more comprehensive testing than
 //! example-based tests.
 
-// Track 1 - Property-Based Testing Expansion (Agent Beta)
+// Core property tests
 pub mod raw_event_property_tests;
 pub mod ulid_concurrent_property_tests;
 pub mod event_registry_property_tests;
 pub mod json_schema_property_tests;
 pub mod ulid_ordering_property_tests;
 pub mod work_queue_property_tests;
-
-// Agent Alpha - VM Infrastructure  
 pub mod ulid_properties;
+pub mod property_tests; // Moved from root level
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;
 
 // Property test strategies for common Sinex types
+#[allow(dead_code)]
 pub mod strategies {
     use super::*;
     use chrono::{DateTime, Utc};
@@ -56,7 +56,7 @@ pub mod strategies {
             Just("/tmp/cache/file.json".to_string()),
             Just("/var/log/system.log".to_string()),
             Just("/home/user/code/project/src/main.rs".to_string()),
-            Just("/home/user/.config/app/settings.toml".to_string()),
+            Just("/home/user/.config/app/settings.toml".to_string())
         ]
     }
 

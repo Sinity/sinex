@@ -2,20 +2,18 @@
 
 pub mod load_testing;
 
-use anyhow::Result;
-use sinex_db::queries;
-use sqlx::PgPool;
+use crate::common::prelude::*;
 use std::time::{Duration, Instant};
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
-#[sqlx::test]
-async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
+#[sinex_test]
+async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Error> {
     let start = Instant::now();
     let mut handles = vec![];
     
     // Spawn multiple tasks to insert events concurrently
     for i in 0..5 {
-        let pool = pool.clone();
+        let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
                 queries::insert_raw_event(
@@ -48,25 +46,25 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<()> {
     
     // Verify count using timing utility
     let count = wait_for_filtered_event_count(
-        &pool,
+        &ctx.pool(),
         "source LIKE $1",
         &["perf_test_%"],
         1000,
         10
     ).await.map_err(|e| anyhow::anyhow!("Failed to verify event count: {}", e))?;
     
-    assert_eq!(count, 1000);
+    pretty_assertions::assert_eq!(count, 1000);
     assert!(elapsed < Duration::from_secs(5), "Ingestion took too long: {:?}", elapsed);
     
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
+#[sinex_test]
+async fn test_concurrent_processing_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
-            &pool,
+            &ctx.pool(),
             "concurrent_test",
             "process_me",
             "test-host",
@@ -82,7 +80,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
     
     // Spawn workers to process events concurrently
     for worker_id in 0..4 {
-        let pool = pool.clone();
+        let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             let mut processed = 0;
             
@@ -148,18 +146,18 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<()> {
     let elapsed = start.elapsed();
     println!("Processed {} events in {:?} with 4 workers", total_processed, elapsed);
     
-    assert_eq!(total_processed, 100);
+    pretty_assertions::assert_eq!(total_processed, 100);
     assert!(elapsed < Duration::from_secs(3), "Processing took too long: {:?}", elapsed);
     
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_query_latency(pool: PgPool) -> Result<()> {
+#[sinex_test]
+async fn test_query_latency(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(
-            &pool,
+            &ctx.pool(),
             "latency_test",
             if i % 2 == 0 { "type_a" } else { "type_b" },
             "test-host",
@@ -183,7 +181,7 @@ async fn test_query_latency(pool: PgPool) -> Result<()> {
     
     for (name, query) in queries_to_test {
         let start = Instant::now();
-        let _result = sqlx::query(query).fetch_all(&pool).await?;
+        let _result = sqlx::query(query).fetch_all(ctx.pool()).await?;
         let elapsed = start.elapsed();
         
         println!("{}: {:?}", name, elapsed);

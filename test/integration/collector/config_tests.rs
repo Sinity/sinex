@@ -120,9 +120,9 @@ fn test_validation_report_accumulation() {
     
     report.add_recommendation("Test recommendation".to_string());
     
-    assert_eq!(report.errors.len(), 1);
-    assert_eq!(report.warnings.len(), 1);
-    assert_eq!(report.recommendations.len(), 1);
+    pretty_assertions::assert_eq!(report.errors.len(), 1);
+    pretty_assertions::assert_eq!(report.warnings.len(), 1);
+    pretty_assertions::assert_eq!(report.recommendations.len(), 1);
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn test_validation_report_merge() {
     report1.merge(report2);
     
     assert!(!report1.valid);
-    assert_eq!(report1.errors.len(), 2);
-    assert_eq!(report1.warnings.len(), 1);
-    assert_eq!(report1.recommendations.len(), 1);
+    pretty_assertions::assert_eq!(report1.errors.len(), 2);
+    pretty_assertions::assert_eq!(report1.warnings.len(), 1);
+    pretty_assertions::assert_eq!(report1.recommendations.len(), 1);
 }
