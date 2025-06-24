@@ -374,7 +374,7 @@ mod unit_tests {
         pretty_assertions::assert_eq!(tracker.get_duplicates()[0], id1);
     }
     
-    #[sqlx::test]
+    #[sinex_test]
     async fn test_worker_crash_simulation(pool: sqlx::PgPool) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
         let tracker = ProcessingTracker::new();

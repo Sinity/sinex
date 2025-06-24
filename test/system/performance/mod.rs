@@ -6,18 +6,18 @@ use crate::common::prelude::*;
 use std::time::{Duration, Instant};
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
-#[sqlx::test]
-async fn test_high_volume_ingestion(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Error> {
     let start = Instant::now();
     let mut handles = vec![];
     
     // Spawn multiple tasks to insert events concurrently
     for i in 0..5 {
-        let pool = pool.clone();
+        let ctx.pool() = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
                 queries::insert_raw_event(
-                    &pool,
+                    &ctx.pool(),
                     &format!("perf_test_{}", i),
                     &format!("test_event_{}", j),
                     "test-host",
@@ -46,7 +46,7 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<(), anyhow::Error> {
     
     // Verify count using timing utility
     let count = wait_for_filtered_event_count(
-        &pool,
+        &ctx.pool(),
         "source LIKE $1",
         &["perf_test_%"],
         1000,
@@ -59,12 +59,12 @@ async fn test_high_volume_ingestion(pool: PgPool) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[sqlx::test]
-async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_concurrent_processing_performance(ctx: TestContext) -> Res
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
-            &pool,
+            &ctx.pool(),
             "concurrent_test",
             "process_me",
             "test-host",
@@ -80,7 +80,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyh
     
     // Spawn workers to process events concurrently
     for worker_id in 0..4 {
-        let pool = pool.clone();
+        let ctx.pool() = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             let mut processed = 0;
             
@@ -103,7 +103,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyh
                     FOR UPDATE SKIP LOCKED
                     "#
                 )
-                .fetch_optional(&pool)
+                .fetch_optional(&ctx.pool())
                 .await?;
                 
                 if let Some((event_id,)) = maybe_event {
@@ -112,7 +112,7 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyh
                     
                     // Mark as processed
                     queries::insert_raw_event(
-                        &pool,
+                        &ctx.pool(),
                         "concurrent_test",
                         "processed",
                         "test-host",
@@ -150,14 +150,17 @@ async fn test_concurrent_processing_performance(pool: PgPool) -> Result<(), anyh
     assert!(elapsed < Duration::from_secs(3), "Processing took too long: {:?}", elapsed);
     
     Ok(())
+apsed);
+    
+    Ok(())
 }
 
-#[sqlx::test]
-async fn test_query_latency(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_query_la
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(
-            &pool,
+            &ctx.pool(),
             "latency_test",
             if i % 2 == 0 { "type_a" } else { "type_b" },
             "test-host",
@@ -181,11 +184,15 @@ async fn test_query_latency(pool: PgPool) -> Result<(), anyhow::Error> {
     
     for (name, query) in queries_to_test {
         let start = Instant::now();
-        let _result = sqlx::query(query).fetch_all(&pool).await?;
+        let _result = sqlx::query(query).fetch_all(&ctx.pool()).await?;
         let elapsed = start.elapsed();
         
         println!("{}: {:?}", name, elapsed);
         assert!(elapsed < Duration::from_millis(100), "{} query too slow: {:?}", name, elapsed);
+    }
+    
+    Ok(())
+oo slow: {:?}", name, elapsed);
     }
     
     Ok(())

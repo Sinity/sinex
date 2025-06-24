@@ -2,8 +2,8 @@ use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 
 /// Test transaction rollback scenarios
-#[sqlx::test]
-async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyhow::Error> {
     
     // Track transaction outcomes
     let successful_commits = Arc::new(AtomicU64::new(0));
@@ -11,7 +11,7 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
     let partial_writes = Arc::new(AtomicU64::new(0));
     
     // Test 1: Constraint violation causing rollback
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = ctx.pool().begin().await.unwrap();
     
     // Insert test data
     sqlx::query("INSERT INTO sinex_schemas.event_payload_schemas (event_source, event_type, schema_version, json_schema_definition) VALUES ($1, $2, $3, $4)")
@@ -45,14 +45,14 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
         .bind("test_source")
         .bind("test_type")
         .bind("v1.0")
-        .fetch_one(&pool)
+        .fetch_one(&ctx.pool())
         .await
         .unwrap();
     
     pretty_assertions::assert_eq!(count, 0, "Transaction should have rolled back completely");
     
     // Test 2: Partial batch insert with error
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = ctx.pool().begin().await.unwrap();
     let batch_size = 10;
     let mut batch_written = 0;
     
@@ -88,7 +88,7 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
     
     // Verify entire batch was rolled back
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE event_source = 'batch_source'")
-        .fetch_one(&pool)
+        .fetch_one(&ctx.pool())
         .await
         .unwrap();
     
@@ -98,8 +98,8 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
     let conflict_detected = Arc::new(AtomicBool::new(false));
     
     // Start two transactions that will conflict
-    let mut tx1 = pool.begin().await.unwrap();
-    let mut tx2 = pool.begin().await.unwrap();
+    let mut tx1 = ctx.pool().begin().await.unwrap();
+    let mut tx2 = ctx.pool().begin().await.unwrap();
     
     // Both try to insert the same key
     let result1 = sqlx::query("INSERT INTO sinex_schemas.event_payload_schemas (event_source, event_type, schema_version, json_schema_definition) VALUES ($1, $2, $3, $4)")
@@ -152,8 +152,8 @@ async fn test_transaction_rollback_behavior(pool: PgPool) -> Result<(), anyhow::
 }
 
 /// Test schema migration failure scenarios
-#[sqlx::test]
-async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_migration_failure_handling(ctx: TestCon
     // This test simulates what happens when migrations fail partway through
     
     #[derive(Debug)]
@@ -174,7 +174,7 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
     ];
     
     for (version, sql, should_succeed) in migrations {
-        let mut tx = pool.begin().await.unwrap();
+        let mut tx = ctx.pool().begin().await.unwrap();
         
         let result = sqlx::query(sql).execute(&mut *tx).await;
         
@@ -219,7 +219,7 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
     let tables_exist = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('test_migration_1', 'test_migration_2')"
     )
-    .fetch_one(&pool)
+    .fetch_one(&ctx.pool())
     .await
     .unwrap();
     
@@ -235,7 +235,7 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
     
     // Cleanup
     let _ = sqlx::query("DROP TABLE IF EXISTS test_migration_2, test_migration_1 CASCADE")
-        .execute(&pool)
+        .execute(&ctx.pool())
         .await;
     
     // Verify the failed migration stopped the sequence
@@ -243,11 +243,14 @@ async fn test_migration_failure_handling(pool: PgPool) -> Result<(), anyhow::Err
     assert!(!results[2].success, "Third migration should fail");
     
     Ok(())
+tion should fail");
+    
+    Ok(())
 }
 
 /// Test connection pool behavior under database restart
-#[sqlx::test]
-async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_database_restart_resil
     
     let queries_before = Arc::new(AtomicU64::new(0));
     let queries_during_outage = Arc::new(AtomicU64::new(0));
@@ -256,13 +259,13 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Er
     
     // Helper to run a simple query
     async fn try_query(
-        pool: &PgPool,
+        ctx.pool(): &PgPool,
         counter: &Arc<AtomicU64>,
         errors: &Arc<AtomicU64>,
     ) -> Result<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(pool)
+            sqlx::query("SELECT 1").fetch_one(ctx.pool())
         ).await {
             Ok(Ok(_)) => {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -281,12 +284,12 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Er
     
     // Phase 1: Normal operation
     for _ in 0..5 {
-        let _ = try_query(&pool, &queries_before, &connection_errors).await;
+        let _ = try_query(&ctx.pool(), &queries_before, &connection_errors).await;
     }
     
     // Phase 2: Simulate database unavailability
     // In a real test, we'd actually stop the database
-    // For this test, we'll use a pool with bad connection string
+    // For this test, we'll use a ctx.pool() with bad connection string
     let bad_pool = PgPool::connect("postgresql://bad_host/bad_db").await;
     
     if let Err(_) = bad_pool {
@@ -297,11 +300,11 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Er
         }
     }
     
-    // Phase 3: Recovery (back to good pool)
+    // Phase 3: Recovery (back to good ctx.pool())
     tokio::time::sleep(Duration::from_millis(100)).await;
     
     for _ in 0..5 {
-        let _ = try_query(&pool, &queries_after, &connection_errors).await;
+        let _ = try_query(&ctx.pool(), &queries_after, &connection_errors).await;
     }
     
     println!("\nDatabase restart resilience test results:");
@@ -315,14 +318,16 @@ async fn test_database_restart_resilience(pool: PgPool) -> Result<(), anyhow::Er
     assert!(queries_after.load(Ordering::Relaxed) > 0, "Should recover after outage");
     
     Ok(())
+ > 0, "Should recover after outage");
+    
+    Ok(())
 }
 
 /// Test handling of very large result sets
-#[sqlx::test]
-async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Error> {
+#[sinex_test
     
     // Insert test data
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = ctx.pool().begin().await.unwrap();
     
     // Create a temporary table for testing
     sqlx::query("CREATE TEMP TABLE large_data_test (id SERIAL, data TEXT)")
@@ -353,7 +358,7 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Erro
     // Strategy 1: Fetch all at once (memory intensive)
     let all_at_once_result = timeout(
         Duration::from_secs(5),
-        sqlx::query("SELECT * FROM large_data_test").fetch_all(&pool)
+        sqlx::query("SELECT * FROM large_data_test").fetch_all(&ctx.pool())
     ).await;
     
     let fetch_all_time = fetch_start.elapsed();
@@ -364,7 +369,7 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Erro
     let mut stream_count = 0;
     
     use futures::TryStreamExt;
-    let mut stream = sqlx::query("SELECT * FROM large_data_test").fetch(&pool);
+    let mut stream = sqlx::query("SELECT * FROM large_data_test").fetch(&ctx.pool());
     
     while let Ok(Some(_row)) = stream.try_next().await {
         stream_count += 1;
@@ -384,6 +389,9 @@ async fn test_large_result_set_handling(pool: PgPool) -> Result<(), anyhow::Erro
         fetch_all_time.as_millis() as f64 / stream_time.as_millis() as f64);
     
     pretty_assertions::assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
+    
+    Ok(())
+ions::assert_eq!(stream_count, rows_to_insert, "Should stream all rows");
     
     Ok(())
 }

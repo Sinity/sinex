@@ -3,8 +3,8 @@ use std::process::Command;
 use crate::common::{events, assertions, generators};
 
 /// Test the Python CLI query interface
-#[sqlx::test]
-async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
     
     // Insert test events using helpers
     let test_events = vec![
@@ -19,7 +19,7 @@ async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
     ];
     
     for event in test_events {
-        assertions::assert_event_inserted(&pool, &event).await.unwrap();
+        assertions::assert_event_inserted(&ctx.pool(), &event).await.unwrap();
     }
     
     // Test various CLI commands
@@ -81,8 +81,8 @@ async fn test_exo_cli_basic_queries(pool: sqlx::PgPool) -> sqlx::Result<()> {
 }
 
 /// Test schema management commands
-#[sqlx::test]
-async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
     
     // Insert test schema
     let test_schema = json!({
@@ -95,7 +95,7 @@ async fn test_exo_cli_schema_commands(pool: sqlx::PgPool) -> sqlx::Result<()> {
     });
     
     // Use schema test utilities to insert schema
-    crate::common::schema_test_utils::database::insert_test_schema(&pool,
+    crate::common::schema_test_utils::database::insert_test_schema(&ctx.pool(),
         "test.filesystem",
         "file_event",
         "1.0.0",
