@@ -229,6 +229,34 @@ just sqlx-check               # Check if cache is up to date
 
 ### Testing
 
+#### Test Infrastructure
+
+The test suite uses a unified test infrastructure with the `#[sinex_test]` macro and `TestContext`:
+
+```rust
+#[sinex_test]
+async fn test_example(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    // Access shared database pool
+    let pool = ctx.pool();
+    
+    // Access test configuration
+    let config = ctx.config();
+    
+    // Use test helpers
+    ctx.wait_for_work_queue(0).await?;
+    
+    Ok(())
+}
+```
+
+**Key Benefits**:
+- Shared database pool (50 connections) instead of per-test pools
+- Automatic test isolation via transactions
+- Consistent test helpers and utilities
+- Faster test startup and execution
+
+#### Running Tests
+
 ```bash
 just test                       # All tests
 just test-unit                  # Unit tests (component isolation)
@@ -253,6 +281,14 @@ cargo test --test unit          # All unit tests
 cargo test --test system        # All system tests
 ```
 
+#### Writing Tests
+
+- Use `#[sinex_test]` instead of `#[tokio::test]` for database tests
+- Accept `ctx: TestContext` parameter instead of `pool: PgPool`
+- Access database via `ctx.pool()` method
+- Use test utilities from `crate::common::prelude::*`
+- Tests are automatically isolated in transactions
+
 ### Query Interface (exo.py)
 
 ```bash
@@ -275,6 +311,24 @@ just query 50                  # View recent 50 events
 # Blob management (requires git-annex)
 ./cli/exo.py blob list          # List stored blobs
 ./cli/exo.py blob get <key>     # Retrieve blob content
+```
+
+### Common Test Patterns
+
+```rust
+// Creating test events
+let event = RawEventBuilder::new("source", "type", json!({"data": "test"})).build();
+let event_id = insert_event(ctx.pool(), &event).await?;
+
+// Using test assertions
+assertions::assert_event_inserted(ctx.pool(), &event).await?;
+assertions::assert_event_insertion_fails(ctx.pool(), &invalid_event).await?;
+
+// Waiting for async operations
+ctx.wait_for_work_queue(0).await?;
+
+// Creating test data batches
+let events = generators::test_events(10);
 ```
 
 ### Debugging
@@ -380,6 +434,32 @@ postgresql:///sinex_dev?host=/run/postgresql
 
 ## 🚀 SYSTEMATIC CODE TRANSFORMATION METHODOLOGY
 
+### Automation Best Practices
+
+**Critical Principle**: Automation can be powerful but also dangerous. Always prefer incremental, verifiable changes over bulk transformations.
+
+#### When to Automate vs Manual
+
+**Consider Automation When**:
+- Pattern occurs 20+ times with minimal variation
+- Changes are mechanical and predictable
+- Verification can be automated (e.g., compilation checks)
+- Risk of human error in repetitive changes is high
+
+**Prefer Manual Approach When**:
+- Context varies significantly between instances
+- Changes require semantic understanding
+- Files contain complex interdependencies
+- Pattern occurs <10 times
+
+#### Safe Automation Process
+
+1. **Backup First**: Always commit current state before automation
+2. **Test on Subset**: Apply automation to 1-2 files first
+3. **Verify Immediately**: Check compilation after each batch
+4. **Use Version Control**: Commit working states frequently
+5. **Review Changes**: Use `git diff` to verify transformations
+
 ### Automation Assessment Framework
 
 When facing repetitive code patterns, use this systematic approach:
@@ -450,6 +530,23 @@ fd "*.rs" | xargs rg "pattern" | wc -l
 - Pattern requires significant context to understand
 - Manual version is clearer than automated version
 - One-time conversion with no ongoing benefit
+
+### Common Automation Pitfalls
+
+1. **Over-aggressive Pattern Matching**: Replacing too broadly can corrupt unrelated code
+2. **Context Loss**: Automated tools may not preserve necessary context (imports, types)
+3. **Cascading Errors**: One bad transformation can break many files
+4. **Incomplete Transformations**: Partial migrations leave code in inconsistent state
+5. **Tool Limitations**: Regex/sed can't handle nested structures or syntax-aware changes
+
+### Recommended Automation Tools
+
+- **ast-grep**: Syntax-aware transformations for complex patterns
+- **sed/awk**: Simple string replacements (use with caution)
+- **Custom scripts**: Python/Rust for complex, context-aware transformations
+- **IDE refactoring**: Often safer for smaller-scale changes
+
+**Remember**: The goal is working code, not perfect automation. When in doubt, do it manually.
 
 ### Automation Iteration Strategy
 
