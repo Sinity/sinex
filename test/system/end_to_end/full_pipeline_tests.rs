@@ -119,9 +119,9 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_full_pipeline_end_to_end(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
         let events_processed = Arc::new(AtomicU32::new(0));
@@ -275,9 +275,9 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
         Ok(())
 }
 
-#[tokio::test]
-async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_pipeline_with_multiple_workers(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
         
@@ -388,9 +388,9 @@ async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
         Ok(())
 }
 
-#[tokio::test]
-async fn test_pipeline_error_recovery() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_pipeline_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         // Insert some events that will cause errors
         for i in 0..5 {
             let event = RawEventBuilder::new(
