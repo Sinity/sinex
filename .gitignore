@@ -55,3 +55,6 @@ result-*
 /logs/
 /spec/combo/
 .direnv/
+
+# Git worktrees
+worktree-*

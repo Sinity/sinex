@@ -1,0 +1,11 @@
+id: add-ok-return
+language: rust
+rule:
+  kind: block_expression
+  inside: { kind: function_item, has: { pattern: '#[sinex_test]' } }
+  has: { kind: expression_statement, stopBy: end }
+  not: { has: { kind: expression_statement, has: { kind: try_expression } } }
+  not: { has: { kind: expression_statement, has: { kind: return_expression } } }
+fix: |
+  $$$
+  Ok(())

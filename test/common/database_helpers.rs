@@ -5,57 +5,62 @@
 
 use crate::common::prelude::*;
 use serde_json::json;
-use lazy_static::lazy_static;
-use std::sync::Mutex;
+use tokio::sync::OnceCell;
 
-lazy_static! {
-    /// Shared test database pool to reduce resource waste
-    /// 
-    /// Creates a single database pool with reasonable connection limits that all tests share.
-    /// Tests get transaction isolation automatically to prevent interference.
-    static ref SHARED_TEST_POOL: Mutex<Option<PgPool>> = Mutex::new(None);
+/// Process-wide shared test pool using async-safe OnceCell
+static SHARED_TEST_POOL: OnceCell<PgPool> = OnceCell::const_new();
+
+/// Get or create the shared test database pool
+///
+/// This uses tokio::sync::OnceCell which is designed for async initialization
+/// and works correctly across different test threads and runtimes.
+pub async fn get_shared_test_pool() -> Result<PgPool> {
+    Ok(SHARED_TEST_POOL
+        .get_or_init(|| async {
+            let database_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+                
+            // Conservative pool sizing for tests
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(50) // Reasonable for parallel tests
+                .min_connections(5)
+                .acquire_timeout(Duration::from_secs(30))
+                .idle_timeout(Duration::from_secs(300))
+                .test_before_acquire(false)
+                .connect(&database_url)
+                .await
+                .expect("Failed to create test database pool");
+                
+            // Apply migrations to ensure schema is current
+            run_migrations(&pool).await.expect("Failed to run migrations");
+            
+            pool
+        })
+        .await
+        .clone())
 }
 
-/// Create or reuse the shared test database pool
+/// Create a test database pool (for tests that need isolated pools)
 ///
-/// This function creates a single database pool with sensible connection limits (50 max connections)
-/// instead of letting every test create its own pool with 2000 connections.
-/// 
-/// Benefits:
-/// - 50-80% faster test startup (no connection overhead per test)
-/// - No connection exhaustion during parallel test runs
-/// - Reduced resource waste on development machines
-pub async fn get_shared_test_pool() -> Result<PgPool> {
-    let mut pool_guard = SHARED_TEST_POOL.lock().unwrap();
-    
-    if pool_guard.is_none() {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-            
-        // Dynamic pool sizing based on CPU cores
-        // Formula: 2 * num_cpus (allowing 2 connections per concurrent test)
-        // Capped at 80 to leave room for other connections to the database
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8) as u32;
-        let max_connections = (num_cpus * 2).min(80);
+/// Most tests should use get_shared_test_pool() with transaction isolation.
+/// Only use this for tests that specifically need their own connection pool.
+pub async fn create_test_pool() -> Result<PgPool> {
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(max_connections)
-            .min_connections(num_cpus.min(10))
-            .acquire_timeout(Duration::from_secs(30))
-            .idle_timeout(Duration::from_secs(300))
-            .test_before_acquire(false)
-            .connect(&database_url)
-            .await?;
-            
-        // Apply migrations to ensure schema is current
-        run_migrations(&pool).await?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5) // Single test doesn't need many connections
+        .min_connections(1)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(10))
+        .test_before_acquire(false)
+        .connect(&database_url)
+        .await?;
         
-        *pool_guard = Some(pool);
-    }
+    // Apply migrations to ensure schema is current
+    run_migrations(&pool).await?;
     
-    Ok(pool_guard.as_ref().unwrap().clone())
+    Ok(pool)
 }
 
 /// Get a database transaction for test isolation

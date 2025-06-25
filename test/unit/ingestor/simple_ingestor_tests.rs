@@ -76,16 +76,16 @@ impl EventSource for TestEventSource {
     }
 }
 
-#[tokio::test]
-async fn test_event_source_initialization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_initialization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 5,
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let source = TestEventSource::initialize(ctx_local).await?;
     
     pretty_assertions::assert_eq!(source.config.events_to_generate, 10);
     pretty_assertions::assert_eq!(source.config.generation_delay_ms, 5);
@@ -94,16 +94,16 @@ async fn test_event_source_initialization() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_initialization_failure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_initialization_failure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 1,
         should_fail: true,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
     
@@ -117,16 +117,16 @@ async fn test_event_source_initialization_failure() -> Result<(), anyhow::Error>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_streaming() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_streaming(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 3,
         generation_delay_ms: 50,
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     let events_sent = source.events_sent.clone();
     
     let (tx, mut rx) = mpsc::channel(10);
@@ -160,16 +160,16 @@ async fn test_event_source_streaming() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_runtime_error() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_runtime_error(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 10,
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     let should_error = source.should_error.clone();
     let events_sent = source.events_sent.clone();
     
@@ -198,16 +198,16 @@ async fn test_event_source_runtime_error() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_graceful_shutdown() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_graceful_shutdown(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 10,
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     
     // Test shutdown
     let result = source.shutdown().await;
@@ -216,16 +216,16 @@ async fn test_event_source_graceful_shutdown() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_receiver_drop() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_receiver_drop(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig {
         events_to_generate: 100, // More than we'll receive
         generation_delay_ms: 1,
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     let _events_sent = source.events_sent.clone();
     
     let (tx, mut rx) = mpsc::channel(5);
@@ -296,8 +296,8 @@ impl EventSource for SlowEventSource {
     }
 }
 
-#[tokio::test]
-async fn test_multiple_event_sources() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_multiple_event_sources(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let config = TestSourceConfig::default();
     
     let ctx1 = event_sources::test_context(serde_json::to_value(&config)?);
@@ -331,9 +331,9 @@ async fn test_multiple_event_sources() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_event_source_database_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+// Removed: using ctx.pool() directly instead
     
     let config = TestSourceConfig {
         events_to_generate: 2,
@@ -341,8 +341,8 @@ async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
         should_fail: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config)?);
-    let mut source = TestEventSource::initialize(ctx).await?;
+    let ctx_local = event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
     
     let (tx, mut rx) = mpsc::channel(10);
     
@@ -355,7 +355,7 @@ async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
         if let Some(event) = rx.recv().await {
             // Store in database using proper queries that handle ts_ingest correctly
             use sinex_db::queries::insert_event;
-            insert_event(&pool, &event).await?;
+            insert_event(ctx.pool(), &event).await?;
         }
     }
     
@@ -365,7 +365,7 @@ async fn test_event_source_database_integration() -> Result<(), anyhow::Error> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'"
     )
-    .fetch_one(&pool)
+    .fetch_one(ctx.pool())
     .await?;
     
     pretty_assertions::assert_eq!(count, 2);

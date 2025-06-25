@@ -247,10 +247,10 @@ struct WorkerStressResult {
     max_claim_time: Duration,
 }
 
-#[tokio::test]
-async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_extreme_concurrency_stress(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+let pool = ctx.pool();
+    run_migrations(pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());
     let extreme_worker_count = 50;
@@ -266,12 +266,12 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
         "generic",
         "running"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
-    let create_pool = pool.clone();
+    let create_pool = ctx.pool().clone();
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
@@ -309,7 +309,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
         
         let worker = StressTestWorker::new(
             format!("extreme_worker_{}", i),
-            pool.clone(),
+            ctx.pool().clone(),
             metrics.clone(),
             agent_name.clone(),
             Duration::from_millis(200),
@@ -323,7 +323,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
         worker_handles.push(handle);
     }
 
-    let monitor_pool = pool.clone();
+    let monitor_pool = ctx.pool().clone();
     let monitor_agent = agent_name.clone();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {
@@ -441,7 +441,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -450,7 +450,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
          WHERE target_agent_name = $1 AND status = 'pending'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -459,7 +459,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
          WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -496,7 +496,7 @@ async fn test_extreme_concurrency_stress() -> Result<(), anyhow::Error> {
     let total_items = final_succeeded + final_pending + final_failed;
     assert!(total_items >= work_items as i64, "All created work items should be accounted for");
 
-    StressTestUtils::cleanup_test_data(&pool, &agent_name, "stress.extreme_concurrency").await?;
+    StressTestUtils::cleanup_test_data(pool, &agent_name, "stress.extreme_concurrency").await?;
 
     Ok(())
 }

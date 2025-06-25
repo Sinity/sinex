@@ -1,0 +1,11 @@
+id: add-prelude-import
+language: rust
+rule:
+  kind: source_file
+  has: { pattern: '#[sinex_test]' }
+  not: { has: { pattern: 'use crate::common::prelude::*;' } }
+  pattern: $$$
+fix: |
+  use crate::common::prelude::*;
+
+  $$$

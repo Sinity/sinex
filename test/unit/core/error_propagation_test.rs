@@ -67,16 +67,17 @@ impl EventSource for FailingEventSource {
     }
 }
 
-#[tokio::test]
-async fn test_event_source_error_propagation() {
-    let ctx = event_sources::test_context(json!({}));
-    let result = FailingEventSource::initialize(ctx).await;
+#[sinex_test]
+async fn test_event_source_error_propagation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx_local = event_sources::test_context(json!({}));
+    let result = FailingEventSource::initialize(ctx_local).await;
     
     assert!(result.is_err());
     match result.unwrap_err() {
         CoreError::Configuration(msg) => pretty_assertions::assert_eq!(msg, "Missing required field"),
         _ => panic!("Expected Configuration error"),
     }
+    Ok(())
 }
 
 #[test]
@@ -121,8 +122,8 @@ fn test_error_display_implementation() {
 }
 
 // Test error propagation across thread boundaries
-#[tokio::test]
-async fn test_error_propagation_across_tasks() {
+#[sinex_test]
+async fn test_error_propagation_across_tasks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use tokio::task;
     
     let handle = task::spawn(async {
@@ -136,6 +137,7 @@ async fn test_error_propagation_across_tasks() {
     let inner_result = result.unwrap();
     assert!(inner_result.is_err());
     assert!(matches!(inner_result, Err(CoreError::Database(_))));
+    Ok(())
 }
 
 // Test error recovery patterns
