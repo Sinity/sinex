@@ -94,35 +94,33 @@ class TestMigrator:
         changes = []
         lines = content.split('\n')
         
-        # Track which variable names we've removed so we can replace their usage
-        removed_pool_vars = set()
+        # For simplicity, always keep the pool variable but replace its initialization
+        # This avoids complex tracking of where pool is used
         
         for i, line in enumerate(lines):
             original_line = line
             
             # Pattern: let pool = get_shared_test_pool().await?;
-            # Remove the line entirely since we use ctx.pool() directly
             if 'get_shared_test_pool' in line:
                 match = re.search(r'let\s+(\w+)\s*=\s*(?:database_helpers::)?get_shared_test_pool\(\)\.await\?;', line)
                 if match:
                     var_name = match.group(1)
-                    removed_pool_vars.add(var_name)
-                    line = '// Removed: using ctx.pool() directly instead'
+                    line = f'let {var_name} = ctx.pool();'
                     changes.append(MigrationChange(
                         line_num=i + 1,
                         original=original_line.strip(),
                         replacement=line.strip(),
-                        description=f'Remove get_shared_test_pool - use ctx.pool() directly (var: {var_name})'
+                        description='Replace get_shared_test_pool with ctx.pool()'
                     ))
             
             # Pattern: let pool = TestPool::new().await?;
             if 'TestPool::new' in line:
-                line = re.sub(
-                    r'let\s+(\w+)\s*=\s*TestPool::new\(\)\.await\?;',
-                    r'let \1 = ctx.pool();',
-                    line
-                )
-                if line != original_line:
+                # This pattern we keep but replace with ctx.pool()
+                match = re.search(r'let\s+(\w+)\s*=\s*TestPool::new\(\)\.await\?;', line)
+                if match:
+                    var_name = match.group(1)
+                    # We don't add to removed_pool_vars because we're keeping the variable
+                    line = f'let {var_name} = ctx.pool();'
                     changes.append(MigrationChange(
                         line_num=i + 1,
                         original=original_line.strip(),
@@ -132,12 +130,11 @@ class TestMigrator:
             
             # Pattern: TestPool::with_strategy(...)
             if 'TestPool::with_strategy' in line:
-                line = re.sub(
-                    r'let\s+(\w+)\s*=\s*TestPool::with_strategy\([^)]+\)\.await[^;]*;',
-                    r'let \1 = ctx.pool();',
-                    line
-                )
-                if line != original_line:
+                match = re.search(r'let\s+(\w+)\s*=\s*TestPool::with_strategy\([^)]+\)\.await[^;]*;', line)
+                if match:
+                    var_name = match.group(1)
+                    # We don't add to removed_pool_vars because we're keeping the variable
+                    line = f'let {var_name} = ctx.pool();'
                     changes.append(MigrationChange(
                         line_num=i + 1,
                         original=original_line.strip(),
@@ -181,25 +178,6 @@ class TestMigrator:
                         replacement=line.strip(),
                         description='Replace pool.clone() with ctx.pool().clone()'
                     ))
-            
-            lines[i] = line
-        
-        # Second pass: replace usage of removed pool variables
-        for i, line in enumerate(lines):
-            original_line = line
-            
-            for var_name in removed_pool_vars:
-                # Replace &var_name with ctx.pool()
-                if f'&{var_name}' in line and not line.strip().startswith('//'):
-                    line = re.sub(rf'\b&{var_name}\b', 'ctx.pool()', line)
-                    if line != original_line:
-                        changes.append(MigrationChange(
-                            line_num=i + 1,
-                            original=original_line.strip(),
-                            replacement=line.strip(),
-                            description=f'Replace &{var_name} reference with ctx.pool()'
-                        ))
-                        break  # Only process one replacement per line
             
             lines[i] = line
         
