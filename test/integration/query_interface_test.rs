@@ -134,8 +134,8 @@ async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
 }
 
 /// Test agent monitoring commands
-#[tokio::test]
-async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_agent_commands(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
@@ -177,8 +177,8 @@ async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
 }
 
 /// Test error handling in CLI
-#[tokio::test]
-async fn test_exo_cli_error_handling() {
+#[sinex_test]
+async fn test_exo_cli_error_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
     // Test 1: Invalid database URL
@@ -218,8 +218,8 @@ async fn test_exo_cli_error_handling() {
 }
 
 /// Test advanced query features
-#[tokio::test]
-async fn test_exo_cli_advanced_queries() {
+#[sinex_test]
+async fn test_exo_cli_advanced_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
@@ -294,8 +294,8 @@ async fn test_exo_cli_advanced_queries() {
 }
 
 /// Test output formatting options
-#[tokio::test]
-async fn test_exo_cli_output_formats() {
+#[sinex_test]
+async fn test_exo_cli_output_formats(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
     
