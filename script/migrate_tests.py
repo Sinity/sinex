@@ -21,10 +21,11 @@ class MigrationChange:
     description: str
 
 class TestMigrator:
-    def __init__(self, dry_run: bool = False, verbose: bool = False, quality: bool = False):
+    def __init__(self, dry_run: bool = False, verbose: bool = False, quality: bool = False, aggressive: bool = False):
         self.dry_run = dry_run
         self.verbose = verbose
         self.quality = quality
+        self.aggressive = aggressive
         self.migration_stats = {
             'files_processed': 0,
             'tests_migrated': 0,
@@ -245,37 +246,62 @@ class TestMigrator:
         
         return '\n'.join(lines), changes
     
-    def fix_unwraps(self, content: str) -> Tuple[str, List[MigrationChange]]:
+    def fix_unwraps(self, content: str, aggressive: bool = False) -> Tuple[str, List[MigrationChange]]:
         """Replace .unwrap() with ? operator where appropriate."""
         changes = []
         lines = content.split('\n')
         
+        # Define replacement patterns
+        basic_patterns = [
+            # Basic end-of-statement unwrap
+            (r'\.unwrap\(\);', '?;'),
+            # Await unwrap pattern
+            (r'\.await\.unwrap\(\)', '.await?'),
+        ]
+        
+        aggressive_patterns = [
+            # Assignment patterns
+            (r'let\s+(\w+)\s*=\s*(.*?)\.unwrap\(\);', r'let \1 = \2?;'),
+            # Function call results
+            (r'=\s*(\w+)\(\)\.unwrap\(\)', r'= \1()?'),
+            # Method call results
+            (r'=\s*(\w+)\.(\w+)\(\)\.unwrap\(\)', r'= \1.\2()?'),
+            # Unwrap in function arguments (careful with this one)
+            (r'(\w+)\(([^)]*?)\.unwrap\(\)\)', r'\1(\2?)'),
+        ]
+        
+        patterns = basic_patterns
+        if aggressive:
+            patterns.extend(aggressive_patterns)
+        
         for i, line in enumerate(lines):
             original_line = line
             
-            # Skip if it's a comment or string
-            if line.strip().startswith('//') or '".unwrap()"' in line:
+            # Skip if it's a comment or string literal
+            if line.strip().startswith('//') or '".unwrap()"' in line or "'.unwrap()'" in line:
                 continue
             
-            # Pattern: .unwrap() at end of statement
-            if '.unwrap();' in line:
-                line = line.replace('.unwrap();', '?;')
+            # Skip if it's in an assert - these often should stay as unwrap
+            if 'assert' in line:
+                continue
+            
+            # Apply patterns
+            modified = False
+            for pattern, replacement in patterns:
+                new_line = re.sub(pattern, replacement, line)
+                if new_line != line:
+                    line = new_line
+                    modified = True
+                    break
+            
+            if modified:
+                lines[i] = line
                 changes.append(MigrationChange(
                     line_num=i + 1,
                     original=original_line.strip(),
                     replacement=line.strip(),
                     description='Replace .unwrap() with ? operator'
                 ))
-            
-            # Pattern: .unwrap() in assignments or expressions
-            elif '.unwrap()' in line and not line.strip().endswith('.unwrap()'):
-                # This is trickier - might be in middle of expression
-                # For now, mark for manual review
-                if '.unwrap().' in line or '.unwrap(),' in line:
-                    # Don't auto-replace these complex cases
-                    pass
-            
-            lines[i] = line
         
         return '\n'.join(lines), changes
     
@@ -316,6 +342,61 @@ class TestMigrator:
         
         return '\n'.join(lines), changes
     
+    def generate_assert_message(self, left: str, right: str, is_eq: bool = True) -> str:
+        """Generate contextual assertion messages based on common patterns."""
+        
+        # Length comparisons
+        if 'len()' in left or 'len()' in right:
+            if right.isdigit():
+                return f"expected length {right} but got {{}}"
+            return "length mismatch: expected {} but got {}"
+        
+        # Empty checks
+        elif 'is_empty()' in left:
+            return "expected empty collection but was not"
+        elif 'is_empty()' in right:
+            return "expected non-empty collection but was empty"
+        
+        # Error/Ok checks
+        elif 'is_err()' in left:
+            return "expected Error variant but got Ok"
+        elif 'is_ok()' in left:
+            return "expected Ok variant but got Error"
+        
+        # Count comparisons
+        elif 'count' in left.lower() and right.isdigit():
+            return f"expected count of {right} but got {{}}"
+        
+        # Size comparisons
+        elif 'size' in left.lower() and right.isdigit():
+            return f"expected size {right} but got {{}}"
+        
+        # Contains checks
+        elif 'contains(' in left:
+            return "expected substring/item not found in collection"
+        
+        # Boolean comparisons
+        elif right == 'true':
+            return f"expected {left} to be true"
+        elif right == 'false':
+            return f"expected {left} to be false"
+        
+        # Status/state checks
+        elif 'status' in left.lower():
+            return f"unexpected status: expected {right}"
+        elif 'state' in left.lower():
+            return f"unexpected state: expected {right}"
+        
+        # Numeric comparisons
+        elif right.isdigit() or (right.startswith('-') and right[1:].isdigit()):
+            return f"expected value {right} but got {{}}"
+        
+        # Default but still contextual
+        if is_eq:
+            return f"assertion failed: expected {right}"
+        else:
+            return f"assertion failed: {left}"
+    
     def add_assert_messages(self, content: str) -> Tuple[str, List[MigrationChange]]:
         """Add descriptive messages to assertions."""
         changes = []
@@ -334,20 +415,33 @@ class TestMigrator:
                 left = match.group(1).strip()
                 right = match.group(2).strip()
                 
-                # Generate a reasonable message
-                if 'len()' in left or 'len()' in right:
-                    message = "length mismatch"
-                elif 'is_empty()' in left or 'is_empty()' in right:
-                    message = "expected empty but was not"
-                elif 'contains' in left or 'contains' in right:
-                    message = "substring not found"
-                else:
-                    # Generic message based on variable names
-                    message = f"expected {right} but got {left}"
+                message = self.generate_assert_message(left, right, is_eq=True)
                 
                 new_line = line.replace(
                     match.group(0),
                     f'assert_eq!({left}, {right}, "{message}");'
+                )
+                
+                if new_line != line:
+                    lines[i] = new_line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=original_line.strip(),
+                        replacement=new_line.strip(),
+                        description='Add descriptive message to assertion'
+                    ))
+            
+            # Pattern: assert_ne!(a, b); without message
+            match = re.search(r'assert_ne!\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*\);', line)
+            if match:
+                left = match.group(1).strip()
+                right = match.group(2).strip()
+                
+                message = f"expected values to be different but both were {left}"
+                
+                new_line = line.replace(
+                    match.group(0),
+                    f'assert_ne!({left}, {right}, "{message}");'
                 )
                 
                 if new_line != line:
@@ -364,11 +458,38 @@ class TestMigrator:
             if match and ',' not in match.group(1):  # No existing message
                 condition = match.group(1).strip()
                 
-                # Generate message based on condition
-                if '!' in condition:
-                    message = f"expected {condition} to be true"
+                # Generate contextual message based on condition
+                if '!' in condition and not condition.startswith('!'):
+                    # Negation in the middle
+                    message = f"assertion failed: {condition}"
+                elif condition.startswith('!'):
+                    # Negation at start
+                    inner = condition[1:].strip()
+                    message = f"expected {inner} to be false"
                 elif '.is_' in condition:
-                    message = f"condition {condition} failed"
+                    # is_* method calls
+                    if '.is_empty()' in condition:
+                        message = "expected empty collection"
+                    elif '.is_some()' in condition:
+                        message = "expected Some variant but got None"
+                    elif '.is_none()' in condition:
+                        message = "expected None but got Some"
+                    elif '.is_ok()' in condition:
+                        message = "expected Ok but got Error"
+                    elif '.is_err()' in condition:
+                        message = "expected Error but got Ok"
+                    else:
+                        message = f"{condition} check failed"
+                elif 'contains(' in condition:
+                    message = "substring/item not found"
+                elif '==' in condition:
+                    parts = condition.split('==')
+                    if len(parts) == 2:
+                        message = f"expected {parts[0].strip()} to equal {parts[1].strip()}"
+                    else:
+                        message = f"equality check failed: {condition}"
+                elif '>' in condition or '<' in condition:
+                    message = f"comparison failed: {condition}"
                 else:
                     message = f"assertion failed: {condition}"
                 
@@ -384,6 +505,62 @@ class TestMigrator:
                         original=original_line.strip(),
                         replacement=new_line.strip(),
                         description='Add descriptive message to assertion'
+                    ))
+        
+        return '\n'.join(lines), changes
+    
+    def fix_sleep_patterns_conservative(self, content: str) -> Tuple[str, List[MigrationChange]]:
+        """Replace obviously safe sleep patterns with proper synchronization."""
+        changes = []
+        lines = content.split('\n')
+        
+        for i in range(len(lines) - 3):  # Need lookahead for context
+            line = lines[i]
+            
+            # Skip if it's a comment
+            if line.strip().startswith('//'):
+                continue
+            
+            # Look for sleep patterns
+            if ('sleep(' in line or 'time::sleep' in line) and 'Duration::from_' in line:
+                # Extract duration if possible
+                duration_match = re.search(r'from_(?:secs|millis)\((\d+)\)', line)
+                if not duration_match:
+                    continue
+                
+                duration_value = int(duration_match.group(1))
+                duration_unit = 'secs' if 'from_secs' in line else 'millis'
+                
+                # Only consider sleeps >= 1 second (likely synchronization)
+                if duration_unit == 'millis' and duration_value < 1000:
+                    continue
+                
+                # Check next 3-5 lines for assertions or checks
+                lookahead_lines = lines[i+1:i+6]
+                has_assertion = any('assert' in l for l in lookahead_lines)
+                has_check = any(pattern in ' '.join(lookahead_lines) for pattern in [
+                    'count', 'len()', 'is_empty', 'contains', 'should', 'expected'
+                ])
+                
+                # Check if this is in a sinex_test (has TestContext available)
+                has_test_context = False
+                # Look backwards for function signature
+                for j in range(max(0, i-10), i):
+                    if 'ctx: TestContext' in lines[j]:
+                        has_test_context = True
+                        break
+                
+                if has_test_context and (has_assertion or has_check):
+                    # Safe to replace
+                    indent = re.match(r'^(\s*)', line).group(1)
+                    new_line = f'{indent}ctx.wait_for_work_queue(0).await?;'
+                    
+                    lines[i] = new_line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=line.strip(),
+                        replacement=new_line.strip(),
+                        description=f'Replace {duration_value}{duration_unit} sleep with wait_for_work_queue'
                     ))
         
         return '\n'.join(lines), changes
@@ -484,7 +661,7 @@ class TestMigrator:
             
             # Apply quality improvements if requested
             if self.quality:
-                content, unwrap_changes = self.fix_unwraps(content)
+                content, unwrap_changes = self.fix_unwraps(content, aggressive=self.aggressive)
                 all_changes.extend(unwrap_changes)
                 
                 content, println_changes = self.fix_println(content)
@@ -492,6 +669,11 @@ class TestMigrator:
                 
                 content, assert_changes = self.add_assert_messages(content)
                 all_changes.extend(assert_changes)
+                
+                # Conservative sleep replacement (only in conservative mode or always?)
+                if not self.aggressive:  # Conservative by default
+                    content, sleep_changes = self.fix_sleep_patterns_conservative(content)
+                    all_changes.extend(sleep_changes)
             
             # Add warnings to stats
             self.migration_stats['warnings'].extend(
@@ -654,7 +836,8 @@ Examples:
   %(prog)s test/integration/            # Migrate specific directory
   %(prog)s test/unit/my_test.rs        # Migrate single file
   %(prog)s --dry-run --verbose          # Show detailed changes
-  %(prog)s --quality                    # Also fix unwrap/println/asserts
+  %(prog)s --quality                    # Conservative quality improvements
+  %(prog)s --aggressive                 # Aggressive quality improvements
   %(prog)s --dry-run --quality -v       # Preview all improvements
 """
     )
@@ -680,6 +863,11 @@ Examples:
         action="store_true",
         help="Also apply quality improvements (unwrap->?, println->tracing, add assert messages)"
     )
+    parser.add_argument(
+        "--aggressive", "-a",
+        action="store_true",
+        help="Use aggressive mode for quality improvements (more unwrap patterns, skip sleep fixes)"
+    )
     
     args = parser.parse_args()
     
@@ -687,7 +875,16 @@ Examples:
         print(f"Error: Path {args.path} not found")
         sys.exit(1)
     
-    migrator = TestMigrator(dry_run=args.dry_run, verbose=args.verbose, quality=args.quality)
+    # Aggressive mode implies quality
+    if args.aggressive:
+        args.quality = True
+    
+    migrator = TestMigrator(
+        dry_run=args.dry_run, 
+        verbose=args.verbose, 
+        quality=args.quality,
+        aggressive=args.aggressive
+    )
     migrator.run_migration(args.path)
 
 if __name__ == "__main__":
