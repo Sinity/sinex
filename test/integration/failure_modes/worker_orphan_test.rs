@@ -2,14 +2,13 @@ use sinex_db::models::QueueStatus;
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::common::timing_optimization::TestSynchronizer;
-use sinex_test_macros::sinex_test;
 
 /// Test orphaned worker detection and cleanup
 ///
 /// This test verifies that the system can detect when a worker stops sending heartbeats
 /// while still holding work items. In real systems, this happens due to crashes, hangs,
 /// or network issues. The test uses controlled timing to ensure deterministic behavior.
-#[sinex_test]
+#[tokio::test]
 async fn test_orphaned_worker_detection() {
     use tokio::sync::watch;
     
@@ -219,7 +218,7 @@ async fn test_orphaned_worker_detection() {
 }
 
 /// Test work item recovery from orphaned workers
-#[sinex_test]
+#[tokio::test]
 async fn test_orphaned_work_recovery() {
     // Track work items and their processing state
     
@@ -360,7 +359,7 @@ async fn test_orphaned_work_recovery() {
 }
 
 /// Test preventing zombie workers
-#[sinex_test]
+#[tokio::test]
 async fn test_zombie_worker_prevention() {
     // Test mechanisms to prevent workers from continuing after they should stop
     

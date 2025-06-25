@@ -1,7 +1,6 @@
 //! Minimal test to verify the procedural macro works
 
 use crate::common::prelude::*;
-use sinex_test_macros::sinex_test;
 
 #[sinex_test]
 async fn test_macro_works(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

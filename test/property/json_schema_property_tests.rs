@@ -2,7 +2,6 @@ use crate::common::prelude::*;
 use proptest::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
 use serde_json::{json, Value};
-use sinex_test_macros::sinex_test;
 
 /// Generate JSON payloads for event validation testing
 fn arb_event_payload() -> impl Strategy<Value = Value> {
@@ -247,7 +246,7 @@ fn test_event_validator_edge_cases() {
 mod integration_tests {
     use super::*;
     
-    #[sinex_test]
+    #[tokio::test]
     async fn test_event_validator_database_integration() {
         let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create test pool");
         run_migrations(&pool).await.expect("Failed to run migrations");
@@ -277,7 +276,7 @@ mod integration_tests {
         }
     }
     
-    #[sinex_test] 
+    #[tokio::test] 
     async fn test_validator_with_real_filesystem_events() {
         let validator = EventValidator::new();
         

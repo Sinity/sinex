@@ -2,7 +2,6 @@ use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
 use sinex_db::validation::EventValidator;
 use std::fs;
-use sinex_test_macros::sinex_test;
 
 /// Security test scenario definition
 #[derive(Debug, Clone)]
@@ -303,8 +302,8 @@ fn security_scenarios() -> Vec<SecurityScenario> {
 }
 
 /// Test all security scenarios comprehensively
-#[sinex_test]
-async fn test_comprehensive_security_scenarios() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_comprehensive_security_scenarios() -> Result<(), anyhow::Error> {
     let scenarios = security_scenarios();
 
     let pool = database_helpers::get_shared_test_pool().await?;
@@ -377,8 +376,8 @@ async fn test_comprehensive_security_scenarios() -> Result<(), Box<dyn std::erro
 }
 
 /// Test path traversal attacks specifically
-#[sinex_test]
-async fn test_path_traversal_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_path_traversal_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PathTraversal))
@@ -388,8 +387,8 @@ async fn test_path_traversal_attacks() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Test SQL injection attacks
-#[sinex_test]
-async fn test_sql_injection_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_sql_injection_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::SqlInjection))
@@ -399,8 +398,8 @@ async fn test_sql_injection_attacks() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Test command injection attacks
-#[sinex_test]
-async fn test_command_injection_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_command_injection_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::CommandInjection))
@@ -410,8 +409,8 @@ async fn test_command_injection_attacks() -> Result<(), Box<dyn std::error::Erro
 }
 
 /// Test XSS injection attacks
-#[sinex_test]
-async fn test_xss_injection_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_xss_injection_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::XssInjection))
@@ -421,8 +420,8 @@ async fn test_xss_injection_attacks() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Test JSON attacks
-#[sinex_test]
-async fn test_json_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_json_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::JsonAttack))
@@ -432,8 +431,8 @@ async fn test_json_attacks() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test unicode exploits
-#[sinex_test]
-async fn test_unicode_exploits() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_unicode_exploits() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::UnicodeExploit))
@@ -443,8 +442,8 @@ async fn test_unicode_exploits() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test resource exhaustion attacks
-#[sinex_test]
-async fn test_resource_exhaustion_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_resource_exhaustion_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::ResourceExhaustion))
@@ -454,8 +453,8 @@ async fn test_resource_exhaustion_attacks() -> Result<(), Box<dyn std::error::Er
 }
 
 /// Test prototype pollution attacks
-#[sinex_test]
-async fn test_prototype_pollution_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_prototype_pollution_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PrototypePollution))
@@ -465,8 +464,8 @@ async fn test_prototype_pollution_attacks() -> Result<(), Box<dyn std::error::Er
 }
 
 /// Test format string attacks
-#[sinex_test]
-async fn test_format_string_attacks() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_format_string_attacks() -> Result<(), anyhow::Error> {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::FormatString))
@@ -476,7 +475,7 @@ async fn test_format_string_attacks() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 /// Helper function to run a batch of security tests
-async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecurityScenario>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecurityScenario>) -> Result<(), anyhow::Error> {
     if scenarios.is_empty() {
         println!("No {} scenarios to test", category_name);
         return Ok(());
@@ -562,8 +561,8 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
 }
 
 /// Test filesystem path traversal attacks specifically
-#[sinex_test]
-async fn test_filesystem_path_traversal_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_path_traversal_comprehensive() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -634,8 +633,8 @@ async fn test_filesystem_path_traversal_comprehensive() -> Result<(), Box<dyn st
 }
 
 /// Test hash collision DoS attacks
-#[sinex_test]
-async fn test_hash_collision_dos() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_hash_collision_dos() -> Result<(), anyhow::Error> {
     let mut collision_map = HashMap::new();
     
     // Known hash collision strings
@@ -710,8 +709,8 @@ fn test_json_parser_differential() {
 }
 
 /// Test malicious TOML configuration injection
-#[sinex_test]
-async fn test_configuration_injection() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_configuration_injection() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let config_dir = temp_dir.path().join("config");
     fs::create_dir_all(&config_dir)?;
@@ -854,7 +853,7 @@ impl SecurityTestResults {
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, anyhow::Error>, tokio::time::error::Elapsed>,
         pool: &sqlx::PgPool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         self.total_tests += 1;
 
         match result {
@@ -923,7 +922,7 @@ impl SecurityTestResults {
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, anyhow::Error>, tokio::time::error::Elapsed>,
         _pool: &sqlx::PgPool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         self.total_tests += 1;
 
         match result {

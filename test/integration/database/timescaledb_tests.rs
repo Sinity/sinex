@@ -1,9 +1,8 @@
 use crate::common::prelude::*;
 use chrono::{Duration, Utc};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
-async fn test_raw_events_is_timescale_hypertable() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     
     // Verify raw.events is a hypertable
@@ -40,7 +39,7 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
@@ -125,7 +124,7 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_timescale_compression_policy() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
@@ -193,7 +192,7 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
@@ -283,7 +282,7 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     
@@ -363,7 +362,7 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_timescale_data_node_stats() -> anyhow::Result<()> {
     let pool = crate::common::database_helpers::get_shared_test_pool().await?;
     

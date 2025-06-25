@@ -2,7 +2,6 @@ use crate::common::prelude::*;
 // Project-specific imports not covered by prelude
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, worker::Worker};
-use sinex_test_macros::sinex_test;
 
 // Test setup macros
 
@@ -63,7 +62,7 @@ impl EventProcessor for PipelineTestProcessor {
         &self,
         pool: &PgPool,
         item: &WorkQueueItem,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         // Fetch the raw event
         let event = sqlx::query!(
             r#"
@@ -120,8 +119,8 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-#[sinex_test]
-async fn test_full_pipeline_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
@@ -276,8 +275,8 @@ async fn test_full_pipeline_end_to_end() -> Result<(), Box<dyn std::error::Error
         Ok(())
 }
 
-#[sinex_test]
-async fn test_pipeline_with_multiple_workers() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
@@ -389,8 +388,8 @@ async fn test_pipeline_with_multiple_workers() -> Result<(), Box<dyn std::error:
         Ok(())
 }
 
-#[sinex_test]
-async fn test_pipeline_error_recovery() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_pipeline_error_recovery() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         // Insert some events that will cause errors
         for i in 0..5 {
@@ -438,7 +437,7 @@ async fn test_pipeline_error_recovery() -> Result<(), Box<dyn std::error::Error>
                 &self,
                 pool: &PgPool,
                 item: &WorkQueueItem,
-            ) -> Result<(), Box<dyn std::error::Error>> {
+            ) -> Result<(), anyhow::Error> {
                 // Fetch the raw event
                 let event = sqlx::query!(
                     r#"

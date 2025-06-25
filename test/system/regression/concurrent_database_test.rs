@@ -1,9 +1,8 @@
 use crate::common::prelude::*;
 use sinex_db::queries;
 use crate::common::create_test_db_pool;
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_concurrent_ulid_generation() {
     let pool = create_test_db_pool().await.unwrap();
     let num_tasks = 10;
@@ -54,7 +53,7 @@ async fn test_concurrent_ulid_generation() {
     );
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_worker_double_processing() {
     let pool = create_test_db_pool().await.unwrap();
     

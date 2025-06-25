@@ -1,4 +1,3 @@
-use sinex_test_macros::sinex_test;
 //! Common test utilities and helpers
 
 #![allow(dead_code)] // Test utilities may not all be used
@@ -310,7 +309,7 @@ pub mod assertions {
     pub async fn assert_event_insertion_fails(
         pool: &PgPool,
         event: &RawEvent
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let result = queries::insert_event(&pool, event).await;
         assert!(result.is_err(), "Expected event insertion to fail, but it succeeded");
         Ok(())
@@ -320,7 +319,7 @@ pub mod assertions {
     pub async fn assert_manifest_registered(
         pool: &PgPool,
         manifest: &AgentManifest
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let result = queries::upsert_agent_manifest(&pool,
             &manifest.agent_name,
             &manifest.description.as_deref().unwrap_or(""),
@@ -582,7 +581,7 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::Ra
 }
 
 /// Helper for creating a test agent with default settings
-pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     queries::upsert_agent_manifest(&pool,
         &manifest.agent_name,
@@ -608,7 +607,7 @@ pub async fn create_agent_with_subscriptions(
     pool: &PgPool, 
     agent_name: &str, 
     subscriptions: &serde_json::Value
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), anyhow::Error> {
     // Create a test agent manifest and add subscriptions
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
@@ -718,7 +717,7 @@ pub mod cleanup {
     use super::*;
     
     /// Truncate all test tables
-    pub async fn truncate_all_tables(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn truncate_all_tables(pool: &PgPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
             .execute(pool).await?;
@@ -730,7 +729,7 @@ pub mod cleanup {
     }
     
     /// Clean up test files and directories
-    pub async fn cleanup_test_files(paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn cleanup_test_files(paths: &[&str]) -> Result<(), anyhow::Error> {
         for path in paths {
             if std::path::Path::new(path).exists() {
                 if std::path::Path::new(path).is_dir() {

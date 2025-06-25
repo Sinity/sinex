@@ -5,10 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use crate::common::prelude::*;
 use crate::common::resources;
-use sinex_test_macros::sinex_test;
 
 /// Test disk full scenarios during event capture
-#[sinex_test]
+#[tokio::test]
 async fn test_disk_full_handling() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
@@ -95,7 +94,7 @@ async fn test_disk_full_handling() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test permission changes during filesystem monitoring
-#[sinex_test]
+#[tokio::test]
 async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
@@ -165,7 +164,7 @@ async fn test_permission_change_handling() -> Result<(), Box<dyn std::error::Err
 }
 
 /// Test filesystem unmount/remount scenarios
-#[sinex_test]
+#[tokio::test]
 async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates monitoring a path that becomes unavailable
     let temp_dir = resources::temp_dir()?;
@@ -236,7 +235,7 @@ async fn test_filesystem_availability() -> Result<(), Box<dyn std::error::Error>
 }
 
 /// Test handling of symbolic link edge cases
-#[sinex_test]
+#[tokio::test]
 async fn test_symlink_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let base_path = temp_dir.path();
@@ -333,7 +332,7 @@ async fn test_symlink_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Test rapid file creation/deletion patterns
-#[sinex_test]
+#[tokio::test]
 async fn test_rapid_filesystem_changes() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let test_dir = temp_dir.path();

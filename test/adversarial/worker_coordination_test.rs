@@ -4,9 +4,8 @@ use sinex_db::queries;
 use chrono::Utc;
 use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicU64, Ordering};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_worker_claim_exact_same_microsecond() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -112,7 +111,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_dead_worker_holding_locks() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -248,7 +247,7 @@ async fn test_dead_worker_holding_locks() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_mass_worker_wakeup_thundering_herd() {
     let pool = create_test_db_pool().await.unwrap();
     

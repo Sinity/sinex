@@ -9,7 +9,7 @@ pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type:
 }
 
 /// Assert schema validates event successfully
-pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -24,7 +24,7 @@ pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::
 }
 
 /// Assert schema invalidates event
-pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -367,7 +367,7 @@ pub mod database {
     }
 
     /// Cleanup test schemas from database
-    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), anyhow::Error> {
         for &schema_id in schema_ids {
             delete_schema(&pool, schema_id).await?;
         }
@@ -406,14 +406,14 @@ pub mod validation {
     }
 
     /// Test schema compilation
-    pub fn test_schema_compilation(schema: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn test_schema_compilation(schema: &Value) -> Result<(), anyhow::Error> {
         JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Schema compilation failed: {}", e))?;
         Ok(())
     }
 
     /// Run comprehensive validation tests
-    pub fn run_schema_validation_tests() -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run_schema_validation_tests() -> Result<(), anyhow::Error> {
         // Test filesystem schema
         let fs_schema = schemas::filesystem_event_schema();
         test_schema_compilation(&fs_schema)?;

@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
 use crate::common::timing_optimization::replacements::{wait_for_work_queue_status_count};
-use sinex_test_macros::sinex_test;
 
 /// Metrics for tracking work distribution algorithm performance
 #[derive(Debug)]
@@ -221,8 +220,8 @@ impl SelectForUpdateWorker {
     }
 }
 
-#[sinex_test]
-async fn test_select_for_update_skip_locked_fairness() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_select_for_update_skip_locked_fairness() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -423,8 +422,8 @@ async fn test_select_for_update_skip_locked_fairness() -> Result<(), Box<dyn std
     Ok(())
 }
 
-#[sinex_test]
-async fn test_select_for_update_skip_locked_under_contention() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_select_for_update_skip_locked_under_contention() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -567,8 +566,8 @@ async fn test_select_for_update_skip_locked_under_contention() -> Result<(), Box
     Ok(())
 }
 
-#[sinex_test]
-async fn test_work_queue_ordering_properties() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_work_queue_ordering_properties() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -740,8 +739,8 @@ async fn test_work_queue_ordering_properties() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-#[sinex_test]
-async fn test_work_queue_retry_mechanism() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_work_queue_retry_mechanism() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

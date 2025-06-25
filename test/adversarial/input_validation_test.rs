@@ -1,10 +1,9 @@
 use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
-use sinex_test_macros::sinex_test;
 
 /// Test input validation for event sources and types
-#[sinex_test]
-async fn test_event_source_validation() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_source_validation() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -176,8 +175,8 @@ struct ValidationResult {
 }
 
 /// Test JSON payload validation and sanitization
-#[sinex_test]
-async fn test_json_payload_validation() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -392,8 +391,8 @@ fn check_dangerous_content(content: &str) -> bool {
 }
 
 /// Test error handling for malformed inputs
-#[sinex_test]
-async fn test_malformed_input_handling() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -537,8 +536,8 @@ async fn test_malformed_input_handling() -> Result<(), Box<dyn std::error::Error
 }
 
 /// Test boundary conditions and edge cases
-#[sinex_test]
-async fn test_input_boundary_conditions() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

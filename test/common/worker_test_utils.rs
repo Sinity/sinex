@@ -113,7 +113,7 @@ pub async fn count_work_items_by_status(pool: &PgPool, status: &str) -> Result<i
 }
 
 /// Cleanup all work queue items
-pub async fn cleanup_work_queue(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn cleanup_work_queue(pool: &PgPool) -> Result<(), anyhow::Error> {
     sqlx::query!("DELETE FROM sinex_schemas.work_queue")
         .execute(pool)
         .await?;
@@ -214,7 +214,7 @@ pub mod lifecycle {
         }
 
         /// Simulate worker startup
-        pub async fn startup(&self) -> Result<(), Box<dyn std::error::Error>> {
+        pub async fn startup(&self) -> Result<(), anyhow::Error> {
             // Register worker or perform startup tasks
             Ok(())
         }
@@ -254,7 +254,7 @@ pub mod lifecycle {
         }
 
         /// Simulate worker shutdown
-        pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error>> {
+        pub async fn shutdown(&self) -> Result<(), anyhow::Error> {
             // Cleanup or shutdown tasks
             Ok(())
         }
@@ -270,7 +270,7 @@ pub mod assertions {
         pool: &PgPool,
         queue_id: Ulid,
         expected_status: &str
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let item = get_work_item(&pool, queue_id).await?
             .ok_or_else(|| anyhow::anyhow!("Work item not found: {}", queue_id))?;
         
@@ -287,7 +287,7 @@ pub mod assertions {
     pub async fn assert_processed_count(
         pool: &PgPool,
         expected_count: i64
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let actual_count = count_work_items_by_status(&pool, "succeeded").await?;
         
         pretty_assertions::assert_eq!(
@@ -300,7 +300,7 @@ pub mod assertions {
     }
 
     /// Assert that work queue is empty
-    pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<(), anyhow::Error> {
         let count = wait_for_work_queue_count(&pool, 0, 1)
             .await
             .unwrap_or(1); // If timeout, assume there are items

@@ -1,4 +1,3 @@
-use sinex_test_macros::sinex_test;
 //! Integration tests for configuration validation end-to-end
 //! 
 //! These tests validate that the configuration system works correctly
@@ -14,8 +13,8 @@ use sinex_collector::config::{CollectorConfig, ValidationReport};
 use tempfile::{TempDir, NamedTempFile};
 use tokio::fs;
 
-#[sinex_test]
-async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), anyhow::Error> {
     // NOTE: This test is currently disabled due to config structure simplification
     // The CollectorConfig structure was simplified to only include:
     // - enabled_events: Vec<String>
@@ -45,7 +44,7 @@ async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), Bo
     */
 }
 
-async fn test_configuration_loading_sources() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_loading_sources() -> Result<(), anyhow::Error> {
     // DISABLED: Config structure simplified - this test needs rewrite
     Ok(())
     /*
@@ -172,7 +171,7 @@ fn merge_configurations(configs: Vec<CollectorConfig>) -> CollectorConfig {
     result
 }
 
-async fn test_comprehensive_validation_rules() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_comprehensive_validation_rules() -> Result<(), anyhow::Error> {
     // Test all validation rules comprehensively
     
     // Test 1: Valid configuration should pass all validations
@@ -229,7 +228,7 @@ fn create_comprehensive_valid_config() -> CollectorConfig {
     config
 }
 
-async fn test_invalid_event_types() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_event_types() -> Result<(), anyhow::Error> {
     let invalid_event_types = vec![
         ("no_category", "Event type must have category.subcategory format"),
         ("1invalid.event", "Event type cannot start with number"),
@@ -257,7 +256,7 @@ async fn test_invalid_event_types() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn test_invalid_configuration_values() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_configuration_values() -> Result<(), anyhow::Error> {
     // Test invalid monitoring values
     let mut invalid_monitoring = CollectorConfig::default();
     invalid_monitoring.monitoring.health_check_interval_secs = 0; // Invalid: must be > 0
@@ -284,7 +283,7 @@ async fn test_invalid_configuration_values() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn test_missing_required_configurations() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_missing_required_configurations() -> Result<(), anyhow::Error> {
     // Test missing required event configurations
     let mut missing_config = CollectorConfig::default();
     missing_config.enabled_events.push("shell.command.executed_atuin".to_string());
@@ -301,7 +300,7 @@ async fn test_missing_required_configurations() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-async fn test_cross_validation_failures() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cross_validation_failures() -> Result<(), anyhow::Error> {
     // Test various cross-validation scenarios
     
     // Test 1: Event enabled but no configuration provided
@@ -335,7 +334,7 @@ async fn test_cross_validation_failures() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-async fn test_configuration_merging_precedence() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_merging_precedence() -> Result<(), anyhow::Error> {
     // Test configuration merging with proper precedence rules
     
     let temp_dir = TempDir::new()?;
@@ -403,7 +402,7 @@ polling_interval_secs = 5
     Ok(())
 }
 
-async fn test_configuration_hot_reload() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_hot_reload() -> Result<(), anyhow::Error> {
     // Test hot-reloading configuration changes
     
     let temp_dir = TempDir::new()?;
@@ -469,7 +468,7 @@ polling_interval_secs = 5
     Ok(())
 }
 
-async fn test_configuration_error_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_error_handling() -> Result<(), anyhow::Error> {
     // Test various error scenarios and recovery
     
     // Test 1: Malformed TOML
@@ -530,7 +529,7 @@ enabled_events = ["filesystem.file.created"]
 }
 
 #[tokio::test]
-async fn test_configuration_performance_and_scale() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_performance_and_scale() -> Result<(), anyhow::Error> {
     // Test configuration system performance with large configurations
     
     // Test 1: Large number of enabled events
@@ -545,7 +544,7 @@ async fn test_configuration_performance_and_scale() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-async fn test_large_event_configuration() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_large_event_configuration() -> Result<(), anyhow::Error> {
     // Test with many enabled events
     
     let mut large_config = CollectorConfig::default();
@@ -582,7 +581,7 @@ async fn test_large_event_configuration() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-async fn test_complex_event_configurations() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complex_event_configurations() -> Result<(), anyhow::Error> {
     // Test with complex nested event configurations
     
     let mut complex_config = CollectorConfig::default();
@@ -639,7 +638,7 @@ async fn test_complex_event_configurations() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn test_configuration_validation_performance() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_validation_performance() -> Result<(), anyhow::Error> {
     // Test validation performance with various configuration sizes
     
     let test_cases = vec![

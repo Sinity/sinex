@@ -8,11 +8,10 @@ use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
-use sinex_test_macros::sinex_test;
 
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
-#[sinex_test]
+#[tokio::test]
 async fn test_complete_event_pipeline() {
     // Initialize test environment
     common::env::init_test_logging();

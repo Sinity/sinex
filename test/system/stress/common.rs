@@ -158,7 +158,7 @@ impl StressTestUtils {
         Ok(pool.clone())
 }
     /// Clean up test data after a stress test
-    pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name)
             .execute(pool).await?;

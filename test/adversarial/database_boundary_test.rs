@@ -3,9 +3,8 @@ use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_approaching_1gb_limit() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -62,7 +61,7 @@ async fn test_event_payload_approaching_1gb_limit() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_connection_pool_exhaustion() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -149,7 +148,7 @@ async fn test_connection_pool_exhaustion() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_concurrent_btree_index_splits() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -253,7 +252,7 @@ async fn test_concurrent_btree_index_splits() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_events_spanning_chunk_boundary() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -316,7 +315,7 @@ async fn test_events_spanning_chunk_boundary() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_query_during_chunk_compression() {
     let pool = create_test_db_pool().await.unwrap();
     

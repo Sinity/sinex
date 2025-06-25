@@ -1,10 +1,9 @@
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
-use sinex_test_macros::sinex_test;
 
 /// Test transaction rollback scenarios
 #[sinex_test]
-async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyhow::Error> {
     
     // Track transaction outcomes
     let successful_commits = Arc::new(AtomicU64::new(0));
@@ -320,7 +319,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> Result<(), Box<dy
 
 /// Test handling of very large result sets
 #[sinex_test]
-async fn test_large_result_set_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_large_result_set_handling(ctx: TestContext) -> Result<(), anyhow::Error> {
     
     // Insert test data
     let mut tx = ctx.pool().begin().await.unwrap();

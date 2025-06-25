@@ -3,10 +3,9 @@ use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::sync::RwLock;
-use sinex_test_macros::sinex_test;
 
 /// Test gradual memory leak detection
-#[sinex_test]
+#[tokio::test]
 async fn test_memory_leak_detection() {
     // Simulate a component that gradually leaks memory
     #[derive(Clone)]
@@ -128,7 +127,7 @@ async fn test_memory_leak_detection() {
 }
 
 /// Test CPU throttling detection
-#[sinex_test]
+#[tokio::test]
 async fn test_cpu_throttling_detection() {
     // Track processing performance over time
     struct PerformanceMonitor {
@@ -242,7 +241,7 @@ async fn test_cpu_throttling_detection() {
 }
 
 /// Test I/O saturation handling
-#[sinex_test]
+#[tokio::test]
 async fn test_io_saturation_handling() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::fs::OpenOptions;
     use tokio::io::AsyncWriteExt;
@@ -404,7 +403,7 @@ async fn test_io_saturation_handling() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Test resource usage pattern analysis
-#[sinex_test]
+#[tokio::test]
 async fn test_resource_usage_patterns() {
     // Simulate different resource usage patterns
     

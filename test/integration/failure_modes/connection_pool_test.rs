@@ -3,10 +3,9 @@ use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, RwLock};
 use crate::common::timing_optimization::EventCounter;
-use sinex_test_macros::sinex_test;
 
 /// Test connection pool exhaustion scenarios
-#[sinex_test]
+#[tokio::test]
 async fn test_connection_pool_exhaustion() {
     // Simulate a connection pool with limited resources
     const MAX_CONNECTIONS: usize = 10;
@@ -167,7 +166,7 @@ async fn test_connection_pool_exhaustion() {
 }
 
 /// Test connection leak detection
-#[sinex_test]
+#[tokio::test]
 async fn test_connection_leak_detection() {
     const POOL_SIZE: usize = 5;
     
@@ -319,7 +318,7 @@ async fn test_connection_leak_detection() {
 }
 
 /// Test deadlock prevention in connection pool
-#[sinex_test]
+#[tokio::test]
 async fn test_connection_deadlock_prevention() {
     const POOL_SIZE: usize = 2; // Small pool to trigger contention
     

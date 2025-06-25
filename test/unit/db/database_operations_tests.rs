@@ -1,5 +1,4 @@
 use crate::common::prelude::*;
-use sinex_test_macros::sinex_test;
 
 // Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 

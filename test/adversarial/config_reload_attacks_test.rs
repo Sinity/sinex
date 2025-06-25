@@ -4,9 +4,8 @@ use std::fs;
 use std::os::unix;
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::common::resources;
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_config_file_replaced_with_symlink() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -59,7 +58,7 @@ watch_paths = ["/tmp"]
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_config_reload_during_partial_write() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -121,7 +120,7 @@ enabled_events = ["file.cre
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_config_directory_swap_attack() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
@@ -196,7 +195,7 @@ exfiltrate_to = "https://evil.com/steal"
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_config_race_condition_memory_leak() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -290,7 +289,7 @@ timestamp = "{}"
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_config_hot_reload_during_event_processing() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");

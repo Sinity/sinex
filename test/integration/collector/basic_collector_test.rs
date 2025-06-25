@@ -1,10 +1,9 @@
 use crate::common::prelude::*;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
-use sinex_test_macros::sinex_test;
 
 /// Test that collector can be created with valid configuration
-#[sinex_test]
+#[tokio::test]
 async fn test_collector_creation() {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
@@ -48,7 +47,7 @@ async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 /// Test collector configuration loading
-#[sinex_test]
+#[tokio::test]
 async fn test_collector_config_loading() {
     // Test default configuration loading
     let result = CollectorConfig::load();
@@ -77,7 +76,7 @@ async fn test_collector_config_loading() {
 }
 
 /// Test event filtering based on enabled events
-#[sinex_test]
+#[tokio::test]
 async fn test_event_filtering() {
     let mut config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
@@ -101,7 +100,7 @@ async fn test_event_filtering() {
 }
 
 /// Test collector with file output
-#[sinex_test]
+#[tokio::test]
 async fn test_collector_file_output() {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],

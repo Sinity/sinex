@@ -4,9 +4,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
@@ -76,7 +75,7 @@ async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
@@ -156,7 +155,7 @@ async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_watching_special_files() {
     // Test watching various special file types that might cause issues
     let special_files = vec![
@@ -198,7 +197,7 @@ async fn test_watching_special_files() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_fifo_pipe_watching() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let fifo_path = temp_dir.path().join("test_fifo");
@@ -250,7 +249,7 @@ async fn test_fifo_pipe_watching() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_rapid_file_creation_deletion() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("rapid_changes");
@@ -330,7 +329,7 @@ async fn test_rapid_file_creation_deletion() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_watching_symlink_cycles() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     

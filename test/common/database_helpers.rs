@@ -6,7 +6,6 @@
 use crate::common::prelude::*;
 use serde_json::json;
 use tokio::sync::OnceCell;
-use sinex_test_macros::sinex_test;
 
 /// Process-wide shared test pool using async-safe OnceCell
 static SHARED_TEST_POOL: OnceCell<PgPool> = OnceCell::const_new();
@@ -72,7 +71,7 @@ pub async fn create_test_pool() -> Result<PgPool> {
 /// Usage:
 /// ```rust
 /// #[tokio::test]
-/// async fn my_test() -> Result<(), Box<dyn std::error::Error>> {
+/// async fn my_test() -> Result<(), anyhow::Error> {
 ///     let mut tx = test_transaction().await?;
 ///     // Use &mut tx instead of &pool
 ///     sqlx::query!("INSERT INTO ...").execute(&mut *tx).await?;

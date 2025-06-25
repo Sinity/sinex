@@ -5,10 +5,9 @@ use crate::common::prelude::*;
 use crate::common::database_helpers::get_shared_test_pool;
 // Local function definitions at bottom of file
 use chrono::{Utc, Duration};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
-async fn test_queue_depth_metric_calculation() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that queue_depth metric correctly counts pending items per agent
     
@@ -65,8 +64,8 @@ async fn test_queue_depth_metric_calculation() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-#[sinex_test]
-async fn test_dequeue_latency_metric_calculation() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that dequeue_latency_ms measures time from creation to processing
     
@@ -105,8 +104,8 @@ async fn test_dequeue_latency_metric_calculation() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
-async fn test_per_agent_lag_metric_calculation() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that per_agent_lag measures how far behind each agent is
     
@@ -150,8 +149,8 @@ async fn test_per_agent_lag_metric_calculation() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-#[sinex_test]
-async fn test_prometheus_metrics_exposition() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_prometheus_metrics_exposition() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that metrics are properly exposed in Prometheus format
     
@@ -194,8 +193,8 @@ async fn test_prometheus_metrics_exposition() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-#[sinex_test]
-async fn test_metrics_update_frequency() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_metrics_update_frequency() -> Result<(), anyhow::Error> {
     let pool = get_shared_test_pool().await?;
     // Test that metrics are updated efficiently without excessive database queries
     
@@ -337,7 +336,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 

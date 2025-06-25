@@ -1,10 +1,9 @@
 // TTL policy tests - should fail until TTL implementation is complete
 use crate::common::prelude::*;
 use chrono::{Utc, Duration};
-use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -70,7 +69,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_ttl_policy_purges_old_failed_items(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ttl_policy_purges_old_failed_items(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -101,7 +100,7 @@ async fn test_ttl_policy_purges_old_failed_items(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_ttl_policy_keeps_pending_items(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ttl_policy_keeps_pending_items(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -142,7 +141,7 @@ async fn test_ttl_policy_keeps_pending_items(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_ttl_policy_keeps_items_without_processed_at(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ttl_policy_keeps_items_without_processed_at(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     
@@ -169,7 +168,7 @@ async fn test_ttl_policy_keeps_items_without_processed_at(ctx: TestContext) -> R
 }
 
 #[sinex_test]
-async fn test_ttl_policy_respects_90_day_threshold(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ttl_policy_respects_90_day_threshold(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Create test agent first
     crate::common::create_test_agent(ctx.pool(), "test-agent").await?;
     

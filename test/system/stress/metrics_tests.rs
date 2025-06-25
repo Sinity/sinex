@@ -2,7 +2,6 @@ use crate::common::prelude::*;
 use super::common::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{sleep, interval};
-use sinex_test_macros::sinex_test;
 
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {

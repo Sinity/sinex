@@ -2,9 +2,8 @@ use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_shutdown_signal_during_initialization() {
     // Simulate shutdown signal arriving during database migration/startup
     
@@ -90,7 +89,7 @@ async fn test_shutdown_signal_during_initialization() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_multiple_concurrent_shutdown_signals() {
     // Test what happens when multiple shutdown signals arrive simultaneously
     
@@ -196,7 +195,7 @@ async fn test_multiple_concurrent_shutdown_signals() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_event_router_state_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -282,7 +281,7 @@ async fn test_event_router_state_corruption() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_worker_state_machine_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     

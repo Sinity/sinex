@@ -1,9 +1,8 @@
 use sqlx::postgres::PgPoolOptions;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_agent_heartbeat_generation() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
@@ -90,7 +89,7 @@ async fn test_agent_heartbeat_generation() {
     pretty_assertions::assert_eq!(heartbeat_count, 1, "Heartbeat event should exist");
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_stale_heartbeat_detection() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
@@ -167,7 +166,7 @@ async fn test_stale_heartbeat_detection() {
     assert!(healthy_agents.contains(&"stale_agent_2".to_string()));
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_heartbeat_metrics_tracking() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
@@ -264,7 +263,7 @@ async fn test_heartbeat_metrics_tracking() {
     pretty_assertions::assert_eq!(degraded_count, 1);
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_heartbeat_based_status_updates() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
@@ -341,7 +340,7 @@ async fn test_heartbeat_based_status_updates() {
     pretty_assertions::assert_eq!(error_summary.unwrap(), "Unable to connect to data source");
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_heartbeat_frequency_monitoring() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());

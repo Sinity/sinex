@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use std::process::Command;
 use crate::common::{events, assertions, generators};
-use sinex_test_macros::sinex_test;
 
 /// Test the Python CLI query interface
 #[sinex_test]

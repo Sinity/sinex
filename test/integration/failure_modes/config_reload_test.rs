@@ -1,10 +1,9 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use sinex_test_macros::sinex_test;
 
 /// Test configuration reload during active event processing
-#[sinex_test]
+#[tokio::test]
 async fn test_config_reload_during_processing() {
     // Track state across reload
     let events_before_reload = Arc::new(AtomicU64::new(0));
@@ -142,7 +141,7 @@ async fn test_config_reload_during_processing() {
 }
 
 /// Test config validation during reload
-#[sinex_test]
+#[tokio::test]
 async fn test_invalid_config_reload_handling() {
     // Test that invalid config changes are rejected gracefully
     
@@ -204,7 +203,7 @@ async fn test_invalid_config_reload_handling() {
 }
 
 /// Test graceful handling of config reload timing
-#[sinex_test] 
+#[tokio::test] 
 async fn test_config_reload_timing() {
     // Test various timing scenarios for config reload
     

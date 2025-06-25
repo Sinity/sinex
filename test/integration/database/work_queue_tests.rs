@@ -2,10 +2,9 @@
 use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use chrono::Utc;
-use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_work_queue_table_exists(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_table_exists(ctx: TestContext) -> Result<(), anyhow::Error> {
     // This test should fail until the migration is run
     // Check that work_queue table exists
     let result = sqlx::query!(
@@ -19,7 +18,7 @@ async fn test_work_queue_table_exists(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_work_queue_has_new_columns(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_has_new_columns(ctx: TestContext) -> Result<(), anyhow::Error> {
     // This test should fail until the migration adds new columns
     let columns = sqlx::query!(
         r#"
@@ -46,7 +45,7 @@ async fn test_work_queue_has_new_columns(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> Result<(), anyhow::Error> {
     // Test that the status column supports 'succeeded' and 'failed' values
     // This should work once the new status values are supported
     

@@ -3,9 +3,8 @@ use crate::common::create_test_db_pool;
 use sinex_db::{queries, models::AgentManifest};
 use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::Utc;
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_agent_registering_from_multiple_instances() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -117,7 +116,7 @@ async fn test_agent_registering_from_multiple_instances() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_heartbeat_from_unregistered_agent() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -160,7 +159,7 @@ async fn test_heartbeat_from_unregistered_agent() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_agent_downgrade_during_operation() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -284,7 +283,7 @@ async fn test_agent_downgrade_during_operation() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_concurrent_agent_status_updates() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -388,7 +387,7 @@ async fn test_concurrent_agent_status_updates() {
     // This test exposes lost update problems in agent status management
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_agent_zombie_heartbeat_scenario() {
     let pool = create_test_db_pool().await.unwrap();
     

@@ -1,4 +1,4 @@
-id: update-test-attribute
+id: migrate-test-attribute
 language: rust
 rule:
   pattern: '#[tokio::test]'

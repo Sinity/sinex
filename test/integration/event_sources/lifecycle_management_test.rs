@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_events::{
-use sinex_test_macros::sinex_test;
     filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
     clipboard::ClipboardMonitor,
@@ -138,8 +137,8 @@ impl EventSource for ResourceExhaustedSource {
     }
 }
 
-#[sinex_test]
-async fn test_event_source_crash_recovery() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_source_crash_recovery() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel(100);
     let mut crashing_source = CrashingEventSource::new(Duration::from_millis(200));
 
@@ -184,8 +183,8 @@ async fn test_event_source_crash_recovery() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-#[sinex_test]
-async fn test_resource_exhaustion_handling() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_resource_exhaustion_handling() -> Result<(), anyhow::Error> {
     let (tx, mut rx) = mpsc::channel(100);
     let mut resource_source = ResourceExhaustedSource {
         fd_limit_reached: false,
@@ -229,8 +228,8 @@ async fn test_resource_exhaustion_handling() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-#[sinex_test]
-async fn test_filesystem_source_permission_denied() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_source_permission_denied() -> Result<(), anyhow::Error> {
     // Create a directory we can't read (simulated permission denied)
     let temp_dir = TempDir::new()?;
     let protected_dir = temp_dir.path().join("protected");
@@ -278,8 +277,8 @@ async fn test_filesystem_source_permission_denied() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[sinex_test]
-async fn test_kitty_socket_unavailable() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_kitty_socket_unavailable() -> Result<(), anyhow::Error> {
     // Try to connect to a non-existent socket
     let config = json!({
         "socket_path": "/tmp/non-existent-kitty-socket-12345",
@@ -316,8 +315,8 @@ async fn test_kitty_socket_unavailable() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-#[sinex_test]
-async fn test_clipboard_source_access_denied() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_clipboard_source_access_denied() -> Result<(), anyhow::Error> {
     // Test clipboard source when X11/Wayland access is denied
     let config = json!({
         "monitor_clipboard": true,
@@ -355,8 +354,8 @@ async fn test_clipboard_source_access_denied() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-#[sinex_test]
-async fn test_event_source_coordination_failures() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_source_coordination_failures() -> Result<(), anyhow::Error> {
     // Test what happens when multiple sources try to access shared resources
     let temp_dir = TempDir::new()?;
     
@@ -433,8 +432,8 @@ async fn test_event_source_coordination_failures() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
-async fn test_event_source_invalid_configuration() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_source_invalid_configuration() -> Result<(), anyhow::Error> {
     // Test various invalid configurations
     
     // Empty watch patterns
@@ -491,8 +490,8 @@ async fn test_event_source_invalid_configuration() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
-async fn test_source_shutdown_during_active_streaming() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_source_shutdown_during_active_streaming() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let config = json!({
         "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],

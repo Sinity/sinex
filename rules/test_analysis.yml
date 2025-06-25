@@ -1,0 +1,94 @@
+# rules/test_analysis.yml
+# This file contains rules for analyzing the Sinex test suite's quality,
+# performance, and maintainability. It's orchestrated by the analysis script.
+
+# --- Performance & Reliability Analysis ---
+- id: find-sleep-calls
+  language: rust
+  rule: { pattern: 'tokio::time::sleep(Duration::from_secs($S))' }
+
+- id: find-unwraps
+  language: rust
+  rule:
+    pattern: $VAR.unwrap()
+    # We want to count all unwraps, even in asserts, for analysis purposes.
+
+- id: find-expects
+  language: rust
+  rule: { pattern: '$VAR.expect($MSG)' }
+
+# --- Maintainability & Complexity Analysis ---
+- id: find-test-functions
+  language: rust
+  rule:
+    kind: function_item
+    has:
+      any:
+        - pattern: '#[test]'
+        - pattern: '#[tokio::test]'
+        - pattern: '#[sinex_test]'
+
+- id: find-long-test-functions
+  language: rust
+  rule:
+    kind: function_item
+    has:
+      any:
+        - pattern: '#[test]'
+        - pattern: '#[tokio::test]'
+        - pattern: '#[sinex_test]'
+    has:
+      field: body
+      # Heuristic for "long": more than 10 semicolons (statements)
+      regex: '(?s)(.*;.*){10,}'
+
+# --- Quality & Coverage Analysis ---
+- id: find-tests-without-assertions
+  language: rust
+  rule:
+    kind: function_item
+    has:
+      any:
+        - pattern: '#[test]'
+        - pattern: '#[tokio::test]'
+        - pattern: '#[sinex_test]'
+    # Key part: The function does NOT have any macro call starting with "assert"
+    not:
+      has:
+        kind: macro_invocation
+        has:
+          path:
+            regex: '^assert'
+
+- id: find-assertions-without-messages
+  language: rust
+  rule:
+    any:
+      # Matches assert_eq!(a, b) but not assert_eq!(a, b, "message")
+      - pattern: assert_eq!($A, $B)
+      # Matches assert!(condition) but not assert!(condition, "message")
+      - pattern: assert!($COND)
+        not:
+          has:
+            kind: string_literal
+
+- id: find-total-assertions
+  language: rust
+  rule:
+    kind: macro_invocation
+    has:
+      path:
+        regex: '^assert'
+
+# --- Architectural Analysis ---
+- id: find-test-categories
+  language: rust
+  rule:
+    kind: file_path # Special kind to match the file path itself
+    # Use regex to categorize based on directory structure
+    any:
+      - regex: 'test/unit/'
+      - regex: 'test/integration/'
+      - regex: 'test/system/'
+      - regex: 'test/property/'
+      - regex: 'test/adversarial/'

@@ -2,7 +2,6 @@
 
 use crate::common::prelude::*;
 use crate::common::database_helpers;
-use sinex_test_macros::sinex_test;
 
 /// Simplest possible test that actually works
 #[sinex_test]

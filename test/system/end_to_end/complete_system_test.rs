@@ -1,6 +1,5 @@
 use crate::common::prelude::*;
 use std::process::Command;
-use sinex_test_macros::sinex_test;
 
 async fn _setup_system_test() -> Result<PgPool> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
@@ -17,7 +16,7 @@ async fn _setup_system_test() -> Result<PgPool> {
     Ok(pool.pool().clone())
 }
 #[sinex_test]
-async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     // Step 1: Simulate event capture by inserting events
@@ -92,7 +91,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_system_cli_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_cli_integration(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     // Insert test events
@@ -152,7 +151,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     // Create temporary directory for filesystem simulation
@@ -217,7 +216,7 @@ async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     // Simulate correlated events from multiple sources
@@ -311,7 +310,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_system_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_error_recovery(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     // Test system resilience with various edge cases
@@ -381,7 +380,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_system_performance_baseline(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_performance_baseline(ctx: TestContext) -> Result<(), anyhow::Error> {
     // setup_system_test() functionality moved to TestContext
     
     let start_time = std::time::Instant::now();

@@ -1,6 +1,5 @@
 use crate::common::prelude::*;
 use sinex_events::{
-use sinex_test_macros::sinex_test;
     filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
     asciinema::AsciinemaRecorder, 
@@ -10,8 +9,8 @@ use sinex_test_macros::sinex_test;
 use std::fs;
 use crate::common::{resources, event_sources};
 
-#[sinex_test]
-async fn test_filesystem_watcher_initialization() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_watcher_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
     let ctx = event_sources::test_context(config);
@@ -24,8 +23,8 @@ async fn test_filesystem_watcher_initialization() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-#[sinex_test]
-async fn test_filesystem_watcher_captures_events() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_watcher_captures_events() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
@@ -65,8 +64,8 @@ async fn test_filesystem_watcher_captures_events() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[sinex_test]
-async fn test_filesystem_watcher_ignores_patterns() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_watcher_ignores_patterns() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
@@ -114,8 +113,8 @@ async fn test_filesystem_watcher_ignores_patterns() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[sinex_test]
-async fn test_kitty_socket_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_kitty_socket_listener_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "socket_path": "/tmp/test-kitty-socket",
         "polling_interval_secs": 2
@@ -129,8 +128,8 @@ async fn test_kitty_socket_listener_initialization() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-#[sinex_test]
-async fn test_asciinema_recorder_initialization() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_asciinema_recorder_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "recordings_dir": temp_dir.path().to_str().unwrap(),
@@ -150,8 +149,8 @@ async fn test_asciinema_recorder_initialization() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-#[sinex_test] 
-async fn test_clipboard_monitor_initialization() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test] 
+async fn test_clipboard_monitor_initialization() -> Result<(), anyhow::Error> {
     let config = json!({
         "monitor_clipboard": true,
         "monitor_primary": true,
@@ -173,8 +172,8 @@ async fn test_clipboard_monitor_initialization() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-#[sinex_test]
-async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     
     // Create a subdirectory to test path-based patterns
@@ -236,8 +235,8 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive() -> Result<(), B
     Ok(())
 }
 
-#[sinex_test]
-async fn test_scrollback_capture_initialization() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_scrollback_capture_initialization() -> Result<(), anyhow::Error> {
     let temp_dir = resources::temp_dir()?;
     let config = json!({
         "kitty_socket_path": "/tmp/test-kitty-socket",

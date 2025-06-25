@@ -3,7 +3,6 @@ use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::queries;
 use std::time::Instant;
-use sinex_test_macros::sinex_test;
 
 // ==================== FILESYSTEM EVENT ATTACKS ====================
 
@@ -220,7 +219,7 @@ fn test_terminal_utf8_overlong_encoding() {
 
 // ==================== WINDOW MANAGER EVENT ATTACKS ====================
 
-#[sinex_test]
+#[tokio::test]
 async fn test_window_geometry_overflow() {
     let pool = create_test_db_pool().await.unwrap();
     
@@ -316,7 +315,7 @@ fn test_window_circular_parent_reference() {
 
 // ==================== CROSS-EVENT-TYPE INTERACTIONS ====================
 
-#[sinex_test]
+#[tokio::test]
 async fn test_event_cascade_explosion() {
     let pool = create_test_db_pool().await.unwrap();
     

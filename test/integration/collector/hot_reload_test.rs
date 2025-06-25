@@ -5,7 +5,6 @@ use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use tokio::sync::{mpsc, Mutex};
 use std::io::Write;
 use crate::common::event_sources;
-use sinex_test_macros::sinex_test;
 
 // Mock event source that can track configuration changes
 struct ConfigurableEventSource {
@@ -59,8 +58,8 @@ impl EventSource for ConfigurableEventSource {
     }
 }
 
-#[sinex_test]
-async fn test_config_hot_reload_without_data_loss() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error> {
     // Create initial config file
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
@@ -159,8 +158,8 @@ async fn test_config_hot_reload_without_data_loss() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[sinex_test]
-async fn test_config_reload_with_source_restart() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     // Test that sources can be gracefully restarted with new config
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
@@ -224,8 +223,8 @@ async fn test_config_reload_with_source_restart() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-#[sinex_test]
-async fn test_config_validation_before_reload() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_config_validation_before_reload() -> Result<(), anyhow::Error> {
     // Test that invalid configs are rejected without affecting running sources
     
     let valid_config = CollectorConfig {
@@ -250,8 +249,8 @@ async fn test_config_validation_before_reload() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-#[sinex_test]
-async fn test_partial_reload_capability() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_partial_reload_capability() -> Result<(), anyhow::Error> {
     // Test that specific sources can be reloaded without affecting others
     
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);

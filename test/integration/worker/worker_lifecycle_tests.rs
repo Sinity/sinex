@@ -3,7 +3,6 @@ use sinex_db::models::WorkQueueItem;
 use sinex_worker::{EventProcessor, WorkerMetrics, calculate_backoff_secs};
 // Import test setup macros and utilities
 use crate::common::worker_test_utils::{self, insert_test_work_item};
-use sinex_test_macros::sinex_test;
 
 struct TestEventProcessor {
     agent_name: String,
@@ -29,7 +28,7 @@ impl EventProcessor for TestEventProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
         
         tokio::time::sleep(self.processing_delay).await;
@@ -54,8 +53,8 @@ impl EventProcessor for TestEventProcessor {
     }
 }
 
-#[sinex_test]
-async fn test_event_processor_basic_processing() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
@@ -82,8 +81,8 @@ async fn test_event_processor_basic_processing() -> Result<(), Box<dyn std::erro
         Ok(())
 }
 
-#[sinex_test]
-async fn test_event_processor_failure_handling() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_event_processor_failure_handling() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor = TestEventProcessor::new("test_agent".to_string());
         
@@ -107,7 +106,7 @@ async fn test_event_processor_failure_handling() -> Result<(), Box<dyn std::erro
         Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_backoff_calculation() {
     // Test backoff calculation function
     let backoff_0 = calculate_backoff_secs(0);
@@ -126,7 +125,7 @@ async fn test_backoff_calculation() {
         backoff_0, backoff_1, backoff_5, backoff_10);
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_worker_metrics_creation() {
     let metrics = WorkerMetrics::new("test_agent");
     
@@ -144,8 +143,8 @@ async fn test_worker_metrics_creation() {
     pretty_assertions::assert_eq!(metrics.items_failed.get(), 1.0);
 }
 
-#[sinex_test]
-async fn test_multiple_processors_different_agents() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error> {
     let pool = database_helpers::get_shared_test_pool().await?;
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
@@ -185,7 +184,7 @@ async fn test_multiple_processors_different_agents() -> Result<(), Box<dyn std::
         Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_processor_configuration() {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
@@ -204,7 +203,7 @@ impl EventProcessor for SlowProcessor {
         &self,
         _pool: &PgPool,
         _item: &WorkQueueItem,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         tokio::time::sleep(Duration::from_millis(200)).await;
         Ok(())
     }
@@ -222,7 +221,7 @@ impl EventProcessor for SlowProcessor {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_processor_custom_configuration() {
     let processor = SlowProcessor {
         agent_name: "slow_agent".to_string(),

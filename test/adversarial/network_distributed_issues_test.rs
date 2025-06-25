@@ -3,9 +3,8 @@ use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_database_dns_timeout() {
     // Test what happens when database hostname fails to resolve
     
@@ -49,7 +48,7 @@ async fn test_database_dns_timeout() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_network_partition_during_processing() {
     // Simulate network partition by creating workers that lose connectivity
     
@@ -155,7 +154,7 @@ async fn test_network_partition_during_processing() {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_split_brain_scenario() {
     // Simulate split-brain where two parts of system think they're primary
     

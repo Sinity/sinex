@@ -10,7 +10,6 @@ use crate::common::worker_test_utils;
 use sinex_db::queries::{claim_work_queue_items, complete_work_queue_item};
 use tokio::task::JoinSet;
 use std::sync::Mutex;
-use sinex_test_macros::sinex_test;
 
 #[sinex_test]
 async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

@@ -2,9 +2,8 @@ use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use tokio::sync::Mutex;
 use crate::common::resources;
-use sinex_test_macros::sinex_test;
 
-#[sinex_test]
+#[tokio::test]
 async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
     // Try to watch a directory with thousands of files
     let temp_dir = resources::temp_dir()?;
@@ -56,7 +55,7 @@ async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_memory_exhaustion_via_config_reload() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -154,7 +153,7 @@ fn test_string_concatenation_memory_bomb() {
     println!("String sizes generated: {:?}", sizes);
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_collector_event_queue_overflow() {
     use std::sync::atomic::{AtomicU64, Ordering};
     

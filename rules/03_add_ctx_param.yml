@@ -1,9 +1,0 @@
-id: add-ctx-param
-language: rust
-rule:
-  pattern: 'async fn $NAME() { $$BODY }'
-fix: |
-  async fn $NAME(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
-      $$BODY
-      Ok(())
-  }

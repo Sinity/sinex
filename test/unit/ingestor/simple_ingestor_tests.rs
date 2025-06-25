@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use serde::{Serialize, Deserialize};
 use crate::common::event_sources;
-use sinex_test_macros::sinex_test;
 #[allow(unused_imports)]
 
 // Import test setup macros

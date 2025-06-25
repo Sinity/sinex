@@ -1,4 +1,3 @@
-use sinex_test_macros::sinex_test;
 //! Performance and load tests
 
 pub mod load_testing;
@@ -8,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[sinex_test]
-async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Error> {
     let start = Instant::now();
     let mut handles = vec![];
     
