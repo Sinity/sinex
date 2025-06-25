@@ -1,21 +1,16 @@
-use crate::common::{create_test_db_pool, events};
-use sinex_db::queries;
+use crate::common::prelude::*;
 use std::sync::{Arc, Barrier};
-use tokio::runtime::Runtime;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-#[test]
-fn test_worker_claim_exact_same_microsecond() {
-    let rt = Runtime::new().unwrap();
+#[sinex_test]
+async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
+        
+    // Insert event to be claimed
+    let event = events::race_test_event("race");
     
-    rt.block_on(async {
-        let pool = create_test_db_pool().await.unwrap();
-        
-        // Insert event to be claimed
-        let event = events::race_test_event("race");
-        
-        let inserted = queries::insert_event(&pool, &event).await.unwrap();
+    let inserted = queries::insert_event(pool, &event).await?;
         let event_id = inserted.id;
         
         // Create high-precision synchronization
@@ -45,8 +40,10 @@ fn test_worker_claim_exact_same_microsecond() {
             .execute(&pool1)
             .await;
             
-            if result.is_ok() && result.unwrap().rows_affected() > 0 {
-                claims1.fetch_add(1, Ordering::SeqCst);
+            if let Ok(result) = result {
+                if result.rows_affected() > 0 {
+                    claims1.fetch_add(1, Ordering::SeqCst);
+                }
             }
         });
         
@@ -66,38 +63,37 @@ fn test_worker_claim_exact_same_microsecond() {
             .execute(&pool2)
             .await;
             
-            if result.is_ok() && result.unwrap().rows_affected() > 0 {
-                claims2.fetch_add(1, Ordering::SeqCst);
+            if let Ok(result) = result {
+                if result.rows_affected() > 0 {
+                    claims2.fetch_add(1, Ordering::SeqCst);
+                }
             }
         });
         
         let _ = tokio::join!(handle1, handle2);
         
-        let total_claims = claims.load(Ordering::SeqCst);
-        println!("Total successful claims: {}", total_claims);
-        
-        // Check final state
-        let final_state = sqlx::query!(
-            "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-            event_id.to_uuid()
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        
-        println!("Final payload: {}", final_state.payload);
-        
-        // Both workers might claim if there's a race condition
-        pretty_assertions::assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
-    });
+    let total_claims = claims.load(Ordering::SeqCst);
+    println!("Total successful claims: {}", total_claims);
+    
+    // Check final state
+    let final_state = sqlx::query!(
+        "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+        event_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    println!("Final payload: {}", final_state.payload);
+    
+    // Both workers might claim if there's a race condition
+    pretty_assertions::assert_eq!(total_claims, 1, "Multiple workers claimed same event!");
+    
+    Ok(())
 }
 
-#[test]
-fn test_event_causality_violation() {
-    let rt = Runtime::new().unwrap();
-    
-    rt.block_on(async {
-        let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_event_causality_violation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         let order_violations = Arc::new(AtomicU64::new(0));
         
         // Simulate dependent events processed out of order
@@ -131,10 +127,10 @@ fn test_event_causality_violation() {
             
             let (res_b, res_a) = tokio::join!(handle_b, handle_a);
             
-            if res_b.is_ok() && res_a.is_ok() {
+            if let (Ok(Ok(inserted_b)), Ok(Ok(inserted_a))) = (res_b, res_a) {
                 // Check if B was inserted before A (causality violation)
-                let b_id = res_b.unwrap().unwrap().id;
-                let a_id = res_a.unwrap().unwrap().id;
+                let b_id = inserted_b.id;
+                let a_id = inserted_a.id;
                 
                 if b_id < a_id {
                     violations.fetch_add(1, Ordering::SeqCst);
@@ -142,24 +138,21 @@ fn test_event_causality_violation() {
             }
         }
         
-        let total_violations = order_violations.load(Ordering::SeqCst);
-        println!("Causality violations detected: {}/100", total_violations);
-        
-        // This likely shows violations due to concurrent inserts
-    });
+    let total_violations = order_violations.load(Ordering::SeqCst);
+    println!("Causality violations detected: {}/100", total_violations);
+    
+    // This likely shows violations due to concurrent inserts
+    Ok(())
 }
 
-#[test]
-fn test_work_queue_thundering_herd() {
-    let rt = Runtime::new().unwrap();
-    
-    rt.block_on(async {
-        let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_work_queue_thundering_herd(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         
         // Insert single event
         let event = events::adversarial_test_event("herd.test", serde_json::json!({"value": "prize"}));
         
-        queries::insert_event(&pool, &event).await.unwrap();
+    queries::insert_event(pool, &event).await?;
         
         // Simulate 100 workers waking simultaneously
         let start = Instant::now();
@@ -185,7 +178,7 @@ fn test_work_queue_thundering_herd() {
                 .fetch_optional(&pool)
                 .await;
                 
-                if result.is_ok() && result.unwrap().is_some() {
+                if let Ok(Some(_)) = result {
                     claims.fetch_add(1, Ordering::SeqCst);
                     println!("Worker {} claimed the event", i);
                 }
@@ -204,17 +197,15 @@ fn test_work_queue_thundering_herd() {
         println!("- Successful claims: {}", claims);
         println!("- Database connections stressed: 100");
         
-        // Only 1 should succeed, but timing shows stress
-        pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single event");
-    });
+    // Only 1 should succeed, but timing shows stress
+    pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single event");
+    
+    Ok(())
 }
 
-#[test]
-fn test_concurrent_metadata_lost_update() {
-    let rt = Runtime::new().unwrap();
-    
-    rt.block_on(async {
-        let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
         
         // Insert test event
         let event = events::adversarial_test_event("metadata.test", serde_json::json!({
@@ -222,7 +213,7 @@ fn test_concurrent_metadata_lost_update() {
             "updates": []
         }));
         
-        let inserted = queries::insert_event(&pool, &event).await.unwrap();
+    let inserted = queries::insert_event(pool, &event).await?;
         let event_id = inserted.id;
         
         // 10 concurrent updates
@@ -240,7 +231,7 @@ fn test_concurrent_metadata_lost_update() {
                 )
                 .fetch_one(&pool)
                 .await
-                .unwrap();
+                .expect("Database query failed");
                 
                 // Simulate processing time
                 tokio::task::yield_now().await;
@@ -257,7 +248,7 @@ fn test_concurrent_metadata_lost_update() {
                 )
                 .execute(&pool)
                 .await
-                .unwrap();
+                .expect("Database update failed");
             });
             
             handles.push(handle);
@@ -265,14 +256,13 @@ fn test_concurrent_metadata_lost_update() {
         
         futures::future::join_all(handles).await;
         
-        // Check final state
-        let final_state = sqlx::query!(
-            "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-            event_id.to_uuid()
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    // Check final state
+    let final_state = sqlx::query!(
+        "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+        event_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
         
         let counter = final_state.payload["counter"].as_i64().unwrap_or(0);
         let updates = final_state.payload["updates"].as_array().unwrap().len();
@@ -280,8 +270,9 @@ fn test_concurrent_metadata_lost_update() {
         println!("Final counter: {} (expected: 10)", counter);
         println!("Update array length: {} (expected: 10)", updates);
         
-        // Lost updates likely occurred
-        pretty_assertions::assert_eq!(counter, 10, "Lost updates detected!");
-        pretty_assertions::assert_eq!(updates, 10, "Lost update records!");
-    });
+    // Lost updates likely occurred
+    pretty_assertions::assert_eq!(counter, 10, "Lost updates detected!");
+    pretty_assertions::assert_eq!(updates, 10, "Lost update records!");
+    
+    Ok(())
 }
