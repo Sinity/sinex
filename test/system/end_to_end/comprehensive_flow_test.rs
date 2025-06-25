@@ -11,7 +11,7 @@ use tracing::info;
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
 #[sinex_test]
-async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), anyhow::Error> {
+async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // TestContext provides isolated database and test environment
     
     info!("Starting comprehensive pipeline test");
