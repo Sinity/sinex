@@ -21,9 +21,10 @@ class MigrationChange:
     description: str
 
 class TestMigrator:
-    def __init__(self, dry_run: bool = False, verbose: bool = False):
+    def __init__(self, dry_run: bool = False, verbose: bool = False, quality: bool = False):
         self.dry_run = dry_run
         self.verbose = verbose
+        self.quality = quality
         self.migration_stats = {
             'files_processed': 0,
             'tests_migrated': 0,
@@ -244,6 +245,149 @@ class TestMigrator:
         
         return '\n'.join(lines), changes
     
+    def fix_unwraps(self, content: str) -> Tuple[str, List[MigrationChange]]:
+        """Replace .unwrap() with ? operator where appropriate."""
+        changes = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            original_line = line
+            
+            # Skip if it's a comment or string
+            if line.strip().startswith('//') or '".unwrap()"' in line:
+                continue
+            
+            # Pattern: .unwrap() at end of statement
+            if '.unwrap();' in line:
+                line = line.replace('.unwrap();', '?;')
+                changes.append(MigrationChange(
+                    line_num=i + 1,
+                    original=original_line.strip(),
+                    replacement=line.strip(),
+                    description='Replace .unwrap() with ? operator'
+                ))
+            
+            # Pattern: .unwrap() in assignments or expressions
+            elif '.unwrap()' in line and not line.strip().endswith('.unwrap()'):
+                # This is trickier - might be in middle of expression
+                # For now, mark for manual review
+                if '.unwrap().' in line or '.unwrap(),' in line:
+                    # Don't auto-replace these complex cases
+                    pass
+            
+            lines[i] = line
+        
+        return '\n'.join(lines), changes
+    
+    def fix_println(self, content: str) -> Tuple[str, List[MigrationChange]]:
+        """Replace println! with tracing::info! or remove debug prints."""
+        changes = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            original_line = line
+            
+            # Skip if it's a comment
+            if line.strip().startswith('//'):
+                continue
+            
+            # Pattern: println!("...") - likely debug output
+            if 'println!' in line:
+                # Check if it looks like debug output
+                if any(marker in line.lower() for marker in ['debug', 'test', 'here', 'xxx', '---']):
+                    # Remove debug prints
+                    lines[i] = ''  # Remove the line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=original_line.strip(),
+                        replacement='',
+                        description='Remove debug println!'
+                    ))
+                else:
+                    # Convert to tracing
+                    line = line.replace('println!', 'tracing::info!')
+                    lines[i] = line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=original_line.strip(),
+                        replacement=line.strip(),
+                        description='Replace println! with tracing::info!'
+                    ))
+        
+        return '\n'.join(lines), changes
+    
+    def add_assert_messages(self, content: str) -> Tuple[str, List[MigrationChange]]:
+        """Add descriptive messages to assertions."""
+        changes = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            original_line = line
+            
+            # Skip if it's a comment
+            if line.strip().startswith('//'):
+                continue
+            
+            # Pattern: assert_eq!(a, b); without message
+            match = re.search(r'assert_eq!\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*\);', line)
+            if match:
+                left = match.group(1).strip()
+                right = match.group(2).strip()
+                
+                # Generate a reasonable message
+                if 'len()' in left or 'len()' in right:
+                    message = "length mismatch"
+                elif 'is_empty()' in left or 'is_empty()' in right:
+                    message = "expected empty but was not"
+                elif 'contains' in left or 'contains' in right:
+                    message = "substring not found"
+                else:
+                    # Generic message based on variable names
+                    message = f"expected {right} but got {left}"
+                
+                new_line = line.replace(
+                    match.group(0),
+                    f'assert_eq!({left}, {right}, "{message}");'
+                )
+                
+                if new_line != line:
+                    lines[i] = new_line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=original_line.strip(),
+                        replacement=new_line.strip(),
+                        description='Add descriptive message to assertion'
+                    ))
+            
+            # Pattern: assert!(condition); without message
+            match = re.search(r'assert!\s*\(\s*([^)]+)\s*\);', line)
+            if match and ',' not in match.group(1):  # No existing message
+                condition = match.group(1).strip()
+                
+                # Generate message based on condition
+                if '!' in condition:
+                    message = f"expected {condition} to be true"
+                elif '.is_' in condition:
+                    message = f"condition {condition} failed"
+                else:
+                    message = f"assertion failed: {condition}"
+                
+                new_line = line.replace(
+                    match.group(0),
+                    f'assert!({condition}, "{message}");'
+                )
+                
+                if new_line != line:
+                    lines[i] = new_line
+                    changes.append(MigrationChange(
+                        line_num=i + 1,
+                        original=original_line.strip(),
+                        replacement=new_line.strip(),
+                        description='Add descriptive message to assertion'
+                    ))
+        
+        return '\n'.join(lines), changes
+    
     def fix_imports(self, content: str) -> Tuple[str, List[MigrationChange]]:
         """Fix imports for migrated tests."""
         lines = content.split('\n')
@@ -337,6 +481,17 @@ class TestMigrator:
             
             content, ok_changes = self.add_missing_ok_returns(content)
             all_changes.extend(ok_changes)
+            
+            # Apply quality improvements if requested
+            if self.quality:
+                content, unwrap_changes = self.fix_unwraps(content)
+                all_changes.extend(unwrap_changes)
+                
+                content, println_changes = self.fix_println(content)
+                all_changes.extend(println_changes)
+                
+                content, assert_changes = self.add_assert_messages(content)
+                all_changes.extend(assert_changes)
             
             # Add warnings to stats
             self.migration_stats['warnings'].extend(
@@ -499,6 +654,8 @@ Examples:
   %(prog)s test/integration/            # Migrate specific directory
   %(prog)s test/unit/my_test.rs        # Migrate single file
   %(prog)s --dry-run --verbose          # Show detailed changes
+  %(prog)s --quality                    # Also fix unwrap/println/asserts
+  %(prog)s --dry-run --quality -v       # Preview all improvements
 """
     )
     parser.add_argument(
@@ -518,6 +675,11 @@ Examples:
         action="store_true",
         help="Show detailed change information in dry-run mode"
     )
+    parser.add_argument(
+        "--quality", "-q",
+        action="store_true",
+        help="Also apply quality improvements (unwrap->?, println->tracing, add assert messages)"
+    )
     
     args = parser.parse_args()
     
@@ -525,7 +687,7 @@ Examples:
         print(f"Error: Path {args.path} not found")
         sys.exit(1)
     
-    migrator = TestMigrator(dry_run=args.dry_run, verbose=args.verbose)
+    migrator = TestMigrator(dry_run=args.dry_run, verbose=args.verbose, quality=args.quality)
     migrator.run_migration(args.path)
 
 if __name__ == "__main__":
