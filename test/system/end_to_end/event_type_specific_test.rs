@@ -1,13 +1,12 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::queries;
 use std::time::Instant;
 
 // ==================== FILESYSTEM EVENT ATTACKS ====================
 
-#[test]
-fn test_filesystem_unicode_normalization_collision() {
+#[sinex_test]
+async fn test_filesystem_unicode_normalization_collision(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Different Unicode representations of "same" filename
     let unicode_variants = vec![
         ("NFC", "café"),                    // é as single codepoint
@@ -35,10 +34,12 @@ fn test_filesystem_unicode_normalization_collision() {
             }
         }
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_filesystem_case_sensitivity_race() {
+#[sinex_test]
+async fn test_filesystem_case_sensitivity_race(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Test rapid case variations of same filename
     let case_variants = vec![
         "test.txt",
@@ -71,10 +72,12 @@ fn test_filesystem_case_sensitivity_race() {
     println!("- Case-insensitive FS: All events refer to same file");
     println!("- Case-sensitive FS: Events refer to different files");
     println!("- Mixed processing: Some components case-sensitive, others not");
+    
+    Ok(())
 }
 
-#[test]
-fn test_filesystem_null_byte_injection() {
+#[sinex_test]
+async fn test_filesystem_null_byte_injection(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Paths with null bytes - many systems handle these differently
     let malicious_paths = vec![
         "/etc/passwd\0.txt",
@@ -115,12 +118,14 @@ fn test_filesystem_null_byte_injection() {
             }
         }
     }
+    
+    Ok(())
 }
 
 // ==================== TERMINAL EVENT ATTACKS ====================
 
-#[test]
-fn test_terminal_ansi_escape_injection() {
+#[sinex_test]
+async fn test_terminal_ansi_escape_injection(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Malicious ANSI escape sequences that could compromise terminal
     let evil_escapes = vec![
         ("\x1b[3J", "Clear scrollback buffer"),
@@ -153,10 +158,12 @@ fn test_terminal_ansi_escape_injection() {
             }
         }
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_terminal_control_character_smuggling() {
+#[sinex_test]
+async fn test_terminal_control_character_smuggling(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Control characters that could affect process control
     let control_chars = vec![
         ('\x03', "ETX (Ctrl+C)", "SIGINT - terminates process"),
@@ -188,10 +195,12 @@ fn test_terminal_control_character_smuggling() {
             }
         }
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_terminal_utf8_overlong_encoding() {
+#[sinex_test]
+async fn test_terminal_utf8_overlong_encoding(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Overlong UTF-8 sequences that might bypass filters
     let overlong_sequences = vec![
         (vec![0xC0, 0x80], "Overlong NULL"),
@@ -219,9 +228,8 @@ fn test_terminal_utf8_overlong_encoding() {
 
 // ==================== WINDOW MANAGER EVENT ATTACKS ====================
 
-#[tokio::test]
-async fn test_window_geometry_overflow() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_window_geometry_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     let overflow_geometries = vec![
         (i32::MAX, i32::MAX, 100, 100, "Max position"),
@@ -247,7 +255,7 @@ async fn test_window_geometry_overflow() {
             None
         );
         
-        match queries::insert_event(&pool, &event).await {
+        match queries::insert_event(ctx.pool(), &event).await {
             Ok(_) => {
                 println!("  {}: Accepted geometry ({},{}) {}x{}", desc, x, y, width, height);
                 
@@ -262,10 +270,12 @@ async fn test_window_geometry_overflow() {
             }
         }
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_window_circular_parent_reference() {
+#[sinex_test]
+async fn test_window_circular_parent_reference(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Window parent-child relationships that form cycles
     let circular_configs = vec![
         vec![("A", "B"), ("B", "C"), ("C", "A")],  // 3-node cycle
@@ -311,13 +321,14 @@ fn test_window_circular_parent_reference() {
             println!("    No cycle detected");
         }
     }
+    
+    Ok(())
 }
 
 // ==================== CROSS-EVENT-TYPE INTERACTIONS ====================
 
-#[tokio::test]
-async fn test_event_cascade_explosion() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_event_cascade_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Simulate cascading events: filesystem -> terminal -> window
     println!("Testing cascading event explosion:");
@@ -328,7 +339,7 @@ async fn test_event_cascade_explosion() {
     // Initial filesystem event
     let fs_event = events::filesystem_chaos_event("file.modified", "/tmp/trigger.sh", None);
     
-    queries::insert_event(&pool, &fs_event).await.unwrap();
+    queries::insert_event(ctx.pool(), &fs_event).await?;
     total_events += 1;
     
     // Simulate: file change triggers 10 terminal commands
@@ -343,13 +354,13 @@ async fn test_event_cascade_explosion() {
             None
         );
         
-        queries::insert_event(&pool, &term_event).await.unwrap();
+        queries::insert_event(ctx.pool(), &term_event).await?;
         total_events += 1;
         
         // Each terminal command opens a notification window
         let win_event = crate::common::events::generic_adversarial_event("hyprland", "window.created", json!({"test": true}), None);
         
-        queries::insert_event(&pool, &win_event).await.unwrap();
+        queries::insert_event(ctx.pool(), &win_event).await?;
         total_events += 1;
     }
     
@@ -360,10 +371,12 @@ async fn test_event_cascade_explosion() {
     if total_events > 20 {
         println!("  CASCADE EXPLOSION: 1 event triggered {} events!", total_events);
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_event_type_confusion() {
+#[sinex_test]
+async fn test_event_type_confusion(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Send events to wrong sources
     let confused_events = vec![
         ("filesystem", json!({
@@ -405,4 +418,6 @@ fn test_event_type_confusion() {
             _ => {}
         }
     }
+    
+    Ok(())
 }
