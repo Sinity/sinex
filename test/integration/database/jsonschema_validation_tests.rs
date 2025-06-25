@@ -9,6 +9,7 @@
 use crate::common::prelude::*;
 use crate::common::schema_test_utils;
 use uuid::Uuid;
+use sinex_test_macros::sinex_test;
 
 #[sinex_test]
 async fn test_json_schema_registration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

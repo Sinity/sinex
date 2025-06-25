@@ -2,6 +2,7 @@ use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuinPayload};
 use sinex_core::EventSource;
 use crate::common::{create_test_db_pool, event_sources};
+use sinex_test_macros::sinex_test;
 
 /// Get real Atuin database path or create minimal test database if needed
 fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
@@ -91,8 +92,8 @@ fn generate_test_commands() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_reader_initialization() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -118,8 +119,8 @@ async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_event_capture() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -168,8 +169,8 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_watermarking() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -253,7 +254,7 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
 }
 
 /// Test against real Atuin database if available, otherwise use minimal test database
-#[tokio::test]
+#[sinex_test]
 async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_or_create_atuin_db()?;
     
@@ -321,7 +322,7 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Test live Atuin monitoring with automatic command generation
-#[tokio::test]
+#[sinex_test]
 async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
@@ -398,8 +399,8 @@ async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_production_scale() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_production_scale() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {

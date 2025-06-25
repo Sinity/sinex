@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use sinex_core::{CoreError, Result as CoreResult};
 use std::io;
+use sinex_test_macros::sinex_test;
 
 #[test]
 fn test_core_error_from_io_error() {

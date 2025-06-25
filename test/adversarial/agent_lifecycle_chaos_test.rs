@@ -3,9 +3,10 @@ use crate::common::create_test_db_pool;
 use sinex_db::{queries, models::AgentManifest};
 use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::Utc;
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_agent_registering_from_multiple_instances() {
+#[sinex_test]
+async fn test_agent_registering_from_multiple_instances() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "chaos-agent";
@@ -116,8 +117,8 @@ async fn test_agent_registering_from_multiple_instances() {
     }
 }
 
-#[tokio::test]
-async fn test_heartbeat_from_unregistered_agent() {
+#[sinex_test]
+async fn test_heartbeat_from_unregistered_agent() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let phantom_agent = "phantom-agent";
@@ -159,8 +160,8 @@ async fn test_heartbeat_from_unregistered_agent() {
     }
 }
 
-#[tokio::test]
-async fn test_agent_downgrade_during_operation() {
+#[sinex_test]
+async fn test_agent_downgrade_during_operation() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "version-chaos-agent";
@@ -283,8 +284,8 @@ async fn test_agent_downgrade_during_operation() {
     }
 }
 
-#[tokio::test]
-async fn test_concurrent_agent_status_updates() {
+#[sinex_test]
+async fn test_concurrent_agent_status_updates() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "status-chaos-agent";
@@ -387,8 +388,8 @@ async fn test_concurrent_agent_status_updates() {
     // This test exposes lost update problems in agent status management
 }
 
-#[tokio::test]
-async fn test_agent_zombie_heartbeat_scenario() {
+#[sinex_test]
+async fn test_agent_zombie_heartbeat_scenario() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "zombie-agent";

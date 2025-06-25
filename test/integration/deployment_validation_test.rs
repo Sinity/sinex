@@ -3,8 +3,9 @@
 
 // use sinex_core::prelude::*; // No prelude module exists
 use crate::common::prelude::*;
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
+#[sinex_test]
 async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
     use mock_types::{SystemdNotifier, SystemdEvent};
     
@@ -46,7 +47,7 @@ async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
     use mock_types::{SystemdNotifier, SystemdEvent};
     
@@ -89,7 +90,7 @@ async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_graceful_shutdown_handling() -> anyhow::Result<()> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     
@@ -128,7 +129,7 @@ async fn test_graceful_shutdown_handling() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_resource_limits_configuration() -> anyhow::Result<()> {
     // Verify resource limit configurations are valid
     
@@ -165,7 +166,7 @@ async fn test_resource_limits_configuration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_health_endpoint_response() -> anyhow::Result<()> {
     // Simulate health check endpoint
     let mut health_checker = HealthChecker::new();
@@ -203,7 +204,7 @@ async fn test_health_endpoint_response() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_configuration_validation() -> anyhow::Result<()> {
     // Test various configuration scenarios
     
@@ -250,7 +251,7 @@ async fn test_configuration_validation() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_database_migration_state() -> anyhow::Result<()> {
     // Verify migration tracking works correctly
     
@@ -273,7 +274,7 @@ async fn test_database_migration_state() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_backup_directory_structure() -> anyhow::Result<()> {
     
     // Verify backup directories can be created
@@ -303,7 +304,7 @@ async fn test_backup_directory_structure() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_log_rotation_configuration() -> anyhow::Result<()> {
     // Verify log rotation settings
     
@@ -322,7 +323,7 @@ async fn test_log_rotation_configuration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_monitoring_metrics_exposition() -> anyhow::Result<()> {
     // Verify metrics can be collected and exposed
     
@@ -349,7 +350,7 @@ async fn test_monitoring_metrics_exposition() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_security_hardening_options() -> anyhow::Result<()> {
     // Verify security configurations
     
@@ -373,7 +374,7 @@ async fn test_security_hardening_options() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_deployment_checklist_automation() -> anyhow::Result<()> {
     // Automated deployment readiness check
     
@@ -497,12 +498,12 @@ mod mock_types {
             Ok(())
         }
         
-        pub fn notify_ready(&self) -> Result<(), anyhow::Error> { 
+        pub fn notify_ready(&self) -> Result<(), Box<dyn std::error::Error>> { 
             self.events.lock().unwrap().push((SystemdEvent::Ready, Instant::now()));
             Ok(()) 
         }
         
-        pub fn notify_watchdog(&self) -> Result<(), anyhow::Error> { 
+        pub fn notify_watchdog(&self) -> Result<(), Box<dyn std::error::Error>> { 
             if *self.fail_watchdog.lock().unwrap() {
                 return Err(anyhow::anyhow!("Simulated watchdog failure"));
             }
@@ -510,12 +511,12 @@ mod mock_types {
             Ok(()) 
         }
         
-        pub fn notify_status(&self, status: &str) -> Result<(), anyhow::Error> { 
+        pub fn notify_status(&self, status: &str) -> Result<(), Box<dyn std::error::Error>> { 
             self.events.lock().unwrap().push((SystemdEvent::Status(status.to_string()), Instant::now()));
             Ok(()) 
         }
         
-        pub fn notify_stopping(&self) -> Result<(), anyhow::Error> { 
+        pub fn notify_stopping(&self) -> Result<(), Box<dyn std::error::Error>> { 
             self.events.lock().unwrap().push((SystemdEvent::Stopping, Instant::now()));
             Ok(()) 
         }
@@ -604,7 +605,7 @@ mod mock_types {
     }
     
     impl CollectorConfig {
-        pub fn validate(&self) -> Result<(), anyhow::Error> {
+        pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
             if self.database_url.is_empty() {
                 return Err(anyhow::anyhow!("Database URL is empty"));
             }

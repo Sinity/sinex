@@ -3,6 +3,7 @@ use crate::common::create_test_db_pool;
 use crate::common::events;
 use sinex_db::queries;
 use std::time::Instant;
+use sinex_test_macros::sinex_test;
 
 // ==================== FILESYSTEM EVENT ATTACKS ====================
 
@@ -219,8 +220,8 @@ fn test_terminal_utf8_overlong_encoding() {
 
 // ==================== WINDOW MANAGER EVENT ATTACKS ====================
 
-#[tokio::test]
-async fn test_window_geometry_overflow() {
+#[sinex_test]
+async fn test_window_geometry_overflow() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     let overflow_geometries = vec![
@@ -315,8 +316,8 @@ fn test_window_circular_parent_reference() {
 
 // ==================== CROSS-EVENT-TYPE INTERACTIONS ====================
 
-#[tokio::test]
-async fn test_event_cascade_explosion() {
+#[sinex_test]
+async fn test_event_cascade_explosion() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     // Simulate cascading events: filesystem -> terminal -> window

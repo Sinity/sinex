@@ -8,6 +8,7 @@ use crate::common::prelude::*;
 use crate::common::database::CleanupStrategy;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
+use sinex_test_macros::sinex_test;
 
 /// Health status for a component
 #[derive(Debug, Clone, PartialEq)]
@@ -93,8 +94,8 @@ impl SystemHealthMonitor {
     }
 }
 
-#[tokio::test]
-async fn test_comprehensive_health_monitoring_system() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_comprehensive_health_monitoring_system() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Initialize health monitoring system
@@ -137,7 +138,7 @@ async fn test_comprehensive_health_monitoring_system() -> Result<(), anyhow::Err
     Ok(())
 }
 
-async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Test database health check
     let db_health = check_database_health(pool).await?;
     monitor.update_component_health("database", db_health, None).await;
@@ -335,7 +336,7 @@ async fn check_git_annex_health() -> Result<HealthStatus> {
     }
 }
 
-async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
+async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> Result<(), Box<dyn std::error::Error>> {
     // Test 1: Simulate component failure
     monitor.update_component_health("filesystem_source", HealthStatus::Unhealthy, 
         Some("Simulated filesystem monitoring failure".to_string())).await;
@@ -372,7 +373,7 @@ async fn test_failure_detection_and_recovery(monitor: &SystemHealthMonitor) -> R
     Ok(())
 }
 
-async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<(), anyhow::Error> {
+async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result<(), Box<dyn std::error::Error>> {
     // Test how system health is calculated from component health
     
     // Scenario 1: All components healthy
@@ -411,8 +412,8 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
     Ok(())
 }
 
-#[tokio::test]
-async fn test_health_monitoring_performance_impact() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_health_monitoring_performance_impact() -> Result<(), Box<dyn std::error::Error>> {
     // Test that health monitoring doesn't significantly impact system performance
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(10), 3);
@@ -477,8 +478,8 @@ impl Clone for SystemHealthMonitor {
     }
 }
 
-#[tokio::test]
-async fn test_health_monitoring_with_real_workload() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_health_monitoring_with_real_workload() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);

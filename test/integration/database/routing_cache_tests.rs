@@ -4,9 +4,10 @@
 use crate::common::prelude::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
 use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_routing_cache_view_exists() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
@@ -24,8 +25,8 @@ async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_routing_cache_structure() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing_cache has the correct columns (event_type, agent_id)
     // For materialized views, we need to query pg_attribute directly
@@ -59,8 +60,8 @@ async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing_cache is automatically refreshed when agent_manifests change
     
@@ -99,8 +100,8 @@ async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow:
     Ok(())
 }
 
-#[tokio::test]
-async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_batch_router_creates_work_queue_entries() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that the batch router function creates work queue entries based on routing cache
     
@@ -144,8 +145,8 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
     Ok(())
 }
 
-#[tokio::test]
-async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_batch_router_avoids_duplicate_routing() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that batch router doesn't create duplicate work queue entries
     
@@ -183,8 +184,8 @@ async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_routing_cache_performance_over_triggers() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     // Test that routing cache approach performs better than per-row triggers
     // This is a conceptual test - in practice we'd measure timing

@@ -1,9 +1,10 @@
 use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
+use sinex_test_macros::sinex_test;
 
 /// Test graceful degradation under database connectivity issues
-#[tokio::test]
-async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_graceful_degradation_database_failure() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -47,7 +48,7 @@ async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Erro
     let pool3 = pool.clone();
     
     // Define async functions for each operation
-    async fn event_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn event_test(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         let _event = insert_raw_event(
             &pool,
             "degradation.test",
@@ -61,7 +62,7 @@ async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Erro
         Ok(())
     }
     
-    async fn health_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn health_test(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
             .fetch_one(&pool)
             .await
@@ -70,7 +71,7 @@ async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Erro
         Ok(())
     }
     
-    async fn agent_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn agent_test(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         let _agent_check = sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
             .fetch_one(&pool)
             .await
@@ -181,8 +182,8 @@ async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Erro
 }
 
 /// Test resource limits and monitoring under load
-#[tokio::test]
-async fn test_resource_limits_monitoring() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_resource_limits_monitoring() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -503,8 +504,8 @@ async fn test_resource_limits_monitoring() -> Result<(), anyhow::Error> {
 }
 
 /// Test system behavior under resource exhaustion scenarios
-#[tokio::test]
-async fn test_resource_exhaustion_scenarios() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_resource_exhaustion_scenarios() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

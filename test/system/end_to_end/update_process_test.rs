@@ -6,8 +6,9 @@
 
 use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
+#[sinex_test]
 async fn test_database_migration_process() -> anyhow::Result<()> {
     // Test: Basic database update/migration process
     
@@ -29,7 +30,7 @@ async fn test_database_migration_process() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_configuration_reload_simulation() -> anyhow::Result<()> {
     // Test: Simulate configuration reload by re-reading environment
     

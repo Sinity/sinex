@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use sinex_annex::{GitAnnex, AnnexConfig};
 use tokio::fs;
+use sinex_test_macros::sinex_test;
 
 async fn setup_test_annex() -> Result<(GitAnnex, TempDir)> {
     let temp_dir = TempDir::new()?;
@@ -20,8 +21,8 @@ async fn setup_test_annex() -> Result<(GitAnnex, TempDir)> {
     Ok((annex, temp_dir))
 }
 
-#[tokio::test]
-async fn test_file_add_and_retrieve() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_file_add_and_retrieve() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file
@@ -45,8 +46,8 @@ async fn test_file_add_and_retrieve() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_large_file_handling() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_large_file_handling() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create 1MB of data
@@ -68,8 +69,8 @@ async fn test_large_file_handling() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_annex_key_lookup() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_annex_key_lookup() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file with known content
@@ -91,8 +92,8 @@ async fn test_annex_key_lookup() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_drop_content() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_drop_content() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create and add a file
@@ -111,8 +112,8 @@ async fn test_drop_content() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_fsck() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_fsck() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Add some files
@@ -131,8 +132,8 @@ async fn test_fsck() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_git_annex_configuration() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_git_annex_configuration() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
     
@@ -161,8 +162,8 @@ async fn test_git_annex_configuration() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_concurrent_file_operations() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_concurrent_file_operations() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     let annex = std::sync::Arc::new(annex);
     let mut handles = vec![];
@@ -204,8 +205,8 @@ async fn test_concurrent_file_operations() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_files_in_subdirectories() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_files_in_subdirectories() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create subdirectory structure
@@ -230,8 +231,8 @@ async fn test_files_in_subdirectories() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_annex_deduplication() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_annex_deduplication() -> Result<(), Box<dyn std::error::Error>> {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     let content = b"Duplicate content for dedup test";

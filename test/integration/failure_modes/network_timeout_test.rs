@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use sinex_test_macros::sinex_test;
 
 /// Test database connection timeout handling
-#[tokio::test]
-async fn test_database_connection_timeout() {
+#[sinex_test]
+async fn test_database_connection_timeout() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate various network timeout scenarios
     
     #[derive(Debug, Clone)]
@@ -132,8 +133,8 @@ async fn test_database_connection_timeout() {
 }
 
 /// Test connection pool behavior under timeout conditions
-#[tokio::test]
-async fn test_connection_pool_timeout_resilience() {
+#[sinex_test]
+async fn test_connection_pool_timeout_resilience() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate connection pool with limited connections
     const POOL_SIZE: usize = 5;
     const NUM_WORKERS: usize = 10;
@@ -213,8 +214,8 @@ async fn test_connection_pool_timeout_resilience() {
 }
 
 /// Test retry logic with exponential backoff
-#[tokio::test]
-async fn test_retry_with_backoff() {
+#[sinex_test]
+async fn test_retry_with_backoff() -> Result<(), Box<dyn std::error::Error>> {
     // Track retry behavior
     let _attempt_count = Arc::new(AtomicU64::new(0));
     let success_after_retry = Arc::new(AtomicU64::new(0));

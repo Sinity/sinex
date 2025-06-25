@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
 use std::fs;
 use sinex_db::queries::insert_raw_event;
+use sinex_test_macros::sinex_test;
 
 /// Test filesystem monitoring against path traversal attacks
-#[tokio::test]
-async fn test_filesystem_path_traversal_protection() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_filesystem_path_traversal_protection() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -92,8 +93,8 @@ async fn test_filesystem_path_traversal_protection() -> Result<(), anyhow::Error
 }
 
 /// Test SQL injection protection in dynamic query construction
-#[tokio::test]
-async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_sql_injection_protection() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -285,8 +286,8 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
 }
 
 /// Test resource exhaustion attack protection
-#[tokio::test]
-async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_resource_exhaustion_protection() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 
@@ -482,8 +483,8 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
 }
 
 /// Test malicious configuration injection
-#[tokio::test]
-async fn test_configuration_injection_protection() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_injection_protection() -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
 
     let temp_dir = TempDir::new()?;
@@ -600,8 +601,8 @@ async fn test_configuration_injection_protection() -> Result<(), anyhow::Error> 
 }
 
 /// Test event payload sanitization
-#[tokio::test]
-async fn test_malicious_payload_sanitization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_malicious_payload_sanitization() -> Result<(), Box<dyn std::error::Error>> {
     let pool = database_helpers::get_shared_test_pool().await?;
     run_migrations(&pool).await?;
 

@@ -3,9 +3,10 @@ use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_database_dns_timeout() {
+#[sinex_test]
+async fn test_database_dns_timeout() -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when database hostname fails to resolve
     
     let fake_hostnames = vec![
@@ -48,8 +49,8 @@ async fn test_database_dns_timeout() {
     }
 }
 
-#[tokio::test]
-async fn test_network_partition_during_processing() {
+#[sinex_test]
+async fn test_network_partition_during_processing() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate network partition by creating workers that lose connectivity
     
     let pool = create_test_db_pool().await.unwrap();
@@ -154,8 +155,8 @@ async fn test_network_partition_during_processing() {
     }
 }
 
-#[tokio::test]
-async fn test_split_brain_scenario() {
+#[sinex_test]
+async fn test_split_brain_scenario() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate split-brain where two parts of system think they're primary
     
     let pool = create_test_db_pool().await.unwrap();

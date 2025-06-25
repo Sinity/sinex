@@ -3,6 +3,7 @@ use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
 use sinex_db::models::RawEvent;
 use tokio::time::{timeout, sleep, Instant};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use sinex_test_macros::sinex_test;
 
 
 
@@ -139,8 +140,8 @@ impl SlowEventProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<(), Box<dyn std::error::Error>> {
     // Create a bounded channel with the same capacity as UnifiedCollector
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
     
@@ -221,8 +222,8 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer() -> Result<
     Ok(())
 }
 
-#[tokio::test]
-async fn test_channel_saturation_prevents_event_loss() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_channel_saturation_prevents_event_loss() -> Result<(), Box<dyn std::error::Error>> {
     // Test that the channel properly handles saturation without losing events
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100); // Smaller channel for easier testing
     
@@ -278,8 +279,8 @@ async fn test_channel_saturation_prevents_event_loss() -> Result<(), anyhow::Err
     Ok(())
 }
 
-#[tokio::test]
-async fn test_multiple_sources_backpressure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_multiple_sources_backpressure() -> Result<(), Box<dyn std::error::Error>> {
     // Test backpressure with multiple event sources feeding into the same channel
     let (tx, rx) = mpsc::channel::<RawEvent>(1000);
     
@@ -343,8 +344,8 @@ async fn test_multiple_sources_backpressure() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_channel_close_during_backpressure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_channel_close_during_backpressure() -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when the channel is closed while producer is backpressured
     let (tx, rx) = mpsc::channel::<RawEvent>(10);
     
@@ -381,8 +382,8 @@ async fn test_channel_close_during_backpressure() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_backpressure_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_backpressure_recovery() -> Result<(), Box<dyn std::error::Error>> {
     // Test that the system recovers properly when backpressure is relieved
     let (tx, mut rx) = mpsc::channel::<RawEvent>(50);
     
@@ -439,8 +440,8 @@ async fn test_backpressure_recovery() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_memory_pressure_during_backpressure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_memory_pressure_during_backpressure() -> Result<(), Box<dyn std::error::Error>> {
     // Test that memory usage stays reasonable even during extended backpressure
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     

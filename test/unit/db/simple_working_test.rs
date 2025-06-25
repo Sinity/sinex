@@ -1,6 +1,7 @@
 //! A simple working test to demonstrate the correct pattern
 
 use crate::common::prelude::*;
+use sinex_test_macros::sinex_test;
 
 #[sinex_test]
 async fn test_basic_database_operations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

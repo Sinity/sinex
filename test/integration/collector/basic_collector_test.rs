@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
+use sinex_test_macros::sinex_test;
 
 /// Test that collector can be created with valid configuration
-#[tokio::test]
-async fn test_collector_creation() {
+#[sinex_test]
+async fn test_collector_creation() -> Result<(), Box<dyn std::error::Error>> {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -47,8 +48,8 @@ async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 /// Test collector configuration loading
-#[tokio::test]
-async fn test_collector_config_loading() {
+#[sinex_test]
+async fn test_collector_config_loading() -> Result<(), Box<dyn std::error::Error>> {
     // Test default configuration loading
     let result = CollectorConfig::load();
     
@@ -76,8 +77,8 @@ async fn test_collector_config_loading() {
 }
 
 /// Test event filtering based on enabled events
-#[tokio::test]
-async fn test_event_filtering() {
+#[sinex_test]
+async fn test_event_filtering() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -100,8 +101,8 @@ async fn test_event_filtering() {
 }
 
 /// Test collector with file output
-#[tokio::test]
-async fn test_collector_file_output() {
+#[sinex_test]
+async fn test_collector_file_output() -> Result<(), Box<dyn std::error::Error>> {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),

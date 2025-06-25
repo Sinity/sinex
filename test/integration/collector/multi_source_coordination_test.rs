@@ -4,6 +4,7 @@ use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Barrier};
 use crate::common::event_sources;
+use sinex_test_macros::sinex_test;
 
 // Test source that can simulate different behaviors
 struct TestCoordinatedSource {
@@ -70,8 +71,8 @@ impl EventSource for TestCoordinatedSource {
     }
 }
 
-#[tokio::test]
-async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_multiple_sources_lifecycle_management() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources with different configurations
@@ -133,8 +134,8 @@ async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_source_failure_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources, one will fail
@@ -195,8 +196,8 @@ async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_source_startup_synchronization() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let barrier = Arc::new(Barrier::new(3));
     
@@ -269,8 +270,8 @@ async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_registry_based_source_discovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_registry_based_source_discovery() -> Result<(), Box<dyn std::error::Error>> {
     // Test that sources can be discovered and started from registry
     let registry = create_registry();
     
@@ -296,8 +297,8 @@ async fn test_registry_based_source_discovery() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_dynamic_source_addition() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_dynamic_source_addition() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let mut handles = Vec::new();
     

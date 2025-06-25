@@ -1,8 +1,9 @@
 use crate::common::prelude::*;
 use sqlx::postgres::PgPoolOptions;
 use std::time::{Duration, Instant};
-#[tokio::test]
-async fn test_connection_pool_max_connections() -> Result<(), anyhow::Error> {
+use sinex_test_macros::sinex_test;
+#[sinex_test]
+async fn test_connection_pool_max_connections() -> Result<(), Box<dyn std::error::Error>> {
     // Create a pool with a small max size
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -55,8 +56,8 @@ async fn test_connection_pool_max_connections() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_timeout_behavior() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_timeout_behavior() -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_millis(500))
@@ -79,8 +80,8 @@ async fn test_connection_pool_timeout_behavior() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_recovery_after_database_restart() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_recovery_after_database_restart() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Verify initial connection works
@@ -105,8 +106,8 @@ async fn test_connection_pool_recovery_after_database_restart() -> Result<(), an
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_concurrent_pressure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_concurrent_pressure() -> Result<(), Box<dyn std::error::Error>> {
     let pool = Arc::new(TestPool::with_strategy(CleanupStrategy::None).await?);
     
     // Spawn many concurrent tasks
@@ -137,8 +138,8 @@ async fn test_connection_pool_concurrent_pressure() -> Result<(), anyhow::Error>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_max_lifetime() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_max_lifetime() -> Result<(), Box<dyn std::error::Error>> {
     // Create pool with short max lifetime
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -165,8 +166,8 @@ async fn test_connection_pool_max_lifetime() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_idle_timeout() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_idle_timeout() -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
@@ -196,8 +197,8 @@ async fn test_connection_pool_idle_timeout() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_transaction_isolation() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_transaction_isolation() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Start a transaction in one task
@@ -241,8 +242,8 @@ async fn test_connection_pool_transaction_isolation() -> Result<(), anyhow::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_error_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_error_recovery() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Cause an error on a connection
@@ -269,8 +270,8 @@ async fn test_connection_pool_error_recovery() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_statement_cache() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_statement_cache() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Execute the same prepared statement many times

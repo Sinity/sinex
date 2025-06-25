@@ -4,8 +4,9 @@ use sinex_core::{EventSource, EventType};
 use crate::common::resources;
 use chrono::Utc;
 use crate::common::event_sources;
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
+#[sinex_test]
 async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let socket_path = temp_dir.path().join("kitty-test-*");
@@ -22,8 +23,8 @@ async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-#[tokio::test]
-async fn test_kitty_event_structure() {
+#[sinex_test]
+async fn test_kitty_event_structure() -> Result<(), Box<dyn std::error::Error>> {
     // Test that the event payload structure is correct
     let payload = CommandExecutedPayload {
         command_string: "echo test".to_string(),
@@ -43,8 +44,8 @@ async fn test_kitty_event_structure() {
     pretty_assertions::assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
 }
 
-#[tokio::test]
-async fn test_kitty_socket_pattern_matching() {
+#[sinex_test]
+async fn test_kitty_socket_pattern_matching() -> Result<(), Box<dyn std::error::Error>> {
     let config = KittyConfig {
         socket_path: "/tmp/mykitty-*".to_string(),
         polling_interval_secs: 1,

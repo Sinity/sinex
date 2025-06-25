@@ -4,9 +4,10 @@ use sinex_db::queries;
 use chrono::Utc;
 use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicU64, Ordering};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_worker_claim_exact_same_microsecond() {
+#[sinex_test]
+async fn test_worker_claim_exact_same_microsecond() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing microsecond-level worker claim races:");
@@ -111,8 +112,8 @@ async fn test_worker_claim_exact_same_microsecond() {
     }
 }
 
-#[tokio::test]
-async fn test_dead_worker_holding_locks() {
+#[sinex_test]
+async fn test_dead_worker_holding_locks() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing zombie worker scenario:");
@@ -247,8 +248,8 @@ async fn test_dead_worker_holding_locks() {
     }
 }
 
-#[tokio::test]
-async fn test_mass_worker_wakeup_thundering_herd() {
+#[sinex_test]
+async fn test_mass_worker_wakeup_thundering_herd() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing thundering herd with 100 workers:");

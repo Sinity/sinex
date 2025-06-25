@@ -1,9 +1,10 @@
 use sqlx::postgres::PgPoolOptions;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_agent_heartbeat_generation() {
+#[sinex_test]
+async fn test_agent_heartbeat_generation() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -89,8 +90,8 @@ async fn test_agent_heartbeat_generation() {
     pretty_assertions::assert_eq!(heartbeat_count, 1, "Heartbeat event should exist");
 }
 
-#[tokio::test]
-async fn test_stale_heartbeat_detection() {
+#[sinex_test]
+async fn test_stale_heartbeat_detection() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -166,8 +167,8 @@ async fn test_stale_heartbeat_detection() {
     assert!(healthy_agents.contains(&"stale_agent_2".to_string()));
 }
 
-#[tokio::test]
-async fn test_heartbeat_metrics_tracking() {
+#[sinex_test]
+async fn test_heartbeat_metrics_tracking() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -263,8 +264,8 @@ async fn test_heartbeat_metrics_tracking() {
     pretty_assertions::assert_eq!(degraded_count, 1);
 }
 
-#[tokio::test]
-async fn test_heartbeat_based_status_updates() {
+#[sinex_test]
+async fn test_heartbeat_based_status_updates() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -340,8 +341,8 @@ async fn test_heartbeat_based_status_updates() {
     pretty_assertions::assert_eq!(error_summary.unwrap(), "Unable to connect to data source");
 }
 
-#[tokio::test]
-async fn test_heartbeat_frequency_monitoring() {
+#[sinex_test]
+async fn test_heartbeat_frequency_monitoring() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     

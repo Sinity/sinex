@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs;
+use sinex_test_macros::sinex_test;
 
 /// Git-annex integration test helper
 struct GitAnnexTestRepo {
@@ -149,8 +150,8 @@ impl GitAnnexTestRepo {
     
 }
 
-#[tokio::test]
-async fn test_git_annex_integration_with_event_pipeline() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_git_annex_integration_with_event_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     let annex_repo = GitAnnexTestRepo::new().await?;
@@ -175,7 +176,7 @@ async fn test_git_annex_integration_with_event_pipeline() -> Result<(), anyhow::
     Ok(())
 }
 
-async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), Box<dyn std::error::Error>> {
     // Test capturing events with large files that should be stored in git-annex
     
     // Create large test files (> 1KB to trigger git-annex)
@@ -239,7 +240,7 @@ async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnne
     Ok(())
 }
 
-async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), Box<dyn std::error::Error>> {
     // Test event processing that involves retrieving and processing git-annex stored content
     
     // Create test files with various content types
@@ -358,7 +359,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
     Ok(())
 }
 
-async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), Box<dyn std::error::Error>> {
     // Test that the worker system can handle concurrent access to git-annex files
     
     // Create multiple files for concurrent processing
@@ -496,7 +497,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
     Ok(())
 }
 
-async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), Box<dyn std::error::Error>> {
     // Test that query interface can access git-annex stored content
     
     // Create test files with searchable content
@@ -595,8 +596,8 @@ async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo:
     Ok(())
 }
 
-#[tokio::test]
-async fn test_git_annex_fallback_scenarios() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_git_annex_fallback_scenarios() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Test system behavior when git-annex is not available
@@ -611,7 +612,7 @@ async fn test_git_annex_fallback_scenarios() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Test system behavior when git-annex is not available
     
     // Create events that would normally use git-annex
@@ -646,7 +647,7 @@ async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), anyh
     Ok(())
 }
 
-async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Test handling of git-annex operation failures
     
     // Simulate scenarios where git-annex operations might fail
@@ -691,7 +692,7 @@ async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<()
     Ok(())
 }
 
-async fn test_annex_recovery_scenarios(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_recovery_scenarios(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Test system recovery when git-annex becomes available again
     
     let temp_dir = TempDir::new()?;

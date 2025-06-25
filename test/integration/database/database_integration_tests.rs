@@ -11,6 +11,7 @@
 
 use crate::common::prelude::*;
 use crate::common::{self, events, assertions, generators};
+use sinex_test_macros::sinex_test;
 
 /// Test basic event lifecycle: insert → retrieve → verify
 /// 

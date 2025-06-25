@@ -2,6 +2,7 @@
 
 use crate::common::prelude::*;
 use crate::common::{parameterized, scenario_builders, test_dsl};
+use sinex_test_macros::sinex_test;
 
 #[test]
 fn test_validation_with_parameterized_helper() {

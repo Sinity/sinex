@@ -4,6 +4,7 @@ use sinex_core::{EventSource, EventType};
 use sinex_db::models::RawEvent;
 use chrono::{Utc, TimeZone};
 use crate::common::{resources, create_test_db_pool, event_sources};
+use sinex_test_macros::sinex_test;
 
 
 
@@ -142,8 +143,8 @@ impl TestAtuinEntryBuilder {
     }
 }
 
-#[tokio::test]
-async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_reader_initialization() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -173,8 +174,8 @@ async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_event_capture() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -252,8 +253,8 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_watermarking() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -383,8 +384,8 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_watermarking_resume_behavior() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_watermarking_resume_behavior() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -530,8 +531,8 @@ async fn test_atuin_watermarking_resume_behavior() -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_timestamp_conversion() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_timestamp_conversion() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -587,7 +588,7 @@ async fn test_atuin_timestamp_conversion() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>> {
     // Test with non-existent database file
     let temp_dir = resources::temp_dir()?;
@@ -621,8 +622,8 @@ async fn test_atuin_error_conditions() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_builder_patterns() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_builder_patterns() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -699,8 +700,8 @@ async fn test_atuin_builder_patterns() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_edge_cases() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -766,8 +767,8 @@ async fn test_atuin_edge_cases() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_global_history() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_global_history() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -848,8 +849,8 @@ async fn test_atuin_global_history() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_performance_with_many_entries() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_performance_with_many_entries() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -923,7 +924,7 @@ async fn test_atuin_performance_with_many_entries() -> Result<(), anyhow::Error>
 
 /// Test against real Atuin database if available
 /// This test is ignored by default since it requires a real Atuin installation
-#[tokio::test]
+#[sinex_test]
 #[ignore = "requires real Atuin database"]
 async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>> {
     // Check for real Atuin database in standard locations
@@ -1000,7 +1001,7 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
 
 /// Test that demonstrates how to run against a live Atuin database
 /// while Atuin is actively being used (without interfering)
-#[tokio::test]
+#[sinex_test]
 #[ignore = "requires live Atuin usage"]
 async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());

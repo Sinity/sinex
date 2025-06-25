@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
+#[sinex_test]
 async fn test_database_insertion_performance() -> anyhow::Result<()> {
     // Test: Basic database insertion performance
     let pool = create_test_db_pool().await?;
@@ -74,7 +75,7 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[sinex_test]
 async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
     // Test: Concurrent database insertion
     let pool = create_test_db_pool().await?;

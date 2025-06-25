@@ -8,13 +8,14 @@
 
 #![allow(dead_code, unused_imports, unused_variables)]
 
+use sinex_test_macros::sinex_test;
 use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ValidationReport};
 use tempfile::{TempDir, NamedTempFile};
 use tokio::fs;
 
-#[tokio::test]
-async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     // NOTE: This test is currently disabled due to config structure simplification
     // The CollectorConfig structure was simplified to only include:
     // - enabled_events: Vec<String>
@@ -23,16 +24,16 @@ async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), an
     // - annex_repo_path: Option<String>
     // The old monitoring, database, and git_annex fields were removed.
     println!("Configuration test disabled due to simplified config structure");
-    Ok(())
+    
     /*
-    // Test 1: Configuration loading from various sources
+    // Test 1: Load configuration from multiple sources
     test_configuration_loading_sources().await?;
     
-    // Test 2: Configuration validation with all validation rules
-    test_comprehensive_validation_rules().await?;
+    // Test 2: Validate configuration schema and constraints
+    test_configuration_validation_rules().await?;
     
-    // Test 3: Configuration merging and precedence
-    test_configuration_merging_precedence().await?;
+    // Test 3: Merge configurations with proper precedence
+    test_configuration_merging().await?;
     
     // Test 4: Hot-reload configuration changes
     test_configuration_hot_reload().await?;
@@ -42,649 +43,435 @@ async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), an
     
     Ok(())
     */
+    Ok(())
 }
 
-async fn test_configuration_loading_sources() -> Result<(), anyhow::Error> {
+async fn test_configuration_loading_sources() -> Result<(), Box<dyn std::error::Error>> {
     // DISABLED: Config structure simplified - this test needs rewrite
     Ok(())
     /*
     // Test loading configuration from different sources with proper precedence
     
+    // 1. Create temporary config files
     let temp_dir = TempDir::new()?;
     
-    // Create different configuration files
-    let default_config = r#"
-enabled_events = ["filesystem.file.created"]
-
-[monitoring]
-health_check_interval_secs = 60
-metrics_enabled = false
-
+    // Default config file
+    let default_config = temp_dir.path().join("default.toml");
+    fs::write(&default_config, r#"
 [database]
+url = "postgresql:///sinex_default"
 max_connections = 10
-"#;
-    
-    let user_config = r#"
-enabled_events = ["filesystem.file.created", "terminal.command.executed"]
 
 [monitoring]
-health_check_interval_secs = 30
-metrics_enabled = true
+heartbeat_interval_secs = 30
+emit_metrics = false
 
-[event.shell_command_executed_atuin]
-db_path = "/home/user/.local/share/atuin/history.db"
-polling_interval_secs = 5
-"#;
+[[event_sources.filesystem]]
+name = "default_watcher"
+watch_paths = ["/tmp/default"]
+    "#).await?;
     
-    let environment_config = r#"
-enabled_events = ["filesystem.file.created", "terminal.command.executed", "hyprland.window.focus"]
-
-[monitoring]
-failure_threshold = 5
-
+    // User config file (should override default)
+    let user_config = temp_dir.path().join("user.toml");
+    fs::write(&user_config, r#"
 [database]
+max_connections = 20  # Override default
+
+[monitoring]
+emit_metrics = true  # Override default
+
+[[event_sources.filesystem]]
+name = "user_watcher"
+watch_paths = ["/home/user/data"]
+    "#).await?;
+    
+    // Environment config (highest priority)
+    std::env::set_var("SINEX_DATABASE_URL", "postgresql:///sinex_env");
+    std::env::set_var("SINEX_MONITORING_HEARTBEAT_INTERVAL_SECS", "10");
+    
+    // 2. Load configuration with precedence
+    let config = CollectorConfig::load_with_sources(&[
+        default_config.as_path(),
+        user_config.as_path(),
+    ])?;
+    
+    // 3. Verify precedence is applied correctly
+    
+    // Environment variables should have highest priority
+    pretty_assertions::assert_eq!(config.database.url, "postgresql:///sinex_env");
+    pretty_assertions::assert_eq!(config.monitoring.heartbeat_interval_secs, 10);
+    
+    // User config should override default config
+    pretty_assertions::assert_eq!(config.database.max_connections, 20);
+    pretty_assertions::assert_eq!(config.monitoring.emit_metrics, true);
+    
+    // Event sources should be merged (both should exist)
+    pretty_assertions::assert_eq!(config.event_sources.filesystem.len(), 2);
+    
+    let fs_names: HashSet<_> = config.event_sources.filesystem
+        .iter()
+        .map(|fs| fs.name.as_str())
+        .collect();
+    assert!(fs_names.contains("default_watcher"));
+    assert!(fs_names.contains("user_watcher"));
+    
+    // Clean up environment
+    std::env::remove_var("SINEX_DATABASE_URL");
+    std::env::remove_var("SINEX_MONITORING_HEARTBEAT_INTERVAL_SECS");
+    
+    Ok(())
+    */
+}
+
+async fn test_configuration_validation_rules() -> Result<(), Box<dyn std::error::Error>> {
+    // DISABLED: Config structure simplified - this test needs rewrite
+    Ok(())
+    /*
+    // Test various validation rules and constraints
+    
+    // 1. Valid configuration should pass
+    let valid_config = r#"
+[database]
+url = "postgresql:///sinex_test"
 max_connections = 50
-connection_timeout_secs = 60
-"#;
-    
-    // Write configuration files
-    let default_file = temp_dir.path().join("default.toml");
-    let user_file = temp_dir.path().join("user.toml");
-    let env_file = temp_dir.path().join("environment.toml");
-    
-    fs::write(&default_file, default_config).await?;
-    fs::write(&user_file, user_config).await?;
-    fs::write(&env_file, environment_config).await?;
-    
-    // Test 1: Load default configuration
-    let default_loaded: CollectorConfig = toml::from_str(default_config)?;
-    pretty_assertions::assert_eq!(default_loaded.enabled_events.len(), 1);
-    pretty_assertions::assert_eq!(default_loaded.monitoring.health_check_interval_secs, 60);
-    pretty_assertions::assert_eq!(default_loaded.database.max_connections, 10);
-    
-    // Test 2: Load user configuration (should include defaults + user overrides)
-    let user_loaded: CollectorConfig = toml::from_str(user_config)?;
-    pretty_assertions::assert_eq!(user_loaded.enabled_events.len(), 2);
-    pretty_assertions::assert_eq!(user_loaded.monitoring.health_check_interval_secs, 30);
-    assert!(user_loaded.monitoring.metrics_enabled);
-    
-    // Test 3: Simulate configuration merging
-    let merged_config = merge_configurations(vec![
-        default_loaded,
-        user_loaded.clone(),
-    ]);
-    
-    // User config should override defaults
-    pretty_assertions::assert_eq!(merged_config.enabled_events.len(), 2);
-    pretty_assertions::assert_eq!(merged_config.monitoring.health_check_interval_secs, 30);
-    assert!(merged_config.monitoring.metrics_enabled);
-    
-    // Test 4: Load environment configuration (highest precedence)
-    let env_loaded: CollectorConfig = toml::from_str(environment_config)?;
-    let final_config = merge_configurations(vec![
-        merged_config,
-        env_loaded,
-    ]);
-    
-    // Environment should override everything
-    pretty_assertions::assert_eq!(final_config.enabled_events.len(), 3);
-    pretty_assertions::assert_eq!(final_config.monitoring.failure_threshold, 5);
-    pretty_assertions::assert_eq!(final_config.database.max_connections, 50);
-    pretty_assertions::assert_eq!(final_config.database.connection_timeout_secs, 60);
-    
-    // Validate final merged configuration
-    let validation = final_config.validate();
-    assert!(validation.is_ok(), "Merged configuration should be valid: {:?}", validation);
-    
-    println!("✅ Configuration loading from multiple sources successful");
-    Ok(())
-}
 
-fn merge_configurations(configs: Vec<CollectorConfig>) -> CollectorConfig {
-    // Simplified configuration merging logic for testing with current config structure
-    let mut result = CollectorConfig::default();
+[monitoring]
+heartbeat_interval_secs = 60
+emit_metrics = true
+metrics_port = 9090
+
+[[event_sources.filesystem]]
+name = "test_watcher"
+watch_paths = ["/tmp/test"]
+ignore_patterns = ["*.tmp", "*.log"]
+    "#;
     
-    for config in configs {
-        // Merge enabled_events (union)
-        for event in config.enabled_events {
-            if !result.enabled_events.contains(&event) {
-                result.enabled_events.push(event);
-            }
+    let result = CollectorConfig::from_str(valid_config);
+    assert!(result.is_ok(), "Valid config should parse successfully");
+    
+    let config = result.unwrap();
+    let validation = config.validate()?;
+    assert!(validation.is_valid(), "Valid config should pass validation");
+    
+    // 2. Invalid database URL should fail
+    let invalid_db_config = r#"
+[database]
+url = "not-a-valid-url"
+max_connections = 50
+    "#;
+    
+    let result = CollectorConfig::from_str(invalid_db_config);
+    match result {
+        Ok(config) => {
+            let validation = config.validate()?;
+            assert!(!validation.is_valid(), "Invalid DB URL should fail validation");
+            assert!(validation.errors.iter().any(|e| e.contains("database URL")));
         }
-        
-        // Merge annex repo path (later configs override)
-        if config.annex_repo_path.is_some() {
-            result.annex_repo_path = config.annex_repo_path;
-        }
-        
-        // Merge event configurations
-        for (key, value) in config.event {
-            result.event.insert(key, value);
-        }
-        
-        // Merge flat configurations
-        for (key, value) in config.flat_config {
-            result.flat_config.insert(key, value);
+        Err(_) => {
+            // Parse error is also acceptable
         }
     }
     
-    result
-}
+    // 3. Invalid connection pool size
+    let invalid_pool_config = r#"
+[database]
+url = "postgresql:///sinex_test"
+max_connections = 0  # Should be > 0
+    "#;
+    
+    let config = CollectorConfig::from_str(invalid_pool_config)?;
+    let validation = config.validate()?;
+    assert!(!validation.is_valid(), "Zero connections should fail validation");
+    assert!(validation.errors.iter().any(|e| e.contains("max_connections")));
+    
+    // 4. Duplicate event source names
+    let duplicate_names_config = r#"
+[[event_sources.filesystem]]
+name = "duplicate_name"
+watch_paths = ["/tmp/a"]
 
-async fn test_comprehensive_validation_rules() -> Result<(), anyhow::Error> {
-    // Test all validation rules comprehensively
+[[event_sources.filesystem]]
+name = "duplicate_name"  # Duplicate!
+watch_paths = ["/tmp/b"]
+    "#;
     
-    // Test 1: Valid configuration should pass all validations
-    let valid_config = create_comprehensive_valid_config();
-    let validation = valid_config.validate();
-    assert!(validation.is_ok(), "Valid configuration should pass validation");
+    let config = CollectorConfig::from_str(duplicate_names_config)?;
+    let validation = config.validate()?;
+    assert!(!validation.is_valid(), "Duplicate names should fail validation");
+    assert!(validation.errors.iter().any(|e| e.contains("duplicate")));
     
-    let validation_report = valid_config.get_validation_report();
-    assert!(validation_report.valid, "Valid configuration should have valid report");
-    assert!(validation_report.errors.is_empty(), "Valid configuration should have no errors");
+    // 5. Invalid file paths
+    let invalid_paths_config = r#"
+[[event_sources.filesystem]]
+name = "invalid_paths"
+watch_paths = [
+    "/definitely/does/not/exist/12345",
+    "relative/path/not/allowed"
+]
+    "#;
     
-    // Test 2: Invalid event type formats
-    test_invalid_event_types().await?;
-    
-    // Test 3: Invalid configuration values
-    test_invalid_configuration_values().await?;
-    
-    // Test 4: Missing required configurations
-    test_missing_required_configurations().await?;
-    
-    // Test 5: Cross-validation failures
-    test_cross_validation_failures().await?;
+    let config = CollectorConfig::from_str(invalid_paths_config)?;
+    let validation = config.validate()?;
+    assert!(!validation.is_valid(), "Invalid paths should fail validation");
+    assert!(validation.warnings.len() > 0, "Should have warnings for non-existent paths");
     
     Ok(())
+    */
 }
 
-fn create_comprehensive_valid_config() -> CollectorConfig {
-    let mut config = CollectorConfig::default();
-    
-    config.enabled_events = vec![
-        "filesystem.file.created".to_string(),
-        "filesystem.file.modified".to_string(),
-        "filesystem.file.deleted".to_string(),
-        "terminal.command.executed".to_string(),
-        "terminal.session.started".to_string(),
-        "hyprland.window.focus".to_string(),
-        "hyprland.workspace.changed".to_string(),
-        "clipboard.content.changed".to_string(),
-        "shell.command.executed_atuin".to_string(),
-    ];
-    
-    // Set git-annex repository path
-    config.annex_repo_path = Some("/tmp/test-annex".to_string());
-    
-    // Required event configurations using the correct TOML value type
-    use toml::Value;
-    config.event.insert("shell_command_executed_atuin".to_string(), {
-        let mut table = toml::map::Map::new();
-        table.insert("db_path".to_string(), Value::String("/home/user/.local/share/atuin/history.db".to_string()));
-        table.insert("polling_interval_secs".to_string(), Value::Integer(5));
-        Value::Table(table)
-    });
-    
-    config
-}
-
-async fn test_invalid_event_types() -> Result<(), anyhow::Error> {
-    let invalid_event_types = vec![
-        ("no_category", "Event type must have category.subcategory format"),
-        ("1invalid.event", "Event type cannot start with number"),
-        ("invalid..double_dot", "Event type cannot have consecutive dots"),
-        ("invalid.event.", "Event type cannot end with dot"),
-        (".invalid.event", "Event type cannot start with dot"),
-        ("invalid event", "Event type cannot contain spaces"),
-        ("invalid-event.type", "Event type can only contain alphanumeric and dots"),
-    ];
-    
-    for (invalid_type, expected_error) in invalid_event_types {
-        let mut config = CollectorConfig::default();
-        config.enabled_events.push(invalid_type.to_string());
-        
-        let validation = config.validate();
-        assert!(validation.is_err(), "Invalid event type '{}' should fail validation", invalid_type);
-        
-        let error_message = validation.unwrap_err().to_string());
-        // Check that error message contains relevant information
-        assert!(error_message.contains("Event type") || error_message.contains("format"), 
-               "Error message should be descriptive for '{}': {}", invalid_type, error_message);
-    }
-    
-    println!("✅ Invalid event type validation successful");
+async fn test_configuration_merging() -> Result<(), Box<dyn std::error::Error>> {
+    // DISABLED: Config structure simplified - this test needs rewrite
     Ok(())
-}
-
-async fn test_invalid_configuration_values() -> Result<(), anyhow::Error> {
-    // Test invalid monitoring values
-    let mut invalid_monitoring = CollectorConfig::default();
-    invalid_monitoring.monitoring.health_check_interval_secs = 0; // Invalid: must be > 0
+    /*
+    // Test configuration merging with proper precedence and conflict resolution
     
-    let validation = invalid_monitoring.validate();
-    assert!(validation.is_err(), "Zero health check interval should fail validation");
+    let base_config = CollectorConfig {
+        database: DatabaseConfig {
+            url: "postgresql:///base".to_string(),
+            max_connections: 10,
+            connect_timeout_secs: 30,
+        },
+        monitoring: MonitoringConfig {
+            heartbeat_interval_secs: 60,
+            emit_metrics: false,
+            metrics_port: None,
+            health_check_port: Some(8080),
+        },
+        event_sources: EventSourcesConfig {
+            filesystem: vec![
+                FilesystemConfig {
+                    name: "base_watcher".to_string(),
+                    watch_paths: vec!["/tmp/base".to_string()],
+                    ignore_patterns: vec!["*.tmp".to_string()],
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     
-    // Test invalid database values
-    let mut invalid_database = CollectorConfig::default();
-    invalid_database.database.max_connections = 0; // Invalid: must be > 0
+    let override_config = CollectorConfig {
+        database: DatabaseConfig {
+            url: "postgresql:///override".to_string(),  // Should override
+            max_connections: 20,  // Should override
+            connect_timeout_secs: 30,  // Same as base
+        },
+        monitoring: MonitoringConfig {
+            heartbeat_interval_secs: 30,  // Should override
+            emit_metrics: true,  // Should override
+            metrics_port: Some(9090),  // Should add
+            health_check_port: Some(8080),  // Same as base
+        },
+        event_sources: EventSourcesConfig {
+            filesystem: vec![
+                FilesystemConfig {
+                    name: "override_watcher".to_string(),
+                    watch_paths: vec!["/tmp/override".to_string()],
+                    ignore_patterns: vec!["*.log".to_string()],
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     
-    let validation = invalid_database.validate();
-    assert!(validation.is_err(), "Zero max connections should fail validation");
+    // Merge configurations
+    let merged = base_config.merge(override_config)?;
     
-    // Test invalid git-annex values
-    let mut invalid_annex = CollectorConfig::default();
-    invalid_annex.git_annex.enabled = true;
-    invalid_annex.git_annex.repository_path = "relative/path".to_string()); // Invalid: must be absolute
+    // Verify database config (simple override)
+    pretty_assertions::assert_eq!(merged.database.url, "postgresql:///override");
+    pretty_assertions::assert_eq!(merged.database.max_connections, 20);
+    pretty_assertions::assert_eq!(merged.database.connect_timeout_secs, 30);
     
-    let validation = invalid_annex.validate();
-    assert!(validation.is_err(), "Relative path should fail validation");
+    // Verify monitoring config (override with new fields)
+    pretty_assertions::assert_eq!(merged.monitoring.heartbeat_interval_secs, 30);
+    pretty_assertions::assert_eq!(merged.monitoring.emit_metrics, true);
+    pretty_assertions::assert_eq!(merged.monitoring.metrics_port, Some(9090));
+    pretty_assertions::assert_eq!(merged.monitoring.health_check_port, Some(8080));
     
-    println!("✅ Invalid configuration values validation successful");
+    // Verify event sources (should be combined, not replaced)
+    pretty_assertions::assert_eq!(merged.event_sources.filesystem.len(), 2);
+    
+    let fs_names: HashSet<_> = merged.event_sources.filesystem
+        .iter()
+        .map(|fs| fs.name.as_str())
+        .collect();
+    assert!(fs_names.contains("base_watcher"));
+    assert!(fs_names.contains("override_watcher"));
+    
     Ok(())
+    */
 }
 
-async fn test_missing_required_configurations() -> Result<(), anyhow::Error> {
-    // Test missing required event configurations
-    let mut missing_config = CollectorConfig::default();
-    missing_config.enabled_events.push("shell.command.executed_atuin".to_string());
-    // Don't provide required configuration
-    
-    let cross_validation = missing_config.cross_validate();
-    assert!(cross_validation.is_err(), "Missing required config should fail cross-validation");
-    
-    let error_message = cross_validation.unwrap_err().to_string());
-    assert!(error_message.contains("missing") || error_message.contains("required"), 
-           "Error should mention missing requirement: {}", error_message);
-    
-    println!("✅ Missing required configurations validation successful");
+async fn test_configuration_hot_reload() -> Result<(), Box<dyn std::error::Error>> {
+    // DISABLED: Config structure simplified - this test needs rewrite
     Ok(())
-}
-
-async fn test_cross_validation_failures() -> Result<(), anyhow::Error> {
-    // Test various cross-validation scenarios
-    
-    // Test 1: Event enabled but no configuration provided
-    let mut no_config = CollectorConfig::default();
-    no_config.enabled_events.push("shell.command.executed_atuin".to_string());
-    
-    let validation = no_config.cross_validate();
-    assert!(validation.is_err(), "Missing event config should fail cross-validation");
-    
-    // Test 2: Invalid file paths in event configuration
-    let mut invalid_paths = CollectorConfig::default();
-    invalid_paths.enabled_events.push("shell.command.executed_atuin".to_string());
-    invalid_paths.event.insert("shell_command_executed_atuin".to_string(), json!({
-        "db_path": "relative/path/to/db", // Should be absolute
-        "polling_interval_secs": 5
-    });
-    
-    let validation = invalid_paths.cross_validate();
-    assert!(validation.is_err(), "Relative paths should fail cross-validation");
-    
-    // Test 3: Inconsistent configuration values
-    let mut inconsistent = CollectorConfig::default();
-    inconsistent.monitoring.failure_threshold = 10;
-    inconsistent.monitoring.recovery_timeout_secs = 5; // Too short for high threshold
-    
-    // This might pass basic validation but could fail in advanced cross-validation
-    let basic_validation = inconsistent.validate();
-    // For now, we just ensure the system can handle such configurations
-    
-    println!("✅ Cross-validation failures testing successful");
-    Ok(())
-}
-
-async fn test_configuration_merging_precedence() -> Result<(), anyhow::Error> {
-    // Test configuration merging with proper precedence rules
+    /*
+    // Test configuration hot-reload functionality
     
     let temp_dir = TempDir::new()?;
-    
-    // Create base configuration
-    let base_config = r#"
-enabled_events = ["filesystem.file.created"]
-
-[monitoring]
-health_check_interval_secs = 60
-metrics_enabled = false
-failure_threshold = 3
-
-[database]
-max_connections = 10
-connection_timeout_secs = 30
-"#;
-    
-    // Create override configuration
-    let override_config = r#"
-enabled_events = ["filesystem.file.created", "terminal.command.executed"]
-
-[monitoring]
-health_check_interval_secs = 30  # Override
-metrics_enabled = true          # Override
-# failure_threshold not specified - should keep base value
-
-[database]
-max_connections = 50            # Override
-# connection_timeout_secs not specified - should keep base value
-
-[event.shell_command_executed_atuin]
-db_path = "/home/user/.local/share/atuin/history.db"
-polling_interval_secs = 5
-"#;
-    
-    let base: CollectorConfig = toml::from_str(base_config)?;
-    let override_cfg: CollectorConfig = toml::from_str(override_config)?;
-    
-    // Test merging
-    let merged = merge_configurations(vec![base, override_cfg]);
-    
-    // Verify merge results
-    pretty_assertions::assert_eq!(merged.enabled_events.len(), 2, "Should have merged enabled events");
-    assert!(merged.enabled_events.contains(&"filesystem.file.created".to_string()));
-    assert!(merged.enabled_events.contains(&"terminal.command.executed".to_string()));
-    
-    // Override values should be used
-    pretty_assertions::assert_eq!(merged.monitoring.health_check_interval_secs, 30);
-    assert!(merged.monitoring.metrics_enabled);
-    pretty_assertions::assert_eq!(merged.database.max_connections, 50);
-    
-    // Base values should be preserved where not overridden
-    pretty_assertions::assert_eq!(merged.monitoring.failure_threshold, 3);
-    pretty_assertions::assert_eq!(merged.database.connection_timeout_secs, 30);
-    
-    // New configurations should be added
-    assert!(merged.event.contains_key("shell_command_executed_atuin"));
-    
-    // Validate merged configuration
-    let validation = merged.validate();
-    assert!(validation.is_ok(), "Merged configuration should be valid");
-    
-    println!("✅ Configuration merging precedence testing successful");
-    Ok(())
-}
-
-async fn test_configuration_hot_reload() -> Result<(), anyhow::Error> {
-    // Test hot-reloading configuration changes
-    
-    let temp_dir = TempDir::new()?;
-    let config_file = temp_dir.path().join("hot_reload.toml");
+    let config_path = temp_dir.path().join("config.toml");
     
     // Initial configuration
-    let initial_config = r#"
-enabled_events = ["filesystem.file.created"]
-
+    fs::write(&config_path, r#"
 [monitoring]
-health_check_interval_secs = 60
-metrics_enabled = false
-"#;
-    
-    fs::write(&config_file, initial_config).await?;
-    
-    // Load initial configuration
-    let initial_content = fs::read_to_string(&config_file).await?;
-    let initial: CollectorConfig = toml::from_str(&initial_content)?;
-    
-    pretty_assertions::assert_eq!(initial.enabled_events.len(), 1);
-    pretty_assertions::assert_eq!(initial.monitoring.health_check_interval_secs, 60);
-    assert!(!initial.monitoring.metrics_enabled);
-    
-    // Simulate time passing
-    tokio::task::yield_now().await;
-    
-    // Update configuration
-    let updated_config = r#"
-enabled_events = ["filesystem.file.created", "terminal.command.executed"]
+heartbeat_interval_secs = 60
+emit_metrics = false
 
-[monitoring]
-health_check_interval_secs = 30
-metrics_enabled = true
-failure_threshold = 5
-
-[event.shell_command_executed_atuin]
-db_path = "/home/user/.local/share/atuin/history.db"
-polling_interval_secs = 5
-"#;
+[[event_sources.filesystem]]
+name = "initial_watcher"
+watch_paths = ["/tmp/initial"]
+    "#).await?;
     
-    fs::write(&config_file, updated_config).await?;
+    // Load initial config
+    let initial_config = CollectorConfig::load_from_file(&config_path)?;
+    pretty_assertions::assert_eq!(initial_config.monitoring.heartbeat_interval_secs, 60);
+    pretty_assertions::assert_eq!(initial_config.monitoring.emit_metrics, false);
+    pretty_assertions::assert_eq!(initial_config.event_sources.filesystem.len(), 1);
     
-    // Reload configuration
-    let updated_content = fs::read_to_string(&config_file).await?;
-    let updated: CollectorConfig = toml::from_str(&updated_content)?;
-    
-    // Verify changes
-    pretty_assertions::assert_eq!(updated.enabled_events.len(), 2);
-    pretty_assertions::assert_eq!(updated.monitoring.health_check_interval_secs, 30);
-    assert!(updated.monitoring.metrics_enabled);
-    pretty_assertions::assert_eq!(updated.monitoring.failure_threshold, 5);
-    
-    // Validate updated configuration
-    let validation = updated.validate();
-    assert!(validation.is_ok(), "Updated configuration should be valid");
-    
-    // Test hot-reload validation
-    let cross_validation = updated.cross_validate();
-    assert!(cross_validation.is_ok(), "Updated configuration should pass cross-validation");
-    
-    println!("✅ Configuration hot-reload testing successful");
-    Ok(())
-}
-
-async fn test_configuration_error_handling() -> Result<(), anyhow::Error> {
-    // Test various error scenarios and recovery
-    
-    // Test 1: Malformed TOML
-    let malformed_toml = r#"
-enabled_events = ["filesystem.file.created
-[monitoring  # Missing closing bracket
-health_check_interval_secs = 60
-"#;
-    
-    let toml_result = toml::from_str::<CollectorConfig>(malformed_toml);
-    assert!(toml_result.is_err(), "Malformed TOML should fail parsing");
-    
-    // Test 2: Invalid JSON in event configuration
-    let invalid_json_config = r#"
-enabled_events = ["shell.command.executed_atuin"]
-
-[event.shell_command_executed_atuin]
-db_path = "/valid/path"
-invalid_json = '''{"invalid": json content}'''
-"#;
-    
-    // Should parse as TOML but might fail validation
-    let json_config: CollectorConfig = toml::from_str(invalid_json_config)?;
-    // The invalid JSON will be stored as a string in the TOML structure
-    
-    // Test 3: Configuration with circular references (if applicable)
-    // This would be more relevant for complex configuration systems
-    
-    // Test 4: Recovery from configuration errors
-    let broken_config = r#"
-enabled_events = ["invalid_event_type"]
-
-[monitoring]
-health_check_interval_secs = -1  # Invalid negative value
-"#;
-    
-    let broken: CollectorConfig = toml::from_str(broken_config)?;
-    let validation = broken.validate();
-    assert!(validation.is_err(), "Broken configuration should fail validation");
-    
-    // Test fallback to defaults
-    let fallback_config = CollectorConfig::default();
-    let fallback_validation = fallback_config.validate();
-    assert!(fallback_validation.is_ok(), "Default configuration should be valid");
-    
-    // Test 5: Partial configuration recovery
-    let partial_config = r#"
-enabled_events = ["filesystem.file.created"]
-# Incomplete but valid partial configuration
-"#;
-    
-    let partial: CollectorConfig = toml::from_str(partial_config)?;
-    let partial_validation = partial.validate();
-    assert!(partial_validation.is_ok(), "Partial valid configuration should work");
-    
-    println!("✅ Configuration error handling testing successful");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_configuration_performance_and_scale() -> Result<(), anyhow::Error> {
-    // Test configuration system performance with large configurations
-    
-    // Test 1: Large number of enabled events
-    test_large_event_configuration().await?;
-    
-    // Test 2: Complex event configurations
-    test_complex_event_configurations().await?;
-    
-    // Test 3: Configuration validation performance
-    test_configuration_validation_performance().await?;
-    
-    Ok(())
-}
-
-async fn test_large_event_configuration() -> Result<(), anyhow::Error> {
-    // Test with many enabled events
-    
-    let mut large_config = CollectorConfig::default();
-    
-    // Generate 100 different event types
-    for i in 0..100 {
-        large_config.enabled_events.push(format!("source{}.category{}.event{}", 
-                                                 i / 10, (i / 5) % 10, i % 5));
-    }
-    
-    // Add corresponding configurations
-    for i in 0..20 {
-        large_config.event.insert(format!("event_config_{}", i), json!({
-            "setting1": format!("value_{}", i),
-            "setting2": i * 10,
-            "setting3": true
-        });
-    }
-    
-    // Test validation performance
-    let start_time = std::time::Instant::now();
-    let validation = large_config.validate();
-    let validation_time = start_time.elapsed();
-    
-    // Should complete quickly even with large configuration
-    assert!(validation_time < Duration::from_millis(100), 
-           "Large configuration validation should be fast: {:?}", validation_time);
-    
-    // Should be valid (all events follow proper format)
-    assert!(validation.is_ok(), "Large configuration should be valid");
-    
-    println!("✅ Large event configuration testing successful ({} events in {:?})", 
-             large_config.enabled_events.len(), validation_time);
-    Ok(())
-}
-
-async fn test_complex_event_configurations() -> Result<(), anyhow::Error> {
-    // Test with complex nested event configurations
-    
-    let mut complex_config = CollectorConfig::default();
-    complex_config.enabled_events = vec!["complex.event.type".to_string()];
-    
-    // Create deeply nested configuration
-    complex_config.event.insert("complex_event_type".to_string(), json!({
-        "database": {
-            "connection": {
-                "host": "localhost",
-                "port": 5432,
-                "database": "complex_db",
-                "pool_settings": {
-                    "min_connections": 1,
-                    "max_connections": 10,
-                    "timeout_seconds": 30
-                }
-            },
-            "queries": {
-                "select_events": "SELECT * FROM events WHERE timestamp > $1",
-                "insert_event": "INSERT INTO events (data) VALUES ($1)",
-                "batch_size": 100
-            }
-        },
-        "processing": {
-            "filters": [
-                {"type": "regex", "pattern": "^important.*"},
-                {"type": "size", "min_bytes": 1024},
-                {"type": "timestamp", "max_age_hours": 24}
-            ],
-            "transformations": [
-                {"type": "normalize", "fields": ["timestamp", "source"]},
-                {"type": "enrich", "lookup_table": "metadata"}
-            ]
-        },
-        "output": {
-            "destinations": [
-                {"type": "database", "table": "processed_events"},
-                {"type": "file", "path": "/tmp/events.log"},
-                {"type": "webhook", "url": "https://api.example.com/events"}
-            ]
-        }
+    // Set up config watcher
+    let (config_tx, mut config_rx) = tokio::sync::mpsc::channel(10);
+    let config_watcher = ConfigWatcher::new(config_path.clone(), config_tx)?;
+    let watcher_handle = tokio::spawn(async move {
+        config_watcher.watch().await
     });
     
-    // Test validation with complex configuration
-    let validation = complex_config.validate();
-    assert!(validation.is_ok(), "Complex configuration should be valid");
+    // Update configuration file
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fs::write(&config_path, r#"
+[monitoring]
+heartbeat_interval_secs = 30  # Changed
+emit_metrics = true  # Changed
+
+[[event_sources.filesystem]]
+name = "initial_watcher"
+watch_paths = ["/tmp/initial", "/tmp/additional"]  # Added path
+
+[[event_sources.filesystem]]
+name = "new_watcher"  # New watcher
+watch_paths = ["/tmp/new"]
+    "#).await?;
     
-    // Test cross-validation
-    let cross_validation = complex_config.cross_validate();
-    // May pass or fail depending on specific validation rules
+    // Wait for reload notification
+    let reload_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        config_rx.recv()
+    ).await?;
     
-    println!("✅ Complex event configuration testing successful");
+    assert!(reload_result.is_some(), "Should receive reload notification");
+    
+    let reloaded_config = reload_result.unwrap()?;
+    
+    // Verify changes were loaded
+    pretty_assertions::assert_eq!(reloaded_config.monitoring.heartbeat_interval_secs, 30);
+    pretty_assertions::assert_eq!(reloaded_config.monitoring.emit_metrics, true);
+    pretty_assertions::assert_eq!(reloaded_config.event_sources.filesystem.len(), 2);
+    
+    let initial_watcher = reloaded_config.event_sources.filesystem
+        .iter()
+        .find(|fs| fs.name == "initial_watcher")
+        .expect("initial_watcher should exist");
+    pretty_assertions::assert_eq!(initial_watcher.watch_paths.len(), 2);
+    
+    // Clean up
+    watcher_handle.abort();
+    
     Ok(())
+    */
 }
 
-async fn test_configuration_validation_performance() -> Result<(), anyhow::Error> {
-    // Test validation performance with various configuration sizes
+async fn test_configuration_error_handling() -> Result<(), Box<dyn std::error::Error>> {
+    // DISABLED: Config structure simplified - this test needs rewrite
+    Ok(())
+    /*
+    // Test error handling and recovery scenarios
     
-    let test_cases = vec![
-        (10, "Small"),
-        (100, "Medium"), 
-        (500, "Large"),
-        (1000, "Very Large"),
-    ];
+    // 1. Malformed TOML
+    let malformed_toml = r#"
+[database
+url = "postgresql:///test"  # Missing closing bracket
+    "#;
     
-    for (event_count, size_name) in test_cases {
-        let mut config = CollectorConfig::default();
-        
-        // Generate events
-        for i in 0..event_count {
-            config.enabled_events.push(format!("perf.test.event{}", i));
+    let result = CollectorConfig::from_str(malformed_toml);
+    assert!(result.is_err(), "Malformed TOML should fail to parse");
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("TOML"), "Error should mention TOML");
+    
+    // 2. Missing required fields
+    let missing_fields = r#"
+[monitoring]
+# Missing required heartbeat_interval_secs
+emit_metrics = true
+    "#;
+    
+    let result = CollectorConfig::from_str(missing_fields);
+    match result {
+        Ok(config) => {
+            // If parsing succeeds with defaults, validation should catch it
+            let validation = config.validate()?;
+            if !validation.is_valid() {
+                assert!(validation.errors.iter().any(|e| e.contains("heartbeat")));
+            }
         }
-        
-        // Add some configurations
-        for i in 0..(event_count / 10) {
-            config.event.insert(format!("config_{}", i), json!({
-                "value": i,
-                "name": format!("config_{}", i)
-            });
+        Err(e) => {
+            // Parse error mentioning missing field is also acceptable
+            assert!(e.to_string().contains("heartbeat") || e.to_string().contains("missing"));
         }
-        
-        // Measure validation time
-        let start_time = std::time::Instant::now();
-        let validation = config.validate();
-        let validation_time = start_time.elapsed();
-        
-        // Measure cross-validation time
-        let cross_start = std::time::Instant::now();
-        let cross_validation = config.cross_validate();
-        let cross_validation_time = cross_start.elapsed();
-        
-        assert!(validation.is_ok(), "{} configuration should be valid", size_name);
-        
-        println!("✅ {} config ({} events): validation {:?}, cross-validation {:?}", 
-                 size_name, event_count, validation_time, cross_validation_time);
-        
-        // Performance assertions
-        assert!(validation_time < Duration::from_millis(50), 
-               "{} validation should be fast", size_name);
-        assert!(cross_validation_time < Duration::from_millis(100), 
-               "{} cross-validation should be fast", size_name);
     }
+    
+    // 3. Type mismatches
+    let type_mismatch = r#"
+[database]
+url = "postgresql:///test"
+max_connections = "not a number"  # Should be integer
+    "#;
+    
+    let result = CollectorConfig::from_str(type_mismatch);
+    assert!(result.is_err(), "Type mismatch should fail to parse");
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("max_connections") || err.to_string().contains("integer"));
+    
+    // 4. Configuration with warnings (should succeed but with warnings)
+    let config_with_warnings = r#"
+[database]
+url = "postgresql:///test"
+max_connections = 1000  # Very high, should warn
+
+[monitoring]
+heartbeat_interval_secs = 1  # Very frequent, should warn
+emit_metrics = true
+
+[[event_sources.filesystem]]
+name = "large_watcher"
+watch_paths = ["/"]  # Watching root, should warn
+    "#;
+    
+    let config = CollectorConfig::from_str(config_with_warnings)?;
+    let validation = config.validate()?;
+    
+    // Should be valid but with warnings
+    assert!(validation.is_valid(), "Config should be valid despite warnings");
+    assert!(!validation.warnings.is_empty(), "Should have warnings");
+    
+    // Check specific warnings
+    assert!(validation.warnings.iter().any(|w| w.contains("max_connections") || w.contains("high")));
+    assert!(validation.warnings.iter().any(|w| w.contains("heartbeat") || w.contains("frequent")));
+    assert!(validation.warnings.iter().any(|w| w.contains("root") || w.contains("/")));
+    
+    // 5. Recovery with defaults
+    let partial_config = r#"
+[database]
+url = "postgresql:///test"
+# Other fields should get defaults
+    "#;
+    
+    let config = CollectorConfig::from_str(partial_config)?;
+    
+    // Should have sensible defaults
+    assert!(config.database.max_connections > 0);
+    assert!(config.monitoring.heartbeat_interval_secs > 0);
     
     Ok(())
     */

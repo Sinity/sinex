@@ -8,9 +8,10 @@ use crate::common::prelude::*;
 use chrono::{Utc, Duration as ChronoDuration};
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::sync::{mpsc, Mutex};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_database_disconnection_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_database_disconnection_recovery() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Test 1: System should handle temporary database unavailability
@@ -162,8 +163,8 @@ async fn test_connection_pool_recovery(pool: &sqlx::PgPool) -> Result<bool> {
     Ok(properly_limited)
 }
 
-#[tokio::test]
-async fn test_event_source_crash_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_event_source_crash_recovery() -> Result<(), Box<dyn std::error::Error>> {
     // Test recovery from event source crashes and restarts
     
     let crash_recovery = test_source_crash_and_restart().await?;
@@ -336,8 +337,8 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_worker_failure_and_retry() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_worker_failure_and_retry() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
     
     // Test worker failure scenarios and retry logic
@@ -517,8 +518,8 @@ async fn test_concurrent_worker_failures(pool: &sqlx::PgPool) -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_resource_exhaustion_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_resource_exhaustion_recovery() -> Result<(), Box<dyn std::error::Error>> {
     // Test recovery from various resource exhaustion scenarios
     
     let memory_recovery = test_memory_pressure_recovery().await?;

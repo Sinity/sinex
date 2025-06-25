@@ -3,9 +3,10 @@ use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_event_payload_approaching_1gb_limit() {
+#[sinex_test]
+async fn test_event_payload_approaching_1gb_limit() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing JSONB 1GB limit:");
@@ -61,8 +62,8 @@ async fn test_event_payload_approaching_1gb_limit() {
     }
 }
 
-#[tokio::test]
-async fn test_connection_pool_exhaustion() {
+#[sinex_test]
+async fn test_connection_pool_exhaustion() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing connection pool exhaustion:");
@@ -148,8 +149,8 @@ async fn test_connection_pool_exhaustion() {
     }
 }
 
-#[tokio::test]
-async fn test_concurrent_btree_index_splits() {
+#[sinex_test]
+async fn test_concurrent_btree_index_splits() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing concurrent B-tree index splits:");
@@ -252,8 +253,8 @@ async fn test_concurrent_btree_index_splits() {
     }
 }
 
-#[tokio::test]
-async fn test_events_spanning_chunk_boundary() {
+#[sinex_test]
+async fn test_events_spanning_chunk_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing TimescaleDB chunk boundary operations:");
@@ -315,8 +316,8 @@ async fn test_events_spanning_chunk_boundary() {
     }
 }
 
-#[tokio::test]
-async fn test_query_during_chunk_compression() {
+#[sinex_test]
+async fn test_query_during_chunk_compression() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing queries during chunk compression:");

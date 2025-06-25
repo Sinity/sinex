@@ -8,6 +8,7 @@ use crate::common::prelude::*;
 use sinex_collector::config::CollectorConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use sinex_test_macros::sinex_test;
 
 /// Test helper to create a comprehensive collector configuration
 fn create_comprehensive_config() -> CollectorConfig {
@@ -31,8 +32,8 @@ fn create_comprehensive_config() -> CollectorConfig {
     config
 }
 
-#[tokio::test]
-async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_system_startup_with_all_configurations() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     
     // Clean database state
@@ -350,8 +351,8 @@ async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<boo
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_configuration_validation_end_to_end() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_validation_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
     // Test comprehensive configuration validation
     
     // Test 1: Valid configuration should pass all checks
@@ -382,8 +383,8 @@ async fn test_configuration_validation_end_to_end() -> Result<(), anyhow::Error>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_graceful_degradation_on_component_failure() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_graceful_degradation_on_component_failure() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
@@ -467,8 +468,8 @@ async fn test_annex_fallback_scenario() -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_system_health_monitoring_integration() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_system_health_monitoring_integration() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     
@@ -549,8 +550,8 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_comprehensive_error_handling_integration() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_comprehensive_error_handling_integration() -> Result<(), Box<dyn std::error::Error>> {
     let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
     crate::common::cleanup::truncate_all_tables(&pool).await?;
     

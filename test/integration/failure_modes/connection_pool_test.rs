@@ -3,10 +3,11 @@ use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, RwLock};
 use crate::common::timing_optimization::EventCounter;
+use sinex_test_macros::sinex_test;
 
 /// Test connection pool exhaustion scenarios
-#[tokio::test]
-async fn test_connection_pool_exhaustion() {
+#[sinex_test]
+async fn test_connection_pool_exhaustion() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate a connection pool with limited resources
     const MAX_CONNECTIONS: usize = 10;
     
@@ -166,8 +167,8 @@ async fn test_connection_pool_exhaustion() {
 }
 
 /// Test connection leak detection
-#[tokio::test]
-async fn test_connection_leak_detection() {
+#[sinex_test]
+async fn test_connection_leak_detection() -> Result<(), Box<dyn std::error::Error>> {
     const POOL_SIZE: usize = 5;
     
     #[derive(Debug)]
@@ -318,8 +319,8 @@ async fn test_connection_leak_detection() {
 }
 
 /// Test deadlock prevention in connection pool
-#[tokio::test]
-async fn test_connection_deadlock_prevention() {
+#[sinex_test]
+async fn test_connection_deadlock_prevention() -> Result<(), Box<dyn std::error::Error>> {
     const POOL_SIZE: usize = 2; // Small pool to trigger contention
     
     let pool = Arc::new(Semaphore::new(POOL_SIZE));

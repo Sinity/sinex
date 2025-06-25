@@ -8,11 +8,12 @@ use sinex_db::{models::*, queries};
 // Event payload creation is done inline with JSON
 use tokio::sync::{mpsc, Mutex};
 use tracing::info;
+use sinex_test_macros::sinex_test;
 
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
-#[tokio::test]
-async fn test_complete_event_pipeline() {
+#[sinex_test]
+async fn test_complete_event_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment
     common::env::init_test_logging();
     let pool = common::create_test_db_pool().await.expect("Failed to create test pool");

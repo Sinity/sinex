@@ -2,9 +2,10 @@ use crate::common::prelude::*;
 use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
+use sinex_test_macros::sinex_test;
 
-#[tokio::test]
-async fn test_shutdown_signal_during_initialization() {
+#[sinex_test]
+async fn test_shutdown_signal_during_initialization() -> Result<(), Box<dyn std::error::Error>> {
     // Simulate shutdown signal arriving during database migration/startup
     
     let pool = create_test_db_pool().await.unwrap();
@@ -89,8 +90,8 @@ async fn test_shutdown_signal_during_initialization() {
     }
 }
 
-#[tokio::test]
-async fn test_multiple_concurrent_shutdown_signals() {
+#[sinex_test]
+async fn test_multiple_concurrent_shutdown_signals() -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when multiple shutdown signals arrive simultaneously
     
     let shutdown_count = Arc::new(AtomicU64::new(0));
@@ -195,8 +196,8 @@ async fn test_multiple_concurrent_shutdown_signals() {
     }
 }
 
-#[tokio::test]
-async fn test_event_router_state_corruption() {
+#[sinex_test]
+async fn test_event_router_state_corruption() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create events that test state transitions
@@ -281,8 +282,8 @@ async fn test_event_router_state_corruption() {
     }
 }
 
-#[tokio::test]
-async fn test_worker_state_machine_corruption() {
+#[sinex_test]
+async fn test_worker_state_machine_corruption() -> Result<(), Box<dyn std::error::Error>> {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create a job that will be processed by workers

@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use crate::common::{events, assertions};
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sinex_test_macros::sinex_test;
 
 
 #[sinex_test]

@@ -2,14 +2,15 @@ use sinex_db::models::QueueStatus;
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::common::timing_optimization::TestSynchronizer;
+use sinex_test_macros::sinex_test;
 
 /// Test orphaned worker detection and cleanup
 ///
 /// This test verifies that the system can detect when a worker stops sending heartbeats
 /// while still holding work items. In real systems, this happens due to crashes, hangs,
 /// or network issues. The test uses controlled timing to ensure deterministic behavior.
-#[tokio::test]
-async fn test_orphaned_worker_detection() {
+#[sinex_test]
+async fn test_orphaned_worker_detection() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::sync::watch;
     
     // Simulate workers that might become orphaned
@@ -218,8 +219,8 @@ async fn test_orphaned_worker_detection() {
 }
 
 /// Test work item recovery from orphaned workers
-#[tokio::test]
-async fn test_orphaned_work_recovery() {
+#[sinex_test]
+async fn test_orphaned_work_recovery() -> Result<(), Box<dyn std::error::Error>> {
     // Track work items and their processing state
     
     #[derive(Debug, Clone)]
@@ -359,8 +360,8 @@ async fn test_orphaned_work_recovery() {
 }
 
 /// Test preventing zombie workers
-#[tokio::test]
-async fn test_zombie_worker_prevention() {
+#[sinex_test]
+async fn test_zombie_worker_prevention() -> Result<(), Box<dyn std::error::Error>> {
     // Test mechanisms to prevent workers from continuing after they should stop
     
     let shutdown_signal = Arc::new(AtomicBool::new(false));

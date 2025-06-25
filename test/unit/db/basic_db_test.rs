@@ -1,4 +1,5 @@
 use crate::common::prelude::*;
+use sinex_test_macros::sinex_test;
 
 #[sinex_test]
 async fn test_basic_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
