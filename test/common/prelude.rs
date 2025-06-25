@@ -40,9 +40,7 @@ pub use async_trait::async_trait;
 // ===== Test Infrastructure =====
 // Common modules
 pub use crate::common::{
-    events,
     database_helpers,
-    event_sources,
 };
 // Test context - THE way to write tests
 // Event builders - THE way to create events
@@ -62,8 +60,7 @@ pub use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout,
 };
 // ===== Common Functions =====
-// Event operations
-pub use crate::common::insert_event;
+// Event operations are available through sinex_db::queries
 // Query shortcuts
 pub use sinex_db::queries::{
     add_to_work_queue,

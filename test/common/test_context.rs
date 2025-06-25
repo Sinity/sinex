@@ -9,8 +9,8 @@
 use crate::common::prelude::*;
 use crate::common::database::TestPool;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
-use crate::common::timing_optimization::wait_helpers::{
-    wait_for_event_count, wait_for_filtered_event_count, 
+use sinex_test_macros::sinex_test;
+use crate::common::timing_optimization::wait_helpers::{wait_for_event_count, wait_for_filtered_event_count, 
     wait_for_work_queue_count, wait_for_condition_or_timeout
 };
 use sqlx::{PgPool, Transaction, Postgres};

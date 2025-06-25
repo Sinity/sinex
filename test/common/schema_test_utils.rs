@@ -4,12 +4,12 @@ use crate::common::prelude::*;
 use serde_json::{json, Value};
 
 /// Register test schema with event source and type
-pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
+pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid, Box<dyn std::error::Error>> {
     database::insert_test_schema(&pool, event_source, event_type, "1.0", schema).await
 }
 
 /// Assert schema validates event successfully
-pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), Box<dyn std::error::Error>> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -24,7 +24,7 @@ pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::
 }
 
 /// Assert schema invalidates event
-pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), Box<dyn std::error::Error>> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -259,7 +259,7 @@ pub mod database {
         event_type: &str,
         schema_version: &str,
         schema: Value
-    ) -> Result<Ulid> {
+    ) -> Result<Ulid, Box<dyn std::error::Error>> {
         let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas 
@@ -318,7 +318,7 @@ pub mod database {
     }
 
     /// Delete a schema from the database
-    pub async fn delete_schema(pool: &PgPool, schema_id: Ulid) -> Result<bool> {
+    pub async fn delete_schema(pool: &PgPool, schema_id: Ulid) -> Result<bool, Box<dyn std::error::Error>> {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.event_payload_schemas 
@@ -367,7 +367,7 @@ pub mod database {
     }
 
     /// Cleanup test schemas from database
-    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), anyhow::Error> {
+    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), Box<dyn std::error::Error>> {
         for &schema_id in schema_ids {
             delete_schema(&pool, schema_id).await?;
         }
@@ -381,7 +381,7 @@ pub mod validation {
     use jsonschema::JSONSchema;
 
     /// Test a payload against a schema
-    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> Result<bool> {
+    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> Result<bool, Box<dyn std::error::Error>> {
         let compiled_schema = JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;
 
@@ -406,14 +406,14 @@ pub mod validation {
     }
 
     /// Test schema compilation
-    pub fn test_schema_compilation(schema: &Value) -> Result<(), anyhow::Error> {
+    pub fn test_schema_compilation(schema: &Value) -> Result<(), Box<dyn std::error::Error>> {
         JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Schema compilation failed: {}", e))?;
         Ok(())
     }
 
     /// Run comprehensive validation tests
-    pub fn run_schema_validation_tests() -> Result<(), anyhow::Error> {
+    pub fn run_schema_validation_tests() -> Result<(), Box<dyn std::error::Error>> {
         // Test filesystem schema
         let fs_schema = schemas::filesystem_event_schema();
         test_schema_compilation(&fs_schema)?;
@@ -502,7 +502,7 @@ pub mod performance {
         payload: &Value,
         concurrent_tasks: usize,
         operations_per_task: usize
-    ) -> Result<Duration> {
+    ) -> Result<Duration, Box<dyn std::error::Error>> {
         use tokio::task;
 
         let compiled_schema = jsonschema::JSONSchema::compile(schema)

@@ -72,7 +72,7 @@ pub mod assertions {
     use super::*;
 
     /// Assert that validation passes
-    pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<(), Box<dyn std::error::Error>> {
         match validator.validate(event) {
             Ok(()) => Ok(()),
             Err(e) => anyhow::bail!("Expected validation to pass, but got error: {}", e),
@@ -80,7 +80,7 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with specific error type
-    pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<()> 
+    pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<(), Box<dyn std::error::Error>> 
     where
         F: Fn(&ValidationError) -> bool,
     {
@@ -97,14 +97,14 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with unknown event type error
-    pub fn assert_validation_fails_unknown_type(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_fails_unknown_type(validator: &EventValidator, event: &RawEvent) -> Result<(), Box<dyn std::error::Error>> {
         assert_validation_fails_with(validator, event, |e| {
             matches!(e, ValidationError::UnknownEventType { .. })
         })
     }
 
     /// Assert that validation fails with missing field error
-    pub fn assert_validation_fails_missing_field(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_fails_missing_field(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), Box<dyn std::error::Error>> {
         assert_validation_fails_with(validator, event, |e| {
             match e {
                 ValidationError::MissingField { field } => field == expected_field,
@@ -114,7 +114,7 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with invalid type error
-    pub fn assert_validation_fails_invalid_type(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_fails_invalid_type(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), Box<dyn std::error::Error>> {
         assert_validation_fails_with(validator, event, |e| {
             match e {
                 ValidationError::InvalidType { field, .. } => field == expected_field,
@@ -237,7 +237,7 @@ pub mod integration {
     use super::*;
 
     /// Test validation with database schemas
-    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
         let validator = create_test_validator_from_db(pool).await?;
         
         // Test various events
@@ -265,7 +265,7 @@ pub mod integration {
     }
 
     /// Test validation performance in realistic scenarios
-    pub async fn performance_integration_test(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn performance_integration_test(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
         let validator = create_test_validator_from_db(pool).await?;
         let events = generators::validation_test_events()
             .into_iter()
