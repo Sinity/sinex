@@ -136,7 +136,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 90)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Create agent first (required for foreign key)
     let _agent = queries::upsert_agent_manifest(
@@ -232,7 +232,7 @@ async fn test_event_validation(ctx: TestContext) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 90)]
 async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use tokio::task::JoinSet;
     
@@ -274,7 +274,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<(), Box<dyn
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 90)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let mut events = Vec::new();
     

@@ -12,6 +12,9 @@ pub mod database_helpers;
 // NEW: Unified database access
 pub mod database;
 
+// Test database isolation
+pub mod test_database;
+
 // Unified test context for all tests
 pub mod test_context;
 

@@ -49,9 +49,11 @@ pub use crate::common::{
 // Database helpers
 // NEW: Unified database access
 pub use crate::common::database::{TestPool, CleanupStrategy, TestPoolExt};
-// Test macros - THE way to define tests
-pub use sinex_test_macros::{sinex_test};
-// Legacy test macros (being phased out)
+// Test macro - THE way to define tests
+pub use sinex_test_macros::sinex_test;
+// Test context - THE way to write tests (only import when needed)
+#[allow(unused_imports)]
+pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
 pub use crate::common::timing_optimization::wait_helpers::{
     wait_for_filtered_event_count,
