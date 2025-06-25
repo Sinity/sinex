@@ -5,9 +5,9 @@ use crate::common::prelude::*;
 use sinex_db::{refresh_routing_cache, run_batch_router};
 use crate::common::{create_agent_with_subscriptions, test_event_with_payload, insert_event};
 
-#[tokio::test]
-async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_routing_cache_view_exists(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
         r#"
@@ -17,16 +17,16 @@ async fn test_routing_cache_view_exists() -> Result<(), anyhow::Error> {
         AND matviewname = 'routing_cache'
         "#
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     pretty_assertions::assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_routing_cache_structure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that routing_cache has the correct columns (event_type, agent_id)
     // For materialized views, we need to query pg_attribute directly
     let columns = sqlx::query!(
@@ -43,7 +43,7 @@ async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
         ORDER BY a.attnum
         "#
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
     
     pretty_assertions::assert_eq!(columns.len(), 2, "routing_cache should have exactly 2 columns");
@@ -59,9 +59,9 @@ async fn test_routing_cache_structure() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_routing_cache_auto_refresh_on_agent_change(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that routing_cache is automatically refreshed when agent_manifests change
     
     // Create an agent with specific event subscriptions
@@ -71,17 +71,17 @@ async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow:
         "terminal": ["command_executed"]
     });
     
-    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    create_agent_with_subscriptions(pool, agent_name, &subscriptions).await?;
     
     // Manually refresh the view (this function should exist after implementation)
-    refresh_routing_cache(&pool).await?;
+    refresh_routing_cache(pool).await?;
     
     // Check that routing cache contains the expected entries
     let cache_entries = sqlx::query!(
         "SELECT event_type, agent_id FROM sinex_schemas.routing_cache WHERE agent_id = $1 ORDER BY event_type",
         agent_name
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
     
     pretty_assertions::assert_eq!(cache_entries.len(), 3, "Should have 3 routing cache entries");
@@ -99,9 +99,9 @@ async fn test_routing_cache_auto_refresh_on_agent_change() -> Result<(), anyhow:
     Ok(())
 }
 
-#[tokio::test]
-async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_batch_router_creates_work_queue_entries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that the batch router function creates work queue entries based on routing cache
     
     // Create an agent
@@ -109,17 +109,17 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
     let subscriptions = json!({
         "test_source": ["test_event"]
     });
-    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    create_agent_with_subscriptions(pool, agent_name, &subscriptions).await?;
     
     // Create some test events
-    let event1_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 1"}))).await?;
-    let event2_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 2"}))).await?;
+    let event1_id = insert_event(pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 1"}))).await?;
+    let event2_id = insert_event(pool, &test_event_with_payload("test_source", "test_event", json!({"data": "test data 2"}))).await?;
     
     // Refresh routing cache
-    refresh_routing_cache(&pool).await?;
+    refresh_routing_cache(pool).await?;
     
     // Run batch router (this function should exist after implementation)
-    let routed_count = run_batch_router(&pool).await?;
+    let routed_count = run_batch_router(pool).await?;
     
     // Should have routed 2 events
     pretty_assertions::assert_eq!(routed_count, 2, "Should route 2 events to the agent");
@@ -129,7 +129,7 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
         "SELECT raw_event_id::uuid as raw_event_id FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
     
     pretty_assertions::assert_eq!(work_items.len(), 2, "Should have 2 work queue items");
@@ -144,26 +144,26 @@ async fn test_batch_router_creates_work_queue_entries() -> Result<(), anyhow::Er
     Ok(())
 }
 
-#[tokio::test]
-async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_batch_router_avoids_duplicate_routing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that batch router doesn't create duplicate work queue entries
     
     let agent_name = "dedup-test-agent";
     let subscriptions = json!({
         "test_source": ["test_event"]
     });
-    create_agent_with_subscriptions(&pool, agent_name, &subscriptions).await?;
+    create_agent_with_subscriptions(pool, agent_name, &subscriptions).await?;
     
     // Create a test event
-    let event_id = insert_event(&pool, &test_event_with_payload("test_source", "test_event", json!({"data": "dedup test"}))).await?;
+    let event_id = insert_event(pool, &test_event_with_payload("test_source", "test_event", json!({"data": "dedup test"}))).await?;
     
     // Refresh routing cache
-    refresh_routing_cache(&pool).await?;
+    refresh_routing_cache(pool).await?;
     
     // Run batch router twice
-    let first_run = run_batch_router(&pool).await?;
-    let second_run = run_batch_router(&pool).await?;
+    let first_run = run_batch_router(pool).await?;
+    let second_run = run_batch_router(pool).await?;
     
     // First run should route 1 event, second run should route 0 (no duplicates)
     pretty_assertions::assert_eq!(first_run, 1, "First run should route 1 event");
@@ -175,7 +175,7 @@ async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Erro
         agent_name,
         event_id.to_uuid()
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     pretty_assertions::assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
@@ -183,9 +183,9 @@ async fn test_batch_router_avoids_duplicate_routing() -> Result<(), anyhow::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_routing_cache_performance_over_triggers(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     // Test that routing cache approach performs better than per-row triggers
     // This is a conceptual test - in practice we'd measure timing
     
@@ -195,17 +195,17 @@ async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Er
         let subscriptions = json!({
             "test_source": [format!("event_type_{}", i % 3)]
         });
-        create_agent_with_subscriptions(&pool, &agent_name, &subscriptions).await?;
+        create_agent_with_subscriptions(pool, &agent_name, &subscriptions).await?;
     }
     
     // Refresh routing cache once
-    refresh_routing_cache(&pool).await?;
+    refresh_routing_cache(pool).await?;
     
     // Create many events
     let mut event_ids = Vec::new();
     for i in 0..100 {
         let event_id = insert_test_event(
-            &pool, 
+            pool, 
             "test_source", 
             &format!("event_type_{}", i % 3),
             &format!("perf test {}", i)
@@ -215,7 +215,7 @@ async fn test_routing_cache_performance_over_triggers() -> Result<(), anyhow::Er
     
     // Run batch router (should be fast since routing cache is pre-computed)
     let start = std::time::Instant::now();
-    let routed_count = run_batch_router(&pool).await?;
+    let routed_count = run_batch_router(pool).await?;
     let duration = start.elapsed();
     
     // Should route all events to appropriate agents
@@ -241,7 +241,7 @@ async fn insert_test_event(
         "event_type": event_type
     });
     
-    let event = insert_raw_event(&pool,
+    let event = insert_raw_event(pool,
         source,
         event_type,
         "test_host",
@@ -253,4 +253,3 @@ async fn insert_test_event(
     
     Ok(event.id)
 }
-
