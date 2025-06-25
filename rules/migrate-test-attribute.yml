@@ -1,5 +1,0 @@
-id: migrate-test-attribute
-language: rust
-rule:
-  pattern: '#[tokio::test]'
-fix: '#[sinex_test]'
