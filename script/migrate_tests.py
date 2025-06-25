@@ -56,7 +56,12 @@ class TestMigrator:
                         if '->' in next_line:
                             # Has return type, replace entire signature
                             new_signature = f'async fn {test_name}(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>'
-                            lines[i + 1] = re.sub(r'async\s+fn\s+\w+\s*\(\s*\)\s*->.*?(?=\{)', new_signature + ' ', next_line)
+                            # Handle various return types including anyhow::Error, sqlx::Result, etc.
+                            lines[i + 1] = re.sub(
+                                r'async\s+fn\s+\w+\s*\(\s*\)\s*->\s*(?:Result<\(\)(?:,\s*[^>]+)?>\s*|anyhow::Result<\(\)>\s*|sqlx::Result<\(\)>\s*)',
+                                new_signature + ' ',
+                                next_line
+                            )
                         else:
                             # No return type, need to handle the brace
                             if '{' in next_line:

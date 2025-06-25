@@ -232,7 +232,11 @@ class TestAnalyzer:
                 print("-" * 60)
                 
                 for file, fix in severity_fixes[:10]:  # Show first 10
-                    rel_path = Path(file).relative_to(Path.cwd())
+                    try:
+                        rel_path = Path(file).relative_to(Path.cwd())
+                    except ValueError:
+                        # If not relative to cwd, just use the filename
+                        rel_path = Path(file)
                     print(f"\n{rel_path}:{fix.line_number}")
                     print(f"  Issue: {fix.issue}")
                     print(f"  Fix: {fix.fix}")
