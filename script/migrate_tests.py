@@ -41,41 +41,72 @@ class TestMigrator:
         lines = content.split('\n')
         
         # Track line numbers for better dry-run output
-        for i in range(len(lines)):
+        i = 0
+        while i < len(lines):
             line = lines[i]
             
             # Check for #[tokio::test]
             if line.strip() == '#[tokio::test]':
-                # Look ahead for the async fn
-                if i + 1 < len(lines):
-                    next_line = lines[i + 1]
-                    fn_match = re.match(r'\s*async\s+fn\s+(\w+)\s*\(\s*\)', next_line)
+                # Look ahead for the async fn (might be several lines ahead)
+                fn_line_idx = -1
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    if 'async fn' in lines[j]:
+                        fn_line_idx = j
+                        break
+                
+                if fn_line_idx != -1:
+                    fn_line = lines[fn_line_idx]
+                    # More flexible regex to handle various formatting
+                    fn_match = re.match(r'(\s*)async\s+fn\s+(\w+)\s*\(\s*\)(.*)$', fn_line)
                     if fn_match:
                         count += 1
-                        test_name = fn_match.group(1)
+                        indent = fn_match.group(1)
+                        test_name = fn_match.group(2)
+                        rest_of_line = fn_match.group(3)
                         
-                        # Check if there's a return type
-                        if '->' in next_line:
-                            # Has return type, replace entire signature more carefully
-                            new_signature = f'async fn {test_name}(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>'
-                            
-                            # Use a more precise replacement - find the function signature and replace it
-                            fn_pattern = rf'async\s+fn\s+{re.escape(test_name)}\s*\(\s*\)\s*->\s*[^{{]+' 
-                            lines[i + 1] = re.sub(fn_pattern, new_signature, next_line)
-                        else:
-                            # No return type, need to handle the brace
-                            if '{' in next_line:
-                                # Brace on same line
-                                lines[i + 1] = next_line.replace(
-                                    f'async fn {test_name}()',
-                                    f'async fn {test_name}(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>'
-                                )
+                        # Build the new signature
+                        new_signature = f'{indent}async fn {test_name}(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>'
+                        
+                        # Handle the return type and opening brace
+                        if '->' in rest_of_line:
+                            # Has return type, find where it ends
+                            if '{' in rest_of_line:
+                                # Return type and brace on same line
+                                brace_idx = rest_of_line.index('{')
+                                new_signature += ' ' + rest_of_line[brace_idx:]
                             else:
-                                # Brace might be on next line
-                                lines[i + 1] = next_line.replace(
-                                    f'async fn {test_name}()',
-                                    f'async fn {test_name}(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>'
-                                )
+                                # Return type but no brace - might continue on next lines
+                                # Check if the function continues on next lines
+                                j = fn_line_idx + 1
+                                while j < len(lines) and '{' not in lines[j]:
+                                    # Skip lines that are part of the return type
+                                    if lines[j].strip():
+                                        # This line is part of the signature, skip it
+                                        lines[j] = ''  # Clear it as we're replacing the whole signature
+                                    j += 1
+                                
+                                if j < len(lines) and '{' in lines[j]:
+                                    # Found the brace, extract it
+                                    brace_line = lines[j]
+                                    brace_idx = brace_line.index('{')
+                                    new_signature += ' ' + brace_line[brace_idx:]
+                                    lines[j] = ''  # Clear this line too
+                                else:
+                                    # No brace found, add one
+                                    new_signature += ' {'
+                        elif '{' in rest_of_line:
+                            # No return type but has brace
+                            new_signature += ' ' + rest_of_line.strip()
+                        else:
+                            # Neither return type nor brace - check next line
+                            if fn_line_idx + 1 < len(lines) and '{' in lines[fn_line_idx + 1]:
+                                # Keep brace position from next line
+                                new_signature += ' {'
+                            else:
+                                # Just add the opening brace
+                                new_signature += ' {'
+                        
+                        lines[fn_line_idx] = new_signature
                         
                         # Replace the attribute
                         changes.append(MigrationChange(
@@ -85,6 +116,8 @@ class TestMigrator:
                             description=f'Migrate test attribute for {test_name}'
                         ))
                         lines[i] = line.replace('#[tokio::test]', '#[sinex_test]')
+            
+            i += 1
         
         return '\n'.join(lines), count, changes
     
@@ -94,90 +127,74 @@ class TestMigrator:
         changes = []
         lines = content.split('\n')
         
-        # For simplicity, always keep the pool variable but replace its initialization
-        # This avoids complex tracking of where pool is used
+        # Track which variables are pool-related
+        pool_vars = set()
         
         for i, line in enumerate(lines):
             original_line = line
             
-            # Pattern: let pool = get_shared_test_pool().await?;
-            if 'get_shared_test_pool' in line:
-                match = re.search(r'let\s+(\w+)\s*=\s*(?:database_helpers::)?get_shared_test_pool\(\)\.await\?;', line)
+            # Detect pool variable assignments to track them
+            pool_patterns = [
+                (r'let\s+(\w+)\s*=\s*(?:database_helpers::)?get_shared_test_pool\(\)\.await\?;', 'get_shared_test_pool'),
+                (r'let\s+(\w+)\s*=\s*TestPool::new\(\)\.await\?;', 'TestPool::new'),
+                (r'let\s+(\w+)\s*=\s*TestPool::with_strategy\([^)]+\)\.await[^;]*;', 'TestPool::with_strategy'),
+                (r'let\s+(\w+)\s*=\s*(?:database_helpers::)?create_test_pool\(\)\.await\?;', 'create_test_pool'),
+            ]
+            
+            for pattern, desc in pool_patterns:
+                match = re.search(pattern, line)
                 if match:
                     var_name = match.group(1)
-                    line = f'let {var_name} = ctx.pool();'
+                    pool_vars.add(var_name)
+                    # Get the indentation
+                    indent_match = re.match(r'^(\s*)', line)
+                    indent = indent_match.group(1) if indent_match else ''
+                    line = f'{indent}let {var_name} = ctx.pool();'
                     changes.append(MigrationChange(
                         line_num=i + 1,
                         original=original_line.strip(),
                         replacement=line.strip(),
-                        description='Replace get_shared_test_pool with ctx.pool()'
+                        description=f'Replace {desc} with ctx.pool()'
                     ))
+                    break
             
-            # Pattern: let pool = TestPool::new().await?;
-            if 'TestPool::new' in line:
-                # This pattern we keep but replace with ctx.pool()
-                match = re.search(r'let\s+(\w+)\s*=\s*TestPool::new\(\)\.await\?;', line)
-                if match:
-                    var_name = match.group(1)
-                    # We don't add to removed_pool_vars because we're keeping the variable
-                    line = f'let {var_name} = ctx.pool();'
-                    changes.append(MigrationChange(
-                        line_num=i + 1,
-                        original=original_line.strip(),
-                        replacement=line.strip(),
-                        description='Replace TestPool::new with ctx.pool()'
-                    ))
+            # Only replace &pool and pool.clone() if 'pool' is a known pool variable
+            if 'pool' in pool_vars:
+                # Replace &pool with pool (since ctx.pool() returns &PgPool)
+                if '&pool' in line and not line.strip().startswith('//') and not self._is_in_string(line, '&pool'):
+                    line = re.sub(r'\b&pool\b', 'pool', line)
+                    if line != original_line:
+                        changes.append(MigrationChange(
+                            line_num=i + 1,
+                            original=original_line.strip(),
+                            replacement=line.strip(),
+                            description='Replace &pool with pool (ctx.pool() returns &PgPool)'
+                        ))
+                
+                # Handle pool.clone() patterns
+                if 'pool.clone()' in line and not self._is_in_string(line, 'pool.clone()'):
+                    line = re.sub(r'\bpool\.clone\(\)', 'ctx.pool().clone()', line)
+                    if line != original_line:
+                        changes.append(MigrationChange(
+                            line_num=i + 1,
+                            original=original_line.strip(),
+                            replacement=line.strip(),
+                            description='Replace pool.clone() with ctx.pool().clone()'
+                        ))
             
-            # Pattern: TestPool::with_strategy(...)
-            if 'TestPool::with_strategy' in line:
-                match = re.search(r'let\s+(\w+)\s*=\s*TestPool::with_strategy\([^)]+\)\.await[^;]*;', line)
-                if match:
-                    var_name = match.group(1)
-                    # We don't add to removed_pool_vars because we're keeping the variable
-                    line = f'let {var_name} = ctx.pool();'
-                    changes.append(MigrationChange(
-                        line_num=i + 1,
-                        original=original_line.strip(),
-                        replacement=line.strip(),
-                        description='Replace TestPool::with_strategy with ctx.pool()'
-                    ))
-            
-            # Pattern: create_test_pool
-            if 'create_test_pool' in line:
-                line = re.sub(
-                    r'let\s+(\w+)\s*=\s*(?:database_helpers::)?create_test_pool\(\)\.await\?;',
-                    r'let \1 = ctx.pool();',
-                    line
-                )
-                if line != original_line:
-                    changes.append(MigrationChange(
-                        line_num=i + 1,
-                        original=original_line.strip(),
-                        replacement=line.strip(),
-                        description='Replace create_test_pool with ctx.pool()'
-                    ))
-            
-            # Replace &pool with ctx.pool() (but not in strings or comments)
-            if '&pool' in line and not line.strip().startswith('//') and '"' not in line:
-                line = re.sub(r'\b&pool\b', 'ctx.pool()', line)
-                if line != original_line:
-                    changes.append(MigrationChange(
-                        line_num=i + 1,
-                        original=original_line.strip(),
-                        replacement=line.strip(),
-                        description='Replace &pool reference with ctx.pool()'
-                    ))
-            
-            # Handle pool.clone() patterns
-            if 'pool.clone()' in line:
-                line = re.sub(r'\bpool\.clone\(\)', 'ctx.pool().clone()', line)
-                if line != original_line:
-                    changes.append(MigrationChange(
-                        line_num=i + 1,
-                        original=original_line.strip(),
-                        replacement=line.strip(),
-                        description='Replace pool.clone() with ctx.pool().clone()'
-                    ))
+            # Replace direct pool usage in specific contexts
+            for pool_var in pool_vars:
+                if pool_var != 'pool':  # Already handled 'pool' above
+                    # Replace &var with var
+                    if f'&{pool_var}' in line and not self._is_in_string(line, f'&{pool_var}'):
+                        line = re.sub(rf'\b&{pool_var}\b', pool_var, line)
+                        if line != original_line:
+                            changes.append(MigrationChange(
+                                line_num=i + 1,
+                                original=original_line.strip(),
+                                replacement=line.strip(),
+                                description=f'Replace &{pool_var} with {pool_var}'
+                            ))
             
             lines[i] = line
         
@@ -186,7 +203,27 @@ class TestMigrator:
         if re.search(r'pool\s*:\s*(?:PgPool|Pool<Postgres>)', content):
             warnings.append("Complex pool type annotation detected - manual review recommended")
         
+        # Check for manual Runtime creation patterns
+        if 'Runtime::new()' in content or 'tokio::runtime' in content:
+            warnings.append("Manual Runtime creation detected - may need manual adjustment")
+        
         return content, warnings, changes
+    
+    def _is_in_string(self, line: str, text: str) -> bool:
+        """Check if text appears inside a string literal in the line."""
+        # Simple heuristic - check if text is between quotes
+        # This is not perfect but handles common cases
+        idx = line.find(text)
+        if idx == -1:
+            return False
+        
+        # Count quotes before the text
+        before = line[:idx]
+        single_quotes = before.count("'") - before.count("\\'")
+        double_quotes = before.count('"') - before.count('\\"')
+        
+        # If odd number of quotes, we're inside a string
+        return (single_quotes % 2 == 1) or (double_quotes % 2 == 1)
     
     def add_missing_ok_returns(self, content: str) -> Tuple[str, List[MigrationChange]]:
         """Add Ok(()) returns to tests that don't have them."""
@@ -203,64 +240,122 @@ class TestMigrator:
                         test_functions.append((i, j))
                         break
         
-        # Process each test function
-        for attr_line, fn_line in test_functions:
-            # Find the function body range
+        # Process each test function in reverse order to avoid index shifts
+        for attr_line, fn_line in reversed(test_functions):
+            # Find the function body range using proper brace counting
             brace_depth = 0
             function_start = -1
             function_end = -1
+            in_string = False
+            in_char = False
+            escaped = False
             
             for i in range(fn_line, len(lines)):
                 line = lines[i]
-                if '{' in line and function_start == -1:
-                    function_start = i
+                j = 0
+                while j < len(line):
+                    char = line[j]
+                    
+                    # Handle escape sequences
+                    if escaped:
+                        escaped = False
+                        j += 1
+                        continue
+                    
+                    if char == '\\':
+                        escaped = True
+                        j += 1
+                        continue
+                    
+                    # Handle strings and chars to avoid counting braces inside them
+                    if char == '"' and not in_char:
+                        in_string = not in_string
+                    elif char == "'" and not in_string:
+                        in_char = not in_char
+                    elif not in_string and not in_char:
+                        if char == '{':
+                            if function_start == -1:
+                                function_start = i
+                            brace_depth += 1
+                        elif char == '}':
+                            brace_depth -= 1
+                            if brace_depth == 0 and function_start != -1:
+                                function_end = i
+                                break
+                    j += 1
                 
-                if function_start != -1:
-                    brace_depth += line.count('{') - line.count('}')
-                    if brace_depth == 0:
-                        function_end = i
-                        break
+                if function_end != -1:
+                    break
             
             if function_start == -1 or function_end == -1:
                 continue
             
-            # Find the last non-empty, non-comment line before closing brace
+            # Find the last meaningful statement
             last_statement_line = -1
+            last_meaningful_content = ""
+            
             for i in range(function_end - 1, function_start, -1):
                 line = lines[i].strip()
-                if line and not line.startswith('//') and line != '}':
-                    last_statement_line = i
-                    break
+                # Skip empty lines and comments
+                if not line or line.startswith('//') or line == '}':
+                    continue
+                    
+                # Found a meaningful line
+                last_statement_line = i
+                last_meaningful_content = line
+                break
             
             if last_statement_line == -1:
+                # Empty function body - add Ok(())
+                indent_match = re.match(r'^(\s*)}', lines[function_end])
+                if indent_match:
+                    base_indent = indent_match.group(1)
+                    statement_indent = base_indent + '    '
+                else:
+                    statement_indent = '    '
+                
+                lines.insert(function_end, f'{statement_indent}Ok(())')
+                changes.append(MigrationChange(
+                    line_num=function_end + 1,
+                    original='',
+                    replacement=f'{statement_indent}Ok(())',
+                    description='Add Ok(()) to empty function body'
+                ))
                 continue
             
-            last_line = lines[last_statement_line].strip()
+            # Check various patterns that indicate a proper return
+            ok_patterns = [
+                r'\bOk\s*\(.*\)\s*$',  # Ends with Ok(...)
+                r'^\s*Ok\s*\(',         # Starts with Ok(
+                r'^\s*return\s+',       # Explicit return
+                r'\?\s*;?\s*$',         # Ends with ?
+                r'}\.await\?\s*;?\s*$', # Common async pattern
+            ]
             
-            # Check if it already returns Ok or has a return statement
-            if (last_line.endswith('Ok(())') or 
-                last_line.endswith('Ok(())?') or
-                last_line.startswith('Ok(') or 
-                last_line.startswith('return') or
-                '?' in last_line and last_line.endswith(';')):
-                continue
+            has_ok_return = any(re.search(pattern, last_meaningful_content) for pattern in ok_patterns)
             
-            # Get the indentation for the closing brace line
-            indent_match = re.match(r'^(\s*)', lines[function_end])
-            if indent_match:
-                base_indent = indent_match.group(1)
-                statement_indent = base_indent + '    '  # Add one level of indentation
-            else:
-                statement_indent = '    '
-            
-            # Insert Ok(()) before the closing brace
-            lines.insert(function_end, f'{statement_indent}Ok(())')
-            changes.append(MigrationChange(
-                line_num=function_end + 1,
-                original='',
-                replacement=f'{statement_indent}Ok(())',
-                description='Add missing Ok(()) return'
-            ))
+            if not has_ok_return:
+                # Get the indentation from the last statement
+                indent_match = re.match(r'^(\s*)', lines[last_statement_line])
+                if indent_match:
+                    statement_indent = indent_match.group(1)
+                else:
+                    statement_indent = '    '
+                
+                # Insert Ok(()) after the last statement
+                insert_line = last_statement_line + 1
+                
+                # Make sure we're not inserting past the function end
+                if insert_line > function_end:
+                    insert_line = function_end
+                
+                lines.insert(insert_line, f'{statement_indent}Ok(())')
+                changes.append(MigrationChange(
+                    line_num=insert_line + 1,
+                    original='',
+                    replacement=f'{statement_indent}Ok(())',
+                    description='Add missing Ok(()) return'
+                ))
         
         return '\n'.join(lines), changes
     
@@ -921,11 +1016,23 @@ class TestMigrator:
             print("  ✅ Code compiles successfully!")
         else:
             print("  ❌ Compilation failed!")
-            print("  Run 'cargo check --tests' to see errors")
+            print("\n  Compilation errors:")
+            # Show first few error lines
+            error_lines = result.stderr.split('\n')
+            shown = 0
+            for line in error_lines:
+                if 'error' in line.lower() or 'cannot find' in line or '-->' in line:
+                    print(f"    {line}")
+                    shown += 1
+                    if shown > 10:
+                        print("    ... (run 'cargo check --tests' to see all errors)")
+                        break
+            
             print("\n  Common fixes:")
             print("  - Ensure all tests have (ctx: TestContext) parameter")
             print("  - Check that return type is Result<(), Box<dyn std::error::Error>>")
             print("  - Verify imports include: use crate::common::prelude::*;")
+            print("  - Replace &pool with pool since ctx.pool() returns &PgPool")
 
 def main():
     import argparse
