@@ -134,10 +134,10 @@ async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
 }
 
 /// Test agent monitoring commands
-#[tokio::test]
-async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_exo_cli_agent_commands(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
+    let pool = ctx.pool();
     
     // Insert test agent manifest using helpers
     let mut manifest = generators::test_agent_manifest("test-collector");
@@ -177,8 +177,8 @@ async fn test_exo_cli_agent_commands() -> anyhow::Result<()> {
 }
 
 /// Test error handling in CLI
-#[tokio::test]
-async fn test_exo_cli_error_handling() {
+#[sinex_test]
+async fn test_exo_cli_error_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
     // Test 1: Invalid database URL
@@ -215,13 +215,14 @@ async fn test_exo_cli_error_handling() {
         .expect("Failed to execute CLI");
     
     assert!(!output.status.success(), "Should fail with missing argument");
+    Ok(())
 }
 
 /// Test advanced query features
-#[tokio::test]
-async fn test_exo_cli_advanced_queries() {
+#[sinex_test]
+async fn test_exo_cli_advanced_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
+    let pool = ctx.pool();
     
     // Insert events with different timestamps
     let base_time = chrono::Utc::now();
@@ -291,13 +292,14 @@ async fn test_exo_cli_advanced_queries() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let event_count = stdout.matches("Event ID:").count();
     assert!(event_count > 0 && event_count < 20, "Should return subset of events");
+    Ok(())
 }
 
 /// Test output formatting options
-#[tokio::test]
-async fn test_exo_cli_output_formats() {
+#[sinex_test]
+async fn test_exo_cli_output_formats(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create pool");
+    let pool = ctx.pool();
     
     // Insert a test event
     let event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None);
@@ -333,4 +335,5 @@ async fn test_exo_cli_output_formats() {
             assert!(stdout.contains("message"), "Should show full details in -vv mode");
         }
     }
+    Ok(())
 }
