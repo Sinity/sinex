@@ -1,0 +1,6 @@
+id: replace-unwrap-with-expect
+language: rust
+rule:
+  pattern: $VAR.unwrap()
+  not: { inside: { kind: macro_invocation, has: { pattern: 'assert' } } }
+fix: '$VAR.expect("Value should be Some or Ok")'
