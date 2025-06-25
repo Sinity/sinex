@@ -1,0 +1,6 @@
+id: migrate-test-attribute
+language: rust
+rule:
+  kind: attribute
+  has: { pattern: '#[tokio::test]' }
+fix: '#[sinex_test]'

@@ -375,12 +375,12 @@ mod unit_tests {
     }
     
     #[sinex_test]
-    async fn test_worker_crash_simulation(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    async fn test_worker_crash_simulation(ctx: TestContext) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
         let tracker = ProcessingTracker::new();
         
         // Test with 100% crash probability (should exit immediately)
-        let result = worker_with_crashes(pool,
+        let result = worker_with_crashes(ctx.pool().clone(),
             "test_agent".to_string(),
             "crash_test_worker".to_string(),
             tracker,

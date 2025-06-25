@@ -1,0 +1,7 @@
+id: cleanup-redundant-pool-variable
+language: rust
+rule:
+  kind: block
+  inside: { kind: function_item, has: { pattern: '#[sinex_test]' } }
+  has: { pattern: 'let pool = ctx.pool();' }
+fix: '$CLEANED_BODY'
