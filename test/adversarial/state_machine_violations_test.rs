@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_shutdown_signal_during_initialization() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_shutdown_signal_during_initialization() {
     // Simulate shutdown signal arriving during database migration/startup
     
     let pool = create_test_db_pool().await.unwrap();
@@ -91,7 +91,7 @@ async fn test_shutdown_signal_during_initialization() -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_multiple_concurrent_shutdown_signals() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_concurrent_shutdown_signals() {
     // Test what happens when multiple shutdown signals arrive simultaneously
     
     let shutdown_count = Arc::new(AtomicU64::new(0));
@@ -197,7 +197,7 @@ async fn test_multiple_concurrent_shutdown_signals() -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_event_router_state_corruption() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_router_state_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create events that test state transitions
@@ -283,7 +283,7 @@ async fn test_event_router_state_corruption() -> Result<(), Box<dyn std::error::
 }
 
 #[sinex_test]
-async fn test_worker_state_machine_corruption() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_state_machine_corruption() {
     let pool = create_test_db_pool().await.unwrap();
     
     // Create a job that will be processed by workers

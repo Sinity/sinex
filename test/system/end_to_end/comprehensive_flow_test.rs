@@ -13,7 +13,7 @@ use sinex_test_macros::sinex_test;
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
 #[sinex_test]
-async fn test_complete_event_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complete_event_pipeline() {
     // Initialize test environment
     common::env::init_test_logging();
     let pool = common::create_test_db_pool().await.expect("Failed to create test pool");

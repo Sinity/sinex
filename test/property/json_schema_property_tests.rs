@@ -248,7 +248,7 @@ mod integration_tests {
     use super::*;
     
     #[sinex_test]
-    async fn test_event_validator_database_integration() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_event_validator_database_integration() {
         let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create test pool");
         run_migrations(&pool).await.expect("Failed to run migrations");
         
@@ -278,7 +278,7 @@ mod integration_tests {
     }
     
     #[sinex_test] 
-    async fn test_validator_with_real_filesystem_events() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_validator_with_real_filesystem_events() {
         let validator = EventValidator::new();
         
         // Test filesystem events that should have hardcoded validation

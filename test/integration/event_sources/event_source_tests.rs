@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
+use sinex_events::{
 use sinex_test_macros::sinex_test;
-use sinex_events::{filesystem::FilesystemMonitor,
+    filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
     asciinema::AsciinemaRecorder, 
     clipboard::ClipboardMonitor,

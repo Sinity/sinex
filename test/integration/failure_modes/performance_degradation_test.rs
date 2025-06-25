@@ -7,7 +7,7 @@ use sinex_test_macros::sinex_test;
 
 /// Test gradual memory leak detection
 #[sinex_test]
-async fn test_memory_leak_detection() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_memory_leak_detection() {
     // Simulate a component that gradually leaks memory
     #[derive(Clone)]
     struct LeakyComponent {
@@ -129,7 +129,7 @@ async fn test_memory_leak_detection() -> Result<(), Box<dyn std::error::Error>> 
 
 /// Test CPU throttling detection
 #[sinex_test]
-async fn test_cpu_throttling_detection() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cpu_throttling_detection() {
     // Track processing performance over time
     struct PerformanceMonitor {
         processing_times: Arc<RwLock<VecDeque<Duration>>>,
@@ -405,7 +405,7 @@ async fn test_io_saturation_handling() -> Result<(), Box<dyn std::error::Error>>
 
 /// Test resource usage pattern analysis
 #[sinex_test]
-async fn test_resource_usage_patterns() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_usage_patterns() {
     // Simulate different resource usage patterns
     
     #[derive(Debug, Clone, Copy)]

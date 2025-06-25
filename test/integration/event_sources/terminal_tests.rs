@@ -24,7 +24,7 @@ async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::
 }
 
 #[sinex_test]
-async fn test_kitty_event_structure() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_kitty_event_structure() {
     // Test that the event payload structure is correct
     let payload = CommandExecutedPayload {
         command_string: "echo test".to_string(),
@@ -45,7 +45,7 @@ async fn test_kitty_event_structure() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[sinex_test]
-async fn test_kitty_socket_pattern_matching() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_kitty_socket_pattern_matching() {
     let config = KittyConfig {
         socket_path: "/tmp/mykitty-*".to_string(),
         polling_interval_secs: 1,

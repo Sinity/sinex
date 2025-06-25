@@ -155,7 +155,7 @@ fn test_string_concatenation_memory_bomb() {
 }
 
 #[sinex_test]
-async fn test_collector_event_queue_overflow() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_event_queue_overflow() {
     use std::sync::atomic::{AtomicU64, Ordering};
     
     // Create collector with small channel

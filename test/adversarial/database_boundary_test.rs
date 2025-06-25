@@ -6,7 +6,7 @@ use crate::common::timing_optimization::replacements::{wait_for_filtered_event_c
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_event_payload_approaching_1gb_limit() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_payload_approaching_1gb_limit() {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing JSONB 1GB limit:");
@@ -63,7 +63,7 @@ async fn test_event_payload_approaching_1gb_limit() -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_connection_pool_exhaustion() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_exhaustion() {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing connection pool exhaustion:");
@@ -150,7 +150,7 @@ async fn test_connection_pool_exhaustion() -> Result<(), Box<dyn std::error::Err
 }
 
 #[sinex_test]
-async fn test_concurrent_btree_index_splits() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_btree_index_splits() {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing concurrent B-tree index splits:");
@@ -254,7 +254,7 @@ async fn test_concurrent_btree_index_splits() -> Result<(), Box<dyn std::error::
 }
 
 #[sinex_test]
-async fn test_events_spanning_chunk_boundary() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_events_spanning_chunk_boundary() {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing TimescaleDB chunk boundary operations:");
@@ -317,7 +317,7 @@ async fn test_events_spanning_chunk_boundary() -> Result<(), Box<dyn std::error:
 }
 
 #[sinex_test]
-async fn test_query_during_chunk_compression() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_during_chunk_compression() {
     let pool = create_test_db_pool().await.unwrap();
     
     println!("Testing queries during chunk compression:");

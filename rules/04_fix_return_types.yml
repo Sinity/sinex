@@ -1,0 +1,8 @@
+id: fix-anyhow-return
+language: rust
+rule:
+  pattern: 'async fn $NAME() -> Result<(), anyhow::Error> { $$BODY }'
+fix: |
+  async fn $NAME(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+      $$BODY
+  }

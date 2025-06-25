@@ -1,7 +1,8 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
+use sinex_events::{
 use sinex_test_macros::sinex_test;
-use sinex_events::{filesystem::FilesystemMonitor,
+    filesystem::FilesystemMonitor,
     terminal::KittySocketListener,
     clipboard::ClipboardMonitor,
 };

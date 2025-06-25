@@ -5,7 +5,7 @@ use sinex_test_macros::sinex_test;
 
 /// Test what happens when event channel fills up
 #[sinex_test]
-async fn test_channel_backpressure_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_channel_backpressure_handling() {
     // Small channel to trigger backpressure quickly
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
     
@@ -102,7 +102,7 @@ async fn test_channel_backpressure_handling() -> Result<(), Box<dyn std::error::
 
 /// Test graceful degradation under memory pressure
 #[sinex_test]
-async fn test_memory_pressure_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_memory_pressure_handling() {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Track memory usage
@@ -160,7 +160,7 @@ async fn test_memory_pressure_handling() -> Result<(), Box<dyn std::error::Error
 
 /// Test event source crash and restart
 #[sinex_test]
-async fn test_event_source_crash_recovery() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_crash_recovery() {
     struct CrashingEventSource {
         crash_after: u64,
         events_sent: Arc<AtomicU64>,

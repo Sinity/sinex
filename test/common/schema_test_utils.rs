@@ -4,7 +4,7 @@ use crate::common::prelude::*;
 use serde_json::{json, Value};
 
 /// Register test schema with event source and type
-pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid, Box<dyn std::error::Error>> {
+pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
     database::insert_test_schema(&pool, event_source, event_type, "1.0", schema).await
 }
 
@@ -259,7 +259,7 @@ pub mod database {
         event_type: &str,
         schema_version: &str,
         schema: Value
-    ) -> Result<Ulid, Box<dyn std::error::Error>> {
+    ) -> Result<Ulid> {
         let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas 
@@ -318,7 +318,7 @@ pub mod database {
     }
 
     /// Delete a schema from the database
-    pub async fn delete_schema(pool: &PgPool, schema_id: Ulid) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn delete_schema(pool: &PgPool, schema_id: Ulid) -> Result<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.event_payload_schemas 
@@ -381,7 +381,7 @@ pub mod validation {
     use jsonschema::JSONSchema;
 
     /// Test a payload against a schema
-    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> Result<bool> {
         let compiled_schema = JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;
 
@@ -502,7 +502,7 @@ pub mod performance {
         payload: &Value,
         concurrent_tasks: usize,
         operations_per_task: usize
-    ) -> Result<Duration, Box<dyn std::error::Error>> {
+    ) -> Result<Duration> {
         use tokio::task;
 
         let compiled_schema = jsonschema::JSONSchema::compile(schema)

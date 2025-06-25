@@ -10,7 +10,7 @@ use sinex_test_macros::sinex_test;
 /// while still holding work items. In real systems, this happens due to crashes, hangs,
 /// or network issues. The test uses controlled timing to ensure deterministic behavior.
 #[sinex_test]
-async fn test_orphaned_worker_detection() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_orphaned_worker_detection() {
     use tokio::sync::watch;
     
     // Simulate workers that might become orphaned
@@ -220,7 +220,7 @@ async fn test_orphaned_worker_detection() -> Result<(), Box<dyn std::error::Erro
 
 /// Test work item recovery from orphaned workers
 #[sinex_test]
-async fn test_orphaned_work_recovery() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_orphaned_work_recovery() {
     // Track work items and their processing state
     
     #[derive(Debug, Clone)]
@@ -361,7 +361,7 @@ async fn test_orphaned_work_recovery() -> Result<(), Box<dyn std::error::Error>>
 
 /// Test preventing zombie workers
 #[sinex_test]
-async fn test_zombie_worker_prevention() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_zombie_worker_prevention() {
     // Test mechanisms to prevent workers from continuing after they should stop
     
     let shutdown_signal = Arc::new(AtomicBool::new(false));

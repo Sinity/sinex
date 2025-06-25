@@ -4,7 +4,7 @@ use crate::common::timing_optimization::replacements::{wait_for_filtered_event_c
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_agent_heartbeat_generation() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_heartbeat_generation() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -91,7 +91,7 @@ async fn test_agent_heartbeat_generation() -> Result<(), Box<dyn std::error::Err
 }
 
 #[sinex_test]
-async fn test_stale_heartbeat_detection() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_stale_heartbeat_detection() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -168,7 +168,7 @@ async fn test_stale_heartbeat_detection() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[sinex_test]
-async fn test_heartbeat_metrics_tracking() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_metrics_tracking() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -265,7 +265,7 @@ async fn test_heartbeat_metrics_tracking() -> Result<(), Box<dyn std::error::Err
 }
 
 #[sinex_test]
-async fn test_heartbeat_based_status_updates() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_based_status_updates() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     
@@ -342,7 +342,7 @@ async fn test_heartbeat_based_status_updates() -> Result<(), Box<dyn std::error:
 }
 
 #[sinex_test]
-async fn test_heartbeat_frequency_monitoring() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_frequency_monitoring() {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string());
     

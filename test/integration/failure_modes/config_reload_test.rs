@@ -5,7 +5,7 @@ use sinex_test_macros::sinex_test;
 
 /// Test configuration reload during active event processing
 #[sinex_test]
-async fn test_config_reload_during_processing() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_during_processing() {
     // Track state across reload
     let events_before_reload = Arc::new(AtomicU64::new(0));
     let events_after_reload = Arc::new(AtomicU64::new(0));
@@ -143,7 +143,7 @@ async fn test_config_reload_during_processing() -> Result<(), Box<dyn std::error
 
 /// Test config validation during reload
 #[sinex_test]
-async fn test_invalid_config_reload_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_config_reload_handling() {
     // Test that invalid config changes are rejected gracefully
     
     let valid_config = serde_json::json!({
@@ -205,7 +205,7 @@ async fn test_invalid_config_reload_handling() -> Result<(), Box<dyn std::error:
 
 /// Test graceful handling of config reload timing
 #[sinex_test] 
-async fn test_config_reload_timing() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_timing() {
     // Test various timing scenarios for config reload
     
     #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@ use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_config_reload_race_condition() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_race_condition() {
     // Create a config manager with a test config file
     let temp_dir = tempfile::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
@@ -54,7 +54,7 @@ watch_paths = ["/tmp", "/home/user{}"]
 }
 
 #[sinex_test]
-async fn test_config_malformed_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_malformed_handling() {
     let temp_dir = tempfile::tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
     

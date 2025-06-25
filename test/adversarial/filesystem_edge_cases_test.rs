@@ -157,7 +157,7 @@ async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn test_watching_special_files() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watching_special_files() {
     // Test watching various special file types that might cause issues
     let special_files = vec![
         "/dev/null",

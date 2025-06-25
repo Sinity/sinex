@@ -6,7 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_database_dns_timeout() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_dns_timeout() {
     // Test what happens when database hostname fails to resolve
     
     let fake_hostnames = vec![
@@ -50,7 +50,7 @@ async fn test_database_dns_timeout() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[sinex_test]
-async fn test_network_partition_during_processing() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_network_partition_during_processing() {
     // Simulate network partition by creating workers that lose connectivity
     
     let pool = create_test_db_pool().await.unwrap();
@@ -156,7 +156,7 @@ async fn test_network_partition_during_processing() -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_split_brain_scenario() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_split_brain_scenario() {
     // Simulate split-brain where two parts of system think they're primary
     
     let pool = create_test_db_pool().await.unwrap();

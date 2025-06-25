@@ -80,7 +80,7 @@ pub mod assertions {
     }
 
     /// Assert that validation fails with specific error type
-    pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<(), Box<dyn std::error::Error>> 
+    pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<()> 
     where
         F: Fn(&ValidationError) -> bool,
     {

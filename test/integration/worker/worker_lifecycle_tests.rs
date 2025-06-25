@@ -108,7 +108,7 @@ async fn test_event_processor_failure_handling() -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_backoff_calculation() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_backoff_calculation() {
     // Test backoff calculation function
     let backoff_0 = calculate_backoff_secs(0);
     let backoff_1 = calculate_backoff_secs(1);
@@ -127,7 +127,7 @@ async fn test_backoff_calculation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[sinex_test]
-async fn test_worker_metrics_creation() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_metrics_creation() {
     let metrics = WorkerMetrics::new("test_agent");
     
     // Test that metrics can be incremented
@@ -186,7 +186,7 @@ async fn test_multiple_processors_different_agents() -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_processor_configuration() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_processor_configuration() {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
     pretty_assertions::assert_eq!(processor.agent_name(), "test_agent");
@@ -223,7 +223,7 @@ impl EventProcessor for SlowProcessor {
 }
 
 #[sinex_test]
-async fn test_processor_custom_configuration() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_processor_custom_configuration() {
     let processor = SlowProcessor {
         agent_name: "slow_agent".to_string(),
     };

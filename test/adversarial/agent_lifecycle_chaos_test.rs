@@ -6,7 +6,7 @@ use chrono::Utc;
 use sinex_test_macros::sinex_test;
 
 #[sinex_test]
-async fn test_agent_registering_from_multiple_instances() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_registering_from_multiple_instances() {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "chaos-agent";
@@ -118,7 +118,7 @@ async fn test_agent_registering_from_multiple_instances() -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_heartbeat_from_unregistered_agent() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_from_unregistered_agent() {
     let pool = create_test_db_pool().await.unwrap();
     
     let phantom_agent = "phantom-agent";
@@ -161,7 +161,7 @@ async fn test_heartbeat_from_unregistered_agent() -> Result<(), Box<dyn std::err
 }
 
 #[sinex_test]
-async fn test_agent_downgrade_during_operation() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_downgrade_during_operation() {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "version-chaos-agent";
@@ -285,7 +285,7 @@ async fn test_agent_downgrade_during_operation() -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_concurrent_agent_status_updates() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_agent_status_updates() {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "status-chaos-agent";
@@ -389,7 +389,7 @@ async fn test_concurrent_agent_status_updates() -> Result<(), Box<dyn std::error
 }
 
 #[sinex_test]
-async fn test_agent_zombie_heartbeat_scenario() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_zombie_heartbeat_scenario() {
     let pool = create_test_db_pool().await.unwrap();
     
     let agent_name = "zombie-agent";
