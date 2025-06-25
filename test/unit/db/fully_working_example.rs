@@ -4,14 +4,14 @@ use crate::common::prelude::*;
 use crate::common::database_helpers;
 
 /// Simplest possible test that actually works
-#[tokio::test]
-async fn test_without_macro() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_without_macro(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
     // Get shared pool
-    let pool = database_helpers::get_shared_test_pool().await?;
+// Removed: using ctx.pool() directly instead
     
     // Run a simple query
     let result = sqlx::query_scalar!("SELECT 1 + 1 as sum")
-        .fetch_one(&pool)
+        .fetch_one(ctx.pool())
         .await?;
     pretty_assertions::assert_eq!(result, Some(2));
     

@@ -375,7 +375,7 @@ mod unit_tests {
     }
     
     #[sinex_test]
-    async fn test_worker_crash_simulation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_worker_crash_simulation(ctx: TestContext) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
         let tracker = ProcessingTracker::new();
         

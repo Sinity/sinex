@@ -24,8 +24,8 @@ fn test_validation_with_parameterized_helper() {
     });
 }
 
-#[tokio::test]
-async fn test_event_scenarios_with_builder() {
+#[sinex_test]
+async fn test_event_scenarios_with_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 50+ lines of setup, insertion, and verification
@@ -40,10 +40,11 @@ async fn test_event_scenarios_with_builder() {
         .execute(&pool)
         .await
         .unwrap();
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_worker_scenario() {
+#[sinex_test]
+async fn test_worker_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 100+ lines of worker setup, execution, and verification
@@ -65,10 +66,11 @@ async fn test_worker_scenario() {
     for (worker, count) in &result.worker_stats {
         assert!(*count > 0, "Worker {} should have processed events", worker);
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_complex_pipeline_with_dsl() {
+#[sinex_test]
+async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 150+ lines of complex test orchestration
@@ -93,6 +95,7 @@ async fn test_complex_pipeline_with_dsl() {
         .execute(&pool)
         .await
         .unwrap();
+    Ok(())
 }
 
 #[test]
@@ -127,8 +130,8 @@ fn test_multiple_validation_rules_streamlined() {
 }
 
 // Example of how a complex concurrent test can be simplified
-#[tokio::test]
-async fn test_concurrent_operations_streamlined() {
+#[sinex_test]
+async fn test_concurrent_operations_streamlined(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use crate::common::parallelization;
     
     let pool = Arc::new(crate::common::create_test_db_pool().await.unwrap());
@@ -137,7 +140,7 @@ async fn test_concurrent_operations_streamlined() {
     // After: Clear parallel test execution
     
     let operations: Vec<_> = (0..10).map(|i| {
-        let pool = pool.clone();
+        let pool = ctx.pool().clone();
         move |p: Arc<sqlx::PgPool>| async move {
             let event = RawEventBuilder::new(
                 "filesystem",
@@ -151,7 +154,7 @@ async fn test_concurrent_operations_streamlined() {
     }).collect();
     
     let results = parallelization::ParallelTestExecutor::new(5)
-        .execute_db_parallel(pool.clone(), operations)
+        .execute_db_parallel(ctx.pool().clone(), operations)
         .await;
     
     // Verify all succeeded
@@ -162,4 +165,5 @@ async fn test_concurrent_operations_streamlined() {
     // Verify count
     let count = crate::common::get_event_count(&pool).await.unwrap();
     pretty_assertions::assert_eq!(count, 10);
+    Ok(())
 }

@@ -15,8 +15,8 @@ use sinex_core::{RawEventBuilder, sources, event_type_constants};
 /// - Payload is properly attached
 /// - Auto-generated fields (host, ID) are populated
 /// - ULID format is correct (26 characters)
-#[sinex_test]
-async fn test_raw_event_builder_basic() -> Result<(), Box<dyn std::error::Error>> {
+#[test]
+fn test_raw_event_builder_basic() {
     let event = RawEventBuilder::new(
         sources::FILESYSTEM,
         event_type_constants::filesystem::FILE_CREATED,
@@ -28,8 +28,6 @@ async fn test_raw_event_builder_basic() -> Result<(), Box<dyn std::error::Error>
     pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
     assert!(!event.host.is_empty());
     assert!(event.id.to_string().len() == 26); // ULID length
-    
-    Ok(())
 }
 
 /// Test creating multiple events with different sources
@@ -39,8 +37,8 @@ async fn test_raw_event_builder_basic() -> Result<(), Box<dyn std::error::Error>
 /// - Each event gets a unique ULID
 /// - Different sources and types work correctly
 /// - ULIDs maintain time ordering when created in sequence
-#[sinex_test]
-async fn test_multiple_event_creation() -> Result<(), Box<dyn std::error::Error>> {
+#[test]
+fn test_multiple_event_creation() {
     let events = vec![
         RawEventBuilder::new(
             sources::FILESYSTEM,
@@ -68,6 +66,4 @@ async fn test_multiple_event_creation() -> Result<(), Box<dyn std::error::Error>
     pretty_assertions::assert_ne!(events[0].id, events[1].id);
     pretty_assertions::assert_ne!(events[1].id, events[2].id);
     pretty_assertions::assert_ne!(events[0].id, events[2].id);
-    
-    Ok(())
 }
