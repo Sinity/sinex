@@ -95,6 +95,29 @@ where
     }
 }
 
+/// Enhanced ValidationChain helper for numeric field validation
+fn validate_required_numeric_field<T>(payload: &Value, field_name: &str, extractor: fn(&Value) -> Option<T>) -> Result<T, ValidationError>
+where
+    T: Clone + std::fmt::Debug,
+{
+    let value = payload.get(field_name)
+        .ok_or_else(|| ValidationError::MissingField { field: field_name.to_string() })?;
+        
+    // Use ValidationChain to validate the field exists and has content
+    convert_validation_result(
+        ValidationChain::validate(value.clone(), field_name)
+            .custom(|v| v.is_number(), "must be a number")
+            .into_result()
+    )?;
+    
+    extractor(value)
+        .ok_or_else(|| ValidationError::InvalidType {
+            field: field_name.to_string(),
+            expected: "number".to_string(),
+            actual: format!("{:?}", value),
+        })
+}
+
 /// Extract field name from error message (best effort)
 fn extract_field_from_error(msg: &str) -> Option<&str> {
     // This is a simple parser - in production you might want more sophisticated parsing
@@ -333,8 +356,7 @@ impl EventValidator {
             "window.focused",
             |payload| {
                 // Required: window (object or string)
-                let _window = payload.get("window")
-                    .ok_or_else(|| ValidationError::MissingField { field: "window".to_string() })?;
+                let _window = validate_required_field(payload, "window", |v| Some(v.clone()))?;
                 
                 // Optional but common: workspace
                 if let Some(workspace) = payload.get("workspace") {
@@ -357,8 +379,7 @@ impl EventValidator {
             "workspace.changed",
             |payload| {
                 // Required: workspace (number or string)
-                let workspace = payload.get("workspace")
-                    .ok_or_else(|| ValidationError::MissingField { field: "workspace".to_string() })?;
+                let workspace = validate_required_field(payload, "workspace", |v| Some(v.clone()))?;
                 
                 if !workspace.is_number() && !workspace.is_string() {
                     return Err(ValidationError::InvalidType {

@@ -600,7 +600,10 @@ impl ClipboardMonitor {
                 large_files: None,
             };
             let blob_manager = BlobManager::new(annex_config, db_pool.clone())
-                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create BlobManager: {}", e)))?;
+                .map_err(|e| sinex_core::CoreError::processing_failed()
+                    .with_operation("create_blob_manager")
+                    .with_source(e)
+                    .build())?;
             
             let blob_metadata = BlobMetadata {
                 blob_id: sinex_ulid::Ulid::new(),

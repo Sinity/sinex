@@ -295,7 +295,10 @@ impl ScrollbackCapture {
             .arg(format!("unix:{}", self.config.kitty_socket_path))
             .arg("ls")
             .output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to run kitty @: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_command")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             return Err(sinex_core::CoreError::Other(
@@ -354,7 +357,10 @@ impl ScrollbackCapture {
         }
         
         let output = cmd.output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get scrollback: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_get_scrollback")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             return Err(sinex_core::CoreError::Other(
@@ -399,7 +405,10 @@ impl ScrollbackCapture {
         }
         
         let output = cmd.output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get output: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_get_output")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             // This might fail if shell integration isn't enabled
@@ -521,7 +530,10 @@ async fn monitor_command_events(socket_path: String, tx: mpsc::Sender<CommandExe
         .arg("watch")
         .stdout(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| sinex_core::CoreError::Other(format!("Failed to start kitty @ watch: {}", e)))?;
+        .map_err(|e| sinex_core::CoreError::processing_failed()
+            .with_operation("kitty_start_watch")
+            .with_source(e)
+            .build())?;
     
     let stdout = child.stdout.take()
         .ok_or_else(|| sinex_core::CoreError::Other("Failed to capture stdout".to_string()))?;

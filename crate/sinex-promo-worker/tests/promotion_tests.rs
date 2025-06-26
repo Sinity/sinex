@@ -1,6 +1,6 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_db::{models::{AgentManifest, RawEvent}, JsonValue};
+use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
 use sinex_promo_worker::{WorkRouter, EventScanner, ScannerConfig};
 use sinex_ulid::Ulid;
 
