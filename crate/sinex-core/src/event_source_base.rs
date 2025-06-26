@@ -1,10 +1,11 @@
 use crate::{
-    EventSource, EventSourceContext, RawEvent, RawEventBuilder, CoreError, Result,
+    EventSourceContext, RawEvent, RawEventBuilder, CoreError, Result, EventSender,
 };
+use crate::unified_collector::EventSource;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::de::DeserializeOwned;
-use tokio::sync::mpsc;
+use crate::{JsonValue};
 
 /// Base trait that provides common functionality for all event sources
 #[async_trait]
@@ -16,7 +17,7 @@ pub trait EventSourceBase: EventSource + Sized {
     }
     
     /// Create an event with standard fields populated
-    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
             .with_host(gethostname::gethostname().to_string_lossy())
             .with_ingestor_version(env!("CARGO_PKG_VERSION"))
@@ -28,7 +29,7 @@ pub trait EventSourceBase: EventSource + Sized {
     // Event sources will continue to implement their own polling logic
     
     /// Helper to send an event with error handling
-    async fn send_event(&self, tx: &mpsc::Sender<RawEvent>, event: RawEvent) -> Result<()> {
+    async fn send_event(&self, tx: &EventSender, event: RawEvent) -> Result<()> {
         tx.send(event).await
             .map_err(|e| CoreError::Other(format!("Failed to send event: {}", e)))
     }

@@ -70,7 +70,7 @@ async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> Res
 
 // Helper function that calls the real add_to_work_queue
 async fn add_to_work_queue(
-    _pool: &PgPool,
+    _pool: &DbPool,
     _raw_event_id: Ulid,
     _target_agent_name: &str,
     _max_attempts: i32,

@@ -1,7 +1,7 @@
 // Queue metrics implementation for Prometheus exposition
 use anyhow::Result;
+use crate::DbPoolRef;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
 /// Queue depth metric per agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub struct QueueMetrics {
 
 /// Calculate queue depth metrics per agent
 /// Counts pending and retryable items
-pub async fn calculate_queue_depth_metrics(pool: &PgPool) -> Result<Vec<QueueDepthMetric>> {
+pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<QueueDepthMetric>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -69,7 +69,7 @@ pub async fn calculate_queue_depth_metrics(pool: &PgPool) -> Result<Vec<QueueDep
 
 /// Calculate dequeue latency metrics per agent  
 /// Measures time from queue insertion to processing start
-pub async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueLatencyMetric>> {
+pub async fn calculate_dequeue_latency_metrics(pool: DbPoolRef<'_>) -> Result<Vec<DequeueLatencyMetric>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -104,7 +104,7 @@ pub async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<Dequ
 
 /// Calculate per-agent lag metrics
 /// Shows how far behind each agent is in processing
-pub async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMetric>> {
+pub async fn calculate_per_agent_lag_metrics(pool: DbPoolRef<'_>) -> Result<Vec<AgentLagMetric>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -134,7 +134,7 @@ pub async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentL
 }
 
 /// Calculate overall queue statistics
-pub async fn calculate_overall_queue_stats(pool: &PgPool) -> Result<(i64, i64, i64)> {
+pub async fn calculate_overall_queue_stats(pool: DbPoolRef<'_>) -> Result<(i64, i64, i64)> {
     let stats = sqlx::query!(
         r#"
         SELECT
@@ -155,7 +155,7 @@ pub async fn calculate_overall_queue_stats(pool: &PgPool) -> Result<(i64, i64, i
 }
 
 /// Calculate all queue metrics
-pub async fn calculate_all_queue_metrics(pool: &PgPool) -> Result<QueueMetrics> {
+pub async fn calculate_all_queue_metrics(pool: DbPoolRef<'_>) -> Result<QueueMetrics> {
     let (queue_depth, dequeue_latency, agent_lag, (total_pending, total_processing, total_failed)) = tokio::try_join!(
         calculate_queue_depth_metrics(pool),
         calculate_dequeue_latency_metrics(pool),
@@ -244,7 +244,7 @@ pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
 }
 
 /// Generate Prometheus metrics and return formatted string
-pub async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
+pub async fn generate_prometheus_metrics(pool: DbPoolRef<'_>) -> Result<String> {
     let metrics = calculate_all_queue_metrics(pool).await?;
     Ok(format_prometheus_metrics(&metrics))
 }

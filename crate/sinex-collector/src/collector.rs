@@ -1,6 +1,7 @@
 use anyhow::Result;
-use sinex_core::{create_registry, EventRegistry, EventSource, EventSourceContext};
-use sinex_db::{models::RawEvent, validation::EventValidator};
+use sinex_core::{unified_collector::{create_registry, EventRegistry, EventSource}, EventSourceContext, ConfigValue, JsonValue, EventSender};
+use sinex_core::RawEvent;
+use sinex_db::validation::EventValidator;
 use sinex_events::{
     filesystem::{FilesystemMonitor, FilesystemConfig},
     terminal::{KittySocketListener, KittyConfig},
@@ -13,7 +14,7 @@ use sinex_events::{
     clipboard::{ClipboardMonitor, ClipboardConfig},
     journal::{JournalMonitor, JournalConfig},
 };
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -25,23 +26,23 @@ use crate::OutputConfig;
 use std::sync::Arc;
 
 /// Convert TOML value to JSON value
-fn toml_to_json(toml_val: toml::Value) -> serde_json::Value {
+fn toml_to_json(toml_val: ConfigValue) -> JsonValue {
     match toml_val {
-        toml::Value::String(s) => serde_json::Value::String(s),
-        toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
-        toml::Value::Float(f) => serde_json::json!(f),
-        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
-        toml::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(toml_to_json).collect())
+        ConfigValue::String(s) => JsonValue::String(s),
+        ConfigValue::Integer(i) => JsonValue::Number(i.into()),
+        ConfigValue::Float(f) => serde_json::json!(f),
+        ConfigValue::Boolean(b) => JsonValue::Bool(b),
+        ConfigValue::Array(arr) => {
+            JsonValue::Array(arr.into_iter().map(toml_to_json).collect())
         }
-        toml::Value::Table(table) => {
-            let map: serde_json::Map<String, serde_json::Value> = table
+        ConfigValue::Table(table) => {
+            let map: serde_json::Map<String, JsonValue> = table
                 .into_iter()
                 .map(|(k, v)| (k, toml_to_json(v)))
                 .collect();
-            serde_json::Value::Object(map)
+            JsonValue::Object(map)
         }
-        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        ConfigValue::Datetime(dt) => JsonValue::String(dt.to_string()),
     }
 }
 
@@ -51,7 +52,7 @@ pub struct UnifiedCollector {
     output_config: OutputConfig,
     enabled_events: HashSet<String>,
     registry: EventRegistry,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
     validator: Option<EventValidator>,
     event_log_file: Option<tokio::fs::File>,
     metrics: Arc<CollectorMetrics>,
@@ -61,7 +62,7 @@ impl UnifiedCollector {
     pub fn new(
         config: CollectorConfig,
         output_config: OutputConfig,
-        db_pool: Option<PgPool>,
+        db_pool: Option<DbPool>,
         validator: Option<EventValidator>,
     ) -> Self {
         let enabled_events: HashSet<_> = config.enabled_events.iter().cloned().collect();
@@ -134,7 +135,7 @@ impl UnifiedCollector {
     }
     
     /// Start all enabled event sources
-    async fn start_sources(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<Vec<JoinHandle<()>>> {
+    async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
         
         if self.needs_source("filesystem") {
@@ -205,7 +206,7 @@ impl UnifiedCollector {
             .any(|event| self.is_event_enabled(event))
     }
     
-    async fn start_filesystem_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting filesystem source");
         
         // Get config for filesystem events
@@ -239,7 +240,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_terminal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting terminal source");
         
         let config_json = self.config.event.get("commands")
@@ -268,7 +269,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_window_manager_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_window_manager_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting window manager source");
         
         let config_json = self.config.event.get("windows")
@@ -297,7 +298,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_atuin_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_atuin_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting atuin source");
         
         let config_json = self.config.event.get("shell.command.executed_atuin")
@@ -326,7 +327,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_shell_history_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_shell_history_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting shell history source");
         
         let config_json = self.config.event.get("shell.history.command")
@@ -355,7 +356,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_asciinema_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_asciinema_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting asciinema recorder");
         
         let config_json = self.config.event.get("terminal.asciinema")
@@ -384,7 +385,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_scrollback_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_scrollback_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting scrollback capture");
         
         let config_json = self.config.event.get("terminal.scrollback")
@@ -413,7 +414,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_dbus_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_dbus_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting D-Bus monitor");
         
         let config_json = self.config.event.get("dbus")
@@ -442,7 +443,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_clipboard_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_clipboard_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting clipboard monitor");
         
         let config_json = self.config.event.get("clipboard")
@@ -471,7 +472,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_journal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting journal monitor");
         
         let config_json = self.config.event.get("journal")

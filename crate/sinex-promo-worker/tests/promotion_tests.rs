@@ -1,6 +1,6 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_db::models::{AgentManifest, RawEvent};
+use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
 use sinex_promo_worker::{WorkRouter, EventScanner, ScannerConfig};
 use sinex_ulid::Ulid;
 
@@ -25,7 +25,7 @@ fn create_test_event(source: &str, event_type: &str) -> RawEvent {
 fn create_test_manifest(
     agent_name: &str,
     status: &str,
-    subscriptions: serde_json::Value,
+    subscriptions: JsonValue,
 ) -> AgentManifest {
     AgentManifest {
         agent_name: agent_name.to_string(),

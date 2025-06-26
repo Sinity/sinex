@@ -28,6 +28,7 @@ pub use std::time::{Duration, Instant};
 pub use std::collections::{HashMap, HashSet};
 pub use std::str::FromStr;
 pub use std::path::{Path, PathBuf};
+pub use std::fmt::Debug;
 // ===== Error Handling =====
 pub use anyhow::Result;
 /// Standard error type for test functions
@@ -41,16 +42,21 @@ pub use sinex_core::{
     EventSource, EventSourceContext, 
     RawEventBuilder,
     sources, event_type_constants,
+    ValidationChain, MultiValidator, JsonType, ErrorContext, ResultExt, CoreError,
+    ConfigExtractor, ConfigValidator, parse_duration, ConfigValue,
+    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor, BackpressureManager,
+    unified_collector::{EventRegistry, create_registry},
 };
 pub use sinex_db::{
     queries, run_migrations,
-    models::RawEvent,
+    RawEvent,
+    DbPool,
+    prelude::{AgentManifest, WorkQueueItem, QueueStatus},
 };
 // ===== Async Runtime =====
 pub use tokio::sync::{mpsc, Barrier};
 pub use tokio::time::{sleep, interval, timeout};
 // ===== Database =====
-pub use sqlx::PgPool;
 // ===== Testing Utilities =====
 pub use futures::future::join_all;
 pub use tempfile::{TempDir, NamedTempFile};
@@ -61,6 +67,7 @@ pub use crate::common::{
     events,
     database_helpers,
     event_sources,
+    event_builders::EventBuilder,
 };
 // Test context - THE way to write tests
 // Event builders - THE way to create events
@@ -95,6 +102,28 @@ pub use sinex_db::queries::{
     fail_work_queue_item,
     insert_raw_event,
     calculate_queue_depth_metrics,
+};
+// ===== Enhanced Assertions =====
+pub use crate::common::enhanced_assertions::{
+    assert_with_validation, assert_eq_with_context, assert_with_context,
+    assert_event_inserted_with_context, assert_completes_within,
+    assert_validation_passes, assert_validation_fails,
+    assert_channel_send_success, assert_channel_send_timeout,
+    assert_config_valid, assert_config_extraction,
+    assert_database_state, assert_events_equivalent,
+    TestAssertionBatch,
+};
+// ===== Configuration Testing =====
+pub use crate::common::config_test_utils::{
+    test_configs, validation as config_validation, extraction as config_extraction,
+    TestConfigFactory, scenarios as config_scenarios,
+    DatabaseTestConfig, CollectorTestConfig, SourcesTestConfig,
+};
+// ===== Channel Testing =====
+pub use crate::common::channel_test_utils::{
+    TestChannelSetup, behavior as channel_behavior, backpressure as channel_backpressure,
+    performance as channel_performance, monitoring as channel_monitoring,
+    scenarios as channel_scenarios, ChannelPerformanceReport, ChannelHealthReport,
 };
 // ===== Assertion Enhancements =====
 // Use pretty_assertions for better diffs

@@ -1,31 +1,10 @@
-use chrono::{DateTime, Utc};
+use crate::{JsonValue, OptionalTimestamp, Timestamp};
 use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
 use sqlx::FromRow;
 
-/// Raw event from the events table
-/// 
-/// NOTE: This struct uses ULID directly. When using with SQLX queries,
-/// use type overrides like: `id::uuid as "id: _"` for proper type inference
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct RawEvent {
-    pub id: Ulid,
-    pub source: String,
-    pub event_type: String,
-    pub ts_ingest: DateTime<Utc>,
-    pub ts_orig: Option<DateTime<Utc>>,
-    pub host: String,
-    pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<Ulid>,
-    pub payload: serde_json::Value,
-}
-
-impl RawEvent {
-    /// Extract ingestion timestamp from ULID (convenience method)
-    pub fn ts_ingest_from_ulid(&self) -> DateTime<Utc> {
-        self.id.timestamp()
-    }
-}
+// RawEvent and RawEventBuilder are now re-exported from sinex-core
+// This eliminates type conflicts and provides a single source of truth
 
 /// Event payload schema
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -34,9 +13,9 @@ pub struct EventPayloadSchema {
     pub event_source: String,
     pub event_type: String,
     pub schema_version: String,
-    pub json_schema_definition: serde_json::Value,
+    pub json_schema_definition: JsonValue,
     pub description: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub is_active: bool,
 }
 
@@ -48,17 +27,17 @@ pub struct AgentManifest {
     pub version: String,
     pub status: String,
     pub agent_type: String,
-    pub config_template_json: Option<serde_json::Value>,
-    pub produces_event_types: Option<serde_json::Value>,
-    pub subscribes_to_event_types: Option<serde_json::Value>,
-    pub required_capabilities: Option<serde_json::Value>,
-    pub llm_dependencies: Option<serde_json::Value>,
+    pub config_template_json: Option<JsonValue>,
+    pub produces_event_types: Option<JsonValue>,
+    pub subscribes_to_event_types: Option<JsonValue>,
+    pub required_capabilities: Option<JsonValue>,
+    pub llm_dependencies: Option<JsonValue>,
     pub repo_url: Option<String>,
-    pub last_heartbeat_ts: Option<DateTime<Utc>>,
-    pub last_error_ts: Option<DateTime<Utc>>,
+    pub last_heartbeat_ts: OptionalTimestamp,
+    pub last_error_ts: OptionalTimestamp,
     pub last_error_summary: Option<String>,
-    pub registered_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub registered_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// Work queue item (formerly promotion queue)
@@ -70,12 +49,12 @@ pub struct WorkQueueItem {
     pub status: String,
     pub attempts: i32,
     pub max_attempts: i32,
-    pub last_attempt_ts: Option<DateTime<Utc>>,
-    pub next_retry_ts: Option<DateTime<Utc>>,
+    pub last_attempt_ts: OptionalTimestamp,
+    pub next_retry_ts: OptionalTimestamp,
     pub error_message_last: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub processing_worker_id: Option<String>,
-    pub processed_at: Option<DateTime<Utc>>,  // New: TTL policy tracking
+    pub processed_at: OptionalTimestamp,  // New: TTL policy tracking
     pub failure_reason: Option<String>,       // New: Detailed failure information
 }
 
@@ -145,12 +124,12 @@ pub struct DlqEvent {
     pub failure_reason: String,
     pub error_category: String,
     pub retry_count: i32,
-    pub failed_at: DateTime<Utc>,
-    pub last_retry_at: Option<DateTime<Utc>>,
-    pub next_retry_at: Option<DateTime<Utc>>,
-    pub original_event_payload: serde_json::Value,
-    pub additional_metadata: Option<serde_json::Value>,
-    pub resolved_at: Option<DateTime<Utc>>,
+    pub failed_at: Timestamp,
+    pub last_retry_at: OptionalTimestamp,
+    pub next_retry_at: OptionalTimestamp,
+    pub original_event_payload: JsonValue,
+    pub additional_metadata: Option<JsonValue>,
+    pub resolved_at: OptionalTimestamp,
     pub resolved_by: Option<String>,
 }
 

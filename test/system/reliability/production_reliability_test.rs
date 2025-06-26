@@ -46,7 +46,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     let pool3 = pool.clone();
     
     // Define async functions for each operation
-    async fn event_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn event_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _event = insert_raw_event(
             &pool,
             "degradation.test",
@@ -60,7 +60,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         Ok(())
     }
     
-    async fn health_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn health_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
             .fetch_one(&pool)
             .await
@@ -69,7 +69,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         Ok(())
     }
     
-    async fn agent_test(pool: PgPool) -> Result<(), anyhow::Error> {
+    async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _agent_check = sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
             .fetch_one(&pool)
             .await

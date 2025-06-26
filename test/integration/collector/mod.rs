@@ -86,7 +86,7 @@ pub mod utils {
     
     /// Wait for collector to be ready
     pub async fn wait_for_collector_ready(
-        pool: &PgPool,
+        pool: &DbPool,
         timeout_secs: u64
     ) -> Result<(), anyhow::Error> {
         crate::common::timing_optimization::wait_helpers::wait_for_condition(

@@ -213,7 +213,7 @@ async fn test_ttl_policy_respects_90_day_threshold(ctx: TestContext) -> Result<(
 
 
 // Function that should exist after TTL implementation - now implemented!
-async fn purge_old_work_queue_items(_pool: &PgPool) -> Result<i64> {
+async fn purge_old_work_queue_items(_pool: &DbPool) -> Result<i64> {
     // This is a stub for testing - the real implementation should be in sinex_db
     Ok(0)
 }

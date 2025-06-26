@@ -63,7 +63,7 @@ pub mod utils {
     
     /// Wait for agent to be registered
     pub async fn wait_for_agent_registration(
-        pool: &PgPool,
+        pool: &DbPool,
         agent_name: &str,
         timeout_secs: u64
     ) -> Result<(), anyhow::Error> {

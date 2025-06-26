@@ -51,6 +51,54 @@ impl EventSource for MyEventSource {
 - Clean up obsolete code/files proactively
 - Avoid proliferating around arbitrary ad-hoc scripts, documentation and other such files. There's designated space for such documentation needs you might have - spec/docs/claude
 
+### New Abstractions & Patterns
+
+The Sinex codebase has been enhanced with five core abstractions for better error handling, validation, and testing:
+
+#### 1. ValidationChain
+Fluent, composable validation with error accumulation:
+```rust
+let result = ValidationChain::validate(value, "field_name")
+    .not_empty()
+    .min_length(5)
+    .custom(|v| v.contains("test"), "must contain test")
+    .into_result();
+```
+
+#### 2. ErrorContext
+Rich error context with chaining for better debugging:
+```rust
+let error = CoreError::database("Connection failed")
+    .with_context("host", "localhost")
+    .with_event_id(event_id)
+    .with_operation("database_connect")
+    .build();
+```
+
+#### 3. ChannelSenderExt/ReceiverExt
+Enhanced async channel operations with timeouts and monitoring:
+```rust
+sender.send_or_log(item, "context").await?;
+let batch = receiver.recv_batch(10, Duration::from_millis(100)).await;
+```
+
+#### 4. ConfigExtractor
+Type-safe configuration access with validation:
+```rust
+let url = config.require_str("database.url")?;
+let pool_size = config.u64_or("database.pool_size", 10);
+```
+
+#### 5. Enhanced Test Infrastructure
+Rich test assertions and utilities:
+```rust
+assert_event_inserted_with_context(pool, &event, "test_context").await?;
+assert_validation_passes(validation_chain)?;
+let mut batch = TestAssertionBatch::new("test_batch");
+```
+
+**Usage Guide**: See `spec/docs/claude/abstraction_usage_guide.md` for comprehensive examples.
+
 ## 🚨 Critical Agent Responsibilities
 
 ### Task Completion Protocol
@@ -231,19 +279,33 @@ just sqlx-check               # Check if cache is up to date
 
 #### Test Infrastructure
 
-The test suite uses a unified test infrastructure with the `#[sinex_test]` macro and `TestContext`:
+The test suite uses a unified test infrastructure with the `#[sinex_test]` macro, `TestContext`, and enhanced abstractions:
 
 ```rust
 #[sinex_test]
-async fn test_example(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
-    // Access shared database pool
-    let pool = ctx.pool();
+async fn test_example(ctx: TestContext) -> TestResult {
+    // Create test data using enhanced builders
+    let event = EventBuilder::filesystem().path("/test/file.txt").created().build();
     
-    // Access test configuration
-    let config = ctx.config();
+    // Insert with enhanced error context
+    let event_id = assert_event_inserted_with_context(
+        ctx.pool(), 
+        &event, 
+        "example_test_context"
+    ).await?;
     
-    // Use test helpers
-    ctx.wait_for_work_queue(0).await?;
+    // Use ValidationChain for comprehensive validation
+    let validation = assert_with_validation(event.source.clone(), "event_source")
+        .not_empty()
+        .min_length(3);
+    assert_validation_passes(validation)?;
+    
+    // Use TestAssertionBatch for multiple assertions
+    let mut batch = TestAssertionBatch::new("example_assertions");
+    batch.assert_that(|| {
+        assert_eq_with_context(&event.event_type, "file.created", "event type check")
+    }, "event type validation");
+    batch.execute()?;
     
     Ok(())
 }
@@ -252,7 +314,10 @@ async fn test_example(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>
 **Key Benefits**:
 - Shared database pool (50 connections) instead of per-test pools
 - Automatic test isolation via transactions
-- Consistent test helpers and utilities
+- Enhanced assertions with rich error context
+- ValidationChain integration for fluent validation
+- Channel testing utilities for async patterns
+- Configuration testing with type-safe extraction
 - Faster test startup and execution
 
 #### Running Tests

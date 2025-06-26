@@ -3,12 +3,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, JsonValue, Timestamp, OptionalTimestamp};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads
@@ -22,7 +21,7 @@ pub struct JournalEntryPayload {
     /// Timestamp from journal (microseconds since epoch)
     pub timestamp_us: i64,
     /// Parsed timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Hostname
     pub hostname: Option<String>,
     /// Unit name (for systemd services)
@@ -63,9 +62,9 @@ pub struct JournalSyncPayload {
     /// Number of entries processed
     pub entries_count: u64,
     /// Time range start
-    pub time_start: Option<DateTime<Utc>>,
+    pub time_start: OptionalTimestamp,
     /// Time range end
-    pub time_end: Option<DateTime<Utc>>,
+    pub time_end: OptionalTimestamp,
     /// Duration in milliseconds
     pub duration_ms: u64,
 }
@@ -192,7 +191,7 @@ impl EventSource for JournalMonitor {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting journal monitoring");
         
         // Import historical entries if configured
@@ -212,7 +211,7 @@ impl EventSource for JournalMonitor {
 }
 
 impl JournalMonitor {
-    async fn import_historical(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn import_historical(&mut self, tx: &EventSender) -> Result<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
         
@@ -269,7 +268,7 @@ impl JournalMonitor {
                 continue;
             }
             
-            match serde_json::from_slice::<serde_json::Value>(line) {
+            match serde_json::from_slice::<JsonValue>(line) {
                 Ok(entry) => {
                     if let Some(event) = self.parse_journal_entry(&entry)? {
                         if first_cursor.is_none() {
@@ -282,9 +281,7 @@ impl JournalMonitor {
                         
                         if batch.len() >= self.config.batch_size {
                             for event in batch.drain(..) {
-                                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                                    "Channel closed".to_string()
-                                ))?;
+                                tx.send_or_log(event, "journal_batch").await?;
                             }
                         }
                     }
@@ -297,9 +294,7 @@ impl JournalMonitor {
         
         // Send remaining batch
         for event in batch {
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "journal_final_batch").await?;
         }
         
         // Update cursor
@@ -324,9 +319,7 @@ impl JournalMonitor {
                 JournalSync::EVENT_NAME,
                 serde_json::to_value(sync_payload)?
             );
-            tx.send(sync_event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(sync_event, "journal_sync_event").await?;
         }
         
         info!("Historical import complete: {} entries in {:?}", 
@@ -335,7 +328,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    async fn follow_journal(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn follow_journal(&mut self, tx: EventSender) -> Result<()> {
         let mut args = vec![
             "--output=json",
             "--no-pager",
@@ -393,7 +386,7 @@ impl JournalMonitor {
                         continue;
                     }
                     
-                    match serde_json::from_str::<serde_json::Value>(&line) {
+                    match serde_json::from_str::<JsonValue>(&line) {
                         Ok(entry) => {
                             if let Some(event) = self.parse_journal_entry(&entry)? {
                                 // Update cursor
@@ -402,9 +395,7 @@ impl JournalMonitor {
                                     self.save_cursor(cursor).await?;
                                 }
                                 
-                                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                                    "Channel closed".to_string()
-                                ))?;
+                                tx.send_or_log(event, "journal_follow_event").await?;
                             }
                         }
                         Err(e) => {
@@ -425,7 +416,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    fn parse_journal_entry(&self, entry: &serde_json::Value) -> Result<Option<RawEvent>> {
+    fn parse_journal_entry(&self, entry: &JsonValue) -> Result<Option<RawEvent>> {
         let obj = entry.as_object()
             .ok_or_else(|| sinex_core::CoreError::Other("Invalid journal entry".to_string()))?;
         
@@ -528,7 +519,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEvent {
             id: sinex_ulid::Ulid::new(),
             source: Self::SOURCE_NAME.to_string(),

@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sinex_core::{EventSender, Timestamp};
 use std::path::PathBuf;
 use async_trait::async_trait;
 use notify::Watcher;
-use tokio::sync::mpsc;
 use tracing::{debug, info, error};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -19,7 +19,7 @@ use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Re
 pub struct FileCreatedPayload {
     pub path: PathBuf,
     pub size: u64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub permissions: Option<u32>,
 }
 
@@ -27,14 +27,14 @@ pub struct FileCreatedPayload {
 pub struct FileModifiedPayload {
     pub path: PathBuf,
     pub size: u64,
-    pub modified_at: DateTime<Utc>,
+    pub modified_at: Timestamp,
     pub modification_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileDeletedPayload {
     pub path: PathBuf,
-    pub deleted_at: DateTime<Utc>,
+    pub deleted_at: Timestamp,
 }
 
 // ============================================================================
@@ -257,7 +257,7 @@ impl EventSource for FilesystemMonitor {
         Self::new(config).await
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             patterns = ?self.config.watch_patterns,
             ignore = ?self.config.ignore_patterns,
@@ -271,7 +271,10 @@ impl EventSource for FilesystemMonitor {
             std::time::Duration::from_millis(self.config.debounce_ms),
             None,
             notify_tx,
-        ).map_err(|e| sinex_core::CoreError::Other(format!("Failed to create debouncer: {}", e)))?;
+        ).map_err(|e| sinex_core::CoreError::processing_failed()
+            .with_operation("create_debouncer")
+            .with_source(e)
+            .build())?;
         
         // Watch all matching paths
         let mut watched_paths = std::collections::HashSet::new();
@@ -300,7 +303,10 @@ impl EventSource for FilesystemMonitor {
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
                 std::fs::create_dir_all(base_path)
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create directory: {}", e)))?;
+                    .map_err(|e| sinex_core::CoreError::io_error(base_path)
+                        .with_operation("create_directory")
+                        .with_source(e)
+                        .build())?;
             }
             
             // Watch the base directory
@@ -308,7 +314,10 @@ impl EventSource for FilesystemMonitor {
                 info!("Watching directory: {}", base_path.display());
                 debouncer.watcher()
                     .watch(base_path, notify::RecursiveMode::Recursive)
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to watch path: {}", e)))?;
+                    .map_err(|e| sinex_core::CoreError::io_error(base_path)
+                        .with_operation("watch_path")
+                        .with_source(e)
+                        .build())?;
                 watched_paths.insert(base_path.to_path_buf());
             }
         }

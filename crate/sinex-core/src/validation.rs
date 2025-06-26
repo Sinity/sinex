@@ -1,4 +1,5 @@
 use std::path::{PathBuf, Component};
+use crate::{CoreError, Result};
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
@@ -7,15 +8,15 @@ const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
 
 /// Validate a file path for security issues
-pub fn validate_path(path: &str) -> Result<PathBuf, crate::Error> {
+pub fn validate_path(path: &str) -> Result<PathBuf> {
     // Check for null bytes
     if path.contains('\0') {
-        return Err(crate::Error::Validation("Path contains null bytes".into()));
+        return Err(CoreError::Validation("Path contains null bytes".into()));
     }
     
     // Check length
     if path.len() > 4096 {
-        return Err(crate::Error::Validation("Path too long".into()));
+        return Err(CoreError::Validation("Path too long".into()));
     }
     
     let path_buf = PathBuf::from(path);
@@ -27,7 +28,7 @@ pub fn validate_path(path: &str) -> Result<PathBuf, crate::Error> {
             Component::ParentDir => {
                 depth -= 1;
                 if depth < 0 {
-                    return Err(crate::Error::Validation("Path traversal detected".into()));
+                    return Err(CoreError::Validation("Path traversal detected".into()));
                 }
             }
             Component::Normal(_) => depth += 1,
@@ -40,17 +41,17 @@ pub fn validate_path(path: &str) -> Result<PathBuf, crate::Error> {
 }
 
 /// Validate JSON with size and depth limits
-pub fn validate_json(json_str: &str) -> Result<Value, crate::Error> {
+pub fn validate_json(json_str: &str) -> Result<Value> {
     // Size check
     if json_str.len() > MAX_JSON_SIZE {
-        return Err(crate::Error::Validation(format!(
+        return Err(CoreError::Validation(format!(
             "JSON too large: {} bytes", json_str.len()
         )));
     }
     
     // Parse
     let value: Value = serde_json::from_str(json_str)
-        .map_err(|e| crate::Error::Validation(format!("Invalid JSON: {}", e)))?;
+        .map_err(|e| CoreError::Validation(format!("Invalid JSON: {}", e)))?;
     
     // Validate structure
     validate_json_structure(&value, 0)?;
@@ -58,9 +59,9 @@ pub fn validate_json(json_str: &str) -> Result<Value, crate::Error> {
     Ok(value)
 }
 
-fn validate_json_structure(value: &Value, depth: usize) -> Result<(), crate::Error> {
+fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
-        return Err(crate::Error::Validation(format!(
+        return Err(CoreError::Validation(format!(
             "JSON too deep: {} levels", depth
         )));
     }
@@ -68,7 +69,7 @@ fn validate_json_structure(value: &Value, depth: usize) -> Result<(), crate::Err
     match value {
         Value::Object(map) => {
             if map.len() > MAX_JSON_KEYS {
-                return Err(crate::Error::Validation(format!(
+                return Err(CoreError::Validation(format!(
                     "Too many keys: {}", map.len()
                 )));
             }
@@ -89,7 +90,7 @@ fn validate_json_structure(value: &Value, depth: usize) -> Result<(), crate::Err
 }
 
 /// Normalize and validate Unicode strings
-pub fn normalize_unicode(input: &str) -> Result<String, crate::Error> {
+pub fn normalize_unicode(input: &str) -> Result<String> {
     // Normalize to NFC
     let normalized: String = input.nfc().collect();
     
@@ -98,13 +99,13 @@ pub fn normalize_unicode(input: &str) -> Result<String, crate::Error> {
         match ch {
             // Zero-width characters
             '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{2060}' => {
-                return Err(crate::Error::Validation(
+                return Err(CoreError::Validation(
                     "Zero-width characters not allowed".into()
                 ));
             }
             // Direction overrides
             '\u{202A}'..='\u{202E}' | '\u{200E}' | '\u{200F}' => {
-                return Err(crate::Error::Validation(
+                return Err(CoreError::Validation(
                     "Direction control characters not allowed".into()
                 ));
             }
@@ -128,10 +129,10 @@ pub fn contains_shell_metacharacters(s: &str) -> bool {
 }
 
 /// Detect potential billion laughs pattern in JSON
-pub fn check_json_expansion(value: &Value) -> Result<(), crate::Error> {
-    fn estimate_expanded_size(value: &Value, depth: usize, seen_refs: &mut std::collections::HashSet<String>) -> Result<usize, crate::Error> {
+pub fn check_json_expansion(value: &Value) -> Result<()> {
+    fn estimate_expanded_size(value: &Value, depth: usize, seen_refs: &mut std::collections::HashSet<String>) -> Result<usize> {
         if depth > 10 {
-            return Err(crate::Error::Validation(
+            return Err(CoreError::Validation(
                 "Potential billion laughs attack detected".into()
             ));
         }
@@ -152,7 +153,7 @@ pub fn check_json_expansion(value: &Value) -> Result<(), crate::Error> {
                 }
                 // Check for exponential expansion
                 if depth > 3 && arr.len() > 100 {
-                    return Err(crate::Error::Validation(
+                    return Err(CoreError::Validation(
                         "Suspicious array expansion detected".into()
                     ));
                 }
@@ -168,7 +169,7 @@ pub fn check_json_expansion(value: &Value) -> Result<(), crate::Error> {
     
     // If expanded size is more than 100x the original, reject
     if estimated_size > value.to_string().len() * 100 {
-        return Err(crate::Error::Validation(
+        return Err(CoreError::Validation(
             "JSON expansion ratio too high".into()
         ));
     }

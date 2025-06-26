@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
+use sinex_db::{DbPool, Timestamp};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Instant;
@@ -27,11 +28,11 @@ pub struct BlobMetadata {
 #[derive(Debug)]
 pub struct BlobManager {
     annex: GitAnnex,
-    db_pool: PgPool,
+    db_pool: DbPool,
 }
 
 impl BlobManager {
-    pub fn new(annex_config: AnnexConfig, db_pool: PgPool) -> Result<Self> {
+    pub fn new(annex_config: AnnexConfig, db_pool: DbPool) -> Result<Self> {
         let annex = GitAnnex::new(annex_config)?;
         Ok(BlobManager { annex, db_pool })
     }
@@ -322,8 +323,8 @@ impl BlobManager {
         .bind(event["id"].as_str().unwrap())
         .bind(event["source"].as_str().unwrap())
         .bind(event["event_type"].as_str().unwrap())
-        .bind(event["ts_ingest"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
-        .bind(event["ts_orig"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["ts_ingest"].as_str().unwrap().parse::<Timestamp>().unwrap())
+        .bind(event["ts_orig"].as_str().unwrap().parse::<Timestamp>().unwrap())
         .bind(event["host"].as_str().unwrap())
         .bind(&event["payload"])
         .execute(&self.db_pool)
@@ -377,8 +378,8 @@ impl BlobManager {
         .bind(event["id"].as_str().unwrap())
         .bind(event["source"].as_str().unwrap())
         .bind(event["event_type"].as_str().unwrap())
-        .bind(event["ts_ingest"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
-        .bind(event["ts_orig"].as_str().unwrap().parse::<chrono::DateTime<Utc>>().unwrap())
+        .bind(event["ts_ingest"].as_str().unwrap().parse::<Timestamp>().unwrap())
+        .bind(event["ts_orig"].as_str().unwrap().parse::<Timestamp>().unwrap())
         .bind(event["host"].as_str().unwrap())
         .bind(&event["payload"])
         .execute(&self.db_pool)

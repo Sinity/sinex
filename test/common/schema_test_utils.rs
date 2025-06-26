@@ -4,12 +4,12 @@ use crate::common::prelude::*;
 use serde_json::{json, Value};
 
 /// Register test schema with event source and type
-pub async fn register_test_schema(pool: &PgPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
+pub async fn register_test_schema(pool: &DbPool, event_source: &str, event_type: &str, schema: Value) -> Result<Ulid> {
     database::insert_test_schema(&pool, event_source, event_type, "1.0", schema).await
 }
 
 /// Assert schema validates event successfully
-pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_valid_event(pool: &DbPool, event: &sinex_db::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -24,7 +24,7 @@ pub async fn assert_schema_valid_event(pool: &PgPool, event: &sinex_db::models::
 }
 
 /// Assert schema invalidates event
-pub async fn assert_schema_invalid_event(pool: &PgPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_invalid_event(pool: &DbPool, event: &sinex_db::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -254,7 +254,7 @@ pub mod database {
 
     /// Insert a test schema into the database
     pub async fn insert_test_schema(
-        pool: &PgPool, 
+        pool: &DbPool, 
         event_source: &str,
         event_type: &str,
         schema_version: &str,
@@ -280,7 +280,7 @@ pub mod database {
     }
 
     /// Get a schema from the database
-    pub async fn get_schema(pool: &PgPool, schema_id: Ulid) -> Result<Option<Value>> {
+    pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> Result<Option<Value>> {
         let row = sqlx::query!(
             r#"
             SELECT json_schema_definition
@@ -296,7 +296,7 @@ pub mod database {
     }
 
     /// List all schemas in the database
-    pub async fn list_schemas(pool: &PgPool) -> Result<Vec<(Ulid, String, String, Value)>> {
+    pub async fn list_schemas(pool: &DbPool) -> Result<Vec<(Ulid, String, String, Value)>> {
         let rows = sqlx::query!(
             r#"
             SELECT id::uuid, event_source, event_type, json_schema_definition
@@ -318,7 +318,7 @@ pub mod database {
     }
 
     /// Delete a schema from the database
-    pub async fn delete_schema(pool: &PgPool, schema_id: Ulid) -> Result<bool> {
+    pub async fn delete_schema(pool: &DbPool, schema_id: Ulid) -> Result<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.event_payload_schemas 
@@ -333,7 +333,7 @@ pub mod database {
     }
 
     /// Setup test schemas in database
-    pub async fn setup_test_schemas(pool: &PgPool) -> Result<Vec<(String, Ulid)>> {
+    pub async fn setup_test_schemas(pool: &DbPool) -> Result<Vec<(String, Ulid)>> {
         let mut schema_ids = Vec::new();
 
         // Insert filesystem schema
@@ -367,7 +367,7 @@ pub mod database {
     }
 
     /// Cleanup test schemas from database
-    pub async fn cleanup_test_schemas(pool: &PgPool, schema_ids: &[Ulid]) -> Result<(), anyhow::Error> {
+    pub async fn cleanup_test_schemas(pool: &DbPool, schema_ids: &[Ulid]) -> Result<(), anyhow::Error> {
         for &schema_id in schema_ids {
             delete_schema(&pool, schema_id).await?;
         }

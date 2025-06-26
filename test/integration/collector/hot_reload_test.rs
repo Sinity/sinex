@@ -1,5 +1,6 @@
 use crate::common::prelude::*;
 use sinex_collector::config::CollectorConfig;
+use sinex_core::ConfigValue;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use tokio::sync::{mpsc, Mutex};
 use std::io::Write;
@@ -63,9 +64,9 @@ async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> TestResul
     let mut event_config = HashMap::new();
     event_config.insert(
         "configurable_source".to_string(),
-        toml::Value::Table({
+        ConfigValue::Table({
             let mut table = toml::map::Map::new();
-            table.insert("event_interval_ms".to_string(), toml::Value::Integer(100));
+            table.insert("event_interval_ms".to_string(), ConfigValue::Integer(100));
             table
         })
     );

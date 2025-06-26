@@ -1,7 +1,8 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sinex_core::{EventSender, Timestamp, JsonValue, ChannelSenderExt};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
@@ -11,12 +12,10 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources, RawEvent};
 
 // ============================================================================
 // Event Payloads
@@ -27,7 +26,7 @@ pub struct WindowFocusedPayload {
     pub window_address: String,
     pub window_class: String,
     pub window_title: String,
-    pub focused_at: DateTime<Utc>,
+    pub focused_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -36,13 +35,13 @@ pub struct WindowOpenedPayload {
     pub workspace_id: String,
     pub window_class: String,
     pub window_title: String,
-    pub opened_at: DateTime<Utc>,
+    pub opened_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WindowClosedPayload {
     pub window_address: String,
-    pub closed_at: DateTime<Utc>,
+    pub closed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -50,29 +49,29 @@ pub struct WindowMovedPayload {
     pub window_address: String,
     pub from_workspace: Option<String>,
     pub to_workspace: String,
-    pub moved_at: DateTime<Utc>,
+    pub moved_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceChangedPayload {
     pub workspace_id: String,
     pub workspace_name: String,
-    pub changed_at: DateTime<Utc>,
+    pub changed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MonitorFocusedPayload {
     pub monitor_name: String,
     pub workspace_id: String,
-    pub focused_at: DateTime<Utc>,
+    pub focused_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StateSnapshotPayload {
-    pub timestamp: DateTime<Utc>,
-    pub monitors: serde_json::Value,
-    pub workspaces: serde_json::Value,
-    pub clients: serde_json::Value,
+    pub timestamp: Timestamp,
+    pub monitors: JsonValue,
+    pub workspaces: JsonValue,
+    pub clients: JsonValue,
 }
 
 // ============================================================================
@@ -176,7 +175,7 @@ struct CacheEntry {
 #[derive(Debug, Clone)]
 struct FocusHistoryEntry {
     #[allow(dead_code)]
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
     #[allow(dead_code)]
     window_address: String,
     #[allow(dead_code)]
@@ -254,7 +253,7 @@ impl EventSource for HyprlandIPCMonitor {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             socket_path = ?self.socket_path,
             window_augmentation = ?self.config.window_augmentation,
@@ -277,7 +276,7 @@ impl EventSource for HyprlandIPCMonitor {
 
 impl HyprlandIPCMonitor {
     /// Listen to socket2 events
-    async fn listen_socket_events(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn listen_socket_events(&self, event_tx: EventSender) -> Result<()> {
         loop {
             match UnixStream::connect(&self.socket_path).await {
                 Ok(stream) => {
@@ -298,7 +297,7 @@ impl HyprlandIPCMonitor {
     }
 
     /// Process the event stream from socket2
-    async fn process_event_stream(&self, stream: UnixStream, event_tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn process_event_stream(&self, stream: UnixStream, event_tx: &EventSender) -> Result<()> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
 
@@ -340,7 +339,7 @@ impl HyprlandIPCMonitor {
                 };
 
                 // Send event
-                event_tx.send(raw_event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+                event_tx.send_or_log(raw_event, "window_manager_event").await?;
 
                 // Update focus history if applicable
                 if event_name == "activewindow" || event_name == "activewindowv2" {
@@ -579,7 +578,7 @@ impl EventSource for HyprlandStateSnapshotter {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         if self.interval_secs == 0 {
             info!("State snapshots disabled (interval_secs = 0)");
             // Keep running but don't send events
@@ -619,7 +618,7 @@ impl EventSource for HyprlandStateSnapshotter {
                 payload: snapshot,
             };
 
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+            tx.send_or_log(event, "window_manager_snapshot").await?;
         }
     }
 }

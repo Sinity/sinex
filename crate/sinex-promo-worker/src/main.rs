@@ -4,10 +4,10 @@ use clap::Parser;
 use sinex_db::{
     models::WorkQueueItem,
     queries::{upsert_agent_manifest},
+    DbPool, DbPoolRef, JsonValue,
 };
 use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Duration;
@@ -72,7 +72,7 @@ struct ExampleProcessor {
 
 #[async_trait]
 impl EventProcessor for ExampleProcessor {
-    async fn process_event(&self, pool: &PgPool, item: &WorkQueueItem) -> Result<()> {
+    async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()> {
         // Use consolidated query function
         let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id)
             .await?;
@@ -117,7 +117,7 @@ impl EventProcessor for ExampleProcessor {
     }
 }
 
-async fn register_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     
     // Register the agent
@@ -176,7 +176,7 @@ async fn main() -> Result<()> {
 }
 
 /// Run as a scanner that creates work queue entries
-async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
+async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
     info!("Running in scanner mode");
     
     // Set up graceful shutdown
@@ -310,7 +310,7 @@ async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
 }
 
 /// Scan for new events and create work entries
-async fn scan_and_promote(pool: &PgPool, scanner: &mut EventScanner) -> Result<usize> {
+async fn scan_and_promote(pool: DbPoolRef<'_>, scanner: &mut EventScanner) -> Result<usize> {
     // Get active agent manifests
     let manifests = get_active_manifests(pool).await?;
     let router = WorkRouter::from_manifests(manifests);
@@ -350,7 +350,7 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
         None
     }
     
-    fn get_custom_metrics(&self) -> serde_json::Value {
+    fn get_custom_metrics(&self) -> JsonValue {
         serde_json::json!({
             "total_events_processed": self.events_processed.load(Ordering::Relaxed),
             "uptime_seconds": self.start_time.elapsed().as_secs()
@@ -359,7 +359,7 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
 }
 
 /// Run as a worker processing work queue entries
-async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
+async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode");
 
     // Set up graceful shutdown

@@ -1,14 +1,13 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, Timestamp, JsonValue, ChannelSenderExt};
 use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
-use sqlx::PgPool;
+use sinex_db::DbPool;
 
 // ============================================================================
 // Event Payloads
@@ -42,7 +41,7 @@ pub struct ClipboardChangedPayload {
     /// Blob ID from core_blobs table if stored
     pub blob_id: Option<String>,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Clipboard selection event (Linux primary selection)
@@ -67,7 +66,7 @@ pub struct ClipboardSelectionPayload {
     /// Blob ID from core_blobs table if stored
     pub blob_id: Option<String>,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -143,15 +142,15 @@ pub struct ClipboardMonitor {
     last_primary: Option<String>,
     clipboard_history: Vec<ClipboardHistoryEntry>,
     git_annex: Option<GitAnnex>,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
 }
 
 #[derive(Clone)]
 struct ClipboardHistoryEntry {
     content_hash: String,
     #[allow(dead_code)]
-    first_seen: DateTime<Utc>,
-    last_seen: DateTime<Utc>,
+    first_seen: Timestamp,
+    last_seen: Timestamp,
     #[allow(dead_code)]
     content_type: String,
     copy_count: u32,
@@ -236,7 +235,7 @@ impl EventSource for ClipboardMonitor {
         Ok(instance)
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting clipboard monitoring");
         
         let mut interval = tokio::time::interval(
@@ -277,7 +276,7 @@ impl ClipboardMonitor {
     
     async fn check_clipboard(
         &mut self,
-        tx: &mpsc::Sender<RawEvent>,
+        tx: &EventSender,
         selection: &str,
     ) -> Result<()> {
         let content = self.get_clipboard_content(selection).await?;
@@ -348,9 +347,7 @@ impl ClipboardMonitor {
                     ClipboardChanged::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "clipboard_changed").await?;
             } else {
                 let payload = ClipboardSelectionPayload {
                     selection_type: selection.to_string(),
@@ -369,9 +366,7 @@ impl ClipboardMonitor {
                     ClipboardSelection::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "clipboard_selection").await?;
             }
             
             // Update history
@@ -495,7 +490,7 @@ impl ClipboardMonitor {
             .await
         {
             if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Ok(json) = serde_json::from_slice::<JsonValue>(&output.stdout) {
                     return json.get("class")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
@@ -525,7 +520,7 @@ impl ClipboardMonitor {
             .await
         {
             if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Ok(json) = serde_json::from_slice::<JsonValue>(&output.stdout) {
                     return json.get("title")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
@@ -605,7 +600,10 @@ impl ClipboardMonitor {
                 large_files: None,
             };
             let blob_manager = BlobManager::new(annex_config, db_pool.clone())
-                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create BlobManager: {}", e)))?;
+                .map_err(|e| sinex_core::CoreError::processing_failed()
+                    .with_operation("create_blob_manager")
+                    .with_source(e)
+                    .build())?;
             
             let blob_metadata = BlobMetadata {
                 blob_id: sinex_ulid::Ulid::new(),

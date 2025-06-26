@@ -27,7 +27,7 @@ async fn test_database_disconnection_recovery(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-async fn test_database_connection_recovery(pool: &PgPool) -> Result<bool> {
+async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
     // Test connection recovery by simulating connection issues
     
     // Phase 1: Verify normal operation
@@ -73,7 +73,7 @@ async fn test_database_connection_recovery(pool: &PgPool) -> Result<bool> {
     Ok(connection_resilient && system_recovered)
 }
 
-async fn test_event_buffering_during_outage(pool: &PgPool) -> Result<bool> {
+async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
     // Test that events are properly buffered when database is unavailable
     
     let (_event_tx, mut _event_rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
@@ -125,7 +125,7 @@ async fn test_event_buffering_during_outage(pool: &PgPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_connection_pool_recovery(pool: &PgPool) -> Result<bool> {
+async fn test_connection_pool_recovery(pool: &DbPool) -> Result<bool> {
     // Test connection pool recovery from exhaustion
     
     let mut connections = Vec::new();
@@ -351,7 +351,7 @@ async fn test_worker_failure_and_retry(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-async fn test_worker_retry_logic(pool: &PgPool) -> Result<bool> {
+async fn test_worker_retry_logic(pool: &DbPool) -> Result<bool> {
     
     // Create test event and add to promotion queue
     let test_event = RawEventBuilder::new(
@@ -395,7 +395,7 @@ async fn test_worker_retry_logic(pool: &PgPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_dead_letter_queue_handling(pool: &PgPool) -> Result<bool> {
+async fn test_dead_letter_queue_handling(pool: &DbPool) -> Result<bool> {
     
     // Create test event that will exhaust retries
     let test_event = RawEventBuilder::new(
@@ -435,7 +435,7 @@ async fn test_dead_letter_queue_handling(pool: &PgPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_concurrent_worker_failures(pool: &PgPool) -> Result<bool> {
+async fn test_concurrent_worker_failures(pool: &DbPool) -> Result<bool> {
     
     // Create multiple test events
     let mut event_ids = Vec::new();

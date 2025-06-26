@@ -256,7 +256,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     
     // Helper to run a simple query
     async fn try_query(
-        pool: &PgPool,
+        pool: &DbPool,
         counter: &Arc<AtomicU64>,
         errors: &Arc<AtomicU64>,
     ) -> Result<(), sqlx::Error> {

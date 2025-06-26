@@ -18,8 +18,8 @@ async fn test_comprehensive_configuration_validation_pipeline(ctx: TestContext) 
     // NOTE: This test is currently disabled due to config structure simplification
     // The CollectorConfig structure was simplified to only include:
     // - enabled_events: Vec<String>
-    // - event: HashMap<String, toml::Value>
-    // - flat_config: HashMap<String, toml::Value>  
+    // - event: HashMap<String, ConfigValue>
+    // - flat_config: HashMap<String, ConfigValue>  
     // - annex_repo_path: Option<String>
     // The old monitoring, database, and git_annex fields were removed.
     println!("Configuration test disabled due to simplified config structure");
@@ -217,12 +217,12 @@ fn create_comprehensive_valid_config() -> CollectorConfig {
     config.annex_repo_path = Some("/tmp/test-annex".to_string());
     
     // Required event configurations using the correct TOML value type
-    use toml::Value;
+    use sinex_core::ConfigValue;
     config.event.insert("shell_command_executed_atuin".to_string(), {
         let mut table = toml::map::Map::new();
-        table.insert("db_path".to_string(), Value::String("/home/user/.local/share/atuin/history.db".to_string()));
-        table.insert("polling_interval_secs".to_string(), Value::Integer(5));
-        Value::Table(table)
+        table.insert("db_path".to_string(), ConfigValue::String("/home/user/.local/share/atuin/history.db".to_string()));
+        table.insert("polling_interval_secs".to_string(), ConfigValue::Integer(5));
+        ConfigValue::Table(table)
     });
     
     config

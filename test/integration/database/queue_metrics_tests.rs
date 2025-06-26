@@ -237,7 +237,7 @@ pub struct AgentLagMetric {
 
 // Removed local implementation - using the one from sinex_db::queries now
 
-async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueLatencyMetric>> {
+async fn calculate_dequeue_latency_metrics(pool: &DbPool) -> Result<Vec<DequeueLatencyMetric>> {
     // This should calculate average and max dequeue latency per agent
     let records = sqlx::query!(
         r#"
@@ -263,7 +263,7 @@ async fn calculate_dequeue_latency_metrics(pool: &PgPool) -> Result<Vec<DequeueL
     Ok(metrics)
 }
 
-async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMetric>> {
+async fn calculate_per_agent_lag_metrics(pool: &DbPool) -> Result<Vec<AgentLagMetric>> {
     // This should calculate how far behind each agent is based on oldest pending event  
     // Use work queue created_at instead of event ts_ingest for lag calculation
     let records = sqlx::query!(
@@ -289,7 +289,7 @@ async fn calculate_per_agent_lag_metrics(pool: &PgPool) -> Result<Vec<AgentLagMe
     Ok(metrics)
 }
 
-async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
+async fn generate_prometheus_metrics(pool: &DbPool) -> Result<String> {
     // This should generate Prometheus-formatted metrics
     let queue_metrics = calculate_queue_depth_metrics(pool).await?;
     let latency_metrics = calculate_dequeue_latency_metrics(pool).await?;
@@ -332,7 +332,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> TestResult {
+async fn create_test_agent(pool: &DbPool, agent_name: &str) -> TestResult {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
@@ -347,7 +347,7 @@ async fn create_test_agent(pool: &PgPool, agent_name: &str) -> TestResult {
     Ok(())
 }
 
-async fn insert_test_event(pool: &PgPool, source: &str, test_data: &str) -> Result<Ulid> {
+async fn insert_test_event(pool: &DbPool, source: &str, test_data: &str) -> Result<Ulid> {
     let payload = json!({
         "test": test_data,
         "source": source

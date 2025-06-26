@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuin, CommandExecutedAtuinPayload};
 use sinex_core::{EventSource, EventType};
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 use chrono::{Utc, TimeZone};
 use crate::common::{resources, event_sources};
 

@@ -1,13 +1,12 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, JsonValue, Timestamp};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads
@@ -27,9 +26,9 @@ pub struct DbusSignalPayload {
     /// Signal name (e.g., NotificationClosed)
     pub signal: String,
     /// Signal arguments as JSON
-    pub args: serde_json::Value,
+    pub args: JsonValue,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// D-Bus method call event (for important method calls)
@@ -41,8 +40,8 @@ pub struct DbusMethodCallPayload {
     pub path: String,
     pub interface: String,
     pub method: String,
-    pub args: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
+    pub args: JsonValue,
+    pub timestamp: Timestamp,
 }
 
 /// Notification event (specialized from D-Bus signals)
@@ -54,8 +53,8 @@ pub struct NotificationPayload {
     pub urgency: u8,
     pub timeout: i32,
     pub actions: Vec<String>,
-    pub hints: HashMap<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
+    pub hints: HashMap<String, JsonValue>,
+    pub timestamp: Timestamp,
 }
 
 /// Media playback event (from MPRIS interface)
@@ -81,15 +80,15 @@ pub struct MediaPlaybackPayload {
     pub can_pause: bool,
     pub can_seek: bool,
     pub art_url: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Power event
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PowerEventPayload {
     pub event_type: String, // PrepareForSleep, PowerProfileChanged, etc.
-    pub details: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
+    pub details: JsonValue,
+    pub timestamp: Timestamp,
 }
 
 /// Hardware device event (via UDisks2, UPower, etc)
@@ -102,8 +101,8 @@ pub struct HardwareEventPayload {
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
-    pub properties: HashMap<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
+    pub properties: HashMap<String, JsonValue>,
+    pub timestamp: Timestamp,
 }
 
 /// Session/idle event
@@ -112,7 +111,7 @@ pub struct SessionEventPayload {
     pub event_type: String, // idle, active, locked, unlocked
     pub session_id: Option<String>,
     pub idle_time_ms: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// PolicyKit authorization event
@@ -125,7 +124,7 @@ pub struct PolicyKitEventPayload {
     pub requesting_user: Option<String>,
     pub authorized: bool,
     pub challenge_occurred: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Bluetooth device event
@@ -139,7 +138,7 @@ pub struct BluetoothEventPayload {
     pub connected: bool,
     pub paired: bool,
     pub trusted: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Network manager event
@@ -151,7 +150,7 @@ pub struct NetworkEventPayload {
     pub ssid: Option<String>,
     pub ip_address: Option<String>,
     pub state: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Screen saver/lock event
@@ -160,7 +159,7 @@ pub struct ScreenSaverEventPayload {
     pub active: bool,
     pub locked: bool,
     pub idle_time_ms: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Mount/unmount event
@@ -173,7 +172,7 @@ pub struct MountEventPayload {
     pub label: Option<String>,
     pub uuid: Option<String>,
     pub size_bytes: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -339,7 +338,7 @@ impl EventSource for DbusMonitor {
         Ok(Self { config })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting D-Bus monitoring");
         
         let config = self.config.clone();
@@ -373,7 +372,7 @@ impl EventSource for DbusMonitor {
     }
 }
 
-async fn monitor_bus(bus_type: &str, tx: mpsc::Sender<RawEvent>, config: DbusConfig) -> Result<()> {
+async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Result<()> {
     use dbus::message::MatchRule;
     use dbus::channel::MatchingReceiver;
     use dbus_tokio::connection;
@@ -465,8 +464,8 @@ async fn process_extracted_message(
     member: Option<String>,
     sender: Option<String>,
     destination: Option<String>,
-    args: serde_json::Value,
-    tx: mpsc::Sender<RawEvent>,
+    args: JsonValue,
+    tx: EventSender,
     config: &DbusConfig,
 ) -> Result<()> {
     use dbus::message::MessageType;
@@ -505,9 +504,7 @@ async fn process_extracted_message(
                     SystemNotification::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_notification").await?;
             }
             
             if config.extract_media && interface.starts_with("org.mpris.MediaPlayer2") && member == "PropertiesChanged" {
@@ -538,9 +535,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(MediaPlaybackChanged::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_media_playback").await?;
             }
             
             if config.extract_power && (
@@ -558,9 +553,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(PowerEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_power_event").await?;
             }
             
             if config.extract_hardware && (
@@ -582,9 +575,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(HardwareEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_hardware_event").await?;
             }
             
             if config.extract_session && (
@@ -600,9 +591,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(SessionEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_session_event").await?;
             }
             
             if config.extract_bluetooth && interface.starts_with("org.bluez") {
@@ -619,9 +608,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_bluetooth_event").await?;
             }
             
             if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
@@ -636,9 +623,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(NetworkEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_network_event").await?;
             }
             
             if config.extract_screensaver && (
@@ -655,9 +640,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_screensaver_event").await?;
             }
             
             if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
@@ -675,9 +658,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(MountEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_mount_event").await?;
             }
             
             // Always emit generic signal events (capture everything)
@@ -692,9 +673,7 @@ async fn process_extracted_message(
             };
             
             let event = create_event(DbusSignal::EVENT_NAME, serde_json::to_value(payload)?);
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "dbus_generic_signal").await?;
         }
         MessageType::MethodCall => {
             // Extract PolicyKit events
@@ -711,9 +690,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_policykit_event").await?;
             }
             
             // Always log method calls (capture everything)
@@ -729,9 +706,7 @@ async fn process_extracted_message(
             };
             
             let event = create_event(DbusMethodCall::EVENT_NAME, serde_json::to_value(payload)?);
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "dbus_generic_method_call").await?;
         }
         _ => {} // Ignore other message types
     }
@@ -1044,13 +1019,13 @@ fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
 }
 
 
-fn message_args_to_json(msg: &dbus::Message) -> serde_json::Value {
+fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
     // For now, just return debug representation
     // A full implementation would parse all D-Bus argument types
-    serde_json::Value::String(format!("{:?}", msg))
+    JsonValue::String(format!("{:?}", msg))
 }
 
-fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
+fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
     RawEvent {
         id: sinex_ulid::Ulid::new(),
         source: DbusMonitor::SOURCE_NAME.to_string(),

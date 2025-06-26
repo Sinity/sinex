@@ -138,7 +138,7 @@ pub struct StressTestUtils;
 #[allow(dead_code)]
 impl StressTestUtils {
     /// Setup a clean test environment with agent registration
-    pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<PgPool> {
+    pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<DbPool> {
         let pool = database_helpers::get_shared_test_pool().await?;
         run_migrations(&pool).await?;
 
@@ -158,7 +158,7 @@ impl StressTestUtils {
         Ok(pool.clone())
 }
     /// Clean up test data after a stress test
-    pub async fn cleanup_test_data(pool: &PgPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
+    pub async fn cleanup_test_data(pool: &DbPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name)
             .execute(pool).await?;
@@ -172,7 +172,7 @@ impl StressTestUtils {
 
     /// Create test events for stress testing scenarios
     pub async fn create_test_events(
-        pool: &PgPool, 
+        pool: &DbPool, 
         count: usize, 
         source: &str, 
         event_type: &str

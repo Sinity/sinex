@@ -3,16 +3,43 @@ pub mod event_source_context;
 pub mod heartbeat;
 pub mod unified_collector;
 pub mod validation;
+pub mod validation_chains;
 pub mod event_source_base;
+pub mod error_context;
+pub mod config_extractors;
+pub mod channel_helpers;
 
-pub use event::{RawEvent, RawEventBuilder};
 pub use event_source_context::EventSourceContext;
 pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
-pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
+pub use unified_collector::{EventType, EventSource, EventOutput};
 pub use event_source_base::EventSourceBase;
+pub use validation_chains::{ValidationChain, MultiValidator, JsonType};
+pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
+pub use channel_helpers::{
+    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor, ChannelStats,
+    BackpressureManager
+    // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
+};
+
+// Common type aliases for event handling (defined after RawEvent struct)
+
+// Common type aliases for time handling
+pub type Timestamp = chrono::DateTime<chrono::Utc>;
+pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
+
+// Common type aliases for data handling
+pub type JsonValue = serde_json::Value;
+pub type ConfigValue = toml::Value;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use sinex_ulid::Ulid;
+
+// ===== Database type aliases =====
+
+pub type DbPool = sqlx::PgPool;
+pub type DbPoolRef<'a> = &'a sqlx::PgPool;
 
 // ===== Error types (from error.rs) =====
 
@@ -38,6 +65,31 @@ pub enum CoreError {
     Other(String),
 }
 
+/// Validation error type
+#[derive(Error, Debug)]
+pub enum ValidationError {
+    #[error("Field validation failed: {field} - {message}")]
+    Field { field: String, message: String },
+    
+    #[error("Schema validation failed: {0}")]
+    Schema(String),
+    
+    #[error("Business rule validation failed: {0}")]
+    BusinessRule(String),
+    
+    #[error("Invalid value for field {field}: {message}")]
+    InvalidValue { field: String, message: String },
+    
+    #[error("Invalid type for field {field}: expected {expected}, got {actual}")]
+    InvalidType { field: String, expected: String, actual: String },
+    
+    #[error("Schema validation error: {0}")]
+    SchemaValidation(String),
+    
+    #[error("Missing required field: {field}")]
+    MissingField { field: String },
+}
+
 impl From<std::io::Error> for CoreError {
     fn from(e: std::io::Error) -> Self {
         CoreError::Io(e.to_string())
@@ -50,8 +102,113 @@ impl From<serde_json::Error> for CoreError {
     }
 }
 
+impl From<sqlx::Error> for CoreError {
+    fn from(e: sqlx::Error) -> Self {
+        CoreError::Database(e.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, CoreError>;
-pub type Error = CoreError;
+
+// ===== Core data structures =====
+
+/// Raw event structure
+/// 
+/// This is the canonical event structure used throughout the system.
+/// NOTE: This struct uses ULID directly. When using with SQLX queries,
+/// use type overrides like: `id::uuid as "id: _"` for proper type inference
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RawEvent {
+    pub id: Ulid,
+    pub source: String,
+    pub event_type: String,
+    pub ts_ingest: Timestamp,
+    pub ts_orig: OptionalTimestamp,
+    pub host: String,
+    pub ingestor_version: Option<String>,
+    pub payload_schema_id: Option<Ulid>,
+    pub payload: JsonValue,
+}
+
+impl RawEvent {
+    /// Extract ingestion timestamp from ULID (convenience method)
+    pub fn ts_ingest_from_ulid(&self) -> Timestamp {
+        self.id.timestamp()
+    }
+}
+
+/// Builder for creating RawEvent instances
+pub struct RawEventBuilder {
+    source: String,
+    event_type: String,
+    payload: JsonValue,
+    ts_orig: OptionalTimestamp,
+    host: Option<String>,
+    ingestor_version: Option<String>,
+    payload_schema_id: Option<Ulid>,
+}
+
+impl RawEventBuilder {
+    pub fn new(source: impl Into<String>, event_type: impl Into<String>, payload: JsonValue) -> Self {
+        Self {
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: None,
+            host: None,
+            ingestor_version: None,
+            payload_schema_id: None,
+        }
+    }
+
+    pub fn with_orig_timestamp(mut self, ts: Timestamp) -> Self {
+        self.ts_orig = Some(ts);
+        self
+    }
+
+    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+        self.host = Some(host.into());
+        self
+    }
+
+    pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
+        self.ingestor_version = Some(version.into());
+        self
+    }
+
+    pub fn with_payload_schema_id(mut self, id: Ulid) -> Self {
+        self.payload_schema_id = Some(id);
+        self
+    }
+
+    pub fn build(self) -> RawEvent {
+        let id = Ulid::new();
+        let hostname = self.host.unwrap_or_else(|| {
+            gethostname::gethostname()
+                .to_string_lossy()
+                .to_string()
+        });
+
+        RawEvent {
+            id,
+            source: self.source,
+            event_type: self.event_type,
+            ts_ingest: chrono::Utc::now(),
+            ts_orig: self.ts_orig,
+            host: hostname,
+            ingestor_version: self.ingestor_version,
+            payload_schema_id: self.payload_schema_id,
+            payload: self.payload,
+        }
+    }
+}
+
+// ===== Common type aliases for event handling =====
+
+/// Event sender type alias (now that RawEvent is defined)
+pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
+/// Event receiver type alias (now that RawEvent is defined)
+pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 
 // ===== Common types and constants (from types.rs) =====
 

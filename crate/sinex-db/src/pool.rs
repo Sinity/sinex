@@ -1,13 +1,13 @@
 use anyhow::Result;
 use once_cell::sync::OnceCell;
-use sqlx::PgPool;
+use crate::DbPool;
 use std::env;
 use tracing::info;
 
-static POOL: OnceCell<PgPool> = OnceCell::new();
+static POOL: OnceCell<DbPool> = OnceCell::new();
 
 /// Get or create the global database pool
-pub async fn get_pool() -> Result<&'static PgPool> {
+pub async fn get_pool() -> Result<&'static DbPool> {
     if let Some(pool) = POOL.get() {
         return Ok(pool);
     }

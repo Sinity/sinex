@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventSourceContext, RawEventBuilder, CoreError};
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 use tokio::time::{timeout, sleep, Instant};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 

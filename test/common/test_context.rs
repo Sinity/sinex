@@ -26,7 +26,7 @@ use crate::common::timing_optimization::wait_helpers::{
     wait_for_event_count, wait_for_filtered_event_count, 
     wait_for_work_queue_count, wait_for_condition_or_timeout
 };
-use sqlx::{PgPool, Transaction, Postgres};
+use sqlx::{Transaction, Postgres};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -59,7 +59,7 @@ pub enum DbConnection {
     /// Test pool with cleanup strategy
     TestPool(TestPool),
     /// Direct pool access
-    Pool(PgPool),
+    Pool(DbPool),
 }
 
 /// Unified test context providing all common test functionality
@@ -93,7 +93,7 @@ impl TestContext {
     }
     
     /// Create a test context using an existing pool
-    pub async fn with_pool(pool: PgPool, config: TestConfig) -> Result<Self> {
+    pub async fn with_pool(pool: DbPool, config: TestConfig) -> Result<Self> {
         Ok(Self {
             db: DbConnection::Pool(pool),
             config,
@@ -110,7 +110,7 @@ impl TestContext {
     }
     
     /// Get the database pool
-    pub fn pool(&self) -> &PgPool {
+    pub fn pool(&self) -> &DbPool {
         match &self.db {
             DbConnection::TestPool(test_pool) => test_pool.pool(),
             DbConnection::Pool(pool) => pool,
@@ -375,7 +375,7 @@ impl TestContext {
 }
 
 // Re-export for convenience
-pub use sinex_db::models::RawEvent as DbRawEvent;
+pub use sinex_db::RawEvent as DbRawEvent;
 
 /// Performance metrics for test execution
 #[derive(Debug, Clone)]

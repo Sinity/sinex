@@ -15,7 +15,7 @@ use sqlx::{Transaction, Postgres};
 
 /// The standard way to access database in tests
 pub struct TestPool {
-    inner: PgPool,
+    inner: DbPool,
     strategy: CleanupStrategy,
     _cleanup_handle: Option<CleanupHandle>,
 }
@@ -39,7 +39,7 @@ impl Default for CleanupStrategy {
 
 /// Handle for cleanup operations
 struct CleanupHandle {
-    pool: PgPool,
+    pool: DbPool,
     strategy: CleanupStrategy,
 }
 
@@ -86,7 +86,7 @@ impl TestPool {
     }
 
     /// Get the underlying pool
-    pub fn pool(&self) -> &PgPool {
+    pub fn pool(&self) -> &DbPool {
         &self.inner
     }
 
@@ -103,7 +103,7 @@ impl TestPool {
 
 // Allow TestPool to be used where PgPool is expected
 impl Deref for TestPool {
-    type Target = PgPool;
+    type Target = DbPool;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -117,7 +117,7 @@ impl DerefMut for TestPool {
 }
 
 /// Clean up test data from database
-async fn cleanup_test_data(pool: &PgPool) -> Result<()> {
+async fn cleanup_test_data(pool: &DbPool) -> Result<()> {
     // Clean up in reverse dependency order to respect foreign key constraints
     sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
         .execute(pool)
@@ -135,7 +135,7 @@ async fn cleanup_test_data(pool: &PgPool) -> Result<()> {
 }
 
 /// Clean up all test data (more aggressive cleanup)
-pub async fn cleanup_all_test_data(pool: &PgPool) -> Result<()> {
+pub async fn cleanup_all_test_data(pool: &DbPool) -> Result<()> {
     cleanup_test_data(pool).await
 }
 

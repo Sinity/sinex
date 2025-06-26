@@ -6,7 +6,7 @@ use tokio::time::{sleep, interval};
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
     agent_name: String,
@@ -17,7 +17,7 @@ struct StressTestWorker {
 impl StressTestWorker {
     fn new(
         worker_id: String,
-        pool: PgPool,
+        pool: DbPool,
         metrics: Arc<ConcurrencyStressMetrics>,
         agent_name: String,
         deadlock_timeout: Duration,
