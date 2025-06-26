@@ -134,7 +134,7 @@ impl UnifiedCollector {
     }
     
     /// Start all enabled event sources
-    async fn start_sources(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<Vec<JoinHandle<()>>> {
+    async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
         
         if self.needs_source("filesystem") {
@@ -205,7 +205,7 @@ impl UnifiedCollector {
             .any(|event| self.is_event_enabled(event))
     }
     
-    async fn start_filesystem_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting filesystem source");
         
         // Get config for filesystem events
@@ -239,7 +239,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_terminal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting terminal source");
         
         let config_json = self.config.event.get("commands")
@@ -268,7 +268,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_window_manager_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_window_manager_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting window manager source");
         
         let config_json = self.config.event.get("windows")
@@ -297,7 +297,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_atuin_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_atuin_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting atuin source");
         
         let config_json = self.config.event.get("shell.command.executed_atuin")
@@ -326,7 +326,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_shell_history_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_shell_history_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting shell history source");
         
         let config_json = self.config.event.get("shell.history.command")
@@ -355,7 +355,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_asciinema_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_asciinema_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting asciinema recorder");
         
         let config_json = self.config.event.get("terminal.asciinema")
@@ -384,7 +384,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_scrollback_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_scrollback_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting scrollback capture");
         
         let config_json = self.config.event.get("terminal.scrollback")
@@ -413,7 +413,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_dbus_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_dbus_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting D-Bus monitor");
         
         let config_json = self.config.event.get("dbus")
@@ -442,7 +442,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_clipboard_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_clipboard_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting clipboard monitor");
         
         let config_json = self.config.event.get("clipboard")
@@ -471,7 +471,7 @@ impl UnifiedCollector {
         Ok(handle)
     }
     
-    async fn start_journal_source(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<JoinHandle<()>> {
+    async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         info!("Starting journal monitor");
         
         let config_json = self.config.event.get("journal")

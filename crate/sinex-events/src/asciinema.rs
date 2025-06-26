@@ -153,7 +153,7 @@ impl EventSource for AsciinemaRecorder {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting asciinema recording monitor");
         
         if self.config.auto_start_recording {
@@ -183,7 +183,7 @@ impl AsciinemaRecorder {
         Ok(())
     }
     
-    async fn scan_recordings(&self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn scan_recordings(&self, tx: &EventSender) -> Result<()> {
         
         let pattern = self.config.recordings_dir.join(&self.config.file_pattern);
         let pattern_str = pattern.to_string_lossy();
@@ -209,7 +209,7 @@ impl AsciinemaRecorder {
         Ok(())
     }
     
-    async fn process_recording_file(&self, path: &PathBuf, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn process_recording_file(&self, path: &PathBuf, tx: &EventSender) -> Result<()> {
         let metadata = tokio::fs::metadata(path).await
             .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get metadata: {}", e)))?;
         

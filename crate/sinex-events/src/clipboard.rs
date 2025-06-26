@@ -236,7 +236,7 @@ impl EventSource for ClipboardMonitor {
         Ok(instance)
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting clipboard monitoring");
         
         let mut interval = tokio::time::interval(
@@ -277,7 +277,7 @@ impl ClipboardMonitor {
     
     async fn check_clipboard(
         &mut self,
-        tx: &mpsc::Sender<RawEvent>,
+        tx: &EventSender,
         selection: &str,
     ) -> Result<()> {
         let content = self.get_clipboard_content(selection).await?;

@@ -293,7 +293,7 @@ pub struct AgentLifecycle {
     metrics: AgentMetrics,
     manifest_manager: Option<ManifestManager>,
     heartbeat_interval: std::time::Duration,
-    event_tx: Option<mpsc::Sender<RawEvent>>,
+    event_tx: Option<EventSender>,
 }
 
 impl AgentLifecycle {
@@ -316,7 +316,7 @@ impl AgentLifecycle {
     }
     
     /// Register agent manifest and start heartbeat loop
-    pub async fn start(&mut self, manifest: AgentManifest, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    pub async fn start(&mut self, manifest: AgentManifest, event_tx: EventSender) -> Result<()> {
         // Register manifest if we have a database connection
         if let Some(manager) = &self.manifest_manager {
             manager.register_agent(&manifest).await?;

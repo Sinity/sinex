@@ -28,7 +28,7 @@ pub trait EventSourceBase: EventSource + Sized {
     // Event sources will continue to implement their own polling logic
     
     /// Helper to send an event with error handling
-    async fn send_event(&self, tx: &mpsc::Sender<RawEvent>, event: RawEvent) -> Result<()> {
+    async fn send_event(&self, tx: &EventSender, event: RawEvent) -> Result<()> {
         tx.send(event).await
             .map_err(|e| CoreError::Other(format!("Failed to send event: {}", e)))
     }

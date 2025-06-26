@@ -157,7 +157,7 @@ impl EventSource for ScrollbackCapture {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting scrollback capture");
         
         let mut interval = time::interval(Duration::from_secs(self.config.capture_interval_secs));
@@ -209,7 +209,7 @@ impl EventSource for ScrollbackCapture {
 }
 
 impl ScrollbackCapture {
-    async fn capture_all_scrollbacks(&mut self, tx: &mpsc::Sender<RawEvent>, _incremental: bool) -> Result<()> {
+    async fn capture_all_scrollbacks(&mut self, tx: &EventSender, _incremental: bool) -> Result<()> {
         // Check if Kitty socket exists
         if !std::path::Path::new(&self.config.kitty_socket_path).exists() {
             debug!("Kitty socket not found at {}", self.config.kitty_socket_path);
@@ -436,7 +436,7 @@ impl ScrollbackCapture {
         Ok(())
     }
     
-    async fn capture_window_scrollback(&mut self, tx: &mpsc::Sender<RawEvent>, window_id: u32, incremental: bool) -> Result<()> {
+    async fn capture_window_scrollback(&mut self, tx: &EventSender, window_id: u32, incremental: bool) -> Result<()> {
         // Get window info
         let windows = self.get_kitty_windows()?;
         let window = windows.iter().find(|w| w.id == window_id);

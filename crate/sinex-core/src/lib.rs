@@ -11,6 +11,10 @@ pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHe
 pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
 pub use event_source_base::EventSourceBase;
 
+// Common type aliases for event handling
+pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
+pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

@@ -76,7 +76,7 @@ pub trait EventSource: Send + Sync + 'static {
     
     /// Stream ALL events this source can detect
     /// The registry will filter based on enabled events
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()>;
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()>;
     
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {

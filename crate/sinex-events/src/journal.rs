@@ -192,7 +192,7 @@ impl EventSource for JournalMonitor {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting journal monitoring");
         
         // Import historical entries if configured
@@ -212,7 +212,7 @@ impl EventSource for JournalMonitor {
 }
 
 impl JournalMonitor {
-    async fn import_historical(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn import_historical(&mut self, tx: &EventSender) -> Result<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
         
@@ -335,7 +335,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    async fn follow_journal(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn follow_journal(&mut self, tx: EventSender) -> Result<()> {
         let mut args = vec![
             "--output=json",
             "--no-pager",

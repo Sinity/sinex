@@ -104,7 +104,7 @@ impl EventSource for AtuinDbReader {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         // Try to get last processed timestamp and count from database
         if let Some(ref pool) = self.db_pool {
             match self.get_startup_info_from_pool(pool).await {
@@ -203,7 +203,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn watch_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         let db_path = self.config.db_path.clone();
         
@@ -252,7 +252,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_mode(&mut self, tx: EventSender) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
         loop {
@@ -264,7 +264,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn poll_atuin_history(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_atuin_history(&mut self, tx: &EventSender) -> Result<()> {
         let db_path = self.config.db_path.clone();
         let last_timestamp = self.last_processed_timestamp.clone();
         let batch_size = self.config.batch_size;

@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources};
+use sinex_core::{EventType, EventSource, EventSourceContext, EventSender, Result, event_type_constants, sources};
 use sinex_db::models::RawEvent;
 
 // ============================================================================
@@ -254,7 +254,7 @@ impl EventSource for HyprlandIPCMonitor {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             socket_path = ?self.socket_path,
             window_augmentation = ?self.config.window_augmentation,
@@ -277,7 +277,7 @@ impl EventSource for HyprlandIPCMonitor {
 
 impl HyprlandIPCMonitor {
     /// Listen to socket2 events
-    async fn listen_socket_events(&self, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn listen_socket_events(&self, event_tx: EventSender) -> Result<()> {
         loop {
             match UnixStream::connect(&self.socket_path).await {
                 Ok(stream) => {
@@ -298,7 +298,7 @@ impl HyprlandIPCMonitor {
     }
 
     /// Process the event stream from socket2
-    async fn process_event_stream(&self, stream: UnixStream, event_tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn process_event_stream(&self, stream: UnixStream, event_tx: &EventSender) -> Result<()> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
 
@@ -579,7 +579,7 @@ impl EventSource for HyprlandStateSnapshotter {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         if self.interval_secs == 0 {
             info!("State snapshots disabled (interval_secs = 0)");
             // Keep running but don't send events

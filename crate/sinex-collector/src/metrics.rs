@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
+use sinex_core::EventSender;
 use sinex_db::models::RawEvent;
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
@@ -135,7 +136,7 @@ impl CollectorMetrics {
     /// Start the metrics collection loop
     pub async fn start(
         self: Arc<Self>,
-        event_tx: tokio::sync::mpsc::Sender<RawEvent>,
+        event_tx: EventSender,
         db_pool: Option<sqlx::PgPool>,
     ) {
         info!("Starting high-resolution metrics collection");

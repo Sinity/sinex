@@ -339,7 +339,7 @@ impl EventSource for DbusMonitor {
         Ok(Self { config })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting D-Bus monitoring");
         
         let config = self.config.clone();
@@ -373,7 +373,7 @@ impl EventSource for DbusMonitor {
     }
 }
 
-async fn monitor_bus(bus_type: &str, tx: mpsc::Sender<RawEvent>, config: DbusConfig) -> Result<()> {
+async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Result<()> {
     use dbus::message::MatchRule;
     use dbus::channel::MatchingReceiver;
     use dbus_tokio::connection;
@@ -466,7 +466,7 @@ async fn process_extracted_message(
     sender: Option<String>,
     destination: Option<String>,
     args: serde_json::Value,
-    tx: mpsc::Sender<RawEvent>,
+    tx: EventSender,
     config: &DbusConfig,
 ) -> Result<()> {
     use dbus::message::MessageType;

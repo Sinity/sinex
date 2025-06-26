@@ -92,7 +92,7 @@ impl EventSource for KittySocketListener {
         Self::new(config).await
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             socket_path = ?self.config.socket_path,
             polling_interval = self.config.polling_interval_secs,
@@ -120,7 +120,7 @@ impl KittySocketListener {
         })
     }
     
-    async fn poll_kitty_commands(&self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_kitty_commands(&self, tx: &EventSender) -> Result<()> {
         // Find Kitty sockets
         let sockets = Self::find_kitty_sockets(&self.config.socket_path)?;
         
@@ -317,7 +317,7 @@ impl EventSource for BashHistoryWatcher {
         Ok(Self { history_file: config })
     }
     
-    async fn stream_events(&mut self, _tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, _tx: EventSender) -> Result<()> {
         // Watch bash history file for changes
         Ok(())
     }

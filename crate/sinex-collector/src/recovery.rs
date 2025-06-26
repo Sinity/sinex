@@ -218,7 +218,7 @@ pub struct DlqManager {
     agent_name: String,
     base_path: PathBuf,
     critical_failures_log: PathBuf,
-    event_tx: Option<mpsc::Sender<RawEvent>>,
+    event_tx: Option<EventSender>,
 }
 
 impl DlqManager {
@@ -244,7 +244,7 @@ impl DlqManager {
         })
     }
     
-    pub fn with_event_sender(mut self, event_tx: mpsc::Sender<RawEvent>) -> Self {
+    pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.event_tx = Some(event_tx);
         self
     }
@@ -489,7 +489,7 @@ impl RecoveryManager {
         })
     }
     
-    pub fn with_event_sender(mut self, event_tx: mpsc::Sender<RawEvent>) -> Self {
+    pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.dlq = self.dlq.with_event_sender(event_tx);
         self
     }

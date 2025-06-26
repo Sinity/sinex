@@ -111,7 +111,7 @@ impl EventSource for ShellHistoryReader {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting shell history event source");
         
         // Initial read of all files
@@ -134,7 +134,7 @@ impl EventSource for ShellHistoryReader {
 }
 
 impl ShellHistoryReader {
-    async fn watch_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         let watched_files = self.config.history_files.clone();
         
@@ -201,7 +201,7 @@ impl ShellHistoryReader {
         }
     }
     
-    async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_mode(&mut self, tx: EventSender) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
         loop {
@@ -225,7 +225,7 @@ impl ShellHistoryReader {
     async fn read_history_file(
         &mut self,
         path: &PathBuf,
-        tx: &mpsc::Sender<RawEvent>,
+        tx: &EventSender,
         initial_read: bool,
     ) -> Result<()> {
         use tokio::fs::File;

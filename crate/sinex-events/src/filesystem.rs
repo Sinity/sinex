@@ -257,7 +257,7 @@ impl EventSource for FilesystemMonitor {
         Self::new(config).await
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             patterns = ?self.config.watch_patterns,
             ignore = ?self.config.ignore_patterns,
