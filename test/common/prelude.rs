@@ -41,6 +41,9 @@ pub use sinex_core::{
     EventSource, EventSourceContext, 
     RawEventBuilder,
     sources, event_type_constants,
+    ValidationChain, MultiValidator, ErrorContext, ResultExt,
+    ConfigExtractor, ConfigValidator, parse_duration,
+    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor,
 };
 pub use sinex_db::{
     queries, run_migrations,

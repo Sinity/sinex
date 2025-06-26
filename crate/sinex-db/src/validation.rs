@@ -6,6 +6,45 @@ use thiserror::Error;
 
 use crate::models::RawEvent;
 use sinex_ulid::Ulid;
+use sinex_core::{ValidationChain, CoreError};
+
+/// Convert ValidationChain result to local ValidationError type
+fn convert_validation_result<T>(result: std::result::Result<T, CoreError>) -> std::result::Result<T, ValidationError> {
+    result.map_err(|e| match e {
+        CoreError::Validation(msg) => {
+            // Try to parse structured error message
+            if msg.contains("cannot be empty") {
+                if let Some(field) = extract_field_from_error(&msg) {
+                    ValidationError::InvalidValue { 
+                        field: field.to_string(), 
+                        reason: "cannot be empty".to_string() 
+                    }
+                } else {
+                    ValidationError::InvalidValue { 
+                        field: "unknown".to_string(), 
+                        reason: msg 
+                    }
+                }
+            } else {
+                ValidationError::InvalidValue { 
+                    field: "unknown".to_string(), 
+                    reason: msg 
+                }
+            }
+        }
+        other => ValidationError::InvalidValue { 
+            field: "unknown".to_string(), 
+            reason: other.to_string() 
+        }
+    })
+}
+
+/// Extract field name from error message (best effort)
+fn extract_field_from_error(msg: &str) -> Option<&str> {
+    // This is a simple parser - in production you might want more sophisticated parsing
+    // ValidationChain errors typically include field names
+    msg.split_whitespace().next()
+}
 
 /// Database-specific validation error type
 #[derive(Error, Debug, Clone)]
@@ -110,20 +149,14 @@ impl EventValidator {
     
     /// Validate using hardcoded rules only
     pub fn validate_with_rules(&self, source: &str, event_type: &str, payload: &Value) -> Result<(), ValidationError> {
-        // Basic field validation
-        if source.is_empty() {
-            return Err(ValidationError::InvalidValue {
-                field: "source".to_string(),
-                reason: "cannot be empty".to_string(),
-            });
-        }
+        // Basic field validation using ValidationChain
+        convert_validation_result(
+            ValidationChain::validate(source.to_string(), "source").not_empty().into_result()
+        )?;
         
-        if event_type.is_empty() {
-            return Err(ValidationError::InvalidValue {
-                field: "event_type".to_string(),
-                reason: "cannot be empty".to_string(),
-            });
-        }
+        convert_validation_result(
+            ValidationChain::validate(event_type.to_string(), "event_type").not_empty().into_result()
+        )?;
         
         // First check for exact match
         let key = (source.to_string(), event_type.to_string());
@@ -137,7 +170,8 @@ impl EventValidator {
             validator(payload)?;
         }
         
-        // For unknown event types, just ensure it's an object
+        // For unknown event types, just ensure it's an object using manual validation
+        // (ValidationChain for JSON doesn't have custom method, needs to be added in future)
         if !payload.is_object() {
             return Err(ValidationError::InvalidType {
                 field: "payload".to_string(),
@@ -145,6 +179,7 @@ impl EventValidator {
                 actual: format!("{:?}", payload),
             });
         }
+        
         Ok(())
     }
     

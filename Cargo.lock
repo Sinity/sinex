@@ -2935,6 +2935,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+ "sinex-core",
  "sinex-ulid",
  "sqlx",
  "thiserror 1.0.69",

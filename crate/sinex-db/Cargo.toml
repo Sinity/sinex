@@ -9,6 +9,7 @@ description = "Database connection and query utilities for Sinex"
 
 [dependencies]
 sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
+sinex-core = { path = "../sinex-core" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
