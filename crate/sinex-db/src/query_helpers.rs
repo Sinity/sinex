@@ -375,7 +375,7 @@ where
 }
 
 /// Check if a database error is retryable (deadlock, serialization failure)
-fn is_retryable_db_error(err: &DbError) -> bool {
+pub fn is_retryable_db_error(err: &DbError) -> bool {
     match err {
         DbError::Query { source, .. } => {
             let msg = source.to_string();
