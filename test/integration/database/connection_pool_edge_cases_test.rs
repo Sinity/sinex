@@ -6,7 +6,7 @@ use futures::future::join_all;
 #[sinex_test]
 async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
     // Create a pool with a small max size
-    let pool = PgPoolOptions::new()
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(2))
         .connect(&std::env::var("DATABASE_URL")?)
@@ -59,7 +59,7 @@ async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_connection_pool_timeout_behavior(ctx: TestContext) -> TestResult {
-    let pool = PgPoolOptions::new()
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_millis(500))
         .connect(&std::env::var("DATABASE_URL")?)
@@ -142,7 +142,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
     // Create pool with short max lifetime
-    let pool = PgPoolOptions::new()
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(2)
         .max_lifetime(Duration::from_secs(1))
         .connect(&std::env::var("DATABASE_URL")?)
@@ -169,7 +169,7 @@ async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_connection_pool_idle_timeout(ctx: TestContext) -> TestResult {
-    let pool = PgPoolOptions::new()
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
         .idle_timeout(Duration::from_secs(1))

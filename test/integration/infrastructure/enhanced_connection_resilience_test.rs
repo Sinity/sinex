@@ -416,7 +416,7 @@ async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> Test
         println!("\n--- Recovery Cycle {} ---", cycle + 1);
         
         // Create pool with aggressive timeouts to simulate failures
-        let pool = PgPoolOptions::new()
+        let pool: DbPool = PgPoolOptions::new()
             .max_connections(5)
             .acquire_timeout(Duration::from_millis(100))
             .idle_timeout(Duration::from_millis(200))
@@ -480,7 +480,7 @@ async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> Test
 async fn test_connection_pool_deadlock_detection_and_resolution(_ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 3;
     
-    let pool = PgPoolOptions::new()
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(POOL_SIZE as u32)
         .acquire_timeout(Duration::from_millis(500))
         .connect(&std::env::var("DATABASE_URL")?)
@@ -637,7 +637,7 @@ async fn test_connection_pool_cascade_failure_recovery(_ctx: TestContext) -> Tes
                 .idle_timeout(Duration::from_millis(30000))
         };
 
-        let pool = pool_options
+        let pool: DbPool = pool_options
             .connect(&std::env::var("DATABASE_URL")?)
             .await?;
 

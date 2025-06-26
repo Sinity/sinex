@@ -21,7 +21,7 @@ pub async fn get_shared_test_pool() -> Result<DbPool> {
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
                 
             // Conservative pool sizing for tests
-            let pool = sqlx::postgres::PgPoolOptions::new()
+            let pool: DbPool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(50) // Reasonable for parallel tests
                 .min_connections(5)
                 .acquire_timeout(Duration::from_secs(30))
@@ -48,7 +48,7 @@ pub async fn create_test_pool() -> Result<DbPool> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool: DbPool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5) // Single test doesn't need many connections
         .min_connections(1)
         .acquire_timeout(Duration::from_secs(5))
