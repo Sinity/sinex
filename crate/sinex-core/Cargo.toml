@@ -29,8 +29,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 schemars = "0.8"
 
-# For RawEvent type in unified collector
-sinex-db = { path = "../sinex-db" }
+# sinex-db dependency removed to avoid circular dependency
 
 # For validation
 unicode-normalization = "0.1"

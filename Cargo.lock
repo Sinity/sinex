@@ -2912,7 +2912,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sinex-db",
  "sinex-ulid",
  "sqlx",
  "thiserror 1.0.69",
@@ -2931,6 +2930,7 @@ version = "0.4.2"
 dependencies = [
  "anyhow",
  "chrono",
+ "gethostname",
  "jsonschema",
  "once_cell",
  "serde",

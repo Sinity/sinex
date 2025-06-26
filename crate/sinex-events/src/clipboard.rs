@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
 use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
 use sinex_db::DbPool;
 

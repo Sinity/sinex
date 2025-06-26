@@ -10,8 +10,8 @@ use tracing::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads

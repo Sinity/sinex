@@ -1,5 +1,4 @@
-use crate::{CoreError, Result, JsonValue};
-use sinex_db::validation::ValidationError;
+use crate::{CoreError, Result, JsonValue, ValidationError};
 use regex::Regex;
 use serde_json::Value;
 use std::marker::PhantomData;

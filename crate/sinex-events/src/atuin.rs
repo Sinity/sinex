@@ -10,8 +10,8 @@ use tracing::{debug, error, info, warn};
 use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::RawEvent;
 use sinex_db::DbPool;
 
 // ============================================================================

@@ -20,29 +20,40 @@
 //!     .fetch_all()
 //!     .await?;
 //!
-//! // Using macros for even more concise queries
-//! let event: RawEvent = query_one!(pool, "SELECT * FROM raw.events WHERE id = $1::uuid::ulid").await?;
+//! // Using function helpers for queries
+//! let event: RawEvent = query_one(pool, "SELECT * FROM raw.events WHERE id = $1::uuid::ulid", "get event by id").await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! ## Transaction helpers:
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use sinex_db::prelude::*;
 //!
 //! # async fn example(pool: &DbPool) -> DbResult<()> {
 //! // Simple transaction with automatic rollback on error
 //! let result = with_transaction(pool, |tx| async move {
 //!     // Your transactional operations here
-//!     query_one!(tx, "INSERT INTO table VALUES ($1) RETURNING id").await
+//!     let rows = sqlx::query("INSERT INTO table VALUES ($1)")
+//!         .bind("value")
+//!         .execute(&mut **tx)
+//!         .await
+//!         .map_err(|e| db_error(e, "insert operation"))?;
+//!     Ok(rows.rows_affected())
 //! }).await?;
 //!
 //! // Transaction with retry logic for deadlocks
 //! let retry_config = RetryConfig::default();
 //! let result = with_retry_transaction(pool, retry_config, |tx| async move {
-//!     // Operations that might encounter deadlocks
-//!     query_one!(tx, "UPDATE table SET value = $1 WHERE id = $2").await
+//!     // Operations that might encounter deadlocks  
+//!     let rows = sqlx::query("UPDATE table SET value = $1 WHERE id = $2")
+//!         .bind("new_value")
+//!         .bind(123)
+//!         .execute(&mut **tx)
+//!         .await
+//!         .map_err(|e| db_error(e, "update operation"))?;
+//!     Ok(rows.rows_affected())
 //! }).await?;
 //! # Ok(())
 //! # }

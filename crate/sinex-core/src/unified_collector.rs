@@ -4,7 +4,7 @@ use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::{EventSender, Result};
+use crate::{Result};
 
 // ===== Event output configuration (from event_output.rs) =====
 

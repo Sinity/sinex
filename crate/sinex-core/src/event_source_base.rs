@@ -1,10 +1,11 @@
 use crate::{
-    EventSource, EventSourceContext, RawEvent, RawEventBuilder, CoreError, Result,
+    EventSourceContext, RawEvent, RawEventBuilder, CoreError, Result, EventSender,
 };
+use crate::unified_collector::EventSource;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::de::DeserializeOwned;
-use crate::{EventSender, JsonValue};
+use crate::{JsonValue};
 
 /// Base trait that provides common functionality for all event sources
 #[async_trait]

@@ -1,4 +1,5 @@
 pub mod models;
+pub use models::{RawEvent, RawEventBuilder};
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
@@ -23,9 +24,11 @@ pub use query_helpers::{
     ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
 };
 
+// Re-export query macros (these are defined in query_helpers.rs)
+
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
-    pub use crate::models::*;
+    pub use crate::models::{RawEvent, RawEventBuilder, EventPayloadSchema, AgentManifest, WorkQueueItem, DlqEvent, QueueStatus, DlqErrorCategory};
     pub use crate::queries::*;
     pub use crate::query_helpers::{
         DbError, DbResult, QueryBuilder, RetryConfig,
@@ -33,6 +36,7 @@ pub mod prelude {
         with_transaction, with_retry_transaction,
         ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
     };
+    // Re-export macros for prelude convenience (already imported above)
     pub use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, OptionalTimestamp};
     pub use sinex_ulid::Ulid;
     pub use sqlx::{FromRow, Transaction, Postgres};

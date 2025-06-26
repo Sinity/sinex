@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sinex_core::{EventSender, Timestamp};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
@@ -15,8 +16,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, EventSender, Result, event_type_constants, sources};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources, RawEvent};
 
 // ============================================================================
 // Event Payloads

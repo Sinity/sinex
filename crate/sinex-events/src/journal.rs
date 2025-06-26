@@ -7,8 +7,8 @@ use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads
