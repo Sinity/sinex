@@ -106,9 +106,9 @@ fn test_multiple_validation_rules_streamlined() {
     use crate::common::validation_test_utils;
     
     let event_creators = vec![
-        ("filesystem", |p| RawEventBuilder::new("filesystem", "file.created", p).build();
-        ("terminal", |p| RawEventBuilder::new("terminal_kitty", "command.executed", p).build();
-        ("window", |p| RawEventBuilder::new("hyprland", "window.focus", p).build();
+        ("filesystem", |p| RawEventBuilder::new("filesystem", "file.created", p).build()),
+        ("terminal", |p| RawEventBuilder::new("terminal_kitty", "command.executed", p).build()),
+        ("window", |p| RawEventBuilder::new("hyprland", "window.focus", p).build()),
     ];
     
     for (name, creator) in event_creators {
@@ -116,15 +116,15 @@ fn test_multiple_validation_rules_streamlined() {
         
         // Valid event
         let valid_event = match name {
-            "filesystem" => creator(json!({"path": "/test.txt", "size": 1024});
-            "terminal" => creator(json!({"command": "ls", "exit_code": 0});
-            "window" => creator(json!({"window_id": 123, "title": "Test"});
+            "filesystem" => creator(json!({"path": "/test.txt", "size": 1024})),
+            "terminal" => creator(json!({"command": "ls", "exit_code": 0})),
+            "window" => creator(json!({"window_id": 123, "title": "Test"})),
             _ => unreachable!(),
         };
         validation_test_utils::assert_valid_event(&valid_event);
         
         // Invalid event (empty payload)
-        let invalid_event = creator(json!({});
+        let invalid_event = creator(json!({}));
         validation_test_utils::assert_invalid_event(&invalid_event, "");
     }
 }
@@ -140,16 +140,19 @@ async fn test_concurrent_operations_streamlined(ctx: TestContext) -> Result<(), 
     // After: Clear parallel test execution
     
     let operations: Vec<_> = (0..10).map(|i| {
-        let pool = ctx.pool().clone();
-        move |p: Arc<sqlx::PgPool>| async move {
-            let event = RawEventBuilder::new(
-                "filesystem",
-                "file.created",
-                json!({"path": format!("/test_{}.txt", i), "size": i * 1024})
-            ).build();
-            
-            crate::common::insert_test_event(&*p, &event).await?;
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        let pool_clone = pool.clone();
+        move |_p: Arc<sqlx::PgPool>| {
+            let pool_inner = pool_clone.clone();
+            async move {
+                let event = RawEventBuilder::new(
+                    "filesystem",
+                    "file.created",
+                    json!({"path": format!("/test_{}.txt", i), "size": i * 1024})
+                ).build();
+                
+                crate::common::insert_test_event(&*pool_inner, &event).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+            }
         }
     }).collect();
     
