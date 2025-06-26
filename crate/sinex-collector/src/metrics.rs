@@ -2,8 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::EventSender;
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, RawEvent, Timestamp, OptionalTimestamp};
 use sinex_db::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
@@ -182,7 +181,7 @@ impl CollectorMetrics {
     }
     
     /// Sample current metrics (called every second)
-    async fn sample_metrics(&self, db_pool: Option<DbPoolRef>) -> Result<()> {
+    async fn sample_metrics(&self, db_pool: Option<DbPoolRef<'_>>) -> Result<()> {
         // Update system info
         {
             let mut system = self.system.write().await;

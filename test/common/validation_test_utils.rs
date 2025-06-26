@@ -6,7 +6,7 @@
 
 use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {

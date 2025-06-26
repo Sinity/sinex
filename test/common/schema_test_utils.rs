@@ -9,7 +9,7 @@ pub async fn register_test_schema(pool: &DbPool, event_source: &str, event_type:
 }
 
 /// Assert schema validates event successfully
-pub async fn assert_schema_valid_event(pool: &DbPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_valid_event(pool: &DbPool, event: &sinex_db::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
@@ -24,7 +24,7 @@ pub async fn assert_schema_valid_event(pool: &DbPool, event: &sinex_db::models::
 }
 
 /// Assert schema invalidates event
-pub async fn assert_schema_invalid_event(pool: &DbPool, event: &sinex_db::models::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
+pub async fn assert_schema_invalid_event(pool: &DbPool, event: &sinex_db::RawEvent, schema_id: Ulid) -> Result<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(&pool, schema_id).await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;

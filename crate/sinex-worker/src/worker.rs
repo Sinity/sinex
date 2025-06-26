@@ -5,7 +5,7 @@ use sinex_db::queries::{
     claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
     insert_dlq_event,
 };
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 use sinex_db::DbPool;
 use std::sync::Arc;
 use tokio::time::sleep;

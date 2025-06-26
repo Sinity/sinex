@@ -1,6 +1,7 @@
 use anyhow::Result;
-use sinex_core::{create_registry, EventRegistry, EventSource, EventSourceContext, ConfigValue, JsonValue};
-use sinex_db::{models::RawEvent, validation::EventValidator};
+use sinex_core::{unified_collector::{create_registry, EventRegistry, EventSource}, EventSourceContext, ConfigValue, JsonValue, EventSender};
+use sinex_core::RawEvent;
+use sinex_db::validation::EventValidator;
 use sinex_events::{
     filesystem::{FilesystemMonitor, FilesystemConfig},
     terminal::{KittySocketListener, KittyConfig},

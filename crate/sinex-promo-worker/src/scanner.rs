@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use sinex_db::{models::RawEvent, DbPoolRef, Timestamp, OptionalTimestamp};
+use sinex_db::{RawEvent, DbPoolRef, Timestamp, OptionalTimestamp};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tracing::{debug, info};

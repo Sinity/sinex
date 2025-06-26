@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::{models::{AgentManifest, RawEvent}, DbPoolRef};
+use sinex_db::{models::AgentManifest, RawEvent, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};

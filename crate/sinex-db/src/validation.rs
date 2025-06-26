@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tracing::warn;
 use thiserror::Error;
 
-use crate::models::RawEvent;
+use crate::RawEvent;  // Re-exported from sinex-core
 use sinex_ulid::Ulid;
 use sinex_core::{ValidationChain, CoreError};
 

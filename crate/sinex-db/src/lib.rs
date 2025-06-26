@@ -1,5 +1,6 @@
 pub mod models;
-pub use models::{RawEvent, RawEventBuilder};
+// Re-export RawEvent and RawEventBuilder from sinex-core for type unification
+pub use sinex_core::{RawEvent, RawEventBuilder};
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
@@ -28,7 +29,8 @@ pub use query_helpers::{
 
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
-    pub use crate::models::{RawEvent, RawEventBuilder, EventPayloadSchema, AgentManifest, WorkQueueItem, DlqEvent, QueueStatus, DlqErrorCategory};
+    pub use crate::models::{EventPayloadSchema, AgentManifest, WorkQueueItem, DlqEvent, QueueStatus, DlqErrorCategory};
+    pub use sinex_core::{RawEvent, RawEventBuilder};
     pub use crate::queries::*;
     pub use crate::query_helpers::{
         DbError, DbResult, QueryBuilder, RetryConfig,
@@ -108,7 +110,8 @@ pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{RawEvent, WorkQueueItem, QueueStatus};
+    use crate::models::{WorkQueueItem, QueueStatus};
+    use sinex_core::RawEvent;
     use sinex_ulid::Ulid;
     use chrono::Utc;
     use serde_json::json;

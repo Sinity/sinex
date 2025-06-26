@@ -375,7 +375,7 @@ impl TestContext {
 }
 
 // Re-export for convenience
-pub use sinex_db::models::RawEvent as DbRawEvent;
+pub use sinex_db::RawEvent as DbRawEvent;
 
 /// Performance metrics for test execution
 #[derive(Debug, Clone)]

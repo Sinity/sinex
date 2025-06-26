@@ -1,4 +1,5 @@
-use crate::models::{AgentManifest, DlqEvent, WorkQueueItem, RawEvent};
+use crate::models::{AgentManifest, DlqEvent, WorkQueueItem};
+use crate::RawEvent;  // Re-exported from sinex-core
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::validation::EventValidator;
 use crate::{DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
