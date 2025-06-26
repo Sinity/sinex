@@ -79,7 +79,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
             event.payload.clone(),
             event.ts_orig,
             event.ingestor_version.as_deref(),
-            event.payload_schema_id.as_ref()
+            event.payload_schema_id
         ).await?;
         stored_ids.push(result.id);
     }
@@ -166,7 +166,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
         bad_event.payload.clone(),
         bad_event.ts_orig,
         bad_event.ingestor_version.as_deref(),
-        bad_event.payload_schema_id.as_ref()
+        bad_event.payload_schema_id
     ).await?;
     
     // Attempt to process it (would go to DLQ in real system)
@@ -220,7 +220,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
         heartbeat_event.payload.clone(),
         heartbeat_event.ts_orig,
         heartbeat_event.ingestor_version.as_deref(),
-        heartbeat_event.payload_schema_id.as_ref()
+        heartbeat_event.payload_schema_id
     ).await?;
     
     // Update agent heartbeat timestamp
