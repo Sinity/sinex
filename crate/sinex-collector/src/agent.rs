@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sinex_core::{JsonValue, Timestamp, OptionalTimestamp, EventSender, RawEventBuilder, sources, event_type_constants, RawEvent};
+use sinex_core::{JsonValue, Timestamp, OptionalTimestamp, EventSender, RawEvent};
 use sinex_ulid::Ulid;
 use sinex_db::DbPool;
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 /// Agent status enum

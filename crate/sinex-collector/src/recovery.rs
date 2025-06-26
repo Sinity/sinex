@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_core::{RawEvent, Timestamp, EventSender};
 use std::collections::HashMap;
@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::fs;
-use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::agent::{AgentError, DlqEventWritten, ErrorSeverity};

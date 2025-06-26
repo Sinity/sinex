@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use sinex_core::{EventSender, RawEvent, Timestamp, OptionalTimestamp};
