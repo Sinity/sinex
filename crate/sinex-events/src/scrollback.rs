@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use tokio::time;
 use tracing::{debug, error, info};
 use std::collections::HashMap;
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, Timestamp, JsonValue};
 use sinex_core::RawEvent;
 
 // ============================================================================
@@ -244,9 +244,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "scrollback_captured").await?;
                 
                 // Save to file if configured
                 if self.config.save_to_files {
@@ -272,9 +270,7 @@ impl ScrollbackCapture {
                                 CommandOutputCaptured::EVENT_NAME,
                                 serde_json::to_value(payload)?
                             );
-                            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                            tx.send_or_log(event, "scrollback_command_output").await?;
                         }
                     }
                 }
@@ -479,9 +475,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "scrollback_incremental").await?;
                 
                 // Save to file if configured
                 if self.config.save_to_files {
@@ -545,7 +539,7 @@ async fn monitor_command_events(socket_path: String, tx: mpsc::Sender<CommandExe
                     timestamp: Utc::now(),
                 };
                 
-                if let Err(_) = tx.send(event).await {
+                if let Err(_) = tx.send_or_log(event, "scrollback_command_event").await {
                     break; // Channel closed
                 }
             }

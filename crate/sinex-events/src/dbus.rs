@@ -1,12 +1,11 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, JsonValue, Timestamp};
 use sinex_core::RawEvent;
 
 // ============================================================================
@@ -505,9 +504,7 @@ async fn process_extracted_message(
                     SystemNotification::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_notification").await?;
             }
             
             if config.extract_media && interface.starts_with("org.mpris.MediaPlayer2") && member == "PropertiesChanged" {
@@ -538,9 +535,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(MediaPlaybackChanged::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_media_playback").await?;
             }
             
             if config.extract_power && (
@@ -558,9 +553,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(PowerEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_power_event").await?;
             }
             
             if config.extract_hardware && (
@@ -582,9 +575,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(HardwareEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_hardware_event").await?;
             }
             
             if config.extract_session && (
@@ -600,9 +591,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(SessionEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_session_event").await?;
             }
             
             if config.extract_bluetooth && interface.starts_with("org.bluez") {
@@ -619,9 +608,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_bluetooth_event").await?;
             }
             
             if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
@@ -636,9 +623,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(NetworkEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_network_event").await?;
             }
             
             if config.extract_screensaver && (
@@ -655,9 +640,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_screensaver_event").await?;
             }
             
             if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
@@ -675,9 +658,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(MountEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_mount_event").await?;
             }
             
             // Always emit generic signal events (capture everything)
@@ -692,9 +673,7 @@ async fn process_extracted_message(
             };
             
             let event = create_event(DbusSignal::EVENT_NAME, serde_json::to_value(payload)?);
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "dbus_generic_signal").await?;
         }
         MessageType::MethodCall => {
             // Extract PolicyKit events
@@ -711,9 +690,7 @@ async fn process_extracted_message(
                 };
                 
                 let event = create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "dbus_policykit_event").await?;
             }
             
             // Always log method calls (capture everything)
@@ -729,9 +706,7 @@ async fn process_extracted_message(
             };
             
             let event = create_event(DbusMethodCall::EVENT_NAME, serde_json::to_value(payload)?);
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "dbus_generic_method_call").await?;
         }
         _ => {} // Ignore other message types
     }

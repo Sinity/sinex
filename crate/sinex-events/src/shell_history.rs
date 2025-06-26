@@ -11,7 +11,7 @@ use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 use std::collections::HashSet;
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, OptionalTimestamp};
 use sinex_core::RawEvent;
 
 // ============================================================================
@@ -276,9 +276,7 @@ impl ShellHistoryReader {
                 if !self.recent_commands.contains(&dedup_key) {
                     self.recent_commands.insert(dedup_key);
                     
-                    tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                        "Channel closed".to_string()
-                    ))?;
+                    tx.send_or_log(event, "shell_history_command").await?;
                 }
             }
         }

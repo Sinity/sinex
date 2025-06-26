@@ -1,19 +1,18 @@
 pub mod event;
 pub mod event_source_context;
 pub mod heartbeat;
-// pub mod unified_collector; // Temporarily commented out due to RawEvent dependencies
+pub mod unified_collector;
 pub mod validation;
 pub mod validation_chains;
-// pub mod event_source_base; // Temporarily commented out due to RawEvent dependencies
+pub mod event_source_base;
 pub mod error_context;
 pub mod config_extractors;
 pub mod channel_helpers;
 
 pub use event_source_context::EventSourceContext;
 pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
-// pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
-// pub use event_source_base::EventSourceBase;
-// Temporarily commented out due to RawEvent dependencies
+pub use unified_collector::{EventType, EventSource, EventOutput};
+pub use event_source_base::EventSourceBase;
 pub use validation_chains::{ValidationChain, MultiValidator};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
 pub use config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
@@ -23,12 +22,7 @@ pub use channel_helpers::{
     // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
 };
 
-// Export core data structures (moved to sinex-db)
-// pub use {RawEvent, RawEventBuilder};
-
-// Common type aliases for event handling (RawEvent moved to sinex-db)
-// pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
-// pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
+// Common type aliases for event handling (defined after RawEvent struct)
 
 // Common type aliases for time handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
@@ -208,6 +202,13 @@ impl RawEventBuilder {
         }
     }
 }
+
+// ===== Common type aliases for event handling =====
+
+/// Event sender type alias (now that RawEvent is defined)
+pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
+/// Event receiver type alias (now that RawEvent is defined)
+pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 
 // ===== Common types and constants (from types.rs) =====
 

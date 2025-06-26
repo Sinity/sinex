@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, Timestamp, DbPoolRef, ChannelSenderExt};
 use sinex_core::RawEvent;
 use sinex_db::DbPool;
 
@@ -75,6 +75,9 @@ pub struct AtuinDbReader {
     db_pool: Option<DbPool>,
 }
 
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for AtuinDbReader {}
+
 #[async_trait]
 impl EventSource for AtuinDbReader {
     type Config = AtuinConfig;
@@ -82,8 +85,7 @@ impl EventSource for AtuinDbReader {
     const SOURCE_NAME: &'static str = "ingestor.atuin_db_reader";
     
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         
         info!(
             db_path = ?config.db_path,
@@ -173,7 +175,7 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info_from_pool(&self, pool: DbPoolRef) -> Result<(Option<i64>, usize)> {
+    async fn get_startup_info_from_pool(&self, pool: DbPoolRef<'_>) -> Result<(Option<i64>, usize)> {
         use sqlx::Row;
         
         // Get both last timestamp and count in one query
@@ -388,9 +390,7 @@ impl AtuinDbReader {
             let event = self.convert_to_event(entry)?;
             
             // Send event
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "atuin_history_entry").await?;
             
             count += 1;
         }

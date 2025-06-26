@@ -3,11 +3,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, JsonValue, Timestamp, OptionalTimestamp};
 use sinex_core::RawEvent;
 
 // ============================================================================
@@ -282,9 +281,7 @@ impl JournalMonitor {
                         
                         if batch.len() >= self.config.batch_size {
                             for event in batch.drain(..) {
-                                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                                    "Channel closed".to_string()
-                                ))?;
+                                tx.send_or_log(event, "journal_batch").await?;
                             }
                         }
                     }
@@ -297,9 +294,7 @@ impl JournalMonitor {
         
         // Send remaining batch
         for event in batch {
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "journal_final_batch").await?;
         }
         
         // Update cursor
@@ -324,9 +319,7 @@ impl JournalMonitor {
                 JournalSync::EVENT_NAME,
                 serde_json::to_value(sync_payload)?
             );
-            tx.send(sync_event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(sync_event, "journal_sync_event").await?;
         }
         
         info!("Historical import complete: {} entries in {:?}", 
@@ -402,9 +395,7 @@ impl JournalMonitor {
                                     self.save_cursor(cursor).await?;
                                 }
                                 
-                                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                                    "Channel closed".to_string()
-                                ))?;
+                                tx.send_or_log(event, "journal_follow_event").await?;
                             }
                         }
                         Err(e) => {

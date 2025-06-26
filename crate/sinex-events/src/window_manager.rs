@@ -1,8 +1,8 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_core::{EventSender, Timestamp};
+use sinex_core::{EventSender, Timestamp, JsonValue, ChannelSenderExt};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
@@ -340,7 +339,7 @@ impl HyprlandIPCMonitor {
                 };
 
                 // Send event
-                event_tx.send(raw_event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+                event_tx.send_or_log(raw_event, "window_manager_event").await?;
 
                 // Update focus history if applicable
                 if event_name == "activewindow" || event_name == "activewindowv2" {
@@ -619,7 +618,7 @@ impl EventSource for HyprlandStateSnapshotter {
                 payload: snapshot,
             };
 
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+            tx.send_or_log(event, "window_manager_snapshot").await?;
         }
     }
 }

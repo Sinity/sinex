@@ -1,12 +1,11 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::process::Command;
 use tracing::{error, info, debug};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, Timestamp, JsonValue, ChannelSenderExt};
 use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
 use sinex_db::DbPool;
 
@@ -348,9 +347,7 @@ impl ClipboardMonitor {
                     ClipboardChanged::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "clipboard_changed").await?;
             } else {
                 let payload = ClipboardSelectionPayload {
                     selection_type: selection.to_string(),
@@ -369,9 +366,7 @@ impl ClipboardMonitor {
                     ClipboardSelection::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "clipboard_selection").await?;
             }
             
             // Update history

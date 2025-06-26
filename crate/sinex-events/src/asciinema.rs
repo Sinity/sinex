@@ -4,13 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result};
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, JsonValue, Timestamp, ChannelSenderExt};
 use sinex_core::RawEvent;
 
 // ============================================================================
@@ -270,9 +269,7 @@ impl AsciinemaRecorder {
                     AsciinemaSessionStarted::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "asciinema_session_started").await?;
             }
         } else {
             // Check if file size hasn't changed (recording might be complete)
@@ -326,9 +323,7 @@ impl AsciinemaRecorder {
                             AsciinemaSessionEnded::EVENT_NAME,
                             serde_json::to_value(payload)?
                         );
-                        tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                        tx.send_or_log(event, "asciinema_session_ended").await?;
                         
                         // Mark as processed
                         let mut processed = self.processed_files.lock().unwrap();

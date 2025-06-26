@@ -1,11 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{EventSender, Timestamp};
 use std::path::PathBuf;
 use async_trait::async_trait;
 use notify::Watcher;
-use tokio::sync::mpsc;
 use tracing::{debug, info, error};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{EventSender, JsonValue, Timestamp};
@@ -7,11 +7,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, event_type_constants, sources, RawEvent};
+use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, event_type_constants, sources, ChannelSenderExt};
 
 // ============================================================================
 // Event Payloads
@@ -166,7 +165,7 @@ impl KittySocketListener {
                                 serde_json::to_value(cmd)?
                             );
 
-                            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other("Channel closed".to_string()))?;
+                            tx.send_or_log(event, "terminal_command_executed").await?;
                             
                             info!(
                                 window_id = window.id,
