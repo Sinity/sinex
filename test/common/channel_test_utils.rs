@@ -288,8 +288,8 @@ pub mod performance {
     
     /// Measure channel throughput
     pub async fn measure_channel_throughput<T>(
-        sender: impl ChannelSenderExt<T> + Clone,
-        mut receiver: impl ChannelReceiverExt<T>,
+        sender: impl ChannelSenderExt<T> + Clone + Send + 'static,
+        mut receiver: impl ChannelReceiverExt<T> + Send + 'static,
         item_count: usize,
         test_item: T,
     ) -> Result<ChannelPerformanceReport, Box<dyn std::error::Error>>

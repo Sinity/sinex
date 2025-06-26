@@ -28,6 +28,7 @@ pub use std::time::{Duration, Instant};
 pub use std::collections::{HashMap, HashSet};
 pub use std::str::FromStr;
 pub use std::path::{Path, PathBuf};
+pub use std::fmt::Debug;
 // ===== Error Handling =====
 pub use anyhow::Result;
 /// Standard error type for test functions
@@ -41,14 +42,16 @@ pub use sinex_core::{
     EventSource, EventSourceContext, 
     RawEventBuilder,
     sources, event_type_constants,
-    ValidationChain, MultiValidator, ErrorContext, ResultExt,
-    ConfigExtractor, ConfigValidator, parse_duration,
-    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor,
+    ValidationChain, MultiValidator, JsonType, ErrorContext, ResultExt, CoreError,
+    ConfigExtractor, ConfigValidator, parse_duration, ConfigValue,
+    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor, BackpressureManager,
+    unified_collector::{EventRegistry, create_registry},
 };
 pub use sinex_db::{
     queries, run_migrations,
-    models::RawEvent,
+    RawEvent,
     DbPool,
+    prelude::{AgentManifest, WorkQueueItem, QueueStatus},
 };
 // ===== Async Runtime =====
 pub use tokio::sync::{mpsc, Barrier};
@@ -64,6 +67,7 @@ pub use crate::common::{
     events,
     database_helpers,
     event_sources,
+    event_builders::EventBuilder,
 };
 // Test context - THE way to write tests
 // Event builders - THE way to create events

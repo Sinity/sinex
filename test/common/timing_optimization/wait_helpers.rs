@@ -347,13 +347,14 @@ where
 
 /// Wait for multiple conditions to be met simultaneously
 pub async fn wait_for_multiple_conditions<F, Fut>(
-    mut conditions: Vec<F>,
+    conditions: Vec<F>,
     timeout_secs: u64,
 ) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
+    let mut conditions = conditions;
     wait_for_condition(move || {
         async {
             for condition in &mut conditions {

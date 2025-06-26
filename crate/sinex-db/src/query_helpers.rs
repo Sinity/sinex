@@ -98,65 +98,9 @@ pub fn db_error(err: SqlxError, context: &str) -> DbError {
 /// Result type using DbError
 pub type DbResult<T> = std::result::Result<T, DbError>;
 
-// ===== Query Execution Helpers =====
-
-/// Execute a query that returns a single row
-pub async fn query_one<T>(
-    pool: DbPoolRef<'_>,
-    query: &str,
-    context: &str,
-) -> DbResult<T>
-where
-    T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-{
-    sqlx::query_as::<_, T>(query)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| db_error(e, context))
-}
-
-/// Execute a query that returns multiple rows
-pub async fn query_many<T>(
-    pool: DbPoolRef<'_>,
-    query: &str,
-    context: &str,
-) -> DbResult<Vec<T>>
-where
-    T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-{
-    sqlx::query_as::<_, T>(query)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| db_error(e, context))
-}
-
-/// Execute a query that might return a row
-pub async fn query_optional<T>(
-    pool: DbPoolRef<'_>,
-    query: &str,
-    context: &str,
-) -> DbResult<Option<T>>
-where
-    T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-{
-    sqlx::query_as::<_, T>(query)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| db_error(e, context))
-}
-
-/// Execute a query without returning results
-pub async fn execute(
-    pool: DbPoolRef<'_>,
-    query: &str,
-    context: &str,
-) -> DbResult<u64> {
-    sqlx::query(query)
-        .execute(pool)
-        .await
-        .map(|r| r.rows_affected())
-        .map_err(|e| db_error(e, context))
-}
+// ===== Removed Query Execution Helpers =====
+// These were unused abstractions that added complexity without value.
+// Use sqlx::query! macros directly instead.
 
 
 // ===== Transaction Helpers =====
@@ -264,70 +208,9 @@ pub fn is_retryable_db_error(err: &DbError) -> bool {
     }
 }
 
-// ===== Common Query Patterns =====
-
-/// Insert a record and return it with ULID support
-pub async fn insert_and_return<T, R>(
-    pool: DbPoolRef<'_>,
-    table: &str,
-    columns: &[&str],
-    values: &[&str],
-    context: &str,
-) -> DbResult<R>
-where
-    R: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-{
-    let columns_str = columns.join(", ");
-    let placeholders: Vec<String> = (1..=values.len())
-        .map(|i| format!("${}", i))
-        .collect();
-    let placeholders_str = placeholders.join(", ");
-    
-    let query = format!(
-        "INSERT INTO {} ({}) VALUES ({}) RETURNING *",
-        table, columns_str, placeholders_str
-    );
-    
-    let mut q = sqlx::query_as::<_, R>(&query);
-    for value in values {
-        q = q.bind(value);
-    }
-    
-    q.fetch_one(pool)
-        .await
-        .map_err(|e| db_error(e, context))
-}
-
-/// Update records with a WHERE clause
-pub async fn update_where(
-    pool: DbPoolRef<'_>,
-    table: &str,
-    set_clause: &str,
-    where_clause: &str,
-    context: &str,
-) -> DbResult<u64> {
-    let query = format!(
-        "UPDATE {} SET {} WHERE {}",
-        table, set_clause, where_clause
-    );
-    
-    execute(pool, &query, context).await
-}
-
-/// Delete records with a WHERE clause
-pub async fn delete_where(
-    pool: DbPoolRef<'_>,
-    table: &str,
-    where_clause: &str,
-    context: &str,
-) -> DbResult<u64> {
-    let query = format!(
-        "DELETE FROM {} WHERE {}",
-        table, where_clause
-    );
-    
-    execute(pool, &query, context).await
-}
+// ===== Removed Common Query Patterns =====
+// Removed insert_and_return, update_where, delete_where - barely used abstractions.
+// Use sqlx::query! macros directly for better type safety and clarity.
 
 /// Check if a record exists
 pub async fn exists(
@@ -398,23 +281,9 @@ impl UlidArrayExt for Vec<Ulid> {
     }
 }
 
-// ===== Macro Helpers =====
-
-/// Helper macro for creating parameterized queries with ULID support
-#[macro_export]
-macro_rules! bind_ulid {
-    ($query:expr, $ulid:expr) => {
-        $query.bind($crate::query_helpers::ulid_to_uuid($ulid))
-    };
-}
-
-/// Helper macro for binding optional ULIDs
-#[macro_export]
-macro_rules! bind_optional_ulid {
-    ($query:expr, $ulid:expr) => {
-        $query.bind($ulid.map($crate::query_helpers::ulid_to_uuid))
-    };
-}
+// ===== Removed Macro Helpers =====
+// Removed bind_ulid! and bind_optional_ulid! macros - never used.
+// Use ulid_to_uuid() function directly for explicit, readable code.
 
 
 #[cfg(test)]

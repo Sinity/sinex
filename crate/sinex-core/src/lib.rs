@@ -13,7 +13,7 @@ pub use event_source_context::EventSourceContext;
 pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
 pub use unified_collector::{EventType, EventSource, EventOutput};
 pub use event_source_base::EventSourceBase;
-pub use validation_chains::{ValidationChain, MultiValidator};
+pub use validation_chains::{ValidationChain, MultiValidator, JsonType};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
 pub use config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
 pub use channel_helpers::{

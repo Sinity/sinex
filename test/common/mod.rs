@@ -298,7 +298,7 @@ pub mod events {
 #[allow(dead_code)]
 pub mod assertions {
     use super::*;
-    use sinex_db::models::{RawEvent, AgentManifest};
+    // Using RawEvent, AgentManifest from prelude
 
     /// Assert that two events are equivalent (ignoring IDs and timestamps)
     pub fn assert_events_equivalent(actual: &RawEvent, expected: &RawEvent) {
