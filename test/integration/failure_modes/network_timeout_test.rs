@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Test database connection timeout handling
-#[tokio::test]
-async fn test_database_connection_timeout() {
+#[sinex_test]
+async fn test_database_connection_timeout(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate various network timeout scenarios
     
     #[derive(Debug, Clone)]
@@ -129,11 +129,13 @@ async fn test_database_connection_timeout() {
     if slow_timeouts == 0 && intermittent_timeouts == 0 {
         println!("WARNING: No timeouts detected - system may be too fast for these test parameters");
     }
+    
+    Ok(())
 }
 
 /// Test connection pool behavior under timeout conditions
-#[tokio::test]
-async fn test_connection_pool_timeout_resilience() {
+#[sinex_test]
+async fn test_connection_pool_timeout_resilience(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate connection pool with limited connections
     const POOL_SIZE: usize = 5;
     const NUM_WORKERS: usize = 10;
@@ -210,11 +212,13 @@ async fn test_connection_pool_timeout_resilience() {
         "Pool size limit was exceeded");
     assert!(total_timeouts > 0, 
         "Expected some timeouts with more workers than connections");
+    
+    Ok(())
 }
 
 /// Test retry logic with exponential backoff
-#[tokio::test]
-async fn test_retry_with_backoff() {
+#[sinex_test]
+async fn test_retry_with_backoff(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Track retry behavior
     let _attempt_count = Arc::new(AtomicU64::new(0));
     let success_after_retry = Arc::new(AtomicU64::new(0));
@@ -303,4 +307,6 @@ async fn test_retry_with_backoff() {
     let successes = success_after_retry.load(Ordering::Relaxed);
     println!("\nOperations that succeeded after retry: {}", successes);
     assert!(successes >= 2, "Expected at least 2 operations to succeed after retry");
+    
+    Ok(())
 }
