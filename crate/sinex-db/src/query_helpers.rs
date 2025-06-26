@@ -67,7 +67,7 @@
 
 use crate::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
-use sqlx::{postgres::PgRow, Error as SqlxError, FromRow, Postgres, Transaction};
+use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;

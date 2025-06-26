@@ -31,7 +31,6 @@ pub mod prelude {
     pub use crate::queries::*;
     pub use crate::query_helpers::{
         DbError, DbResult, RetryConfig,
-        query_one, query_many, query_optional, execute,
         with_transaction, with_retry_transaction,
         ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
     };
