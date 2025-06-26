@@ -103,12 +103,14 @@ where
     let value = payload.get(field_name)
         .ok_or_else(|| ValidationError::MissingField { field: field_name.to_string() })?;
         
-    // Use ValidationChain to validate the field exists and has content
-    convert_validation_result(
-        ValidationChain::validate(value.clone(), field_name)
-            .custom(|v| v.is_number(), "must be a number")
-            .into_result()
-    )?;
+    // Validate the field is a number (manual check for now)
+    if !value.is_number() {
+        return Err(ValidationError::InvalidType {
+            field: field_name.to_string(),
+            expected: "number".to_string(),
+            actual: format!("{:?}", value),
+        });
+    }
     
     extractor(value)
         .ok_or_else(|| ValidationError::InvalidType {
@@ -116,6 +118,34 @@ where
             expected: "number".to_string(),
             actual: format!("{:?}", value),
         })
+}
+
+/// Enhanced ValidationChain helper for optional numeric field validation
+fn validate_optional_numeric_field<T>(payload: &Value, field_name: &str, extractor: fn(&Value) -> Option<T>) -> Result<Option<T>, ValidationError>
+where
+    T: Clone + std::fmt::Debug,
+{
+    match payload.get(field_name) {
+        Some(value) => {
+            // Validate the field is a number (manual check for now)
+            if !value.is_number() {
+                return Err(ValidationError::InvalidType {
+                    field: field_name.to_string(),
+                    expected: "number".to_string(),
+                    actual: format!("{:?}", value),
+                });
+            }
+            
+            let extracted = extractor(value)
+                .ok_or_else(|| ValidationError::InvalidType {
+                    field: field_name.to_string(),
+                    expected: "number".to_string(),
+                    actual: format!("{:?}", value),
+                })?;
+            Ok(Some(extracted))
+        }
+        None => Ok(None)
+    }
 }
 
 /// Extract field name from error message (best effort)
@@ -281,7 +311,7 @@ impl EventValidator {
                 // Required: path (string), size (number >= 0)
                 let _path = validate_required_string_field(payload, "path")?;
                 
-                let _size = validate_required_field(payload, "size", |v| v.as_u64())?;
+                let _size = validate_required_numeric_field(payload, "size", |v| v.as_u64())?;
                 
                 // Optional: permissions (string matching pattern)
                 if let Some(perms_str) = validate_optional_field(payload, "permissions", |v| v.as_str().map(|s| s.to_string()), "string")? {
@@ -404,7 +434,7 @@ impl EventValidator {
                 let _command = validate_required_string_field(payload, "command")?;
                 
                 // Optional: exit_code (number), duration (number)
-                let _exit_code = validate_optional_field(payload, "exit_code", |v| v.as_i64(), "integer")?;
+                let _exit_code = validate_optional_numeric_field(payload, "exit_code", |v| v.as_i64())?;
                 
                 Ok(())
             },
@@ -477,9 +507,9 @@ impl EventValidator {
                 let _version = validate_required_string_field(payload, "version")?;
                 
                 // Optional numeric fields
-                let _uptime = validate_optional_field(payload, "uptime_seconds", |v| v.as_u64(), "non-negative integer")?;
-                let _events = validate_optional_field(payload, "events_processed_session", |v| v.as_u64(), "non-negative integer")?;
-                let _dlq_size = validate_optional_field(payload, "dlq_size", |v| v.as_u64(), "non-negative integer")?;
+                let _uptime = validate_optional_numeric_field(payload, "uptime_seconds", |v| v.as_u64())?;
+                let _events = validate_optional_numeric_field(payload, "events_processed_session", |v| v.as_u64())?;
+                let _dlq_size = validate_optional_numeric_field(payload, "dlq_size", |v| v.as_u64())?;
                 
                 Ok(())
             },

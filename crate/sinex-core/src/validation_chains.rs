@@ -133,10 +133,15 @@ impl ValidationChain<String> {
         self
     }
 
-    /// Custom validation with a predicate
+}
+
+// Generic validations for all types
+impl<T> ValidationChain<T>
+{
+    /// Custom validation with a predicate for any type
     pub fn custom<F>(mut self, predicate: F, error_message: &str) -> Self
     where
-        F: FnOnce(&String) -> bool,
+        F: FnOnce(&T) -> bool,
     {
         if !predicate(&self.value) {
             self.errors.push(ValidationError::InvalidValue {
