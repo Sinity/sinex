@@ -251,7 +251,7 @@ impl KittySocketListener {
         }
 
         // Parse JSON output
-        let data: serde_json::Value = serde_json::from_slice(&output.stdout)
+        let data: JsonValue = serde_json::from_slice(&output.stdout)
             .map_err(|e| sinex_core::CoreError::Other(format!("Failed to parse Kitty ls output: {}", e)))?;
         
         let mut windows = Vec::new();

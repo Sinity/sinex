@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::Value;
+use JsonValue;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use thiserror::Error;

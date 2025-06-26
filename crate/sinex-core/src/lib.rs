@@ -19,6 +19,9 @@ pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 
+// Common type aliases for data handling
+pub type JsonValue = serde_json::Value;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

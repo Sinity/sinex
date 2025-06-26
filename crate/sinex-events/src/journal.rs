@@ -269,7 +269,7 @@ impl JournalMonitor {
                 continue;
             }
             
-            match serde_json::from_slice::<serde_json::Value>(line) {
+            match serde_json::from_slice::<JsonValue>(line) {
                 Ok(entry) => {
                     if let Some(event) = self.parse_journal_entry(&entry)? {
                         if first_cursor.is_none() {
@@ -393,7 +393,7 @@ impl JournalMonitor {
                         continue;
                     }
                     
-                    match serde_json::from_str::<serde_json::Value>(&line) {
+                    match serde_json::from_str::<JsonValue>(&line) {
                         Ok(entry) => {
                             if let Some(event) = self.parse_journal_entry(&entry)? {
                                 // Update cursor
@@ -425,7 +425,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    fn parse_journal_entry(&self, entry: &serde_json::Value) -> Result<Option<RawEvent>> {
+    fn parse_journal_entry(&self, entry: &JsonValue) -> Result<Option<RawEvent>> {
         let obj = entry.as_object()
             .ok_or_else(|| sinex_core::CoreError::Other("Invalid journal entry".to_string()))?;
         
@@ -528,7 +528,7 @@ impl JournalMonitor {
         Ok(())
     }
     
-    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEvent {
             id: sinex_ulid::Ulid::new(),
             source: Self::SOURCE_NAME.to_string(),

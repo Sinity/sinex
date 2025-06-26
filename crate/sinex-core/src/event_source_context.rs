@@ -1,5 +1,5 @@
 use sqlx::PgPool;
-use serde_json::Value;
+use JsonValue;
 
 /// Context provided to event sources containing shared resources
 #[derive(Clone)]

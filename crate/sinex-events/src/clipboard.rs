@@ -495,7 +495,7 @@ impl ClipboardMonitor {
             .await
         {
             if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Ok(json) = serde_json::from_slice::<JsonValue>(&output.stdout) {
                     return json.get("class")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
@@ -525,7 +525,7 @@ impl ClipboardMonitor {
             .await
         {
             if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Ok(json) = serde_json::from_slice::<JsonValue>(&output.stdout) {
                     return json.get("title")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());

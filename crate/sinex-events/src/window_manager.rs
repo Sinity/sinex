@@ -70,9 +70,9 @@ pub struct MonitorFocusedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StateSnapshotPayload {
     pub timestamp: Timestamp,
-    pub monitors: serde_json::Value,
-    pub workspaces: serde_json::Value,
-    pub clients: serde_json::Value,
+    pub monitors: JsonValue,
+    pub workspaces: JsonValue,
+    pub clients: JsonValue,
 }
 
 // ============================================================================

@@ -18,7 +18,7 @@ pub struct ComponentHeartbeat {
     pub binary_version: String,
     pub git_hash: String,
     pub build_time: String,
-    pub metrics: serde_json::Value,
+    pub metrics: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -306,7 +306,7 @@ pub trait MetricsProvider {
     fn get_events_processed_last_minute(&self) -> u32;
     fn get_errors_last_hour(&self) -> u32;
     fn get_last_error_message(&self) -> Option<String>;
-    fn get_custom_metrics(&self) -> serde_json::Value {
+    fn get_custom_metrics(&self) -> JsonValue {
         serde_json::json!({})
     }
 }

@@ -138,7 +138,7 @@ async fn get_system_health(
 }
 
 /// Simple liveness check
-async fn health_check() -> Json<serde_json::Value> {
+async fn health_check() -> Json<JsonValue> {
     Json(serde_json::json!({
         "status": "ok",
         "service": "sinex-health-aggregator",
@@ -150,7 +150,7 @@ async fn health_check() -> Json<serde_json::Value> {
 async fn get_component_details(
     State(pool): State<Arc<PgPool>>,
     axum::extract::Path(component_name): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<JsonValue>, StatusCode> {
     // Get recent heartbeats for this component (last 10)
     let heartbeats = match sqlx::query!(
         r#"
@@ -201,7 +201,7 @@ async fn get_component_details(
 /// Get list of all known components
 async fn list_components(
     State(pool): State<Arc<PgPool>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<JsonValue>, StatusCode> {
     let components = match sqlx::query!(
         r#"
         SELECT DISTINCT component_name,

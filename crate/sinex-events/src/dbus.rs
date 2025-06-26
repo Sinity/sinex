@@ -27,7 +27,7 @@ pub struct DbusSignalPayload {
     /// Signal name (e.g., NotificationClosed)
     pub signal: String,
     /// Signal arguments as JSON
-    pub args: serde_json::Value,
+    pub args: JsonValue,
     /// Timestamp
     pub timestamp: Timestamp,
 }
@@ -41,7 +41,7 @@ pub struct DbusMethodCallPayload {
     pub path: String,
     pub interface: String,
     pub method: String,
-    pub args: serde_json::Value,
+    pub args: JsonValue,
     pub timestamp: Timestamp,
 }
 
@@ -54,7 +54,7 @@ pub struct NotificationPayload {
     pub urgency: u8,
     pub timeout: i32,
     pub actions: Vec<String>,
-    pub hints: HashMap<String, serde_json::Value>,
+    pub hints: HashMap<String, JsonValue>,
     pub timestamp: Timestamp,
 }
 
@@ -88,7 +88,7 @@ pub struct MediaPlaybackPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PowerEventPayload {
     pub event_type: String, // PrepareForSleep, PowerProfileChanged, etc.
-    pub details: serde_json::Value,
+    pub details: JsonValue,
     pub timestamp: Timestamp,
 }
 
@@ -102,7 +102,7 @@ pub struct HardwareEventPayload {
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
-    pub properties: HashMap<String, serde_json::Value>,
+    pub properties: HashMap<String, JsonValue>,
     pub timestamp: Timestamp,
 }
 
@@ -465,7 +465,7 @@ async fn process_extracted_message(
     member: Option<String>,
     sender: Option<String>,
     destination: Option<String>,
-    args: serde_json::Value,
+    args: JsonValue,
     tx: EventSender,
     config: &DbusConfig,
 ) -> Result<()> {
@@ -1044,13 +1044,13 @@ fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
 }
 
 
-fn message_args_to_json(msg: &dbus::Message) -> serde_json::Value {
+fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
     // For now, just return debug representation
     // A full implementation would parse all D-Bus argument types
-    serde_json::Value::String(format!("{:?}", msg))
+    JsonValue::String(format!("{:?}", msg))
 }
 
-fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
+fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
     RawEvent {
         id: sinex_ulid::Ulid::new(),
         source: DbusMonitor::SOURCE_NAME.to_string(),

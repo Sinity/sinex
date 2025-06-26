@@ -307,7 +307,7 @@ impl ScrollbackCapture {
             ));
         }
         
-        let data: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let data: JsonValue = serde_json::from_slice(&output.stdout)?;
         let mut windows = Vec::new();
         
         if let Some(os_windows) = data.as_array() {
@@ -499,7 +499,7 @@ struct ScrollbackText {
     line_count: usize,
 }
 
-fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
+fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
     RawEvent {
         id: sinex_ulid::Ulid::new(),
         source: ScrollbackCapture::SOURCE_NAME.to_string(),

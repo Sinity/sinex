@@ -350,7 +350,7 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
         None
     }
     
-    fn get_custom_metrics(&self) -> serde_json::Value {
+    fn get_custom_metrics(&self) -> JsonValue {
         serde_json::json!({
             "total_events_processed": self.events_processed.load(Ordering::Relaxed),
             "uptime_seconds": self.start_time.elapsed().as_secs()

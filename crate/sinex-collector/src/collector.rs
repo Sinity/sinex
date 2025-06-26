@@ -25,23 +25,23 @@ use crate::OutputConfig;
 use std::sync::Arc;
 
 /// Convert TOML value to JSON value
-fn toml_to_json(toml_val: toml::Value) -> serde_json::Value {
+fn toml_to_json(toml_val: toml::Value) -> JsonValue {
     match toml_val {
-        toml::Value::String(s) => serde_json::Value::String(s),
-        toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
+        toml::Value::String(s) => JsonValue::String(s),
+        toml::Value::Integer(i) => JsonValue::Number(i.into()),
         toml::Value::Float(f) => serde_json::json!(f),
-        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
+        toml::Value::Boolean(b) => JsonValue::Bool(b),
         toml::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(toml_to_json).collect())
+            JsonValue::Array(arr.into_iter().map(toml_to_json).collect())
         }
         toml::Value::Table(table) => {
-            let map: serde_json::Map<String, serde_json::Value> = table
+            let map: serde_json::Map<String, JsonValue> = table
                 .into_iter()
                 .map(|(k, v)| (k, toml_to_json(v)))
                 .collect();
-            serde_json::Value::Object(map)
+            JsonValue::Object(map)
         }
-        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Datetime(dt) => JsonValue::String(dt.to_string()),
     }
 }
 

@@ -1,5 +1,5 @@
 use std::path::{PathBuf, Component};
-use serde_json::Value;
+use JsonValue;
 use unicode_normalization::UnicodeNormalization;
 
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB

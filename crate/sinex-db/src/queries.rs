@@ -11,7 +11,7 @@ pub async fn insert_raw_event(
     source: &str,
     event_type: &str,
     host: &str,
-    payload: serde_json::Value,
+    payload: JsonValue,
     ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
@@ -25,7 +25,7 @@ pub async fn insert_raw_event_with_validator(
     source: &str,
     event_type: &str,
     host: &str,
-    payload: serde_json::Value,
+    payload: JsonValue,
     ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
@@ -127,8 +127,8 @@ pub async fn upsert_agent_manifest(
     status: &str,
     agent_type: &str,
     description: Option<&str>,
-    produces_event_types: Option<serde_json::Value>,
-    subscribes_to_event_types: Option<serde_json::Value>,
+    produces_event_types: Option<JsonValue>,
+    subscribes_to_event_types: Option<JsonValue>,
 ) -> Result<AgentManifest> {
     // AgentManifest doesn't have ULID fields, so query_as! should work
     let record = sqlx::query_as!(
@@ -359,8 +359,8 @@ pub async fn insert_dlq_event(
     event_type: &str,
     failure_reason: &str,
     error_category: &str,
-    original_event_payload: serde_json::Value,
-    additional_metadata: Option<serde_json::Value>,
+    original_event_payload: JsonValue,
+    additional_metadata: Option<JsonValue>,
 ) -> Result<DlqEvent> {
     let record = sqlx::query!(
         r#"
@@ -585,7 +585,7 @@ pub async fn resolve_dlq_event(
 }
 
 /// Get DLQ statistics
-pub async fn get_dlq_stats(pool: DbPoolRef) -> Result<serde_json::Value> {
+pub async fn get_dlq_stats(pool: DbPoolRef) -> Result<JsonValue> {
     let stats = sqlx::query!(
         r#"
         SELECT 

@@ -8,7 +8,7 @@ use sinex_ulid::Ulid;
 pub struct RawEventBuilder {
     source: String,
     event_type: String,
-    payload: serde_json::Value,
+    payload: JsonValue,
     ts_orig: OptionalTimestamp,
     host: Option<String>,
     ingestor_version: Option<String>,
@@ -16,7 +16,7 @@ pub struct RawEventBuilder {
 }
 
 impl RawEventBuilder {
-    pub fn new(source: impl Into<String>, event_type: impl Into<String>, payload: serde_json::Value) -> Self {
+    pub fn new(source: impl Into<String>, event_type: impl Into<String>, payload: JsonValue) -> Self {
         Self {
             source: source.into(),
             event_type: event_type.into(),

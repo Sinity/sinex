@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use JsonValue as JsonValue;
 use sinex_db::models::RawEvent;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;

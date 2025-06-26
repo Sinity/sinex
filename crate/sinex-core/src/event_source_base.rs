@@ -16,7 +16,7 @@ pub trait EventSourceBase: EventSource + Sized {
     }
     
     /// Create an event with standard fields populated
-    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
             .with_host(gethostname::gethostname().to_string_lossy())
             .with_ingestor_version(env!("CARGO_PKG_VERSION"))
