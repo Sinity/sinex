@@ -46,14 +46,14 @@ pub fn test_database_url() -> String {
 }
 
 /// Create a test database pool with high concurrency settings
-pub async fn create_test_db_pool() -> Result<PgPool> {
+pub async fn create_test_db_pool() -> Result<DbPool> {
     let test_pool = database::TestPool::with_strategy(database::CleanupStrategy::None).await?;
     Ok(test_pool.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
-pub async fn insert_event(pool: &PgPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
+pub async fn insert_event(pool: &DbPool, event: &sinex_db::models::RawEvent) -> Result<Ulid> {
     let inserted = queries::insert_event(&pool, event).await?;
     Ok(inserted.id)
 }
@@ -311,7 +311,7 @@ pub mod assertions {
 
     /// Assert that an event was inserted successfully
     pub async fn assert_event_inserted(
-        pool: &PgPool,
+        pool: &DbPool,
         event: &RawEvent
     ) -> Result<Ulid> {
         let inserted = queries::insert_event(&pool, event).await?;
@@ -321,7 +321,7 @@ pub mod assertions {
 
     /// Assert that an event insertion fails with validation error
     pub async fn assert_event_insertion_fails(
-        pool: &PgPool,
+        pool: &DbPool,
         event: &RawEvent
     ) -> Result<(), anyhow::Error> {
         let result = queries::insert_event(&pool, event).await;
@@ -331,7 +331,7 @@ pub mod assertions {
 
     /// Assert that manifest was registered successfully
     pub async fn assert_manifest_registered(
-        pool: &PgPool,
+        pool: &DbPool,
         manifest: &AgentManifest
     ) -> Result<(), anyhow::Error> {
         let result = queries::upsert_agent_manifest(&pool,
@@ -504,7 +504,7 @@ pub mod generators {
 // Query functions are available directly from sinex_db::queries - no need for wrappers
 
 /// Helper for getting event count from database
-pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
+pub async fn get_event_count(pool: &DbPool) -> Result<i64> {
     let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
         .fetch_one(pool)
         .await?;
@@ -512,7 +512,7 @@ pub async fn get_event_count(pool: &PgPool) -> Result<i64> {
 }
 
 /// Helper for checking if an event exists by ULID
-pub async fn event_exists(pool: &PgPool, event_id: Ulid) -> Result<bool> {
+pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     let exists = sqlx::query!(
         r#"
         SELECT EXISTS(
@@ -532,7 +532,7 @@ pub async fn event_exists(pool: &PgPool, event_id: Ulid) -> Result<bool> {
 macro_rules! test_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
+        async fn $test_name(pool: DbPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_inserted(&pool, &event).await?;
             Ok(())
@@ -544,7 +544,7 @@ macro_rules! test_event_insertion {
 macro_rules! test_invalid_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
+        async fn $test_name(pool: DbPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
             Ok(())
@@ -595,7 +595,7 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::models::Ra
 }
 
 /// Helper for creating a test agent with default settings
-pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
+pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     queries::upsert_agent_manifest(&pool,
         &manifest.agent_name,
@@ -611,14 +611,14 @@ pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), an
 
 /// Quick test event insertion - creates minimal event
 #[allow(dead_code)]
-pub async fn insert_test_event(pool: &PgPool, source: &str, event_type: &str) -> Result<Ulid> {
+pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> Result<Ulid> {
     let event = RawEventBuilder::new(source, event_type, json!({"test": true})).build();
     insert_event(&pool, &event).await
 }
 
 /// Helper for creating agent with specific subscriptions
 pub async fn create_agent_with_subscriptions(
-    pool: &PgPool, 
+    pool: &DbPool, 
     agent_name: &str, 
     subscriptions: &serde_json::Value
 ) -> Result<(), anyhow::Error> {
@@ -670,7 +670,7 @@ pub mod db_utils {
     use super::*;
     
     /// Insert multiple test events quickly
-    pub async fn insert_test_events(pool: &PgPool, count: usize) -> Result<Vec<Ulid>> {
+    pub async fn insert_test_events(pool: &DbPool, count: usize) -> Result<Vec<Ulid>> {
         let mut ids = Vec::new();
         for i in 0..count {
             let event = generators::indexed_event(i);
@@ -713,7 +713,7 @@ pub mod health {
     use super::*;
     
     /// Check if database is healthy
-    pub async fn check_database_health(pool: &PgPool) -> Result<bool> {
+    pub async fn check_database_health(pool: &DbPool) -> Result<bool> {
         match sqlx::query("SELECT 1").fetch_one(pool).await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
@@ -754,7 +754,7 @@ pub mod cleanup {
     use super::*;
     
     /// Truncate all test tables
-    pub async fn truncate_all_tables(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn truncate_all_tables(pool: &DbPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
             .execute(pool).await?;
@@ -848,7 +848,7 @@ pub mod event_sources {
     }
     
     /// Create EventSourceContext with database pool
-    pub fn test_context_with_db(config: Value, pool: sqlx::PgPool) -> EventSourceContext {
+    pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceContext {
         EventSourceContext::new(config).with_db_pool(pool)
     }
     
@@ -928,11 +928,11 @@ pub mod parallelization {
         /// Execute database operations in parallel with shared pool
         pub async fn execute_db_parallel<F, T, Fut>(
             &self,
-            pool: Arc<PgPool>,
+            pool: Arc<DbPool>,
             operations: Vec<F>,
         ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
         where
-            F: FnOnce(Arc<PgPool>) -> Fut + Send + 'static,
+            F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
             Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
             T: Send + 'static,
         {
@@ -968,12 +968,12 @@ pub mod parallelization {
 
     /// Utility for running tests with shared resources safely
     pub async fn run_tests_with_shared_pool<F, T, Fut>(
-        pool: Arc<PgPool>,
+        pool: Arc<DbPool>,
         operations: Vec<F>,
         max_concurrent: usize,
     ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
     where
-        F: FnOnce(Arc<PgPool>) -> Fut + Send + 'static,
+        F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
         T: Send + 'static,
     {

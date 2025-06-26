@@ -21,6 +21,10 @@ pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 
 // Common type aliases for data handling
 pub type JsonValue = serde_json::Value;
+pub type ConfigValue = toml::Value;
+
+// Database type aliases (re-exported from sinex-db)
+pub use sinex_db::{DbPool, DbPoolRef};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -62,7 +66,6 @@ impl From<serde_json::Error> for CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
-pub type Error = CoreError;
 
 // ===== Common types and constants (from types.rs) =====
 

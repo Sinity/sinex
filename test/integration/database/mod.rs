@@ -51,7 +51,7 @@ pub mod utils {
     
     /// Create test schema for validation
     pub async fn create_test_schema(
-        pool: &PgPool,
+        pool: &DbPool,
         source: &str,
         event_type: &str,
         schema: serde_json::Value
@@ -77,7 +77,7 @@ pub mod utils {
     }
     
     /// Verify TimescaleDB hypertable exists
-    pub async fn verify_hypertable_exists(pool: &PgPool, table_name: &str) -> Result<bool> {
+    pub async fn verify_hypertable_exists(pool: &DbPool, table_name: &str) -> Result<bool> {
         let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS(
@@ -96,7 +96,7 @@ pub mod utils {
     
     /// Create test work queue items
     pub async fn create_test_work_items(
-        pool: &PgPool,
+        pool: &DbPool,
         agent_name: &str,
         count: usize
     ) -> Result<Vec<Ulid>> {
@@ -148,7 +148,7 @@ pub mod utils {
     }
     
     /// Get database connection statistics
-    pub async fn get_connection_stats(pool: &PgPool) -> Result<DatabaseConnectionStats> {
+    pub async fn get_connection_stats(pool: &DbPool) -> Result<DatabaseConnectionStats> {
         let row = sqlx::query!(
             r#"
             SELECT 
@@ -178,7 +178,7 @@ pub mod utils {
     }
     
     /// Verify database constraints and indexes
-    pub async fn verify_database_integrity(pool: &PgPool) -> Result<IntegrityReport> {
+    pub async fn verify_database_integrity(pool: &DbPool) -> Result<IntegrityReport> {
         // Check for foreign key violations
         let fk_violations = sqlx::query_scalar!(
             r#"

@@ -45,12 +45,12 @@ pub use sinex_core::{
 pub use sinex_db::{
     queries, run_migrations,
     models::RawEvent,
+    DbPool,
 };
 // ===== Async Runtime =====
 pub use tokio::sync::{mpsc, Barrier};
 pub use tokio::time::{sleep, interval, timeout};
 // ===== Database =====
-pub use sqlx::PgPool;
 // ===== Testing Utilities =====
 pub use futures::future::join_all;
 pub use tempfile::{TempDir, NamedTempFile};

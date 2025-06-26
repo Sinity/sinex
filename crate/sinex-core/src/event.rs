@@ -1,7 +1,8 @@
 // Re-export the canonical RawEvent from sinex-db
 pub use sinex_db::models::RawEvent;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use crate::{JsonValue, OptionalTimestamp, Timestamp};
 use sinex_ulid::Ulid;
 
 /// Builder for creating RawEvent instances

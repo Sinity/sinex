@@ -12,7 +12,7 @@ use notify::event::{ModifyKind, DataChange};
 
 use sinex_core::{EventType, EventSource, EventSourceContext, Result};
 use sinex_db::models::RawEvent;
-use sqlx::PgPool;
+use sinex_db::DbPool;
 
 // ============================================================================
 // Event Payloads
@@ -72,7 +72,7 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_timestamp: Option<i64>,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
 }
 
 #[async_trait]

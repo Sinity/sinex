@@ -141,7 +141,7 @@ async fn test_concurrent_operations_streamlined(ctx: TestContext) -> TestResult 
     
     let operations: Vec<_> = (0..10).map(|i| {
         let pool_clone = pool.clone();
-        move |_p: Arc<sqlx::PgPool>| {
+        move |_p: Arc<DbPool>| {
             let pool_inner = pool_clone.clone();
             async move {
                 let event = RawEventBuilder::new(

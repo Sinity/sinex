@@ -13,9 +13,6 @@ pub use queries::{
     get_next_work_item, complete_work_item, fail_work_item
 };
 
-// Re-export type aliases for convenience
-pub use {DbPool, DbPoolRef};
-
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
@@ -26,8 +23,13 @@ use tracing::info;
 pub type DbPool = PgPool;
 pub type DbPoolRef<'a> = &'a PgPool;
 
+// Import type aliases from sinex-ulid and add our own
+pub use sinex_ulid::Timestamp;
+pub type OptionalTimestamp = Option<Timestamp>;
+pub type JsonValue = serde_json::Value;
+
 /// Create a database connection pool with default settings
-pub async fn create_pool(database_url: &str) -> Result<PgPool> {
+pub async fn create_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
         .max_connections(500)  // Massive pool size
         .min_connections(50)
@@ -41,7 +43,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
 }
 
 /// Create a database connection pool optimized for testing with high concurrency
-pub async fn create_test_pool(database_url: &str) -> Result<PgPool> {
+pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
         .max_connections(2000)  // Even more massive limit for concurrent tests
         .min_connections(200)
@@ -65,7 +67,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations
-pub async fn run_migrations(pool: DbPoolRef) -> Result<()> {
+pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
     sqlx::migrate!("../../migrations")
         .run(pool)
         .await?;

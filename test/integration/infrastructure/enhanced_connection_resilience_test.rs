@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use std::sync::atomic::{AtomicU64, AtomicBool, AtomicUsize, Ordering};
 use tokio::time::{timeout, sleep, interval};
 use futures::StreamExt;
@@ -71,7 +71,7 @@ impl ConnectionMetrics {
 /// Simulate a resilient database worker that handles various failure modes
 struct ResilientDbWorker {
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<ConnectionMetrics>,
     should_stop: Arc<AtomicBool>,
     query_pattern: QueryPattern,
@@ -89,7 +89,7 @@ enum QueryPattern {
 impl ResilientDbWorker {
     fn new(
         worker_id: String,
-        pool: PgPool,
+        pool: DbPool,
         metrics: Arc<ConnectionMetrics>,
         pattern: QueryPattern,
     ) -> Self {

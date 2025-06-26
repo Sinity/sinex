@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use sinex_core::ConfigValue;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,11 +15,11 @@ pub struct CollectorConfig {
     
     /// Event-specific configuration
     #[serde(default)]
-    pub event: HashMap<String, toml::Value>,
+    pub event: HashMap<String, ConfigValue>,
     
     /// Direct event config (e.g., event.file_created)
     #[serde(flatten)]
-    pub flat_config: HashMap<String, toml::Value>,
+    pub flat_config: HashMap<String, ConfigValue>,
     
     /// Path to git-annex repository for large content storage
     #[serde(default)]
@@ -74,8 +75,8 @@ impl CollectorConfig {
     }
     
     /// Get configuration for a specific event, with hierarchical merging
-    pub fn get_event_config(&self, event_name: &str) -> toml::Value {
-        let mut config = toml::Value::Table(toml::map::Map::new());
+    pub fn get_event_config(&self, event_name: &str) -> ConfigValue {
+        let mut config = ConfigValue::Table(toml::map::Map::new());
         
         // First, check for category config (e.g., event.files for file.*)
         if let Some(category) = event_name.split('.').next() {
@@ -194,7 +195,7 @@ impl CollectorConfig {
     }
     
     /// Validate event-specific configuration
-    fn validate_event_config(&self, event_name: &str, config: &toml::Value) -> Result<()> {
+    fn validate_event_config(&self, event_name: &str, config: &ConfigValue) -> Result<()> {
         // Map the event key format to the actual event type
         let actual_event_name = match event_name {
             "shell_command_executed_atuin" => "shell.command.executed_atuin",
@@ -230,7 +231,7 @@ impl CollectorConfig {
     }
     
     /// Validate flat configuration keys
-    fn validate_flat_config(&self, config_key: &str, config_value: &toml::Value) -> Result<()> {
+    fn validate_flat_config(&self, config_key: &str, config_value: &ConfigValue) -> Result<()> {
         // Validate common configuration patterns
         if config_key.starts_with("event.") {
             // Event-specific configurations are handled separately
@@ -267,7 +268,7 @@ impl CollectorConfig {
     }
     
     /// Validate Atuin-specific configuration
-    fn validate_atuin_config(&self, config: &toml::Value) -> Result<()> {
+    fn validate_atuin_config(&self, config: &ConfigValue) -> Result<()> {
         if let Some(table) = config.as_table() {
             if let Some(db_path) = table.get("db_path") {
                 if let Some(path_str) = db_path.as_str() {
@@ -294,7 +295,7 @@ impl CollectorConfig {
     }
     
     /// Validate Kitty terminal configuration
-    fn validate_kitty_config(&self, config: &toml::Value) -> Result<()> {
+    fn validate_kitty_config(&self, config: &ConfigValue) -> Result<()> {
         if let Some(table) = config.as_table() {
             if let Some(socket_path) = table.get("kitty_socket_path") {
                 if let Some(path_str) = socket_path.as_str() {
@@ -320,7 +321,7 @@ impl CollectorConfig {
     }
     
     /// Validate filesystem monitoring configuration
-    fn validate_filesystem_config(&self, config: &toml::Value) -> Result<()> {
+    fn validate_filesystem_config(&self, config: &ConfigValue) -> Result<()> {
         if let Some(table) = config.as_table() {
             if let Some(watch_patterns) = table.get("watch_patterns") {
                 if let Some(patterns) = watch_patterns.as_array() {
@@ -343,7 +344,7 @@ impl CollectorConfig {
     }
     
     /// Validate clipboard monitoring configuration
-    fn validate_clipboard_config(&self, config: &toml::Value) -> Result<()> {
+    fn validate_clipboard_config(&self, config: &ConfigValue) -> Result<()> {
         if let Some(table) = config.as_table() {
             if let Some(poll_interval) = table.get("poll_interval_ms") {
                 if let Some(interval) = poll_interval.as_integer() {
@@ -484,31 +485,31 @@ impl Default for CollectorConfig {
         let mut flat_config = HashMap::new();
         
         // Add default configurations for enabled events
-        flat_config.insert("event.files".to_string(), toml::Value::Table({
+        flat_config.insert("event.files".to_string(), ConfigValue::Table({
             let mut table = toml::map::Map::new();
-            table.insert("watch_patterns".to_string(), toml::Value::Array(vec![
-                toml::Value::String("~/Documents/**/*".to_string()),
-                toml::Value::String("~/Code/**/*".to_string()),
+            table.insert("watch_patterns".to_string(), ConfigValue::Array(vec![
+                ConfigValue::String("~/Documents/**/*".to_string()),
+                ConfigValue::String("~/Code/**/*".to_string()),
             ]));
-            table.insert("ignore_patterns".to_string(), toml::Value::Array(vec![
-                toml::Value::String("**/.git/**".to_string()),
-                toml::Value::String("**/target/**".to_string()),
-                toml::Value::String("**/node_modules/**".to_string()),
+            table.insert("ignore_patterns".to_string(), ConfigValue::Array(vec![
+                ConfigValue::String("**/.git/**".to_string()),
+                ConfigValue::String("**/target/**".to_string()),
+                ConfigValue::String("**/node_modules/**".to_string()),
             ]));
             table
         }));
         
-        flat_config.insert("event.shell_command_executed_atuin".to_string(), toml::Value::Table({
+        flat_config.insert("event.shell_command_executed_atuin".to_string(), ConfigValue::Table({
             let mut table = toml::map::Map::new();
-            table.insert("db_path".to_string(), toml::Value::String("~/.local/share/atuin/history.db".to_string()));
-            table.insert("polling_interval_secs".to_string(), toml::Value::Integer(10));
+            table.insert("db_path".to_string(), ConfigValue::String("~/.local/share/atuin/history.db".to_string()));
+            table.insert("polling_interval_secs".to_string(), ConfigValue::Integer(10));
             table
         }));
         
-        flat_config.insert("event.command_executed".to_string(), toml::Value::Table({
+        flat_config.insert("event.command_executed".to_string(), ConfigValue::Table({
             let mut table = toml::map::Map::new();
-            table.insert("socket_path".to_string(), toml::Value::String("/tmp/kitty".to_string()));
-            table.insert("polling_interval_secs".to_string(), toml::Value::Integer(2));
+            table.insert("socket_path".to_string(), ConfigValue::String("/tmp/kitty".to_string()));
+            table.insert("polling_interval_secs".to_string(), ConfigValue::Integer(2));
             table
         }));
         
@@ -530,9 +531,9 @@ impl Default for CollectorConfig {
 }
 
 /// Merge two TOML values, with `update` overriding values in `base`
-fn merge_toml(base: &mut toml::Value, update: toml::Value) {
+fn merge_toml(base: &mut ConfigValue, update: ConfigValue) {
     match (base, update) {
-        (toml::Value::Table(base_map), toml::Value::Table(update_map)) => {
+        (ConfigValue::Table(base_map), ConfigValue::Table(update_map)) => {
             for (k, v) in update_map {
                 match base_map.get_mut(&k) {
                     Some(base_val) => merge_toml(base_val, v),

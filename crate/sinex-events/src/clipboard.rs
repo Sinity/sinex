@@ -8,7 +8,7 @@ use tracing::{error, info, debug};
 
 use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, RawEvent};
 use sinex_annex::{GitAnnex, AnnexConfig, BlobManager, BlobMetadata};
-use sqlx::PgPool;
+use sinex_db::DbPool;
 
 // ============================================================================
 // Event Payloads
@@ -143,7 +143,7 @@ pub struct ClipboardMonitor {
     last_primary: Option<String>,
     clipboard_history: Vec<ClipboardHistoryEntry>,
     git_annex: Option<GitAnnex>,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
 }
 
 #[derive(Clone)]

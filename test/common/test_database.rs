@@ -20,7 +20,7 @@ static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A test database that provides complete isolation
 pub struct TestDatabase {
-    pub pool: PgPool,
+    pub pool: DbPool,
     pub name: String,
     admin_url: String,
 }

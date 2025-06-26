@@ -230,7 +230,7 @@ async fn test_routing_cache_performance_over_triggers(ctx: TestContext) -> TestR
 // Helper function for creating test events in routing tests
 // This has a different signature (4 args vs 3) from the common insert_test_event function
 async fn insert_test_event(
-    pool: &PgPool, 
+    pool: &DbPool, 
     source: &str, 
     event_type: &str, 
     test_data: &str

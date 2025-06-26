@@ -47,7 +47,7 @@ impl ProcessingTracker {
 
 /// Simulates a worker that claims and processes items with potential random crashes
 async fn worker_with_crashes(
-    pool: sqlx::PgPool,
+    pool: DbPool,
     agent_name: String,
     worker_id: String,
     tracker: ProcessingTracker,

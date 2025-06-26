@@ -93,7 +93,7 @@ async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestRe
     Ok(())
 }
 
-async fn test_database_startup_health(pool: &PgPool) -> Result<bool> {
+async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
     // Test that all required tables exist and are accessible
     let tables = vec!["raw.events", "sinex_schemas.work_queue", "sinex_schemas.agent_manifests"];
     
@@ -297,7 +297,7 @@ async fn test_clipboard_source_health() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_worker_system_startup(pool: &PgPool) -> Result<bool> {
+async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
     // Test that worker system can initialize and claim work
     
     // Insert test work items
@@ -427,7 +427,7 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
     Ok(successful_sources.load(Ordering::SeqCst))
 }
 
-async fn test_database_recovery_scenario(pool: &PgPool) -> Result<bool> {
+async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
     // Test that system can recover from temporary database issues
     
     // Simulate successful database operations
@@ -481,7 +481,7 @@ async fn test_system_health_monitoring_integration(ctx: TestContext) -> TestResu
     Ok(())
 }
 
-async fn test_comprehensive_health_monitoring(config: &CollectorConfig, pool: &PgPool) -> Result<bool> {
+async fn test_comprehensive_health_monitoring(config: &CollectorConfig, pool: &DbPool) -> Result<bool> {
     let mut all_healthy = true;
     
     // Check database health
@@ -580,7 +580,7 @@ async fn test_configuration_error_handling() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_database_error_handling(pool: &PgPool) -> Result<bool> {
+async fn test_database_error_handling(pool: &DbPool) -> Result<bool> {
     // Test that database errors are handled appropriately
     
     // Test 1: Query with invalid syntax should return error, not panic
@@ -609,7 +609,7 @@ async fn test_event_source_error_handling() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_worker_error_handling(pool: &PgPool) -> Result<bool> {
+async fn test_worker_error_handling(pool: &DbPool) -> Result<bool> {
     
     // Test that worker errors are contained and don't affect other workers
     

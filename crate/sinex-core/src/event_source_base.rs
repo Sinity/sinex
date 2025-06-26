@@ -4,7 +4,7 @@ use crate::{
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::de::DeserializeOwned;
-use tokio::sync::mpsc;
+use crate::{EventSender, JsonValue};
 
 /// Base trait that provides common functionality for all event sources
 #[async_trait]

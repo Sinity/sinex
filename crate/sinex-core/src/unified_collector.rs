@@ -4,10 +4,7 @@ use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
-
-use crate::Result;
-use sinex_db::models::RawEvent;
+use crate::{EventSender, Result};
 
 // ===== Event output configuration (from event_output.rs) =====
 

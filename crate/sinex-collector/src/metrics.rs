@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use sinex_core::EventSender;
 use sinex_db::models::RawEvent;
+use sinex_db::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -137,7 +138,7 @@ impl CollectorMetrics {
     pub async fn start(
         self: Arc<Self>,
         event_tx: EventSender,
-        db_pool: Option<sqlx::PgPool>,
+        db_pool: Option<DbPool>,
     ) {
         info!("Starting high-resolution metrics collection");
         
@@ -181,7 +182,7 @@ impl CollectorMetrics {
     }
     
     /// Sample current metrics (called every second)
-    async fn sample_metrics(&self, db_pool: Option<&sqlx::PgPool>) -> Result<()> {
+    async fn sample_metrics(&self, db_pool: Option<DbPoolRef>) -> Result<()> {
         // Update system info
         {
             let mut system = self.system.write().await;

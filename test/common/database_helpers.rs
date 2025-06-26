@@ -8,13 +8,13 @@ use serde_json::json;
 use tokio::sync::OnceCell;
 
 /// Process-wide shared test pool using async-safe OnceCell
-static SHARED_TEST_POOL: OnceCell<PgPool> = OnceCell::const_new();
+static SHARED_TEST_POOL: OnceCell<DbPool> = OnceCell::const_new();
 
 /// Get or create the shared test database pool
 ///
 /// This uses tokio::sync::OnceCell which is designed for async initialization
 /// and works correctly across different test threads and runtimes.
-pub async fn get_shared_test_pool() -> Result<PgPool> {
+pub async fn get_shared_test_pool() -> Result<DbPool> {
     Ok(SHARED_TEST_POOL
         .get_or_init(|| async {
             let database_url = std::env::var("DATABASE_URL")
@@ -44,7 +44,7 @@ pub async fn get_shared_test_pool() -> Result<PgPool> {
 ///
 /// Most tests should use get_shared_test_pool() with transaction isolation.
 /// Only use this for tests that specifically need their own connection pool.
-pub async fn create_test_pool() -> Result<PgPool> {
+pub async fn create_test_pool() -> Result<DbPool> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         
@@ -87,7 +87,7 @@ pub async fn test_transaction() -> Result<sqlx::Transaction<'static, sqlx::Postg
 
 /// Create multiple test work queue items for a given agent
 pub async fn create_test_work_items(
-    pool: &PgPool,
+    pool: &DbPool,
     agent_name: &str,
     count: usize,
 ) -> Result<Vec<Ulid>> {
@@ -121,7 +121,7 @@ pub async fn create_test_work_items(
 }
 
 /// Register a test agent with unique name
-pub async fn register_test_agent(pool: &PgPool, suffix: &str) -> Result<String> {
+pub async fn register_test_agent(pool: &DbPool, suffix: &str) -> Result<String> {
     let agent_name = format!("test_agent_{}_{}", suffix, Ulid::new());
     sqlx::query!(
         "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, status) 
@@ -135,7 +135,7 @@ pub async fn register_test_agent(pool: &PgPool, suffix: &str) -> Result<String> 
 
 /// Insert a batch of test events efficiently
 pub async fn insert_test_event_batch(
-    pool: &PgPool,
+    pool: &DbPool,
     events: &[RawEvent],
 ) -> Result<Vec<Ulid>> {
     let mut event_ids = Vec::new();
@@ -150,7 +150,7 @@ pub async fn insert_test_event_batch(
 
 /// Create test events and work items in a single transaction
 pub async fn setup_test_workload(
-    pool: &PgPool,
+    pool: &DbPool,
     agent_name: &str,
     event_count: usize,
 ) -> Result<(Vec<Ulid>, Vec<Ulid>)> {
@@ -174,7 +174,7 @@ pub async fn create_test_event(source: &str, event_type: &str) -> RawEvent {
 }
 
 /// Create a test agent with minimal fields
-pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<()> {
     sqlx::query!(
         "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, status) 
          VALUES ($1, $2, $3, $4)
@@ -185,7 +185,7 @@ pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
 }
 
 /// Purge old work queue items (TTL cleanup function)
-pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
+pub async fn purge_old_work_queue_items(pool: &DbPool) -> Result<u64> {
     // Purge succeeded items older than 90 days
     let result = sqlx::query!(
         "DELETE FROM sinex_schemas.work_queue 

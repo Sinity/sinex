@@ -1,7 +1,6 @@
 use anyhow::Result;
-use sinex_db::models::{AgentManifest, RawEvent};
+use sinex_db::{models::{AgentManifest, RawEvent}, DbPoolRef};
 use sinex_ulid::Ulid;
-use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -93,7 +92,7 @@ impl WorkRouter {
 
 /// Create work queue entries for new events
 pub async fn create_work_entries(
-    pool: DbPoolRef,
+    pool: DbPoolRef<'_>,
     events: Vec<RawEvent>,
     router: &WorkRouter,
 ) -> Result<usize> {
@@ -145,7 +144,7 @@ pub async fn create_work_entries(
 
 /// Insert a single work queue entry
 async fn insert_work_queue_entry(
-    pool: DbPoolRef,
+    pool: DbPoolRef<'_>,
     event_id: Ulid,
     agent_name: &str,
 ) -> Result<bool> {
@@ -166,7 +165,7 @@ async fn insert_work_queue_entry(
 }
 
 /// Get all active agent manifests
-pub async fn get_active_manifests(pool: DbPoolRef) -> Result<Vec<AgentManifest>> {
+pub async fn get_active_manifests(pool: DbPoolRef<'_>) -> Result<Vec<AgentManifest>> {
     let records = sqlx::query!(
         r#"
         SELECT 

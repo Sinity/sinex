@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use JsonValue as JsonValue;
 use sinex_db::models::RawEvent;
 use sinex_ulid::Ulid;
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -135,11 +135,11 @@ impl AgentMetrics {
 /// Agent manifest manager for database operations
 #[derive(Debug, Clone)]
 pub struct ManifestManager {
-    pool: PgPool,
+    pool: DbPool,
 }
 
 impl ManifestManager {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
@@ -300,7 +300,7 @@ impl AgentLifecycle {
     pub fn new(
         agent_name: impl Into<String>, 
         version: impl Into<String>,
-        db_pool: Option<PgPool>,
+        db_pool: Option<DbPool>,
         heartbeat_interval: Option<std::time::Duration>,
     ) -> Self {
         let metrics = AgentMetrics::new(agent_name, version);

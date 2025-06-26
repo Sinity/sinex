@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use crate::{DbPool, DbPoolRef, JsonValue, Timestamp};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -41,7 +41,7 @@ pub enum HeartbeatError {
 impl ComponentHeartbeat {
     /// Collect system metrics and emit heartbeat to database
     pub async fn collect_and_emit(
-        pool: DbPoolRef,
+        pool: DbPoolRef<'_>,
         component_name: &str,
     ) -> Result<(), HeartbeatError> {
         let heartbeat = Self::collect_metrics(component_name).await?;
@@ -206,7 +206,7 @@ impl ComponentHeartbeat {
     
     /// Get latest heartbeat for a specific component
     pub async fn get_latest_for_component(
-        pool: DbPoolRef,
+        pool: DbPoolRef<'_>,
         component_name: &str,
     ) -> Result<Option<Self>, HeartbeatError> {
         let result = sqlx::query!(
@@ -244,7 +244,7 @@ impl ComponentHeartbeat {
     }
     
     /// Get system health overview
-    pub async fn get_system_health(pool: DbPoolRef) -> Result<SystemHealth, HeartbeatError> {
+    pub async fn get_system_health(pool: DbPoolRef<'_>) -> Result<SystemHealth, HeartbeatError> {
         let result = sqlx::query!(
             "SELECT * FROM get_system_health_status()"
         ).fetch_one(pool).await?;
@@ -295,7 +295,7 @@ pub struct SystemHealth {
 
 /// Heartbeat emission task that can be spawned in services
 pub struct HeartbeatEmitter {
-    pool: PgPool,
+    pool: DbPool,
     component_name: String,
     interval_seconds: u64,
     metrics_provider: Option<Box<dyn MetricsProvider + Send + Sync>>,
@@ -312,7 +312,7 @@ pub trait MetricsProvider {
 }
 
 impl HeartbeatEmitter {
-    pub fn new(pool: PgPool, component_name: String, interval_seconds: u64) -> Self {
+    pub fn new(pool: DbPool, component_name: String, interval_seconds: u64) -> Self {
         Self {
             pool,
             component_name,
@@ -322,7 +322,7 @@ impl HeartbeatEmitter {
     }
     
     pub fn with_metrics_provider<T: MetricsProvider + Send + Sync + 'static>(
-        pool: PgPool, 
+        pool: DbPool, 
         component_name: String, 
         interval_seconds: u64, 
         provider: T

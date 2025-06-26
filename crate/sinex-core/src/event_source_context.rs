@@ -1,11 +1,11 @@
-use sqlx::PgPool;
-use JsonValue;
+use crate::DbPool;
+use serde_json::Value;
 
 /// Context provided to event sources containing shared resources
 #[derive(Clone)]
 pub struct EventSourceContext {
     /// Database connection pool (if available)
-    pub db_pool: Option<PgPool>,
+    pub db_pool: Option<DbPool>,
     
     /// Source-specific configuration
     pub config: Value,
@@ -23,7 +23,7 @@ impl EventSourceContext {
         }
     }
     
-    pub fn with_db_pool(mut self, pool: PgPool) -> Self {
+    pub fn with_db_pool(mut self, pool: DbPool) -> Self {
         self.db_pool = Some(pool);
         self
     }

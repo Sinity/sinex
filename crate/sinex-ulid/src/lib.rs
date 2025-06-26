@@ -8,6 +8,9 @@ use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
 use lazy_static::lazy_static;
 
+/// Type alias for timestamp values, consistent with sinex-core
+pub type Timestamp = DateTime<Utc>;
+
 #[derive(Error, Debug)]
 pub enum UlidError {
     #[error("Invalid ULID format: {0}")]
@@ -15,8 +18,6 @@ pub enum UlidError {
     #[error("UUID conversion error: {0}")]
     UuidConversion(String),
 }
-
-pub type Error = UlidError;
 
 /// Global monotonic ULID generator state
 #[derive(Debug)]

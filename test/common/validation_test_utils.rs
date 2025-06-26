@@ -37,7 +37,7 @@ pub fn create_test_validator() -> EventValidator {
 }
 
 /// Create a test event validator loaded from database
-pub async fn create_test_validator_from_db(pool: &PgPool) -> Result<EventValidator> {
+pub async fn create_test_validator_from_db(pool: &DbPool) -> Result<EventValidator> {
     EventValidator::load_from_db(pool).await
 }
 
@@ -356,7 +356,7 @@ pub mod integration {
     use super::*;
 
     /// Test validation with database schemas
-    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn test_with_database_schemas(pool: &DbPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         
         // Test various events
@@ -384,7 +384,7 @@ pub mod integration {
     }
 
     /// Test validation performance in realistic scenarios
-    pub async fn performance_integration_test(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn performance_integration_test(pool: &DbPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         let events = generators::validation_test_events()
             .into_iter()

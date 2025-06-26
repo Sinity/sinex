@@ -4,10 +4,10 @@ use clap::Parser;
 use sinex_db::{
     models::WorkQueueItem,
     queries::{upsert_agent_manifest},
+    DbPool, DbPoolRef, JsonValue,
 };
 use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Duration;
@@ -176,7 +176,7 @@ async fn main() -> Result<()> {
 }
 
 /// Run as a scanner that creates work queue entries
-async fn run_scanner_mode(pool: PgPool, args: Args) -> Result<()> {
+async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
     info!("Running in scanner mode");
     
     // Set up graceful shutdown
@@ -359,7 +359,7 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
 }
 
 /// Run as a worker processing work queue entries
-async fn run_worker_mode(pool: PgPool, agent_name: String, args: Args) -> Result<()> {
+async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode");
 
     // Set up graceful shutdown

@@ -875,7 +875,7 @@ impl SecurityTestResults {
         &mut self,
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
-        pool: &sqlx::PgPool,
+        pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
 
@@ -944,7 +944,7 @@ impl SecurityTestResults {
         &mut self,
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
-        _pool: &sqlx::PgPool,
+        _pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
 

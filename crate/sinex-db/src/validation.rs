@@ -1,6 +1,5 @@
 use anyhow::Result;
-use JsonValue;
-use sqlx::PgPool;
+use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
 use tracing::warn;
@@ -62,7 +61,7 @@ impl EventValidator {
     }
     
     /// Load JSON schemas from database and create a validator
-    pub async fn load_from_db(pool: DbPoolRef) -> Result<Self> {
+    pub async fn load_from_db(pool: crate::DbPoolRef<'_>) -> Result<Self> {
         let mut validator = Self::new();
         
         // Load all active schemas from database

@@ -7,17 +7,17 @@ use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
 use crate::common::timing_optimization::wait_helpers::{wait_for_work_queue_status_count, wait_for_work_queue_count};
 /// Insert test items (simplified alias)
-pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
+pub async fn insert_test_items(pool: &DbPool, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(&pool, "test_worker", item_count).await
 }
 
 /// Insert test items with custom target agent
-pub async fn insert_test_items_for_agent(pool: &PgPool, agent_name: &str, item_count: usize) -> Result<Vec<Ulid>> {
+pub async fn insert_test_items_for_agent(pool: &DbPool, agent_name: &str, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(&pool, agent_name, item_count).await
 }
 
 /// Setup test worker with specified number of work items
-pub async fn setup_test_worker(pool: &PgPool, worker_name: &str, item_count: usize) -> Result<Vec<Ulid>> {
+pub async fn setup_test_worker(pool: &DbPool, worker_name: &str, item_count: usize) -> Result<Vec<Ulid>> {
     let mut queue_ids = Vec::new();
     
     // Create test work queue items
@@ -46,7 +46,7 @@ pub async fn setup_test_worker(pool: &PgPool, worker_name: &str, item_count: usi
 
 /// Insert a test work item (simplified version for tests)
 pub async fn insert_test_work_item(
-    pool: &PgPool,
+    pool: &DbPool,
     target_agent: &str
 ) -> Result<Ulid> {
     // First create a raw event to reference
@@ -63,7 +63,7 @@ pub async fn insert_test_work_item(
 
 /// Create a test work queue item
 pub async fn create_test_work_item(
-    pool: &PgPool,
+    pool: &DbPool,
     target_agent: &str,
     status: &str
 ) -> Result<Ulid> {
@@ -88,7 +88,7 @@ pub async fn create_test_work_item(
 }
 
 /// Get work queue item by ID
-pub async fn get_work_item(pool: &PgPool, queue_id: Ulid) -> Result<Option<WorkQueueItem>> {
+pub async fn get_work_item(pool: &DbPool, queue_id: Ulid) -> Result<Option<WorkQueueItem>> {
     match sinex_db::queries::get_work_item_by_id(&pool, queue_id).await {
         Ok(item) => Ok(Some(item)),
         Err(e) => {
@@ -104,7 +104,7 @@ pub async fn get_work_item(pool: &PgPool, queue_id: Ulid) -> Result<Option<WorkQ
 
 /// Create a work queue item for an existing event
 pub async fn create_work_item(
-    pool: &PgPool,
+    pool: &DbPool,
     target_agent: &str,
     event_id: Ulid,
 ) -> Result<Ulid> {
@@ -114,14 +114,14 @@ pub async fn create_work_item(
 }
 
 /// Count work items by status using timing optimization
-pub async fn count_work_items_by_status(pool: &PgPool, status: &str) -> Result<i64> {
+pub async fn count_work_items_by_status(pool: &DbPool, status: &str) -> Result<i64> {
     wait_for_work_queue_status_count(&pool, status, 0, 1)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to count work items by status: {}", e))
 }
 
 /// Count work items by agent
-pub async fn count_work_items_by_agent(pool: &PgPool, agent_name: &str) -> Result<i64> {
+pub async fn count_work_items_by_agent(pool: &DbPool, agent_name: &str) -> Result<i64> {
     let count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
@@ -134,7 +134,7 @@ pub async fn count_work_items_by_agent(pool: &PgPool, agent_name: &str) -> Resul
 }
 
 /// Get work queue statistics
-pub async fn get_work_queue_stats(pool: &PgPool) -> Result<WorkQueueStats> {
+pub async fn get_work_queue_stats(pool: &DbPool) -> Result<WorkQueueStats> {
     let row = sqlx::query!(
         r#"
         SELECT 
@@ -180,7 +180,7 @@ impl WorkQueueStats {
 }
 
 /// Cleanup all work queue items
-pub async fn cleanup_work_queue(pool: &PgPool) -> Result<(), anyhow::Error> {
+pub async fn cleanup_work_queue(pool: &DbPool) -> Result<(), anyhow::Error> {
     sqlx::query!("DELETE FROM sinex_schemas.work_queue")
         .execute(pool)
         .await?;
@@ -189,13 +189,13 @@ pub async fn cleanup_work_queue(pool: &PgPool) -> Result<(), anyhow::Error> {
 }
 
 /// Verify all items have been processed
-pub async fn verify_all_items_processed(pool: &PgPool) -> Result<bool> {
+pub async fn verify_all_items_processed(pool: &DbPool) -> Result<bool> {
     let pending_count = count_work_items_by_status(&pool, "pending").await?;
     Ok(pending_count == 0)
 }
 
 /// Verify all items have been processed by specific worker (alternative signature)
-pub async fn verify_all_items_processed_by_worker(pool: &PgPool, worker_name: &str) -> Result<bool> {
+pub async fn verify_all_items_processed_by_worker(pool: &DbPool, worker_name: &str) -> Result<bool> {
     // Check if there are any pending items for this worker using timing utility
     let pending_count = wait_for_work_queue_status_count(&pool, "pending", 0, 1)
         .await
@@ -206,7 +206,7 @@ pub async fn verify_all_items_processed_by_worker(pool: &PgPool, worker_name: &s
 
 /// Simulate worker processing
 pub async fn simulate_worker_processing(
-    pool: &PgPool,
+    pool: &DbPool,
     worker_id: Ulid,
     max_items: usize
 ) -> Result<usize> {
@@ -267,12 +267,12 @@ pub mod lifecycle {
     /// Mock worker for testing
     pub struct MockWorker {
         pub worker_id: Ulid,
-        pub pool: PgPool,
+        pub pool: DbPool,
         pub processed_count: Arc<Mutex<usize>>,
     }
 
     impl MockWorker {
-        pub fn new(pool: PgPool) -> Self {
+        pub fn new(pool: DbPool) -> Self {
             Self {
                 worker_id: Ulid::new(),
                 pool,
@@ -359,7 +359,7 @@ pub mod assertions {
 
     /// Assert that work item has expected status
     pub async fn assert_work_item_status(
-        pool: &PgPool,
+        pool: &DbPool,
         queue_id: Ulid,
         expected_status: &str
     ) -> Result<(), anyhow::Error> {
@@ -377,7 +377,7 @@ pub mod assertions {
 
     /// Assert that expected number of items have been processed
     pub async fn assert_processed_count(
-        pool: &PgPool,
+        pool: &DbPool,
         expected_count: i64
     ) -> Result<(), anyhow::Error> {
         let actual_count = count_work_items_by_status(&pool, "succeeded").await?;
@@ -392,7 +392,7 @@ pub mod assertions {
     }
 
     /// Assert that work queue is empty
-    pub async fn assert_work_queue_empty(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn assert_work_queue_empty(pool: &DbPool) -> Result<(), anyhow::Error> {
         let count = wait_for_work_queue_count(&pool, 0, 1)
             .await
             .unwrap_or(1); // If timeout, assume there are items
@@ -408,7 +408,7 @@ pub mod assertions {
     
     /// Assert work queue statistics match expectations
     pub async fn assert_work_queue_stats(
-        pool: &PgPool,
+        pool: &DbPool,
         expected_stats: &WorkQueueStats
     ) -> Result<(), anyhow::Error> {
         let actual_stats = super::get_work_queue_stats(pool).await?;
@@ -431,7 +431,7 @@ pub mod assertions {
     
     /// Assert that agent processed expected number of items
     pub async fn assert_agent_processed_count(
-        pool: &PgPool,
+        pool: &DbPool,
         agent_name: &str,
         expected_count: i64
     ) -> Result<(), anyhow::Error> {

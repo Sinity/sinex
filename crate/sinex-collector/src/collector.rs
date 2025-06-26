@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_core::{create_registry, EventRegistry, EventSource, EventSourceContext};
+use sinex_core::{create_registry, EventRegistry, EventSource, EventSourceContext, ConfigValue, JsonValue};
 use sinex_db::{models::RawEvent, validation::EventValidator};
 use sinex_events::{
     filesystem::{FilesystemMonitor, FilesystemConfig},
@@ -13,7 +13,7 @@ use sinex_events::{
     clipboard::{ClipboardMonitor, ClipboardConfig},
     journal::{JournalMonitor, JournalConfig},
 };
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -25,23 +25,23 @@ use crate::OutputConfig;
 use std::sync::Arc;
 
 /// Convert TOML value to JSON value
-fn toml_to_json(toml_val: toml::Value) -> JsonValue {
+fn toml_to_json(toml_val: ConfigValue) -> JsonValue {
     match toml_val {
-        toml::Value::String(s) => JsonValue::String(s),
-        toml::Value::Integer(i) => JsonValue::Number(i.into()),
-        toml::Value::Float(f) => serde_json::json!(f),
-        toml::Value::Boolean(b) => JsonValue::Bool(b),
-        toml::Value::Array(arr) => {
+        ConfigValue::String(s) => JsonValue::String(s),
+        ConfigValue::Integer(i) => JsonValue::Number(i.into()),
+        ConfigValue::Float(f) => serde_json::json!(f),
+        ConfigValue::Boolean(b) => JsonValue::Bool(b),
+        ConfigValue::Array(arr) => {
             JsonValue::Array(arr.into_iter().map(toml_to_json).collect())
         }
-        toml::Value::Table(table) => {
+        ConfigValue::Table(table) => {
             let map: serde_json::Map<String, JsonValue> = table
                 .into_iter()
                 .map(|(k, v)| (k, toml_to_json(v)))
                 .collect();
             JsonValue::Object(map)
         }
-        toml::Value::Datetime(dt) => JsonValue::String(dt.to_string()),
+        ConfigValue::Datetime(dt) => JsonValue::String(dt.to_string()),
     }
 }
 
@@ -51,7 +51,7 @@ pub struct UnifiedCollector {
     output_config: OutputConfig,
     enabled_events: HashSet<String>,
     registry: EventRegistry,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
     validator: Option<EventValidator>,
     event_log_file: Option<tokio::fs::File>,
     metrics: Arc<CollectorMetrics>,
@@ -61,7 +61,7 @@ impl UnifiedCollector {
     pub fn new(
         config: CollectorConfig,
         output_config: OutputConfig,
-        db_pool: Option<PgPool>,
+        db_pool: Option<DbPool>,
         validator: Option<EventValidator>,
     ) -> Self {
         let enabled_events: HashSet<_> = config.enabled_events.iter().cloned().collect();

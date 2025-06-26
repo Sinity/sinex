@@ -60,7 +60,7 @@ struct PipelineTestProcessor {
 impl EventProcessor for PipelineTestProcessor {
     async fn process_event(
         &self,
-        pool: &PgPool,
+        pool: &DbPool,
         item: &WorkQueueItem,
     ) -> Result<(), anyhow::Error> {
         // Fetch the raw event
@@ -435,7 +435,7 @@ async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
         impl EventProcessor for ErrorTestProcessor {
             async fn process_event(
                 &self,
-                pool: &PgPool,
+                pool: &DbPool,
                 item: &WorkQueueItem,
             ) -> Result<(), anyhow::Error> {
                 // Fetch the raw event

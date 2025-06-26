@@ -6,21 +6,21 @@ use sinex_db::queries::{
     insert_dlq_event,
 };
 use sinex_db::models::RawEvent;
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 /// Core worker implementation for processing promotion queue
 pub struct Worker {
-    pool: PgPool,
+    pool: DbPool,
     processor: Arc<dyn EventProcessor>,
     worker_id: String,
     metrics: crate::WorkerMetrics,
 }
 
 impl Worker {
-    pub fn new(pool: PgPool, processor: Arc<dyn EventProcessor>, worker_id: String) -> Self {
+    pub fn new(pool: DbPool, processor: Arc<dyn EventProcessor>, worker_id: String) -> Self {
         let metrics = crate::WorkerMetrics::new(&processor.agent_name());
         Self {
             pool,
