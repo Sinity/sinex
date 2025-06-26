@@ -189,7 +189,10 @@ impl AsciinemaRecorder {
         
         // Find all recording files
         let paths = glob::glob(&pattern_str)
-            .map_err(|e| sinex_core::CoreError::Other(format!("Invalid glob pattern: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::configuration("Invalid glob pattern")
+                .with_context("pattern", pattern_str.clone())
+                .with_source(e)
+                .build())?;
         
         for entry in paths {
             match entry {
@@ -210,7 +213,10 @@ impl AsciinemaRecorder {
     
     async fn process_recording_file(&self, path: &PathBuf, tx: &EventSender) -> Result<()> {
         let metadata = tokio::fs::metadata(path).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get metadata: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("get_metadata")
+                .with_source(e)
+                .build())?;
         
         let file_size = metadata.len();
         
@@ -343,7 +349,10 @@ impl AsciinemaRecorder {
         use tokio::io::{AsyncBufReadExt, BufReader};
         
         let file = tokio::fs::File::open(path).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("open_file")
+                .with_source(e)
+                .build())?;
         
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
@@ -351,7 +360,10 @@ impl AsciinemaRecorder {
         // First line should be the header
         if let Ok(Some(line)) = lines.next_line().await {
             serde_json::from_str(&line)
-                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to parse header: {}", e)))
+                .map_err(|e| sinex_core::CoreError::serialization("Failed to parse asciinema header")
+                    .with_context("file_path", path.display())
+                    .with_source(e)
+                    .build())
         } else {
             Err(sinex_core::CoreError::Other("No header found".to_string()))
         }
@@ -393,7 +405,10 @@ impl AsciinemaRecorder {
         // Create subdirectory for asciinema recordings
         let asciinema_dir = annex_repo.join("asciinema");
         tokio::fs::create_dir_all(&asciinema_dir).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create asciinema dir: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(&asciinema_dir)
+                .with_operation("create_directory")
+                .with_source(e)
+                .build())?;
         
         // Generate filename with timestamp and session ID
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
@@ -402,7 +417,11 @@ impl AsciinemaRecorder {
         
         // Copy file to git-annex repository
         tokio::fs::copy(recording_path, &dest_path).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to copy recording: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(recording_path)
+                .with_operation("copy_file")
+                .with_context("destination", dest_path.display())
+                .with_source(e)
+                .build())?;
         
         // Add to git-annex
         let output = Command::new("git")
@@ -412,7 +431,11 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to run git-annex add: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("git_annex_add")
+                .with_context("file", filename.clone())
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             return Err(sinex_core::CoreError::Other(
@@ -428,7 +451,11 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to run git commit: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("git_commit")
+                .with_context("file", filename.clone())
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             warn!("git commit failed (might be nothing to commit): {}", String::from_utf8_lossy(&output.stderr));
@@ -443,7 +470,11 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get git-annex key: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("git_annex_get_key")
+                .with_context("file", filename.clone())
+                .with_source(e)
+                .build())?;
         
         let annex_key = if output.status.success() {
             let key = String::from_utf8_lossy(&output.stdout).trim().to_string();

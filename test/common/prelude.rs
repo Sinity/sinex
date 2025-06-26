@@ -99,6 +99,28 @@ pub use sinex_db::queries::{
     insert_raw_event,
     calculate_queue_depth_metrics,
 };
+// ===== Enhanced Assertions =====
+pub use crate::common::enhanced_assertions::{
+    assert_with_validation, assert_eq_with_context, assert_with_context,
+    assert_event_inserted_with_context, assert_completes_within,
+    assert_validation_passes, assert_validation_fails,
+    assert_channel_send_success, assert_channel_send_timeout,
+    assert_config_valid, assert_config_extraction,
+    assert_database_state, assert_events_equivalent,
+    TestAssertionBatch,
+};
+// ===== Configuration Testing =====
+pub use crate::common::config_test_utils::{
+    test_configs, validation as config_validation, extraction as config_extraction,
+    TestConfigFactory, scenarios as config_scenarios,
+    DatabaseTestConfig, CollectorTestConfig, SourcesTestConfig,
+};
+// ===== Channel Testing =====
+pub use crate::common::channel_test_utils::{
+    TestChannelSetup, behavior as channel_behavior, backpressure as channel_backpressure,
+    performance as channel_performance, monitoring as channel_monitoring,
+    scenarios as channel_scenarios, ChannelPerformanceReport, ChannelHealthReport,
+};
 // ===== Assertion Enhancements =====
 // Use pretty_assertions for better diffs
 // ===== Constants =====

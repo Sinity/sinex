@@ -1,26 +1,17 @@
 //! Query execution helpers for reducing boilerplate and providing consistent error handling
 //!
-//! This module provides a fluent API for common database operations with automatic
+//! This module provides helper functions for common database operations with automatic
 //! ULID<->UUID conversion, transaction support, and retry logic.
 //!
 //! # Examples
 //!
-//! ## Using the fluent QueryBuilder API:
+//! ## Using function helpers:
 //!
 //! ```rust,no_run
 //! use sinex_db::prelude::*;
-//! use std::time::Duration;
 //!
 //! # async fn example(pool: &DbPool) -> DbResult<()> {
 //! // Simple query with automatic error context
-//! let events: Vec<RawEvent> = QueryBuilder::new(pool)
-//!     .sql("SELECT * FROM raw.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2")
-//!     .context("Fetching recent events by source")
-//!     .timeout(Duration::from_secs(5))
-//!     .fetch_all()
-//!     .await?;
-//!
-//! // Using function helpers for queries
 //! let event: RawEvent = query_one(pool, "SELECT * FROM raw.events WHERE id = $1::uuid::ulid", "get event by id").await?;
 //! # Ok(())
 //! # }
@@ -167,120 +158,6 @@ pub async fn execute(
         .map_err(|e| db_error(e, context))
 }
 
-// ===== Query Builder Pattern =====
-
-/// Fluent query builder for common patterns
-pub struct QueryBuilder<'a> {
-    pool: DbPoolRef<'a>,
-    query: String,
-    context: String,
-    timeout: Option<Duration>,
-}
-
-impl<'a> QueryBuilder<'a> {
-    /// Create a new query builder
-    pub fn new(pool: DbPoolRef<'a>) -> Self {
-        Self {
-            pool,
-            query: String::new(),
-            context: "Query execution".to_string(),
-        timeout: None,
-        }
-    }
-
-    /// Set the query SQL
-    pub fn sql(mut self, query: impl Into<String>) -> Self {
-        self.query = query.into();
-        self
-    }
-
-    /// Set error context for better error messages
-    pub fn context(mut self, context: impl Into<String>) -> Self {
-        self.context = context.into();
-        self
-    }
-
-    /// Set query timeout
-    pub fn timeout(mut self, duration: Duration) -> Self {
-        self.timeout = Some(duration);
-        self
-    }
-
-    /// Execute and return one row
-    pub async fn fetch_one<T>(self) -> DbResult<T>
-    where
-        T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-    {
-        let query = sqlx::query_as::<_, T>(&self.query);
-        
-        if let Some(timeout) = self.timeout {
-            tokio::time::timeout(timeout, query.fetch_one(self.pool))
-                .await
-                .map_err(|_| DbError::Timeout { context: self.context.clone() })?
-                .map_err(|e| db_error(e, &self.context))
-        } else {
-            query.fetch_one(self.pool)
-                .await
-                .map_err(|e| db_error(e, &self.context))
-        }
-    }
-
-    /// Execute and return multiple rows
-    pub async fn fetch_all<T>(self) -> DbResult<Vec<T>>
-    where
-        T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-    {
-        let query = sqlx::query_as::<_, T>(&self.query);
-        
-        if let Some(timeout) = self.timeout {
-            tokio::time::timeout(timeout, query.fetch_all(self.pool))
-                .await
-                .map_err(|_| DbError::Timeout { context: self.context.clone() })?
-                .map_err(|e| db_error(e, &self.context))
-        } else {
-            query.fetch_all(self.pool)
-                .await
-                .map_err(|e| db_error(e, &self.context))
-        }
-    }
-
-    /// Execute and return optional row
-    pub async fn fetch_optional<T>(self) -> DbResult<Option<T>>
-    where
-        T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-    {
-        let query = sqlx::query_as::<_, T>(&self.query);
-        
-        if let Some(timeout) = self.timeout {
-            tokio::time::timeout(timeout, query.fetch_optional(self.pool))
-                .await
-                .map_err(|_| DbError::Timeout { context: self.context.clone() })?
-                .map_err(|e| db_error(e, &self.context))
-        } else {
-            query.fetch_optional(self.pool)
-                .await
-                .map_err(|e| db_error(e, &self.context))
-        }
-    }
-
-    /// Execute without returning results
-    pub async fn execute(self) -> DbResult<u64> {
-        let query = sqlx::query(&self.query);
-        
-        if let Some(timeout) = self.timeout {
-            tokio::time::timeout(timeout, query.execute(self.pool))
-                .await
-                .map_err(|_| DbError::Timeout { context: self.context.clone() })?
-                .map(|r| r.rows_affected())
-                .map_err(|e| db_error(e, &self.context))
-        } else {
-            query.execute(self.pool)
-                .await
-                .map(|r| r.rows_affected())
-                .map_err(|e| db_error(e, &self.context))
-        }
-    }
-}
 
 // ===== Transaction Helpers =====
 
@@ -539,64 +416,6 @@ macro_rules! bind_optional_ulid {
     };
 }
 
-// ===== Query Execution Macros =====
-
-/// Execute a query returning one row with automatic error context
-#[macro_export]
-macro_rules! query_one {
-    ($pool:expr, $query:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context(concat!("query_one! at ", file!(), ":", line!()))
-            .fetch_one()
-            .await
-    };
-    ($pool:expr, $query:expr, $context:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context($context)
-            .fetch_one()
-            .await
-    };
-}
-
-/// Execute a query returning multiple rows with automatic error context
-#[macro_export]
-macro_rules! query_many {
-    ($pool:expr, $query:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context(concat!("query_many! at ", file!(), ":", line!()))
-            .fetch_all()
-            .await
-    };
-    ($pool:expr, $query:expr, $context:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context($context)
-            .fetch_all()
-            .await
-    };
-}
-
-/// Execute a query returning an optional row with automatic error context
-#[macro_export]
-macro_rules! query_optional {
-    ($pool:expr, $query:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context(concat!("query_optional! at ", file!(), ":", line!()))
-            .fetch_optional()
-            .await
-    };
-    ($pool:expr, $query:expr, $context:expr) => {
-        $crate::query_helpers::QueryBuilder::new($pool)
-            .sql($query)
-            .context($context)
-            .fetch_optional()
-            .await
-    };
-}
 
 #[cfg(test)]
 mod tests {

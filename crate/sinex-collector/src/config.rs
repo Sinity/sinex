@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_core::{ConfigValue, ConfigExtractor};
+use sinex_core::{ConfigValue, ConfigValidator};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -269,79 +269,37 @@ impl CollectorConfig {
     
     /// Validate Atuin-specific configuration
     fn validate_atuin_config(&self, config: &ConfigValue) -> Result<()> {
-        // Validate path format if present
-        if let Some(path_str) = config.optional_str("db_path") {
-            if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
-                return Err(anyhow!("db_path must be an absolute path or start with ~/"));
-            }
-        }
-        
-        // Validate polling interval range if present  
-        if let Some(interval) = config.optional_i64("polling_interval_secs") {
-            if interval <= 0 {
-                return Err(anyhow!("polling_interval_secs must be greater than 0"));
-            }
-        }
-        
-        Ok(())
+        ConfigValidator::new()
+            .validate_path_format("db_path")
+            .validate_positive("polling_interval_secs")
+            .build()(config)
+            .map_err(|e| anyhow!("{}", e))
     }
     
     /// Validate Kitty terminal configuration
     fn validate_kitty_config(&self, config: &ConfigValue) -> Result<()> {
-        // Validate socket path format if present
-        if let Some(path_str) = config.optional_str("kitty_socket_path") {
-            if !Path::new(path_str).is_absolute() {
-                return Err(anyhow!("kitty_socket_path must be an absolute path"));
-            }
-        }
-        
-        // Validate scrollback lines range if present
-        if let Some(lines) = config.optional_i64("max_scrollback_lines") {
-            if lines < 100 || lines > 1_000_000 {
-                return Err(anyhow!("max_scrollback_lines must be between 100 and 1,000,000"));
-            }
-        }
-        
-        Ok(())
+        ConfigValidator::new()
+            .validate_absolute_path("kitty_socket_path")
+            .validate_range("max_scrollback_lines", 100..=1_000_000)
+            .build()(config)
+            .map_err(|e| anyhow!("{}", e))
     }
     
     /// Validate filesystem monitoring configuration
     fn validate_filesystem_config(&self, config: &ConfigValue) -> Result<()> {
-        // Validate watch patterns if present
-        if let Ok(patterns_array) = config.require_array("watch_patterns") {
-            for (i, pattern_value) in patterns_array.iter().enumerate() {
-                let pattern_str = pattern_value.as_str()
-                    .ok_or_else(|| anyhow!("Watch pattern at index {} must be a string", i))?;
-                
-                if !pattern_str.starts_with('/') && !pattern_str.starts_with("~/") {
-                    return Err(anyhow!(
-                        "Watch pattern '{}' should be an absolute path or start with ~/", 
-                        pattern_str
-                    ));
-                }
-            }
-        }
-        
-        Ok(())
+        ConfigValidator::new()
+            .validate_path_array("watch_patterns")
+            .build()(config)
+            .map_err(|e| anyhow!("{}", e))
     }
     
     /// Validate clipboard monitoring configuration
     fn validate_clipboard_config(&self, config: &ConfigValue) -> Result<()> {
-        // Validate polling interval range if present
-        if let Some(interval) = config.optional_i64("poll_interval_ms") {
-            if interval <= 0 || interval > 60000 {
-                return Err(anyhow!("poll_interval_ms must be between 1 and 60000"));
-            }
-        }
-        
-        // Validate max history entries range if present
-        if let Some(entries) = config.optional_i64("max_history_entries") {
-            if entries < 1 || entries > 100_000 {
-                return Err(anyhow!("max_history_entries must be between 1 and 100,000"));
-            }
-        }
-        
-        Ok(())
+        ConfigValidator::new()
+            .validate_range("poll_interval_ms", 1..=60_000)
+            .validate_range("max_history_entries", 1..=100_000)
+            .build()(config)
+            .map_err(|e| anyhow!("{}", e))
     }
     
     /// Perform cross-validation checks

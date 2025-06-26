@@ -2,28 +2,50 @@ use crate::common::prelude::*;
 
 #[sinex_test]
 async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
-    // Create a simple test event
-    let event = RawEventBuilder::new(
-        "filesystem",
-        "file.created",
-        json!({
-            "path": "/test/simple_file.txt",
-            "size": 1024
-        })
-    ).build();
+    // Create a simple test event using enhanced event builder
+    let event = EventBuilder::filesystem()
+        .path("/test/simple_file.txt")
+        .created()
+        .size(1024)
+        .build();
     
-    // Insert using the available function
-    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    // Insert using enhanced assertion with error context
+    let event_id = assert_event_inserted_with_context(
+        ctx.pool(), 
+        &event, 
+        "basic_event_insertion_test"
+    ).await?;
     
-    // Verify basic fields match
-    pretty_assertions::assert_eq!(inserted_event.source, event.source);
-    pretty_assertions::assert_eq!(inserted_event.event_type, event.event_type);
-    pretty_assertions::assert_eq!(inserted_event.payload, event.payload);
-    pretty_assertions::assert_eq!(inserted_event.host, event.host);
+    // Retrieve the inserted event
+    let inserted_event = queries::get_event_by_id(ctx.pool(), event_id).await
+        .map_err(|e| {
+            CoreError::database("Failed to retrieve inserted event")
+                .with_event_id(event_id)
+                .with_context("test_name", "basic_event_insertion")
+                .with_source(e)
+                .build()
+        })?;
     
-    // Verify the event was actually stored
-    pretty_assertions::assert_eq!(inserted_event.payload["path"], "/test/simple_file.txt");
-    pretty_assertions::assert_eq!(inserted_event.payload["size"], 1024);
+    // Verify using enhanced event equivalence assertion
+    assert_events_equivalent(&inserted_event, &event)?;
+    
+    // Use ValidationChain to validate the event structure
+    let event_validation = assert_with_validation(inserted_event.clone(), "inserted_event")
+        .has_valid_source()
+        .has_valid_event_type()
+        .payload_is_object();
+    
+    assert_validation_passes(event_validation)?;
+    
+    // Validate specific payload fields using ValidationChain
+    let path_validation = assert_with_validation(
+        inserted_event.payload["path"].as_str().unwrap_or("").to_string(),
+        "event_path"
+    )
+    .not_empty()
+    .custom(|path| path.starts_with("/test/"), "should be in test directory");
+    
+    assert_validation_passes(path_validation)?;
     
     Ok(())
 }

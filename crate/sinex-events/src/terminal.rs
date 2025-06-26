@@ -203,7 +203,10 @@ impl KittySocketListener {
         debug!("Searching for Kitty sockets with pattern: {}", pattern);
         let mut sockets = Vec::new();
         
-        for entry in glob(pattern).map_err(|e| sinex_core::CoreError::Other(format!("Failed to read glob pattern: {}", e)))? {
+        for entry in glob(pattern).map_err(|e| sinex_core::CoreError::configuration("Invalid glob pattern")
+            .with_context("pattern", pattern)
+            .with_source(e)
+            .build())? {
             match entry {
                 Ok(path) => {
                     // Verify it's a socket
@@ -243,16 +246,25 @@ impl KittySocketListener {
             .arg(format!("unix:{}", socket))
             .arg("ls")
             .output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to list Kitty windows: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_list_windows")
+                .with_source(e)
+                .build())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(sinex_core::CoreError::Other(format!("Failed to get Kitty windows: {}", stderr)));
+            return Err(sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_list_windows")
+                .with_context("stderr", stderr.to_string())
+                .build());
         }
 
         // Parse JSON output
         let data: JsonValue = serde_json::from_slice(&output.stdout)
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to parse Kitty ls output: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::serialization("Failed to parse Kitty ls output")
+                .with_operation("parse_json")
+                .with_source(e)
+                .build())?;
         
         let mut windows = Vec::new();
         

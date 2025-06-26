@@ -4,9 +4,6 @@ pub use sinex_core::{RawEvent, RawEventBuilder};
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
-pub mod query_macros;
-// pub mod query_examples;  // Disabled for now - requires database connection for compilation
-pub mod query_macro_tests;
 pub mod validation;
 pub mod metrics;
 
@@ -21,14 +18,12 @@ pub use queries::{
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    DbError, DbResult, QueryBuilder, RetryConfig, 
+    DbError, DbResult, RetryConfig, 
     query_one, query_many, query_optional, execute,
     with_transaction, with_retry_transaction,
     insert_and_return, update_where, delete_where, exists, count,
     ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error, is_retryable_db_error
 };
-
-// Declarative macros are re-exported automatically when the module is included
 
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
@@ -36,12 +31,11 @@ pub mod prelude {
     pub use sinex_core::{RawEvent, RawEventBuilder};
     pub use crate::queries::*;
     pub use crate::query_helpers::{
-        DbError, DbResult, QueryBuilder, RetryConfig,
+        DbError, DbResult, RetryConfig,
         query_one, query_many, query_optional, execute,
         with_transaction, with_retry_transaction,
         ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
     };
-    // Re-export macros for prelude convenience (already imported above)
     pub use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, OptionalTimestamp};
     pub use sinex_ulid::Ulid;
     pub use sqlx::{FromRow, Transaction, Postgres};

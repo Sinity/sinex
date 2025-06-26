@@ -39,6 +39,62 @@ fn convert_validation_result<T>(result: std::result::Result<T, CoreError>) -> st
     })
 }
 
+/// Helper function to validate required JSON fields using ValidationChain
+fn validate_required_field<T, F>(payload: &Value, field_name: &str, extractor: F) -> Result<T, ValidationError>
+where
+    F: FnOnce(&Value) -> Option<T>,
+{
+    let value = payload.get(field_name)
+        .ok_or_else(|| ValidationError::MissingField { field: field_name.to_string() })?;
+    extractor(value)
+        .ok_or_else(|| ValidationError::InvalidType {
+            field: field_name.to_string(),
+            expected: "valid value".to_string(),
+            actual: format!("{:?}", value),
+        })
+}
+
+/// Helper function to validate required string fields with empty check
+fn validate_required_string_field(payload: &Value, field_name: &str) -> Result<String, ValidationError> {
+    let value = payload.get(field_name)
+        .ok_or_else(|| ValidationError::MissingField { field: field_name.to_string() })?;
+    
+    let string_value = value.as_str()
+        .ok_or_else(|| ValidationError::InvalidType {
+            field: field_name.to_string(),
+            expected: "string".to_string(),
+            actual: format!("{:?}", value),
+        })?
+        .to_string();
+    
+    convert_validation_result(
+        ValidationChain::validate(string_value.clone(), field_name)
+            .not_empty()
+            .into_result()
+    )?;
+    
+    Ok(string_value)
+}
+
+/// Helper function to validate optional fields with type extraction
+fn validate_optional_field<T, F>(payload: &Value, field_name: &str, extractor: F, expected_type: &str) -> Result<Option<T>, ValidationError>
+where
+    F: FnOnce(&Value) -> Option<T>,
+{
+    match payload.get(field_name) {
+        Some(value) => {
+            let extracted = extractor(value)
+                .ok_or_else(|| ValidationError::InvalidType {
+                    field: field_name.to_string(),
+                    expected: expected_type.to_string(),
+                    actual: format!("{:?}", value),
+                })?;
+            Ok(Some(extracted))
+        }
+        None => Ok(None)
+    }
+}
+
 /// Extract field name from error message (best effort)
 fn extract_field_from_error(msg: &str) -> Option<&str> {
     // This is a simple parser - in production you might want more sophisticated parsing
@@ -200,40 +256,12 @@ impl EventValidator {
             "file.created",
             |payload| {
                 // Required: path (string), size (number >= 0)
-                let path = payload.get("path")
-                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "path".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("path")),
-                    })?;
+                let _path = validate_required_string_field(payload, "path")?;
                 
-                if path.is_empty() {
-                    return Err(ValidationError::InvalidValue {
-                        field: "path".to_string(),
-                        reason: "cannot be empty".to_string(),
-                    });
-                }
-                
-                let _size = payload.get("size")
-                    .ok_or_else(|| ValidationError::MissingField { field: "size".to_string() })?
-                    .as_u64()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "size".to_string(),
-                        expected: "positive integer".to_string(),
-                        actual: format!("{:?}", payload.get("size")),
-                    })?;
+                let _size = validate_required_field(payload, "size", |v| v.as_u64())?;
                 
                 // Optional: permissions (string matching pattern)
-                if let Some(perms) = payload.get("permissions") {
-                    let perms_str = perms.as_str()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "permissions".to_string(),
-                            expected: "string".to_string(),
-                            actual: format!("{:?}", perms),
-                        })?;
-                    
+                if let Some(perms_str) = validate_optional_field(payload, "permissions", |v| v.as_str().map(|s| s.to_string()), "string")? {
                     if !perms_str.chars().all(|c| c >= '0' && c <= '7') || 
                        (perms_str.len() != 3 && perms_str.len() != 4) {
                         return Err(ValidationError::InvalidValue {
@@ -253,14 +281,7 @@ impl EventValidator {
             "file.modified",
             |payload| {
                 // Required: path
-                payload.get("path")
-                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "path".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("path")),
-                    })?;
+                let _path = validate_required_string_field(payload, "path")?;
                 
                 // At least one of: old_size/new_size, modification_type
                 let has_size_info = payload.get("old_size").is_some() || payload.get("new_size").is_some();
@@ -282,24 +303,10 @@ impl EventValidator {
             "file.deleted",
             |payload| {
                 // Required: path
-                payload.get("path")
-                    .ok_or_else(|| ValidationError::MissingField { field: "path".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "path".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("path")),
-                    })?;
+                let _path = validate_required_string_field(payload, "path")?;
                 
                 // Optional: was_directory (boolean)
-                if let Some(was_dir) = payload.get("was_directory") {
-                    was_dir.as_bool()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "was_directory".to_string(),
-                            expected: "boolean".to_string(),
-                            actual: format!("{:?}", was_dir),
-                        })?;
-                }
+                let _was_directory = validate_optional_field(payload, "was_directory", |v| v.as_bool(), "boolean")?;
                 
                 Ok(())
             },
@@ -311,23 +318,8 @@ impl EventValidator {
             "file.renamed",
             |payload| {
                 // Required: old_path, new_path
-                payload.get("old_path")
-                    .ok_or_else(|| ValidationError::MissingField { field: "old_path".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "old_path".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("old_path")),
-                    })?;
-                
-                payload.get("new_path")
-                    .ok_or_else(|| ValidationError::MissingField { field: "new_path".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "new_path".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("new_path")),
-                    })?;
+                let _old_path = validate_required_string_field(payload, "old_path")?;
+                let _new_path = validate_required_string_field(payload, "new_path")?;
                 
                 Ok(())
             },
@@ -341,7 +333,7 @@ impl EventValidator {
             "window.focused",
             |payload| {
                 // Required: window (object or string)
-                payload.get("window")
+                let _window = payload.get("window")
                     .ok_or_else(|| ValidationError::MissingField { field: "window".to_string() })?;
                 
                 // Optional but common: workspace
@@ -388,24 +380,10 @@ impl EventValidator {
             "command.executed",
             |payload| {
                 // Required: command
-                payload.get("command")
-                    .ok_or_else(|| ValidationError::MissingField { field: "command".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "command".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("command")),
-                    })?;
+                let _command = validate_required_string_field(payload, "command")?;
                 
                 // Optional: exit_code (number), duration (number)
-                if let Some(exit_code) = payload.get("exit_code") {
-                    exit_code.as_i64()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "exit_code".to_string(),
-                            expected: "integer".to_string(),
-                            actual: format!("{:?}", exit_code),
-                        })?;
-                }
+                let _exit_code = validate_optional_field(payload, "exit_code", |v| v.as_i64(), "integer")?;
                 
                 Ok(())
             },
@@ -472,63 +450,15 @@ impl EventValidator {
             "sinex",
             "agent.heartbeat",
             |payload| {
-                // Required: agent_name
-                payload.get("agent_name")
-                    .ok_or_else(|| ValidationError::MissingField { field: "agent_name".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "agent_name".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("agent_name")),
-                    })?;
-                
-                // Required: status
-                payload.get("status")
-                    .ok_or_else(|| ValidationError::MissingField { field: "status".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "status".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("status")),
-                    })?;
-                
-                // Required: version
-                payload.get("version")
-                    .ok_or_else(|| ValidationError::MissingField { field: "version".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "version".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("version")),
-                    })?;
+                // Required: agent_name, status, version
+                let _agent_name = validate_required_string_field(payload, "agent_name")?;
+                let _status = validate_required_string_field(payload, "status")?;
+                let _version = validate_required_string_field(payload, "version")?;
                 
                 // Optional numeric fields
-                if let Some(uptime) = payload.get("uptime_seconds") {
-                    uptime.as_u64()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "uptime_seconds".to_string(),
-                            expected: "non-negative integer".to_string(),
-                            actual: format!("{:?}", uptime),
-                        })?;
-                }
-                
-                if let Some(events) = payload.get("events_processed_session") {
-                    events.as_u64()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "events_processed_session".to_string(),
-                            expected: "non-negative integer".to_string(),
-                            actual: format!("{:?}", events),
-                        })?;
-                }
-                
-                if let Some(dlq_size) = payload.get("dlq_size") {
-                    dlq_size.as_u64()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "dlq_size".to_string(),
-                            expected: "non-negative integer".to_string(),
-                            actual: format!("{:?}", dlq_size),
-                        })?;
-                }
+                let _uptime = validate_optional_field(payload, "uptime_seconds", |v| v.as_u64(), "non-negative integer")?;
+                let _events = validate_optional_field(payload, "events_processed_session", |v| v.as_u64(), "non-negative integer")?;
+                let _dlq_size = validate_optional_field(payload, "dlq_size", |v| v.as_u64(), "non-negative integer")?;
                 
                 Ok(())
             },
@@ -540,34 +470,12 @@ impl EventValidator {
             "agent.error",
             |payload| {
                 // Required: agent_name, error_message
-                payload.get("agent_name")
-                    .ok_or_else(|| ValidationError::MissingField { field: "agent_name".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "agent_name".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("agent_name")),
-                    })?;
-                
-                payload.get("error_message")
-                    .ok_or_else(|| ValidationError::MissingField { field: "error_message".to_string() })?
-                    .as_str()
-                    .ok_or_else(|| ValidationError::InvalidType {
-                        field: "error_message".to_string(),
-                        expected: "string".to_string(),
-                        actual: format!("{:?}", payload.get("error_message")),
-                    })?;
+                let _agent_name = validate_required_string_field(payload, "agent_name")?;
+                let _error_message = validate_required_string_field(payload, "error_message")?;
                 
                 // Optional: severity (must be valid level)
-                if let Some(severity) = payload.get("severity") {
-                    let sev = severity.as_str()
-                        .ok_or_else(|| ValidationError::InvalidType {
-                            field: "severity".to_string(),
-                            expected: "string".to_string(),
-                            actual: format!("{:?}", severity),
-                        })?;
-                    
-                    if !["warning", "error", "critical"].contains(&sev) {
+                if let Some(sev) = validate_optional_field(payload, "severity", |v| v.as_str().map(|s| s.to_string()), "string")? {
+                    if !["warning", "error", "critical"].contains(&&*sev) {
                         return Err(ValidationError::InvalidValue {
                             field: "severity".to_string(),
                             reason: "must be one of: warning, error, critical".to_string(),

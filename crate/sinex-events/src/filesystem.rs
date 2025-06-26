@@ -271,7 +271,10 @@ impl EventSource for FilesystemMonitor {
             std::time::Duration::from_millis(self.config.debounce_ms),
             None,
             notify_tx,
-        ).map_err(|e| sinex_core::CoreError::Other(format!("Failed to create debouncer: {}", e)))?;
+        ).map_err(|e| sinex_core::CoreError::processing_failed()
+            .with_operation("create_debouncer")
+            .with_source(e)
+            .build())?;
         
         // Watch all matching paths
         let mut watched_paths = std::collections::HashSet::new();
@@ -300,7 +303,10 @@ impl EventSource for FilesystemMonitor {
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
                 std::fs::create_dir_all(base_path)
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to create directory: {}", e)))?;
+                    .map_err(|e| sinex_core::CoreError::io_error(base_path)
+                        .with_operation("create_directory")
+                        .with_source(e)
+                        .build())?;
             }
             
             // Watch the base directory
@@ -308,7 +314,10 @@ impl EventSource for FilesystemMonitor {
                 info!("Watching directory: {}", base_path.display());
                 debouncer.watcher()
                     .watch(base_path, notify::RecursiveMode::Recursive)
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to watch path: {}", e)))?;
+                    .map_err(|e| sinex_core::CoreError::io_error(base_path)
+                        .with_operation("watch_path")
+                        .with_source(e)
+                        .build())?;
                 watched_paths.insert(base_path.to_path_buf());
             }
         }

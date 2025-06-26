@@ -822,6 +822,9 @@ pub use sinex_db::models::AgentManifest;
 pub use sinex_db::queries::{get_event_by_id, get_events_by_source, get_recent_events, get_events_by_type};
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
+pub mod enhanced_assertions;
+pub mod config_test_utils;
+pub mod channel_test_utils;
 
 /// Validation test utilities
 pub mod validation_test_utils;

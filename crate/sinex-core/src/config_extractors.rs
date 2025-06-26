@@ -237,6 +237,101 @@ impl ConfigValidator {
         self
     }
     
+    /// Validate that a path field is absolute or starts with ~/
+    pub fn validate_path_format(mut self, path: &str) -> Self {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Some(path_str) = config.optional_str(&path) {
+                if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' must be an absolute path or start with ~/", path
+                    )));
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+    
+    /// Validate that a path field points to an absolute path
+    pub fn validate_absolute_path(mut self, path: &str) -> Self {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Some(path_str) = config.optional_str(&path) {
+                if !Path::new(path_str).is_absolute() {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' must be an absolute path", path
+                    )));
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+    
+    /// Validate that all elements in an array field match a condition
+    pub fn validate_array_elements<F>(mut self, path: &str, element_validator: F) -> Self 
+    where
+        F: Fn(&str, &ConfigValue) -> Result<()> + 'static
+    {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Ok(array) = config.require_array(&path) {
+                for (i, element) in array.iter().enumerate() {
+                    element_validator(&format!("{}[{}]", path, i), element)?;
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+    
+    /// Validate that all string elements in an array are valid paths
+    pub fn validate_path_array(mut self, path: &str) -> Self {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Ok(array) = config.require_array(&path) {
+                for (i, element) in array.iter().enumerate() {
+                    if let Some(path_str) = element.as_str() {
+                        if !path_str.starts_with('/') && !path_str.starts_with("~/") {
+                            return Err(CoreError::Configuration(format!(
+                                "Path pattern at '{}[{}]' ('{}') should be an absolute path or start with ~/", 
+                                path, i, path_str
+                            )));
+                        }
+                    } else {
+                        return Err(CoreError::Configuration(format!(
+                            "Element at '{}[{}]' must be a string", path, i
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+    
+    /// Validate that a numeric field is positive (greater than 0)
+    pub fn validate_positive(mut self, path: &str) -> Self {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Some(value) = config.optional_i64(&path) {
+                if value <= 0 {
+                    return Err(CoreError::Configuration(format!(
+                        "Value at '{}' must be greater than 0, got {}", path, value
+                    )));
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+    
     /// Build and return a validation function
     pub fn build(self) -> impl Fn(&ConfigValue) -> Result<()> {
         move |config: &ConfigValue| {
@@ -534,5 +629,109 @@ mod tests {
         assert_eq!(flat.get("port"), Some(&"8080".to_string()));
         assert_eq!(flat.get("database.url"), Some(&"postgresql://localhost/test".to_string()));
         assert_eq!(flat.get("server.hosts"), Some(&"localhost,127.0.0.1".to_string()));
+    }
+    
+    #[test]
+    fn test_config_validator_path_validation() {
+        let validator = ConfigValidator::new()
+            .validate_path_format("db_path")
+            .validate_absolute_path("socket_path")
+            .build();
+        
+        // Valid paths
+        let valid_config: ConfigValue = toml::from_str(r#"
+            db_path = "~/data/test.db"
+            socket_path = "/tmp/socket"
+        "#).unwrap();
+        assert!(validator(&valid_config).is_ok());
+        
+        // Invalid relative path for db_path
+        let invalid_config: ConfigValue = toml::from_str(r#"
+            db_path = "data/test.db"
+            socket_path = "/tmp/socket"
+        "#).unwrap();
+        assert!(validator(&invalid_config).is_err());
+        
+        // Invalid relative path for socket_path  
+        let invalid_config2: ConfigValue = toml::from_str(r#"
+            db_path = "~/data/test.db"
+            socket_path = "tmp/socket"
+        "#).unwrap();
+        assert!(validator(&invalid_config2).is_err());
+    }
+    
+    #[test]
+    fn test_config_validator_array_validation() {
+        let validator = ConfigValidator::new()
+            .validate_path_array("watch_patterns")
+            .build();
+        
+        // Valid array with good paths
+        let valid_config: ConfigValue = toml::from_str(r#"
+            watch_patterns = ["/home/user/docs", "~/Downloads/**/*"]
+        "#).unwrap();
+        assert!(validator(&valid_config).is_ok());
+        
+        // Invalid array with bad path
+        let invalid_config: ConfigValue = toml::from_str(r#"
+            watch_patterns = ["/home/user/docs", "relative/path"]
+        "#).unwrap();
+        assert!(validator(&invalid_config).is_err());
+        
+        // Invalid array with non-string element
+        let invalid_config2: ConfigValue = toml::from_str(r#"
+            watch_patterns = ["/home/user/docs", 123]
+        "#).unwrap();
+        assert!(validator(&invalid_config2).is_err());
+    }
+    
+    #[test]
+    fn test_config_validator_positive_validation() {
+        let validator = ConfigValidator::new()
+            .validate_positive("interval")
+            .build();
+        
+        // Valid positive number
+        let valid_config: ConfigValue = toml::from_str(r#"
+            interval = 10
+        "#).unwrap();
+        assert!(validator(&valid_config).is_ok());
+        
+        // Invalid zero
+        let invalid_config: ConfigValue = toml::from_str(r#"
+            interval = 0
+        "#).unwrap();
+        assert!(validator(&invalid_config).is_err());
+        
+        // Invalid negative
+        let invalid_config2: ConfigValue = toml::from_str(r#"
+            interval = -5
+        "#).unwrap();
+        assert!(validator(&invalid_config2).is_err());
+    }
+    
+    #[test]
+    fn test_config_validator_chaining() {
+        let validator = ConfigValidator::new()
+            .validate_range("port", 1..=65535)
+            .validate_positive("timeout") 
+            .validate_path_format("config_file")
+            .build();
+        
+        // All valid
+        let valid_config: ConfigValue = toml::from_str(r#"
+            port = 8080
+            timeout = 30
+            config_file = "~/app.conf"
+        "#).unwrap();
+        assert!(validator(&valid_config).is_ok());
+        
+        // Invalid port
+        let invalid_config: ConfigValue = toml::from_str(r#"
+            port = 70000
+            timeout = 30
+            config_file = "~/app.conf"
+        "#).unwrap();
+        assert!(validator(&invalid_config).is_err());
     }
 }
