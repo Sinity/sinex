@@ -72,7 +72,7 @@ struct ExampleProcessor {
 
 #[async_trait]
 impl EventProcessor for ExampleProcessor {
-    async fn process_event(&self, pool: DbPoolRef, item: &WorkQueueItem) -> Result<()> {
+    async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()> {
         // Use consolidated query function
         let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id)
             .await?;
@@ -117,7 +117,7 @@ impl EventProcessor for ExampleProcessor {
     }
 }
 
-async fn register_agent(pool: DbPoolRef, agent_name: &str) -> Result<()> {
+async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     
     // Register the agent
@@ -310,7 +310,7 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
 }
 
 /// Scan for new events and create work entries
-async fn scan_and_promote(pool: DbPoolRef, scanner: &mut EventScanner) -> Result<usize> {
+async fn scan_and_promote(pool: DbPoolRef<'_>, scanner: &mut EventScanner) -> Result<usize> {
     // Get active agent manifests
     let manifests = get_active_manifests(pool).await?;
     let router = WorkRouter::from_manifests(manifests);

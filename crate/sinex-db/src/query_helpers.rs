@@ -2,6 +2,66 @@
 //!
 //! This module provides a fluent API for common database operations with automatic
 //! ULID<->UUID conversion, transaction support, and retry logic.
+//!
+//! # Examples
+//!
+//! ## Using the fluent QueryBuilder API:
+//!
+//! ```rust,no_run
+//! use sinex_db::prelude::*;
+//! use std::time::Duration;
+//!
+//! # async fn example(pool: &DbPool) -> DbResult<()> {
+//! // Simple query with automatic error context
+//! let events: Vec<RawEvent> = QueryBuilder::new(pool)
+//!     .sql("SELECT * FROM raw.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2")
+//!     .context("Fetching recent events by source")
+//!     .timeout(Duration::from_secs(5))
+//!     .fetch_all()
+//!     .await?;
+//!
+//! // Using macros for even more concise queries
+//! let event: RawEvent = query_one!(pool, "SELECT * FROM raw.events WHERE id = $1::uuid::ulid").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Transaction helpers:
+//!
+//! ```rust,no_run
+//! use sinex_db::prelude::*;
+//!
+//! # async fn example(pool: &DbPool) -> DbResult<()> {
+//! // Simple transaction with automatic rollback on error
+//! let result = with_transaction(pool, |tx| async move {
+//!     // Your transactional operations here
+//!     query_one!(tx, "INSERT INTO table VALUES ($1) RETURNING id").await
+//! }).await?;
+//!
+//! // Transaction with retry logic for deadlocks
+//! let retry_config = RetryConfig::default();
+//! let result = with_retry_transaction(pool, retry_config, |tx| async move {
+//!     // Operations that might encounter deadlocks
+//!     query_one!(tx, "UPDATE table SET value = $1 WHERE id = $2").await
+//! }).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## ULID conversion helpers:
+//!
+//! ```rust,no_run
+//! use sinex_db::prelude::*;
+//!
+//! # fn example() {
+//! let ulid = Ulid::new();
+//! let uuid = ulid_to_uuid(ulid);  // For database storage
+//! let ulid_back = uuid_to_ulid(uuid);  // From database
+//!
+//! let ulids = vec![Ulid::new(), Ulid::new()];
+//! let uuids = ulids.to_uuid_vec();  // Convert arrays efficiently
+//! # }
+//! ```
 
 use crate::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;

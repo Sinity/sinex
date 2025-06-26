@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sinex_core::{EventSender, Timestamp};
 use std::path::PathBuf;
 use async_trait::async_trait;
 use notify::Watcher;

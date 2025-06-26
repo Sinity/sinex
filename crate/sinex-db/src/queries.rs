@@ -646,7 +646,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
         ts_orig: record.ts_orig,
         host: record.host,
         ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
     })
 }
@@ -684,7 +684,7 @@ pub async fn get_recent_events(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Ra
             ts_orig: record.ts_orig,
             host: record.host,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
             payload: record.payload,
         })
         .collect();
@@ -727,7 +727,7 @@ pub async fn get_events_by_source(pool: DbPoolRef<'_>, source: &str, limit: i64)
             ts_orig: record.ts_orig,
             host: record.host,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
             payload: record.payload,
         })
         .collect();
@@ -770,7 +770,7 @@ pub async fn get_events_by_type(pool: DbPoolRef<'_>, event_type: &str, limit: i6
             ts_orig: record.ts_orig,
             host: record.host,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
             payload: record.payload,
         })
         .collect();
@@ -816,7 +816,7 @@ pub async fn get_events_in_time_range(
             ts_orig: record.ts_orig,
             host: record.host,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
             payload: record.payload,
         })
         .collect();
@@ -859,8 +859,8 @@ pub async fn add_to_work_queue(
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id: Ulid::from_uuid(record.queue_id),
-        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
@@ -928,8 +928,8 @@ pub async fn get_next_work_item(
 
     match record {
         Some(record) => Ok(Some(WorkQueueItem {
-            queue_id: Ulid::from_uuid(record.queue_id),
-            raw_event_id: Ulid::from_uuid(record.raw_event_id),
+            queue_id: uuid_to_ulid(record.queue_id),
+            raw_event_id: uuid_to_ulid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
             status: record.status,
             attempts: record.attempts,
@@ -1019,7 +1019,7 @@ pub async fn fail_work_item(
 
     // If max attempts reached, move to DLQ but keep in work queue for metrics/TTL
     if record.status == "failed" {
-        let event = get_event_by_id(pool, Ulid::from_uuid(record.raw_event_id)).await?;
+        let event = get_event_by_id(pool, uuid_to_ulid(record.raw_event_id)).await?;
         
         insert_dlq_event(
             pool,
@@ -1074,8 +1074,8 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id: Ulid::from_uuid(record.queue_id),
-        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
@@ -1240,8 +1240,8 @@ pub async fn insert_work_queue_item(
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id: Ulid::from_uuid(record.queue_id),
-        raw_event_id: Ulid::from_uuid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
