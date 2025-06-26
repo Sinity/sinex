@@ -1,6 +1,7 @@
 pub mod models;
 pub mod pool;
 pub mod queries;
+pub mod query_helpers;
 pub mod validation;
 pub mod metrics;
 
@@ -12,6 +13,31 @@ pub use queries::{
     complete_work_queue_item, fail_work_queue_item, add_to_work_queue,
     get_next_work_item, complete_work_item, fail_work_item
 };
+
+// Re-export query helpers for easier access
+pub use query_helpers::{
+    DbError, DbResult, QueryBuilder, RetryConfig, 
+    query_one, query_many, query_optional, execute,
+    with_transaction, with_retry_transaction,
+    insert_and_return, update_where, delete_where, exists, count,
+    ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
+};
+
+/// Prelude module for commonly used database types and functions
+pub mod prelude {
+    pub use crate::models::*;
+    pub use crate::queries::*;
+    pub use crate::query_helpers::{
+        DbError, DbResult, QueryBuilder, RetryConfig,
+        query_one, query_many, query_optional, execute,
+        with_transaction, with_retry_transaction,
+        ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
+    };
+    pub use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, OptionalTimestamp};
+    pub use sinex_ulid::Ulid;
+    pub use sqlx::{FromRow, Transaction, Postgres};
+    pub use anyhow::Result;
+}
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;

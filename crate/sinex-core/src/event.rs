@@ -1,9 +1,33 @@
-// Re-export the canonical RawEvent from sinex-db
-pub use sinex_db::models::RawEvent;
-
 use chrono::Utc;
-use crate::{JsonValue, OptionalTimestamp, Timestamp};
+use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
+use sqlx::FromRow;
+use crate::{JsonValue, OptionalTimestamp, Timestamp};
+
+/// Raw event structure
+/// 
+/// This is the canonical event structure used throughout the system.
+/// NOTE: This struct uses ULID directly. When using with SQLX queries,
+/// use type overrides like: `id::uuid as "id: _"` for proper type inference
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct RawEvent {
+    pub id: Ulid,
+    pub source: String,
+    pub event_type: String,
+    pub ts_ingest: Timestamp,
+    pub ts_orig: OptionalTimestamp,
+    pub host: String,
+    pub ingestor_version: Option<String>,
+    pub payload_schema_id: Option<Ulid>,
+    pub payload: JsonValue,
+}
+
+impl RawEvent {
+    /// Extract ingestion timestamp from ULID (convenience method)
+    pub fn ts_ingest_from_ulid(&self) -> Timestamp {
+        self.id.timestamp()
+    }
+}
 
 /// Builder for creating RawEvent instances
 pub struct RawEventBuilder {

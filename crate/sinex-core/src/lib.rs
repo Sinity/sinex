@@ -3,13 +3,24 @@ pub mod event_source_context;
 pub mod heartbeat;
 pub mod unified_collector;
 pub mod validation;
+pub mod validation_chains;
 pub mod event_source_base;
+pub mod error_context;
+pub mod config_extractors;
+pub mod channel_helpers;
 
 pub use event::{RawEvent, RawEventBuilder};
 pub use event_source_context::EventSourceContext;
 pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
 pub use unified_collector::{EventType, EventSource, EventRegistry, EventOutput, create_registry};
 pub use event_source_base::EventSourceBase;
+pub use validation_chains::{ValidationChain, MultiValidator};
+pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
+pub use channel_helpers::{
+    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor, ChannelStats,
+    MonitoredEventSender, BackpressureManager, monitored_channel
+};
 
 // Common type aliases for event handling
 pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
@@ -53,6 +64,9 @@ pub enum CoreError {
     Other(String),
 }
 
+// ValidationError re-exported from sinex-db
+pub use sinex_db::validation::ValidationError;
+
 impl From<std::io::Error> for CoreError {
     fn from(e: std::io::Error) -> Self {
         CoreError::Io(e.to_string())
@@ -62,6 +76,12 @@ impl From<std::io::Error> for CoreError {
 impl From<serde_json::Error> for CoreError {
     fn from(e: serde_json::Error) -> Self {
         CoreError::Serialization(e.to_string())
+    }
+}
+
+impl From<sinex_db::DbError> for CoreError {
+    fn from(e: sinex_db::DbError) -> Self {
+        CoreError::Database(e.to_string())
     }
 }
 

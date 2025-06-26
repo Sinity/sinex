@@ -1,13 +1,14 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
-use thiserror::Error;
 use tracing::warn;
+use thiserror::Error;
 
 use crate::models::RawEvent;
 use sinex_ulid::Ulid;
 
-#[derive(Error, Debug)]
+/// Database-specific validation error type
+#[derive(Error, Debug, Clone)]
 pub enum ValidationError {
     #[error("Missing required field: {field}")]
     MissingField { field: String },

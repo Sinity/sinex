@@ -126,3 +126,11 @@ gethostname = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 which = "5.0"
 tempfile = "3.0"
+
+# Configuration and validation
+regex = "1"
+url = "2"
+jsonschema = "0.17"
+unicode-normalization = "0.1"
+schemars = "0.8"
+dirs = "5.0"

@@ -1,4 +1,5 @@
 use crate::models::{AgentManifest, DlqEvent, WorkQueueItem, RawEvent};
+use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::validation::EventValidator;
 use crate::{DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
 use anyhow::Result;
@@ -71,21 +72,21 @@ pub async fn insert_raw_event_with_validator(
         payload,
         ts_orig,
         ingestor_version,
-        payload_schema_id.map(|id| id.to_uuid())
+        payload_schema_id.map(ulid_to_uuid)
     )
     .fetch_one(pool)
     .await?;
 
     // Map the UUID fields to ULID with compile-time verified field access
     Ok(RawEvent {
-        id: Ulid::from_uuid(record.id),
+        id: uuid_to_ulid(record.id),
         source: record.source,
         event_type: record.event_type,
         ts_ingest: record.ts_ingest,
         ts_orig: record.ts_orig,
         host: record.host,
         ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(Ulid::from_uuid),
+        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
     })
 }
@@ -229,8 +230,8 @@ pub async fn claim_work_queue_items(
     let items = records
         .into_iter()
         .map(|record| WorkQueueItem {
-            queue_id: Ulid::from_uuid(record.queue_id),
-            raw_event_id: Ulid::from_uuid(record.raw_event_id),
+            queue_id: uuid_to_ulid(record.queue_id),
+            raw_event_id: uuid_to_ulid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
             status: record.status,
             attempts: record.attempts,
@@ -256,7 +257,7 @@ pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Re
         SET status = 'succeeded', processed_at = now(), processing_worker_id = NULL
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id.to_uuid()
+        ulid_to_uuid(queue_id)
     )
     .execute(pool)
     .await?;
@@ -288,7 +289,7 @@ pub async fn fail_work_queue_item(
             processing_worker_id = NULL
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id.to_uuid(),
+        ulid_to_uuid(queue_id),
         error_message,
         next_retry_ts
     )
@@ -314,7 +315,7 @@ pub async fn fail_work_queue_item_permanently(
             processing_worker_id = NULL
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id.to_uuid(),
+        ulid_to_uuid(queue_id),
         failure_reason
     )
     .execute(pool)
@@ -385,7 +386,7 @@ pub async fn insert_dlq_event(
             resolved_at,
             resolved_by
         "#,
-        failed_event_id.to_uuid(),
+        ulid_to_uuid(failed_event_id),
         agent_name,
         source,
         event_type,
@@ -398,8 +399,8 @@ pub async fn insert_dlq_event(
     .await?;
 
     Ok(DlqEvent {
-        dlq_id: Ulid::from_uuid(record.dlq_id),
-        failed_event_id: Ulid::from_uuid(record.failed_event_id),
+        dlq_id: uuid_to_ulid(record.dlq_id),
+        failed_event_id: uuid_to_ulid(record.failed_event_id),
         agent_name: record.agent_name,
         source: record.source,
         event_type: record.event_type,
@@ -457,8 +458,8 @@ pub async fn get_retryable_dlq_events_for_agent(
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id: Ulid::from_uuid(record.dlq_id),
-            failed_event_id: Ulid::from_uuid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -516,8 +517,8 @@ pub async fn get_retryable_dlq_events(
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id: Ulid::from_uuid(record.dlq_id),
-            failed_event_id: Ulid::from_uuid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -552,7 +553,7 @@ pub async fn update_dlq_retry_attempt(
             next_retry_at = $2
         WHERE dlq_id = $1::uuid::ulid
         "#,
-        dlq_id.to_uuid(),
+        ulid_to_uuid(dlq_id),
         next_retry_at
     )
     .execute(pool)
@@ -575,7 +576,7 @@ pub async fn resolve_dlq_event(
             resolved_by = $2
         WHERE dlq_id = $1::uuid::ulid
         "#,
-        dlq_id.to_uuid(),
+        ulid_to_uuid(dlq_id),
         resolved_by
     )
     .execute(pool)
@@ -638,7 +639,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
     .await?;
     
     Ok(RawEvent {
-        id: Ulid::from_uuid(record.id),
+        id: uuid_to_ulid(record.id),
         source: record.source,
         event_type: record.event_type,
         ts_ingest: record.ts_ingest,
@@ -676,7 +677,7 @@ pub async fn get_recent_events(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Ra
     let events = records
         .into_iter()
         .map(|record| RawEvent {
-            id: Ulid::from_uuid(record.id),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             ts_ingest: record.ts_ingest,
@@ -719,7 +720,7 @@ pub async fn get_events_by_source(pool: DbPoolRef<'_>, source: &str, limit: i64)
     let events = records
         .into_iter()
         .map(|record| RawEvent {
-            id: Ulid::from_uuid(record.id),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             ts_ingest: record.ts_ingest,
@@ -762,7 +763,7 @@ pub async fn get_events_by_type(pool: DbPoolRef<'_>, event_type: &str, limit: i6
     let events = records
         .into_iter()
         .map(|record| RawEvent {
-            id: Ulid::from_uuid(record.id),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             ts_ingest: record.ts_ingest,
@@ -808,7 +809,7 @@ pub async fn get_events_in_time_range(
     let events = records
         .into_iter()
         .map(|record| RawEvent {
-            id: Ulid::from_uuid(record.id),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             ts_ingest: record.ts_ingest,
@@ -850,7 +851,7 @@ pub async fn add_to_work_queue(
             processed_at,
             failure_reason
         "#,
-        raw_event_id.to_uuid(),
+        ulid_to_uuid(raw_event_id),
         target_agent_name,
         max_attempts
     )
@@ -962,7 +963,7 @@ pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<(
         SET status = 'succeeded', processed_at = now()
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id.to_uuid()
+        ulid_to_uuid(queue_id)
     )
     .execute(pool)
     .await?;
@@ -1010,7 +1011,7 @@ pub async fn fail_work_item(
             max_attempts as "max_attempts!",
             status as "status!"
         "#,
-        queue_id.to_uuid(),
+        ulid_to_uuid(queue_id),
         error_message
     )
     .fetch_one(pool)
@@ -1067,7 +1068,7 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
         FROM sinex_schemas.work_queue
         WHERE queue_id = $1::uuid::ulid
         "#,
-        queue_id.to_uuid()
+        ulid_to_uuid(queue_id)
     )
     .fetch_one(pool)
     .await?;
@@ -1167,8 +1168,8 @@ pub async fn get_dlq_items(
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id: Ulid::from_uuid(record.dlq_id),
-            failed_event_id: Ulid::from_uuid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -1232,7 +1233,7 @@ pub async fn insert_work_queue_item(
             processed_at,
             failure_reason
         "#,
-        raw_event_id.to_uuid(),
+        ulid_to_uuid(raw_event_id),
         target_agent_name
     )
     .fetch_one(pool)
