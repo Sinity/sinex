@@ -13,8 +13,9 @@ pub use observability::*;
 pub use recovery::*;
 
 use anyhow::Result;
-use sinex_db::{models::RawEvent, validation::EventValidator};
-use sqlx::PgPool;
+use sinex_core::RawEvent;
+use sinex_db::validation::EventValidator;
+use sinex_db::DbPoolRef;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info};
@@ -54,7 +55,7 @@ impl Default for OutputConfig {
 pub async fn output_event(
     event: &RawEvent,
     output_config: &OutputConfig,
-    db_pool: Option<&PgPool>,
+    db_pool: Option<DbPoolRef<'_>>,
     validator: Option<&EventValidator>,
     file_handle: &mut Option<File>,
 ) -> Result<()> {

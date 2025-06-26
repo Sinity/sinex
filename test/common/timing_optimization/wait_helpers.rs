@@ -8,12 +8,12 @@ use crate::common::prelude::*;
 use super::EventCounter;
 
 /// Replace `sleep(Duration::from_millis(10))` with proper synchronization
-pub async fn wait_for_database_ready(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+pub async fn wait_for_database_ready(pool: &DbPool) -> anyhow::Result<()> {
     wait_for_database_ready_with_timeout(pool, 10).await
 }
 
 /// Wait for database with custom timeout
-pub async fn wait_for_database_ready_with_timeout(pool: &sqlx::PgPool, timeout_secs: u64) -> anyhow::Result<()> {
+pub async fn wait_for_database_ready_with_timeout(pool: &DbPool, timeout_secs: u64) -> anyhow::Result<()> {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
 
@@ -34,7 +34,7 @@ pub async fn wait_for_database_ready_with_timeout(pool: &sqlx::PgPool, timeout_s
 
 /// Replace polling loops with event-driven waits
 pub async fn wait_for_event_count(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     expected_count: i64,
     timeout_secs: u64,
 ) -> anyhow::Result<i64> {
@@ -62,7 +62,7 @@ pub async fn wait_for_event_count(
 
 /// Replace arbitrary waits with condition-based waits
 pub async fn wait_for_worker_status(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     worker_name: &str,
     expected_status: &str,
     timeout_secs: u64,
@@ -92,7 +92,7 @@ pub async fn wait_for_worker_status(
 
 /// Wait for worker to process expected number of events
 pub async fn wait_for_worker_processed_events(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     worker_name: &str,
     expected_count: i64,
     timeout_secs: u64,
@@ -127,7 +127,7 @@ pub async fn wait_for_worker_processed_events(
 
 /// Wait for work queue to reach expected count
 pub async fn wait_for_work_queue_count(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     expected_count: i64,
     timeout_secs: u64,
 ) -> anyhow::Result<i64> {
@@ -155,7 +155,7 @@ pub async fn wait_for_work_queue_count(
 
 /// Wait for work queue items with specific status
 pub async fn wait_for_work_queue_status_count(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     status: &str,
     expected_count: i64,
     timeout_secs: u64,
@@ -221,7 +221,7 @@ impl WorkerReadinessCoordinator {
 
 /// Wait for work queue to have zero pending items 
 pub async fn wait_for_work_queue_empty(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     agent_name: &str,
     timeout_secs: u64,
 ) -> anyhow::Result<()> {
@@ -252,7 +252,7 @@ pub async fn wait_for_work_queue_empty(
 
 /// Wait for worker to reach specific status in agent manifests
 pub async fn wait_for_agent_status(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     agent_name: &str,
     expected_status: &str,
     timeout_secs: u64,
@@ -282,7 +282,7 @@ pub async fn wait_for_agent_status(
 
 /// Wait for filtered event count based on WHERE condition with parameters
 pub async fn wait_for_filtered_event_count(
-    pool: &sqlx::PgPool,
+    pool: &DbPool,
     where_condition: &str,
     params: &[&str],
     expected_count: i64,
@@ -347,13 +347,14 @@ where
 
 /// Wait for multiple conditions to be met simultaneously
 pub async fn wait_for_multiple_conditions<F, Fut>(
-    mut conditions: Vec<F>,
+    conditions: Vec<F>,
     timeout_secs: u64,
 ) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
+    let mut conditions = conditions;
     wait_for_condition(move || {
         async {
             for condition in &mut conditions {

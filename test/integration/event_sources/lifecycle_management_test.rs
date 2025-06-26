@@ -5,7 +5,7 @@ use sinex_events::{
     terminal::KittySocketListener,
     clipboard::ClipboardMonitor,
 };
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 use tokio::time::{timeout, sleep};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::common::event_sources;

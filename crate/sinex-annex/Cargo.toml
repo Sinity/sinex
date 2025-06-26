@@ -19,4 +19,5 @@ gethostname.workspace = true
 
 # Internal dependencies
 sinex-core = { path = "../sinex-core" }
+sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }

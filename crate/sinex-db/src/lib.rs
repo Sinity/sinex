@@ -1,6 +1,9 @@
 pub mod models;
+// Re-export RawEvent and RawEventBuilder from sinex-core for type unification
+pub use sinex_core::{RawEvent, RawEventBuilder};
 pub mod pool;
 pub mod queries;
+pub mod query_helpers;
 pub mod validation;
 pub mod metrics;
 
@@ -13,14 +16,47 @@ pub use queries::{
     get_next_work_item, complete_work_item, fail_work_item
 };
 
+// Re-export query helpers for easier access
+pub use query_helpers::{
+    DbError, DbResult, RetryConfig, 
+    with_transaction, with_retry_transaction,
+    exists, count,
+    ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error, is_retryable_db_error
+};
+
+/// Prelude module for commonly used database types and functions
+pub mod prelude {
+    pub use crate::models::{EventPayloadSchema, AgentManifest, WorkQueueItem, DlqEvent, QueueStatus, DlqErrorCategory};
+    pub use sinex_core::{RawEvent, RawEventBuilder};
+    pub use crate::queries::*;
+    pub use crate::query_helpers::{
+        DbError, DbResult, RetryConfig,
+        with_transaction, with_retry_transaction,
+        ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
+    };
+    pub use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, OptionalTimestamp};
+    pub use sinex_ulid::Ulid;
+    pub use sqlx::{FromRow, Transaction, Postgres};
+    pub use anyhow::Result;
+}
+
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::time::Duration;
 use tracing::info;
 
+// Common type aliases for database operations
+pub type DbPool = PgPool;
+pub type DbPoolRef<'a> = &'a PgPool;
+
+// Import type aliases from sinex-ulid and add our own
+pub use sinex_ulid::Timestamp;
+pub type OptionalTimestamp = Option<Timestamp>;
+pub type JsonValue = serde_json::Value;
+
 /// Create a database connection pool with default settings
-pub async fn create_pool(database_url: &str) -> Result<PgPool> {
+pub async fn create_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
         .max_connections(500)  // Massive pool size
         .min_connections(50)
@@ -34,7 +70,7 @@ pub async fn create_pool(database_url: &str) -> Result<PgPool> {
 }
 
 /// Create a database connection pool optimized for testing with high concurrency
-pub async fn create_test_pool(database_url: &str) -> Result<PgPool> {
+pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
         .max_connections(2000)  // Even more massive limit for concurrent tests
         .min_connections(200)
@@ -58,7 +94,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations
-pub async fn run_migrations(pool: &PgPool) -> Result<()> {
+pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
     sqlx::migrate!("../../migrations")
         .run(pool)
         .await?;
@@ -69,7 +105,8 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{RawEvent, WorkQueueItem, QueueStatus};
+    use crate::models::{WorkQueueItem, QueueStatus};
+    use sinex_core::RawEvent;
     use sinex_ulid::Ulid;
     use chrono::Utc;
     use serde_json::json;

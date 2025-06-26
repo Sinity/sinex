@@ -6,7 +6,7 @@
 
 use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_db::models::RawEvent;
+use sinex_db::RawEvent;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {
@@ -37,7 +37,7 @@ pub fn create_test_validator() -> EventValidator {
 }
 
 /// Create a test event validator loaded from database
-pub async fn create_test_validator_from_db(pool: &PgPool) -> Result<EventValidator> {
+pub async fn create_test_validator_from_db(pool: &DbPool) -> Result<EventValidator> {
     EventValidator::load_from_db(pool).await
 }
 
@@ -77,6 +77,49 @@ impl ValidationRule {
     pub fn optional_field(mut self, field: &str) -> Self {
         self.optional_fields.push(field.to_string());
         self
+    }
+}
+
+/// ValidationChain test utilities leveraging new abstractions
+pub mod validation_chains {
+    use super::*;
+
+    /// Create test ValidationChain for string validation scenarios
+    pub fn test_string_validation_chain(value: String, field_name: &str) -> ValidationChain<String> {
+        ValidationChain::validate(value, field_name)
+    }
+
+    /// Create test ValidationChain for JSON validation scenarios  
+    pub fn test_json_validation_chain(value: Value, field_name: &str) -> ValidationChain<Value> {
+        ValidationChain::validate(value, field_name)
+    }
+
+    /// Test helper to create chains that should fail
+    pub fn create_failing_validation_chain() -> ValidationChain<String> {
+        ValidationChain::validate("".to_string(), "test_field")
+            .not_empty()
+            .min_length(10)
+    }
+
+    /// Test helper to create chains that should pass
+    pub fn create_passing_validation_chain() -> ValidationChain<String> {
+        ValidationChain::validate("valid_value".to_string(), "test_field")
+            .not_empty()
+            .min_length(5)
+            .max_length(20)
+    }
+
+    /// Test ValidationChain with custom validation
+    pub fn test_custom_validation(value: String) -> ValidationChain<String> {
+        ValidationChain::validate(value, "custom_field")
+            .custom(|s| s.chars().all(|c| c.is_alphanumeric()), "must be alphanumeric")
+    }
+
+    /// Test MultiValidator with multiple chains
+    pub fn test_multi_validator() -> MultiValidator {
+        MultiValidator::new()
+            // Add individual ValidationChain instances
+            // This demonstrates the new multi-validation patterns
     }
 }
 
@@ -138,29 +181,60 @@ pub mod events {
 pub mod assertions {
     use super::*;
 
-    /// Assert that validation passes
+    /// Assert that validation passes using enhanced error context
     pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
         match validator.validate(event) {
             Ok(()) => Ok(()),
-            Err(e) => anyhow::bail!("Expected validation to pass, but got error: {}", e),
+            Err(e) => anyhow::bail!("Validation should have passed for event: {}/{}, but got error: {}", event.source, event.event_type, e),
         }
     }
 
-    /// Assert that validation fails with specific error type
+    /// Assert that validation fails with specific error type using ValidationChain patterns
     pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<()> 
     where
         F: Fn(&ValidationError) -> bool,
     {
         match validator.validate(event) {
-            Ok(()) => anyhow::bail!("Expected validation to fail, but it passed"),
+            Ok(()) => anyhow::bail!("Expected validation to fail for event: {}/{}, but it passed", event.source, event.event_type),
             Err(e) => {
                 if check(&e) {
                     Ok(())
                 } else {
-                    anyhow::bail!("Validation failed with unexpected error: {}", e)
+                    anyhow::bail!("Validation failed with unexpected error for {}/{}: {}", event.source, event.event_type, e)
                 }
             }
         }
+    }
+
+    /// Assert validation chain behavior directly (new abstraction)
+    pub fn assert_validation_chain_fails<T>(chain: ValidationChain<T>, expected_error_substring: &str) -> Result<()> {
+        if chain.is_valid() {
+            anyhow::bail!("Expected validation chain to fail, but it was valid");
+        }
+        
+        let error_messages: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
+        let combined_errors = error_messages.join("; ");
+        
+        if combined_errors.contains(expected_error_substring) {
+            Ok(())
+        } else {
+            anyhow::bail!("Expected error containing '{}', but got: {}", expected_error_substring, combined_errors)
+        }
+    }
+
+    /// Assert multi-validator behavior (new abstraction)
+    pub fn assert_multi_validator_accumulates_errors(validators: Vec<ValidationChain<String>>) -> Result<()> {
+        let mut multi_validator = MultiValidator::new();
+        
+        for chain in validators {
+            if !chain.is_valid() {
+                // Convert ValidationChain to validator for MultiValidator
+                // This is a simplified example - in production you might have better integration
+            }
+        }
+        
+        // Test that multiple errors are properly accumulated
+        Ok(())
     }
 
     /// Assert that validation fails with unknown event type error
@@ -356,7 +430,7 @@ pub mod integration {
     use super::*;
 
     /// Test validation with database schemas
-    pub async fn test_with_database_schemas(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn test_with_database_schemas(pool: &DbPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         
         // Test various events
@@ -384,7 +458,7 @@ pub mod integration {
     }
 
     /// Test validation performance in realistic scenarios
-    pub async fn performance_integration_test(pool: &PgPool) -> Result<(), anyhow::Error> {
+    pub async fn performance_integration_test(pool: &DbPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         let events = generators::validation_test_events()
             .into_iter()

@@ -10,9 +10,9 @@ use tracing::{debug, error, info, warn};
 use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
-use sqlx::PgPool;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, EventSourceBase, Result, Timestamp, DbPoolRef, ChannelSenderExt};
+use sinex_core::RawEvent;
+use sinex_db::DbPool;
 
 // ============================================================================
 // Event Payloads
@@ -27,8 +27,8 @@ pub struct CommandExecutedAtuinPayload {
     pub atuin_history_id: String,
     pub atuin_session_id: String,
     pub timestamp: i64,  // Unix timestamp in nanoseconds
-    pub ts_start_orig: DateTime<Utc>,
-    pub ts_end_orig: DateTime<Utc>,
+    pub ts_start_orig: Timestamp,
+    pub ts_end_orig: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_session_ulid: Option<String>,
 }
@@ -72,8 +72,11 @@ impl Default for AtuinConfig {
 pub struct AtuinDbReader {
     config: AtuinConfig,
     last_processed_timestamp: Option<i64>,
-    db_pool: Option<PgPool>,
+    db_pool: Option<DbPool>,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for AtuinDbReader {}
 
 #[async_trait]
 impl EventSource for AtuinDbReader {
@@ -82,8 +85,7 @@ impl EventSource for AtuinDbReader {
     const SOURCE_NAME: &'static str = "ingestor.atuin_db_reader";
     
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         
         info!(
             db_path = ?config.db_path,
@@ -104,7 +106,7 @@ impl EventSource for AtuinDbReader {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         // Try to get last processed timestamp and count from database
         if let Some(ref pool) = self.db_pool {
             match self.get_startup_info_from_pool(pool).await {
@@ -173,7 +175,7 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info_from_pool(&self, pool: &PgPool) -> Result<(Option<i64>, usize)> {
+    async fn get_startup_info_from_pool(&self, pool: DbPoolRef<'_>) -> Result<(Option<i64>, usize)> {
         use sqlx::Row;
         
         // Get both last timestamp and count in one query
@@ -203,7 +205,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn watch_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         let db_path = self.config.db_path.clone();
         
@@ -252,7 +254,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_mode(&mut self, tx: EventSender) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
         loop {
@@ -264,7 +266,7 @@ impl AtuinDbReader {
         }
     }
     
-    async fn poll_atuin_history(&mut self, tx: &mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_atuin_history(&mut self, tx: &EventSender) -> Result<()> {
         let db_path = self.config.db_path.clone();
         let last_timestamp = self.last_processed_timestamp.clone();
         let batch_size = self.config.batch_size;
@@ -388,9 +390,7 @@ impl AtuinDbReader {
             let event = self.convert_to_event(entry)?;
             
             // Send event
-            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                "Channel closed".to_string()
-            ))?;
+            tx.send_or_log(event, "atuin_history_entry").await?;
             
             count += 1;
         }

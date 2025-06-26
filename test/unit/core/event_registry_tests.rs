@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use sinex_core::create_registry;
+// Using create_registry from prelude
 
 #[sinex_test]
 async fn test_event_registry_creation(_ctx: TestContext) -> TestResult {

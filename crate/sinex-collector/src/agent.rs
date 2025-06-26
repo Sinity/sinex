@@ -1,12 +1,10 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use sinex_db::models::RawEvent;
+use sinex_core::{JsonValue, Timestamp, OptionalTimestamp, EventSender, RawEvent};
 use sinex_ulid::Ulid;
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 /// Agent status enum
@@ -83,14 +81,14 @@ pub struct AgentManifest {
     pub config_schema_id: Option<Ulid>,
     pub produces_event_types: HashMap<String, Vec<String>>, // source -> [event_types]
     pub repo_url: Option<String>,
-    pub last_heartbeat_ts: Option<DateTime<Utc>>,
-    pub registered_at: Option<DateTime<Utc>>,
+    pub last_heartbeat_ts: OptionalTimestamp,
+    pub registered_at: OptionalTimestamp,
 }
 
 /// Agent metrics tracker
 #[derive(Debug, Clone)]
 pub struct AgentMetrics {
-    pub start_time: DateTime<Utc>,
+    pub start_time: Timestamp,
     pub events_processed: u64,
     pub dlq_count: u64,
     agent_name: String,
@@ -135,11 +133,11 @@ impl AgentMetrics {
 /// Agent manifest manager for database operations
 #[derive(Debug, Clone)]
 pub struct ManifestManager {
-    pool: PgPool,
+    pool: DbPool,
 }
 
 impl ManifestManager {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
@@ -293,14 +291,14 @@ pub struct AgentLifecycle {
     metrics: AgentMetrics,
     manifest_manager: Option<ManifestManager>,
     heartbeat_interval: std::time::Duration,
-    event_tx: Option<mpsc::Sender<RawEvent>>,
+    event_tx: Option<EventSender>,
 }
 
 impl AgentLifecycle {
     pub fn new(
         agent_name: impl Into<String>, 
         version: impl Into<String>,
-        db_pool: Option<PgPool>,
+        db_pool: Option<DbPool>,
         heartbeat_interval: Option<std::time::Duration>,
     ) -> Self {
         let metrics = AgentMetrics::new(agent_name, version);
@@ -316,7 +314,7 @@ impl AgentLifecycle {
     }
     
     /// Register agent manifest and start heartbeat loop
-    pub async fn start(&mut self, manifest: AgentManifest, event_tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    pub async fn start(&mut self, manifest: AgentManifest, event_tx: EventSender) -> Result<()> {
         // Register manifest if we have a database connection
         if let Some(manager) = &self.manifest_manager {
             manager.register_agent(&manifest).await?;

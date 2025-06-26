@@ -4,10 +4,7 @@ use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
-
-use crate::Result;
-use sinex_db::models::RawEvent;
+use crate::{Result, EventSender};
 
 // ===== Event output configuration (from event_output.rs) =====
 
@@ -76,7 +73,7 @@ pub trait EventSource: Send + Sync + 'static {
     
     /// Stream ALL events this source can detect
     /// The registry will filter based on enabled events
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()>;
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()>;
     
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {

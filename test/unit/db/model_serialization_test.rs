@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use sinex_db::models::{RawEvent, WorkQueueItem, QueueStatus, AgentManifest};
+// Using RawEvent, WorkQueueItem, QueueStatus, AgentManifest from prelude
 use chrono::{Utc, Duration};
 use uuid::Uuid;
 #[sinex_test]

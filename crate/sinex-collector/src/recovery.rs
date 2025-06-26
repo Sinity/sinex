@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sinex_db::models::RawEvent;
+use sinex_core::{RawEvent, Timestamp, EventSender};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::fs;
-use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::agent::{AgentError, DlqEventWritten, ErrorSeverity};
@@ -68,7 +67,7 @@ pub enum CollectorError {
 pub struct ErrorContext {
     pub collector: String,
     pub operation: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub trace_id: Option<String>,
     pub additional: HashMap<String, String>,
 }
@@ -126,7 +125,7 @@ impl CollectorError {
 /// Failed event wrapper for DLQ storage
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DlqEntry {
-    pub failed_at: DateTime<Utc>,
+    pub failed_at: Timestamp,
     pub failure_reason: String,
     pub retry_count: u32,
     pub original_event: RawEvent,
@@ -218,7 +217,7 @@ pub struct DlqManager {
     agent_name: String,
     base_path: PathBuf,
     critical_failures_log: PathBuf,
-    event_tx: Option<mpsc::Sender<RawEvent>>,
+    event_tx: Option<EventSender>,
 }
 
 impl DlqManager {
@@ -244,7 +243,7 @@ impl DlqManager {
         })
     }
     
-    pub fn with_event_sender(mut self, event_tx: mpsc::Sender<RawEvent>) -> Self {
+    pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.event_tx = Some(event_tx);
         self
     }
@@ -489,7 +488,7 @@ impl RecoveryManager {
         })
     }
     
-    pub fn with_event_sender(mut self, event_tx: mpsc::Sender<RawEvent>) -> Self {
+    pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.dlq = self.dlq.with_event_sender(event_tx);
         self
     }

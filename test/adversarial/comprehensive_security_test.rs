@@ -874,8 +874,8 @@ impl SecurityTestResults {
     async fn record_string_test(
         &mut self,
         scenario: &SecurityScenario,
-        result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
-        pool: &sqlx::PgPool,
+        result: Result<Result<sinex_db::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
+        pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
 
@@ -943,8 +943,8 @@ impl SecurityTestResults {
     async fn record_json_test(
         &mut self,
         scenario: &SecurityScenario,
-        result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
-        _pool: &sqlx::PgPool,
+        result: Result<Result<sinex_db::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
+        _pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
 

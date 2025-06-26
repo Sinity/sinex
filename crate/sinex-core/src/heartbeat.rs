@@ -1,13 +1,13 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use crate::{DbPool, DbPoolRef, JsonValue, Timestamp};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHeartbeat {
     pub component_name: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub status: HealthStatus,
     pub uptime_seconds: u64,
     pub memory_usage_mb: u32,
@@ -18,7 +18,7 @@ pub struct ComponentHeartbeat {
     pub binary_version: String,
     pub git_hash: String,
     pub build_time: String,
-    pub metrics: serde_json::Value,
+    pub metrics: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -41,7 +41,7 @@ pub enum HeartbeatError {
 impl ComponentHeartbeat {
     /// Collect system metrics and emit heartbeat to database
     pub async fn collect_and_emit(
-        pool: &PgPool,
+        pool: DbPoolRef<'_>,
         component_name: &str,
     ) -> Result<(), HeartbeatError> {
         let heartbeat = Self::collect_metrics(component_name).await?;
@@ -206,7 +206,7 @@ impl ComponentHeartbeat {
     
     /// Get latest heartbeat for a specific component
     pub async fn get_latest_for_component(
-        pool: &PgPool,
+        pool: DbPoolRef<'_>,
         component_name: &str,
     ) -> Result<Option<Self>, HeartbeatError> {
         let result = sqlx::query!(
@@ -244,7 +244,7 @@ impl ComponentHeartbeat {
     }
     
     /// Get system health overview
-    pub async fn get_system_health(pool: &PgPool) -> Result<SystemHealth, HeartbeatError> {
+    pub async fn get_system_health(pool: DbPoolRef<'_>) -> Result<SystemHealth, HeartbeatError> {
         let result = sqlx::query!(
             "SELECT * FROM get_system_health_status()"
         ).fetch_one(pool).await?;
@@ -290,12 +290,12 @@ pub struct SystemHealth {
     pub degraded_components: u32,
     pub failed_components: u32,
     pub total_components: u32,
-    pub last_updated: DateTime<Utc>,
+    pub last_updated: Timestamp,
 }
 
 /// Heartbeat emission task that can be spawned in services
 pub struct HeartbeatEmitter {
-    pool: PgPool,
+    pool: DbPool,
     component_name: String,
     interval_seconds: u64,
     metrics_provider: Option<Box<dyn MetricsProvider + Send + Sync>>,
@@ -306,13 +306,13 @@ pub trait MetricsProvider {
     fn get_events_processed_last_minute(&self) -> u32;
     fn get_errors_last_hour(&self) -> u32;
     fn get_last_error_message(&self) -> Option<String>;
-    fn get_custom_metrics(&self) -> serde_json::Value {
+    fn get_custom_metrics(&self) -> JsonValue {
         serde_json::json!({})
     }
 }
 
 impl HeartbeatEmitter {
-    pub fn new(pool: PgPool, component_name: String, interval_seconds: u64) -> Self {
+    pub fn new(pool: DbPool, component_name: String, interval_seconds: u64) -> Self {
         Self {
             pool,
             component_name,
@@ -322,7 +322,7 @@ impl HeartbeatEmitter {
     }
     
     pub fn with_metrics_provider<T: MetricsProvider + Send + Sync + 'static>(
-        pool: PgPool, 
+        pool: DbPool, 
         component_name: String, 
         interval_seconds: u64, 
         provider: T

@@ -8,6 +8,9 @@ use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
 use lazy_static::lazy_static;
 
+/// Type alias for timestamp values, consistent with sinex-core
+pub type Timestamp = DateTime<Utc>;
+
 #[derive(Error, Debug)]
 pub enum UlidError {
     #[error("Invalid ULID format: {0}")]
@@ -15,8 +18,6 @@ pub enum UlidError {
     #[error("UUID conversion error: {0}")]
     UuidConversion(String),
 }
-
-pub type Error = UlidError;
 
 /// Global monotonic ULID generator state
 #[derive(Debug)]
@@ -102,12 +103,12 @@ impl Ulid {
     
 
     /// Create from a timestamp
-    pub fn from_datetime(datetime: DateTime<Utc>) -> Self {
+    pub fn from_datetime(datetime: Timestamp) -> Self {
         Self(InnerUlid::from_datetime(datetime.into()))
     }
 
     /// Get the timestamp component
-    pub fn timestamp(&self) -> DateTime<Utc> {
+    pub fn timestamp(&self) -> Timestamp {
         DateTime::from_timestamp_millis(self.0.timestamp_ms() as i64)
             .unwrap_or_else(|| Utc::now())
     }

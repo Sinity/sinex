@@ -6,7 +6,7 @@ use super::common::*;
 /// Specialized worker for testing race conditions and competitive scenarios
 struct RaceConditionWorker {
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
     agent_name: String,
@@ -16,7 +16,7 @@ struct RaceConditionWorker {
 impl RaceConditionWorker {
     fn new(
         worker_id: String,
-        pool: PgPool,
+        pool: DbPool,
         metrics: Arc<ConcurrencyStressMetrics>,
         agent_name: String,
         timeout: Duration,

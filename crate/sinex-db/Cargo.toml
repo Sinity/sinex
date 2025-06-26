@@ -7,8 +7,12 @@ repository.workspace = true
 license.workspace = true
 description = "Database connection and query utilities for Sinex"
 
+# Note: We're not making this crate a pure proc-macro crate
+# because we also need regular library functionality
+
 [dependencies]
 sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
+sinex-core = { path = "../sinex-core" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -20,6 +24,9 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 once_cell = { workspace = true }
 jsonschema = "0.17"
+gethostname = { workspace = true }
+
+# No additional dependencies needed for declarative macros
 
 [dev-dependencies]
 tokio-test = "0.4"

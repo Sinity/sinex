@@ -1,8 +1,9 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, RawEvent, Timestamp, OptionalTimestamp};
+use sinex_db::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,7 +16,7 @@ use tracing::{info, warn};
 /// Single second of metric data
 #[derive(Debug, Clone, Serialize)]
 pub struct SecondMetrics {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub cpu_percent: f32,
     pub memory_mb: u64,
     pub events_count: u64,
@@ -80,7 +81,7 @@ pub struct SourceMetrics {
     pub events_total: u64,
     pub errors_total: u64,
     pub bytes_processed: u64,
-    pub last_event_time: Option<DateTime<Utc>>,
+    pub last_event_time: OptionalTimestamp,
     #[serde(flatten)]
     pub custom: HashMap<String, JsonValue>,
 }
@@ -135,8 +136,8 @@ impl CollectorMetrics {
     /// Start the metrics collection loop
     pub async fn start(
         self: Arc<Self>,
-        event_tx: tokio::sync::mpsc::Sender<RawEvent>,
-        db_pool: Option<sqlx::PgPool>,
+        event_tx: EventSender,
+        db_pool: Option<DbPool>,
     ) {
         info!("Starting high-resolution metrics collection");
         
@@ -180,7 +181,7 @@ impl CollectorMetrics {
     }
     
     /// Sample current metrics (called every second)
-    async fn sample_metrics(&self, db_pool: Option<&sqlx::PgPool>) -> Result<()> {
+    async fn sample_metrics(&self, db_pool: Option<DbPoolRef<'_>>) -> Result<()> {
         // Update system info
         {
             let mut system = self.system.write().await;

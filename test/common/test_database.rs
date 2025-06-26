@@ -20,7 +20,7 @@ static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A test database that provides complete isolation
 pub struct TestDatabase {
-    pub pool: PgPool,
+    pub pool: DbPool,
     pub name: String,
     admin_url: String,
 }
@@ -64,7 +64,7 @@ impl TestDatabase {
         
         // Connect to the new database
         let db_url = base_url.replace("/sinex_dev", &format!("/{}", name));
-        let pool = sqlx::postgres::PgPoolOptions::new()
+        let pool: DbPool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
             .connect(&db_url)
             .await?;

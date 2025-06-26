@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, create_registry};
+// Using EventSource, EventSourceContext, RawEvent, create_registry from prelude
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Barrier};

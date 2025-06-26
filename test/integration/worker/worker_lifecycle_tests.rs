@@ -26,7 +26,7 @@ impl TestEventProcessor {
 impl EventProcessor for TestEventProcessor {
     async fn process_event(
         &self,
-        _pool: &PgPool,
+        _pool: &DbPool,
         _item: &WorkQueueItem,
     ) -> Result<(), anyhow::Error> {
         self.process_count.fetch_add(1, Ordering::SeqCst);
@@ -207,7 +207,7 @@ struct SlowProcessor {
 impl EventProcessor for SlowProcessor {
     async fn process_event(
         &self,
-        _pool: &PgPool,
+        _pool: &DbPool,
         _item: &WorkQueueItem,
     ) -> Result<(), anyhow::Error> {
         tokio::time::sleep(Duration::from_millis(200)).await;

@@ -1,8 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use sinex_db::models::RawEvent;
+use sinex_db::{RawEvent, DbPoolRef, Timestamp, OptionalTimestamp};
 use sinex_ulid::Ulid;
-use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -33,7 +32,7 @@ pub struct ScannerState {
     /// Last processed event ID for each source
     pub last_event_ids: HashMap<String, Ulid>,
     /// Timestamp of last scan
-    pub last_scan_ts: Option<DateTime<Utc>>,
+    pub last_scan_ts: OptionalTimestamp,
 }
 
 impl Default for ScannerState {
@@ -75,7 +74,7 @@ impl EventScanner {
     }
     
     /// Scan for new events that need promotion
-    pub async fn scan_new_events(&mut self, pool: &PgPool) -> Result<Vec<RawEvent>> {
+    pub async fn scan_new_events(&mut self, pool: DbPoolRef<'_>) -> Result<Vec<RawEvent>> {
         let start_time = if let Some(last_scan) = self.state.last_scan_ts {
             last_scan
         } else if self.config.process_historical {
@@ -119,8 +118,8 @@ impl EventScanner {
     /// Fetch events newer than the given timestamp
     async fn fetch_new_events(
         &self,
-        pool: &PgPool,
-        since: DateTime<Utc>,
+        pool: DbPoolRef<'_>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         // Build dynamic query based on whether we have last event IDs
         if self.state.last_event_ids.is_empty() {
@@ -135,8 +134,8 @@ impl EventScanner {
     /// Fetch events using timestamp filter
     async fn fetch_by_timestamp(
         &self,
-        pool: &PgPool,
-        since: DateTime<Utc>,
+        pool: DbPoolRef<'_>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         let records = sqlx::query!(
             r#"
@@ -182,8 +181,8 @@ impl EventScanner {
     /// Fetch events using last known event IDs per source
     async fn fetch_by_event_ids(
         &self,
-        pool: &PgPool,
-        since: DateTime<Utc>,
+        pool: DbPoolRef<'_>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         // For simplicity, we'll fetch all events newer than any of our last IDs
         // In production, you might want per-source queries for efficiency
@@ -253,7 +252,7 @@ impl EventScanner {
     /// Get events that don't have work queue entries yet
     pub async fn get_unqueued_events(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef<'_>,
         limit: usize,
     ) -> Result<Vec<RawEvent>> {
         let records = sqlx::query!(

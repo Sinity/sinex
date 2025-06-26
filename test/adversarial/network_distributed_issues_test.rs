@@ -24,7 +24,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult {
         // Test connection with timeout
         let result = timeout(
             Duration::from_secs(5),
-            sqlx::PgPool::connect(&fake_url)
+            DbPool::connect(&fake_url)
         ).await;
         
         let elapsed = start.elapsed();

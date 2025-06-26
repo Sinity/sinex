@@ -3,7 +3,7 @@ pub mod worker;
 use anyhow::Result;
 use async_trait::async_trait;
 use sinex_db::models::WorkQueueItem;
-use sqlx::PgPool;
+use sinex_db::{DbPool, DbPoolRef};
 use prometheus::{register_counter_vec, register_histogram_vec, register_gauge_vec, CounterVec, HistogramVec, GaugeVec};
 use once_cell::sync::Lazy;
 
@@ -13,7 +13,7 @@ pub trait EventProcessor: Send + Sync {
     /// Process a single event from the work queue
     async fn process_event(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef<'_>,
         item: &WorkQueueItem,
     ) -> Result<()>;
 
@@ -166,7 +166,7 @@ pub async fn start_metrics_server(port: u16) -> anyhow::Result<()> {
 }
 
 /// Update queue metrics from database
-pub async fn update_queue_metrics(pool: &PgPool) -> Result<()> {
+pub async fn update_queue_metrics(pool: DbPoolRef<'_>) -> Result<()> {
     use sinex_db::metrics::{calculate_all_queue_metrics};
     
     let metrics = calculate_all_queue_metrics(pool).await?;
@@ -222,7 +222,7 @@ pub async fn update_queue_metrics(pool: &PgPool) -> Result<()> {
 }
 
 /// Start enhanced metrics server with queue metrics
-pub async fn start_queue_metrics_server(pool: PgPool, port: u16, update_interval_secs: u64) -> Result<()> {
+pub async fn start_queue_metrics_server(pool: DbPool, port: u16, update_interval_secs: u64) -> Result<()> {
     use axum::{routing::get, Router};
     use std::sync::Arc;
     use tokio::time::{interval, Duration};
@@ -255,7 +255,7 @@ pub async fn start_queue_metrics_server(pool: PgPool, port: u16, update_interval
 }
 
 async fn enhanced_metrics_handler(
-    axum::extract::State(pool): axum::extract::State<std::sync::Arc<PgPool>>
+    axum::extract::State(pool): axum::extract::State<std::sync::Arc<DbPool>>
 ) -> String {
     use prometheus::{Encoder, TextEncoder};
     
@@ -326,7 +326,7 @@ mod tests {
     impl EventProcessor for MockEventProcessor {
         async fn process_event(
             &self,
-            _pool: &PgPool,
+            _pool: DbPoolRef<'_>,
             _item: &WorkQueueItem,
         ) -> Result<()> {
             if self.should_fail {

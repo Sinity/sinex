@@ -7,8 +7,9 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_core::JsonValue;
 // use sinex_core::{ComponentHeartbeat, SystemHealth};
-use sqlx::PgPool;
+use sinex_db::DbPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -45,7 +46,7 @@ pub struct SystemSummary {
 
 /// Health check endpoint - returns overall system health
 async fn get_system_health(
-    State(pool): State<Arc<PgPool>>,
+    State(pool): State<Arc<DbPool>>,
 ) -> Result<Json<SystemHealthResponse>, StatusCode> {
     let cutoff = Utc::now() - Duration::minutes(3);
     
@@ -138,7 +139,7 @@ async fn get_system_health(
 }
 
 /// Simple liveness check
-async fn health_check() -> Json<serde_json::Value> {
+async fn health_check() -> Json<JsonValue> {
     Json(serde_json::json!({
         "status": "ok",
         "service": "sinex-health-aggregator",
@@ -148,9 +149,9 @@ async fn health_check() -> Json<serde_json::Value> {
 
 /// Get detailed component information
 async fn get_component_details(
-    State(pool): State<Arc<PgPool>>,
+    State(pool): State<Arc<DbPool>>,
     axum::extract::Path(component_name): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<JsonValue>, StatusCode> {
     // Get recent heartbeats for this component (last 10)
     let heartbeats = match sqlx::query!(
         r#"
@@ -200,8 +201,8 @@ async fn get_component_details(
 
 /// Get list of all known components
 async fn list_components(
-    State(pool): State<Arc<PgPool>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+    State(pool): State<Arc<DbPool>>,
+) -> Result<Json<JsonValue>, StatusCode> {
     let components = match sqlx::query!(
         r#"
         SELECT DISTINCT component_name,
@@ -246,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Connect to database
     let pool = Arc::new(
-        sqlx::PgPool::connect(&database_url).await?
+        sinex_db::create_pool(&database_url).await?
     );
     
     // Test database connection

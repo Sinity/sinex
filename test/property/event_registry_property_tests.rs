@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
-use sinex_core::{EventRegistry, create_registry};
+// Using EventRegistry, create_registry from prelude
 use std::sync::Barrier;
 use std::thread;
 

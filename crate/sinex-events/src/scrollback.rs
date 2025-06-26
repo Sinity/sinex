@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -9,8 +9,8 @@ use tokio::time;
 use tracing::{debug, error, info};
 use std::collections::HashMap;
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, Timestamp, JsonValue};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads
@@ -27,7 +27,7 @@ pub struct TerminalScrollbackCapturedPayload {
     pub scrollback_lines: usize,
     pub includes_screen: bool,
     pub has_ansi_codes: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Command output captured (using shell integration)
@@ -38,7 +38,7 @@ pub struct CommandOutputCapturedPayload {
     pub output_text: String,
     pub output_type: String, // "last_cmd_output", "last_non_empty_output", etc.
     pub cwd: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -118,7 +118,7 @@ struct KittyWindow {
 
 pub struct ScrollbackCapture {
     config: ScrollbackConfig,
-    last_capture_times: HashMap<u32, DateTime<Utc>>,
+    last_capture_times: HashMap<u32, Timestamp>,
     last_scrollback_hashes: HashMap<u32, u64>,
     command_event_rx: Option<mpsc::Receiver<CommandExecutedEvent>>,
 }
@@ -127,7 +127,7 @@ pub struct ScrollbackCapture {
 struct CommandExecutedEvent {
     window_id: u32,
     #[allow(dead_code)]
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
 }
 
 #[async_trait]
@@ -157,7 +157,7 @@ impl EventSource for ScrollbackCapture {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting scrollback capture");
         
         let mut interval = time::interval(Duration::from_secs(self.config.capture_interval_secs));
@@ -209,7 +209,7 @@ impl EventSource for ScrollbackCapture {
 }
 
 impl ScrollbackCapture {
-    async fn capture_all_scrollbacks(&mut self, tx: &mpsc::Sender<RawEvent>, _incremental: bool) -> Result<()> {
+    async fn capture_all_scrollbacks(&mut self, tx: &EventSender, _incremental: bool) -> Result<()> {
         // Check if Kitty socket exists
         if !std::path::Path::new(&self.config.kitty_socket_path).exists() {
             debug!("Kitty socket not found at {}", self.config.kitty_socket_path);
@@ -244,9 +244,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "scrollback_captured").await?;
                 
                 // Save to file if configured
                 if self.config.save_to_files {
@@ -272,9 +270,7 @@ impl ScrollbackCapture {
                                 CommandOutputCaptured::EVENT_NAME,
                                 serde_json::to_value(payload)?
                             );
-                            tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                            tx.send_or_log(event, "scrollback_command_output").await?;
                         }
                     }
                 }
@@ -299,7 +295,10 @@ impl ScrollbackCapture {
             .arg(format!("unix:{}", self.config.kitty_socket_path))
             .arg("ls")
             .output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to run kitty @: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_command")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             return Err(sinex_core::CoreError::Other(
@@ -307,7 +306,7 @@ impl ScrollbackCapture {
             ));
         }
         
-        let data: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let data: JsonValue = serde_json::from_slice(&output.stdout)?;
         let mut windows = Vec::new();
         
         if let Some(os_windows) = data.as_array() {
@@ -358,7 +357,10 @@ impl ScrollbackCapture {
         }
         
         let output = cmd.output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get scrollback: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_get_scrollback")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             return Err(sinex_core::CoreError::Other(
@@ -403,7 +405,10 @@ impl ScrollbackCapture {
         }
         
         let output = cmd.output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get output: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::processing_failed()
+                .with_operation("kitty_get_output")
+                .with_source(e)
+                .build())?;
         
         if !output.status.success() {
             // This might fail if shell integration isn't enabled
@@ -436,7 +441,7 @@ impl ScrollbackCapture {
         Ok(())
     }
     
-    async fn capture_window_scrollback(&mut self, tx: &mpsc::Sender<RawEvent>, window_id: u32, incremental: bool) -> Result<()> {
+    async fn capture_window_scrollback(&mut self, tx: &EventSender, window_id: u32, incremental: bool) -> Result<()> {
         // Get window info
         let windows = self.get_kitty_windows()?;
         let window = windows.iter().find(|w| w.id == window_id);
@@ -479,9 +484,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?
                 );
-                tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                    "Channel closed".to_string()
-                ))?;
+                tx.send_or_log(event, "scrollback_incremental").await?;
                 
                 // Save to file if configured
                 if self.config.save_to_files {
@@ -499,7 +502,7 @@ struct ScrollbackText {
     line_count: usize,
 }
 
-fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
+fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
     RawEvent {
         id: sinex_ulid::Ulid::new(),
         source: ScrollbackCapture::SOURCE_NAME.to_string(),
@@ -527,7 +530,10 @@ async fn monitor_command_events(socket_path: String, tx: mpsc::Sender<CommandExe
         .arg("watch")
         .stdout(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| sinex_core::CoreError::Other(format!("Failed to start kitty @ watch: {}", e)))?;
+        .map_err(|e| sinex_core::CoreError::processing_failed()
+            .with_operation("kitty_start_watch")
+            .with_source(e)
+            .build())?;
     
     let stdout = child.stdout.take()
         .ok_or_else(|| sinex_core::CoreError::Other("Failed to capture stdout".to_string()))?;
@@ -545,7 +551,7 @@ async fn monitor_command_events(socket_path: String, tx: mpsc::Sender<CommandExe
                     timestamp: Utc::now(),
                 };
                 
-                if let Err(_) = tx.send(event).await {
+                if let Err(_) = tx.send_or_log(event, "scrollback_command_event").await {
                     break; // Channel closed
                 }
             }

@@ -243,7 +243,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
 /// Creates a specialized worker designed to trigger deadlock scenarios
 fn create_deadlock_worker(
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     agent_name: String,
     deadlock_timeout: Duration,
@@ -263,7 +263,7 @@ fn create_deadlock_worker(
 /// Specialized worker that intentionally creates deadlock-prone conditions
 struct DeadlockStressWorker {
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
     agent_name: String,

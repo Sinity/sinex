@@ -90,7 +90,7 @@ pub mod utils {
     
     /// Wait for event source to produce events
     pub async fn wait_for_events_from_source(
-        pool: &PgPool,
+        pool: &DbPool,
         source_name: &str,
         min_events: usize,
         timeout_secs: u64

@@ -450,7 +450,7 @@ async fn test_atuin_production_scale(ctx: TestContext) -> TestResult {
 #[cfg(test)]
 mod test_helpers {
     use super::*;
-    use sinex_db::models::RawEvent;
+    use sinex_db::RawEvent;
     
     /// Helper to verify event payload structure
     #[allow(dead_code)]

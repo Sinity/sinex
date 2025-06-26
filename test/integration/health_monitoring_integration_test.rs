@@ -137,7 +137,7 @@ async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestRe
     Ok(())
 }
 
-async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &DbPool) -> Result<(), anyhow::Error> {
     // Test database health check
     let db_health = check_database_health(pool).await?;
     monitor.update_component_health("database", db_health, None).await;
@@ -180,7 +180,7 @@ async fn test_component_health_checks(monitor: &SystemHealthMonitor, pool: &sqlx
     Ok(())
 }
 
-async fn check_database_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
+async fn check_database_health(pool: &DbPool) -> Result<HealthStatus> {
     // Test database connectivity and basic operations
     match sqlx::query("SELECT 1").fetch_one(pool).await {
         Ok(_) => {
@@ -291,7 +291,7 @@ async fn check_collector_health() -> Result<HealthStatus> {
     }
 }
 
-async fn check_worker_health(pool: &sqlx::PgPool) -> Result<HealthStatus> {
+async fn check_worker_health(pool: &DbPool) -> Result<HealthStatus> {
     // Test worker system health
     
     // Check promotion queue accessibility

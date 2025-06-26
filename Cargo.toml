@@ -91,6 +91,7 @@ sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "chro
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 
 # Error handling
 anyhow = "1"
@@ -125,3 +126,11 @@ gethostname = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 which = "5.0"
 tempfile = "3.0"
+
+# Configuration and validation
+regex = "1"
+url = "2"
+jsonschema = "0.17"
+unicode-normalization = "0.1"
+schemars = "0.8"
+dirs = "5.0"

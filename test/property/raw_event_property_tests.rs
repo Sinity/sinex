@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
-use sinex_core::event::{RawEvent, RawEventBuilder};
+// Using RawEvent, RawEventBuilder from prelude
 use chrono::{DateTime, Utc, Duration as ChronoDuration};
 use serde_json::{json, Value};
 

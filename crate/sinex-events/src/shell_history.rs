@@ -11,8 +11,8 @@ use notify::{Watcher, RecursiveMode, EventKind};
 use notify::event::{ModifyKind, DataChange};
 use std::collections::HashSet;
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result};
-use sinex_db::models::RawEvent;
+use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, OptionalTimestamp};
+use sinex_core::RawEvent;
 
 // ============================================================================
 // Event Payloads
@@ -25,7 +25,7 @@ pub struct ShellHistoryCommandPayload {
     pub history_line_number: Option<usize>,
     pub source_file: String,
     /// Best-effort timestamp extraction (zsh extended history or file mtime)
-    pub ts_command_approx: Option<DateTime<Utc>>,
+    pub ts_command_approx: OptionalTimestamp,
 }
 
 // ============================================================================
@@ -111,7 +111,7 @@ impl EventSource for ShellHistoryReader {
         })
     }
     
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting shell history event source");
         
         // Initial read of all files
@@ -134,7 +134,7 @@ impl EventSource for ShellHistoryReader {
 }
 
 impl ShellHistoryReader {
-    async fn watch_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         let watched_files = self.config.history_files.clone();
         
@@ -201,7 +201,7 @@ impl ShellHistoryReader {
         }
     }
     
-    async fn poll_mode(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()> {
+    async fn poll_mode(&mut self, tx: EventSender) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
         
         loop {
@@ -225,17 +225,23 @@ impl ShellHistoryReader {
     async fn read_history_file(
         &mut self,
         path: &PathBuf,
-        tx: &mpsc::Sender<RawEvent>,
+        tx: &EventSender,
         initial_read: bool,
     ) -> Result<()> {
         use tokio::fs::File;
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
         
         let mut file = File::open(path).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to open {:?}: {}", path, e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("open_file")
+                .with_source(e)
+                .build())?;
         
         let metadata = file.metadata().await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to get metadata: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("get_metadata")
+                .with_source(e)
+                .build())?;
         
         let file_size = metadata.len();
         let last_pos = self.last_positions.get(path).copied().unwrap_or(0);
@@ -257,11 +263,18 @@ impl ShellHistoryReader {
         }
         
         file.seek(std::io::SeekFrom::Start(start_pos)).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to seek: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("seek_file")
+                .with_context("position", start_pos)
+                .with_source(e)
+                .build())?;
         
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to read: {}", e)))?;
+            .map_err(|e| sinex_core::CoreError::io_error(path)
+                .with_operation("read_file")
+                .with_source(e)
+                .build())?;
         
         let content = String::from_utf8_lossy(&buffer);
         let shell_type = if path.to_string_lossy().contains("zsh") { "zsh" } else { "bash" };
@@ -276,9 +289,7 @@ impl ShellHistoryReader {
                 if !self.recent_commands.contains(&dedup_key) {
                     self.recent_commands.insert(dedup_key);
                     
-                    tx.send(event).await.map_err(|_| sinex_core::CoreError::Other(
-                        "Channel closed".to_string()
-                    ))?;
+                    tx.send_or_log(event, "shell_history_command").await?;
                 }
             }
         }

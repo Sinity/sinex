@@ -29,11 +29,22 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 schemars = "0.8"
 
-# For RawEvent type in unified collector
-sinex-db = { path = "../sinex-db" }
+# sinex-db dependency removed to avoid circular dependency
 
 # For validation
 unicode-normalization = "0.1"
+regex = { workspace = true }
+url = { workspace = true }
+jsonschema = { workspace = true }
 
-# For EventSourceContext
+# For EventSourceContext and RawEvent FromRow derive
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
+
+# For configuration
+toml = { workspace = true }
+
+# For logging
+tracing = { workspace = true }
+
+# For path expansion
+dirs = { workspace = true }

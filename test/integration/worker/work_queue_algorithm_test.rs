@@ -94,7 +94,7 @@ impl WorkDistributionMetrics {
 /// Simulates a worker that claims and processes work items using SELECT FOR UPDATE SKIP LOCKED
 struct SelectForUpdateWorker {
     worker_id: String,
-    pool: PgPool,
+    pool: DbPool,
     metrics: Arc<WorkDistributionMetrics>,
     should_stop: Arc<AtomicBool>,
     agent_name: String,
@@ -104,7 +104,7 @@ struct SelectForUpdateWorker {
 impl SelectForUpdateWorker {
     fn new(
         worker_id: String,
-        pool: PgPool,
+        pool: DbPool,
         metrics: Arc<WorkDistributionMetrics>,
         agent_name: String,
         processing_delay: Duration,
