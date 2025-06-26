@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use std::sync::Barrier;
 
 #[sinex_test(timeout = 30)]
-async fn test_concurrent_ulid_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     let num_tasks = 10;
     let events_per_task = 100;
@@ -55,7 +55,7 @@ async fn test_concurrent_ulid_generation(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_worker_double_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Insert a test event

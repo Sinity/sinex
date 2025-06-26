@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use std::process::Command;
 #[sinex_test]
-async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     // Step 1: Simulate event capture by inserting events
@@ -76,7 +76,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_system_cli_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_cli_integration(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     // Insert test events
@@ -136,7 +136,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_real_filesystem_simulation(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     // Create temporary directory for filesystem simulation
@@ -201,7 +201,7 @@ async fn test_system_real_filesystem_simulation(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     // Simulate correlated events from multiple sources
@@ -295,7 +295,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_system_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     // Test system resilience with various edge cases
@@ -365,7 +365,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_system_performance_baseline(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_performance_baseline(ctx: TestContext) -> TestResult {
     // TestContext provides isolated database and test environment
     
     let start_time = std::time::Instant::now();

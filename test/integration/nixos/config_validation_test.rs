@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use std::process::Command;
 
 #[sinex_test]
-async fn test_nix_config_validation_basic(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nix_config_validation_basic(ctx: TestContext) -> TestResult {
     // Test that our Nix configuration validation works for a basic config
     let nix_expr = r#"
     let
@@ -50,7 +50,7 @@ async fn test_nix_config_validation_basic(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_nix_config_validation_invalid_events(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nix_config_validation_invalid_events(ctx: TestContext) -> TestResult {
     // Test that invalid event types are caught
     let nix_expr = r#"
     let
@@ -103,7 +103,7 @@ async fn test_nix_config_validation_invalid_events(ctx: TestContext) -> Result<(
 }
 
 #[sinex_test]
-async fn test_nix_config_validation_dependencies(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nix_config_validation_dependencies(ctx: TestContext) -> TestResult {
     // Test dependency validation
     let nix_expr = r#"
     let
@@ -159,7 +159,7 @@ async fn test_nix_config_validation_dependencies(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_nix_toml_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nix_toml_validation(ctx: TestContext) -> TestResult {
     // Test TOML syntax validation
     let nix_expr = r#"
     let
@@ -210,7 +210,7 @@ async fn test_nix_toml_validation(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_nix_config_optimization_suggestions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nix_config_optimization_suggestions(ctx: TestContext) -> TestResult {
     // Test optimization suggestions
     let nix_expr = r#"
     let

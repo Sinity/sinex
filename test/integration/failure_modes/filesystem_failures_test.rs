@@ -8,7 +8,7 @@ use crate::common::resources;
 
 /// Test disk full scenarios during event capture
 #[sinex_test]
-async fn test_disk_full_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
     
@@ -95,7 +95,7 @@ async fn test_disk_full_handling(ctx: TestContext) -> Result<(), Box<dyn std::er
 
 /// Test permission changes during filesystem monitoring
 #[sinex_test]
-async fn test_permission_change_handling(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
@@ -165,7 +165,7 @@ async fn test_permission_change_handling(_ctx: TestContext) -> Result<(), Box<dy
 
 /// Test filesystem unmount/remount scenarios
 #[sinex_test]
-async fn test_filesystem_availability(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_filesystem_availability(_ctx: TestContext) -> TestResult {
     // This test simulates monitoring a path that becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount");
@@ -180,7 +180,7 @@ async fn test_filesystem_availability(_ctx: TestContext) -> Result<(), Box<dyn s
         path: &PathBuf,
         phase: &str,
         counter: &Arc<AtomicU64>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> TestResult {
         // Check if path exists and is accessible
         if !path.exists() {
             return Err(format!("Path does not exist: {:?}", path).into());
@@ -236,7 +236,7 @@ async fn test_filesystem_availability(_ctx: TestContext) -> Result<(), Box<dyn s
 
 /// Test handling of symbolic link edge cases
 #[sinex_test]
-async fn test_symlink_edge_cases(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_symlink_edge_cases(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let base_path = temp_dir.path();
     
@@ -333,7 +333,7 @@ async fn test_symlink_edge_cases(_ctx: TestContext) -> Result<(), Box<dyn std::e
 
 /// Test rapid file creation/deletion patterns
 #[sinex_test]
-async fn test_rapid_filesystem_changes(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_rapid_filesystem_changes(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let test_dir = temp_dir.path();
     

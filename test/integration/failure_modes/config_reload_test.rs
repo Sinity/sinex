@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 /// Test configuration reload during active event processing
 #[sinex_test]
-async fn test_config_reload_during_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
     // Track state across reload
     let events_before_reload = Arc::new(AtomicU64::new(0));
     let events_after_reload = Arc::new(AtomicU64::new(0));
@@ -146,7 +146,7 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> Result<(), Bo
 
 /// Test config validation during reload
 #[sinex_test]
-async fn test_invalid_config_reload_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_config_reload_handling(ctx: TestContext) -> TestResult {
     // Test that invalid config changes are rejected gracefully
     
     let valid_config = serde_json::json!({
@@ -210,7 +210,7 @@ async fn test_invalid_config_reload_handling(ctx: TestContext) -> Result<(), Box
 
 /// Test graceful handling of config reload timing
 #[sinex_test] 
-async fn test_config_reload_timing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_timing(ctx: TestContext) -> TestResult {
     // Test various timing scenarios for config reload
     
     #[derive(Debug, Clone)]

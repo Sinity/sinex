@@ -3,7 +3,7 @@ use sinex_db::queries::insert_raw_event;
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Create test agent
@@ -181,7 +181,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> Result<
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
-async fn test_resource_limits_monitoring(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     println!("Testing resource limits and monitoring under load...");
@@ -502,7 +502,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> Result<(), Box<dyn
 
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
-async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     println!("Testing resource exhaustion scenarios...");

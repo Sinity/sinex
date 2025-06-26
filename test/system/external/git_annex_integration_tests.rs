@@ -22,7 +22,7 @@ async fn setup_test_annex() -> Result<(GitAnnex, tempfile::TempDir), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_file_add_and_retrieve(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file
@@ -47,7 +47,7 @@ async fn test_file_add_and_retrieve(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_large_file_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_large_file_handling(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create 1MB of data
@@ -70,7 +70,7 @@ async fn test_large_file_handling(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_annex_key_lookup(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_annex_key_lookup(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create a test file with known content
@@ -93,7 +93,7 @@ async fn test_annex_key_lookup(ctx: TestContext) -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_drop_content(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_drop_content(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create and add a file
@@ -113,7 +113,7 @@ async fn test_drop_content(ctx: TestContext) -> Result<(), Box<dyn std::error::E
 }
 
 #[sinex_test]
-async fn test_fsck(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_fsck(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Add some files
@@ -133,7 +133,7 @@ async fn test_fsck(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[sinex_test]
-async fn test_git_annex_configuration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_git_annex_configuration(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let repo_path = temp_dir.path().to_path_buf();
     
@@ -163,7 +163,7 @@ async fn test_git_annex_configuration(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_concurrent_file_operations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     let annex = std::sync::Arc::new(annex);
     let mut handles = vec![];
@@ -206,7 +206,7 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_files_in_subdirectories(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     // Create subdirectory structure
@@ -232,7 +232,7 @@ async fn test_files_in_subdirectories(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_annex_deduplication(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_annex_deduplication(ctx: TestContext) -> TestResult {
     let (annex, temp_dir) = setup_test_annex().await?;
     
     let content = b"Duplicate content for dedup test";

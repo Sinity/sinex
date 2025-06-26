@@ -532,7 +532,7 @@ pub async fn event_exists(pool: &PgPool, event_id: Ulid) -> Result<bool> {
 macro_rules! test_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_inserted(&pool, &event).await?;
             Ok(())
@@ -544,7 +544,7 @@ macro_rules! test_event_insertion {
 macro_rules! test_invalid_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
             Ok(())

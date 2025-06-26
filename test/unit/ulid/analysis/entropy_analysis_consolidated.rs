@@ -65,7 +65,7 @@ mod entropy_analysis {
     /// This demonstrates the mathematical foundation of our analysis
     #[sinex_test]
     #[ignore] // Run with: cargo test entropy_analysis -- --ignored
-    async fn test_precise_entropy_calculation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_precise_entropy_calculation(_ctx: TestContext) -> TestResult {
         println!("\n=== PRECISE ENTROPY ANALYSIS ===");
         
         // Using Python for arbitrary precision calculation
@@ -97,7 +97,7 @@ print(f"Scientific notation: {result:.25e}")
     /// Test demonstrating why this entropy gain is negligible
     #[sinex_test]
     #[ignore]
-    async fn test_practical_significance(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_practical_significance(_ctx: TestContext) -> TestResult {
         println!("\n=== PRACTICAL SIGNIFICANCE ANALYSIS ===");
         
         let entropy_gain = 1.1933693676497481e-19; // f64 precision
@@ -141,7 +141,7 @@ print(f"Scientific notation: {result:.25e}")
     /// Test demonstrating the complexity vs benefit trade-off
     #[sinex_test]
     #[ignore]
-    async fn test_complexity_vs_benefit(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_complexity_vs_benefit(_ctx: TestContext) -> TestResult {
         println!("\n=== COMPLEXITY VS BENEFIT ANALYSIS ===");
         
         println!("Current approach (simple +1):");
@@ -172,7 +172,7 @@ print(f"Scientific notation: {result:.25e}")
     /// Test bit-level verification that our implementation matches standard
     #[sinex_test]
     #[ignore] 
-    async fn test_bit_layout_verification(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_bit_layout_verification(_ctx: TestContext) -> TestResult {
         println!("\n=== BIT LAYOUT VERIFICATION ===");
         
         // This test verifies our monotonic implementation produces identical

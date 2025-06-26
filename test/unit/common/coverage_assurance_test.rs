@@ -5,7 +5,7 @@ use crate::common::{scenario_builders, coverage_assurance, parameterized};
 use crate::common::coverage_assurance::{CoverageTracker, CoverageAssertion};
 
 #[sinex_test]
-async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> TestResult {
     // Reset tracker for clean test
     CoverageTracker::reset();
     
@@ -38,7 +38,7 @@ async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_coverage_assertion_ensures_minimum_coverage(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_coverage_assertion_ensures_minimum_coverage(_ctx: TestContext) -> TestResult {
     CoverageTracker::reset();
     
     // Define minimum coverage expectations based on original tests
@@ -101,7 +101,7 @@ fn simulate_comprehensive_test_suite() {
 }
 
 #[sinex_test]
-async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> TestResult {
     use coverage_assurance::{CoverageSnapshot, CoverageComparison};
     
     // Original verbose test coverage
@@ -147,7 +147,7 @@ async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_property_coverage_tracking(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_property_coverage_tracking(_ctx: TestContext) -> TestResult {
     use coverage_assurance::PropertyCoverage;
     
     let mut prop_coverage = PropertyCoverage::new();
@@ -166,7 +166,7 @@ async fn test_property_coverage_tracking(_ctx: TestContext) -> Result<(), Box<dy
 
 /// Macro usage example
 #[sinex_test]
-async fn test_coverage_tracking_macro(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_coverage_tracking_macro(_ctx: TestContext) -> TestResult {
     use crate::track_test_coverage;
     
     CoverageTracker::reset();

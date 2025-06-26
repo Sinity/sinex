@@ -3,7 +3,7 @@ use tokio::time::{timeout, Duration};
 
 /// Test input validation for event sources and types
 #[sinex_test]
-async fn test_event_source_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_validation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test various malicious source names
@@ -175,7 +175,7 @@ struct ValidationResult {
 
 /// Test JSON payload validation and sanitization
 #[sinex_test]
-async fn test_json_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_payload_validation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test various malicious JSON structures
@@ -390,7 +390,7 @@ fn check_dangerous_content(content: &str) -> bool {
 
 /// Test error handling for malformed inputs
 #[sinex_test]
-async fn test_malformed_input_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_malformed_input_handling(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test agent creation with malformed names
@@ -534,7 +534,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> Result<(), Box<dyn s
 
 /// Test boundary conditions and edge cases
 #[sinex_test]
-async fn test_input_boundary_conditions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_input_boundary_conditions(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test size boundaries

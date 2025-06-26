@@ -5,7 +5,7 @@ use chrono::Utc;
 use tokio::task::yield_now;
 
 #[sinex_test]
-async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let agent_name = "chaos-agent";
@@ -119,7 +119,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Res
 }
 
 #[sinex_test]
-async fn test_heartbeat_from_unregistered_agent(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_from_unregistered_agent(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let phantom_agent = "phantom-agent";
@@ -164,7 +164,7 @@ async fn test_heartbeat_from_unregistered_agent(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_agent_downgrade_during_operation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let agent_name = "version-chaos-agent";
@@ -290,7 +290,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_concurrent_agent_status_updates(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let agent_name = "status-chaos-agent";
@@ -396,7 +396,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let agent_name = "zombie-agent";

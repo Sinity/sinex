@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use sinex_db::validation::EventValidator;
 
 #[sinex_test]
-async fn test_circular_json_references(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_circular_json_references(ctx: TestContext) -> TestResult {
     // Test that Sinex's event validation handles circular JSON references safely
     let circular_json = json!({
         "data": {
@@ -51,7 +51,7 @@ async fn test_circular_json_references(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_json_billion_laughs_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
     // Test that Sinex can handle exponentially expanding JSON without resource exhaustion
     // Each level exponentially expands the previous
     
@@ -110,7 +110,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_json_unicode_normalization_bypass(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_unicode_normalization_bypass(ctx: TestContext) -> TestResult {
     // Different Unicode representations that might bypass validation
     
     let unicode_variants = vec![
@@ -156,7 +156,7 @@ async fn test_json_unicode_normalization_bypass(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_json_depth_stack_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_depth_stack_overflow(ctx: TestContext) -> TestResult {
     // Test deeply nested JSON that could cause stack overflow during parsing/validation
     
     // Create JSON with extreme depth that might cause stack overflow
@@ -243,7 +243,7 @@ async fn test_json_depth_stack_overflow(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_json_key_confusion_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_key_confusion_attack(ctx: TestContext) -> TestResult {
     // Test various key representations that might be treated as equivalent
     
     let key_variants = vec![

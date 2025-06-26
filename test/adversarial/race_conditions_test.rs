@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 #[sinex_test]
-async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         
     // Insert event to be claimed
@@ -92,7 +92,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_event_causality_violation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         let order_violations = Arc::new(AtomicU64::new(0));
         
@@ -146,7 +146,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_work_queue_thundering_herd(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_thundering_herd(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         
         // Insert single event
@@ -204,7 +204,7 @@ async fn test_work_queue_thundering_herd(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         
         // Insert test event

@@ -3,7 +3,7 @@ use sinex_core::{CoreError, Result as CoreResult};
 use std::io;
 
 #[sinex_test]
-async fn test_core_error_from_io_error(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_core_error_from_io_error(_ctx: TestContext) -> TestResult {
     let io_err = io::Error::new(io::ErrorKind::NotFound, "File not found");
     let core_err: CoreError = io_err.into();
     
@@ -15,7 +15,7 @@ async fn test_core_error_from_io_error(_ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_core_error_from_serde_json_error(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_core_error_from_serde_json_error(_ctx: TestContext) -> TestResult {
     let json_str = r#"{"invalid": json}"#;
     let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
     let core_err: CoreError = json_err.into();
@@ -28,7 +28,7 @@ async fn test_core_error_from_serde_json_error(_ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_error_chain_propagation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_chain_propagation(_ctx: TestContext) -> TestResult {
     fn inner_operation() -> CoreResult<String> {
         Err(CoreError::Database("Connection lost".to_string()))
     }
@@ -71,7 +71,7 @@ impl EventSource for FailingEventSource {
 }
 
 #[sinex_test]
-async fn test_event_source_error_propagation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_error_propagation(ctx: TestContext) -> TestResult {
     let ctx_local = event_sources::test_context(json!({}));
     let result = FailingEventSource::initialize(ctx_local).await;
     
@@ -84,7 +84,7 @@ async fn test_event_source_error_propagation(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_validation_error_propagation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
     fn validate_event_type(event_type: &str) -> CoreResult<()> {
         if event_type.is_empty() {
             return Err(CoreError::Validation("Event type cannot be empty".to_string()));
@@ -110,7 +110,7 @@ async fn test_validation_error_propagation(_ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_error_display_implementation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_display_implementation(_ctx: TestContext) -> TestResult {
     let errors = vec![
         (CoreError::Database("Connection timeout".to_string()), "Database error: Connection timeout"),
         (CoreError::Serialization("Invalid JSON".to_string()), "Serialization error: Invalid JSON"),
@@ -128,7 +128,7 @@ async fn test_error_display_implementation(_ctx: TestContext) -> Result<(), Box<
 
 // Test error propagation across thread boundaries
 #[sinex_test]
-async fn test_error_propagation_across_tasks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_propagation_across_tasks(ctx: TestContext) -> TestResult {
     use tokio::task;
     
     let handle = task::spawn(async {
@@ -147,7 +147,7 @@ async fn test_error_propagation_across_tasks(ctx: TestContext) -> Result<(), Box
 
 // Test error recovery patterns
 #[sinex_test]
-async fn test_error_recovery_with_fallback(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_recovery_with_fallback(_ctx: TestContext) -> TestResult {
     fn operation_with_fallback() -> Result<String> {
         let primary_result = Err::<String, CoreError>(CoreError::Io("Primary failed".to_string()));
         
@@ -165,7 +165,7 @@ async fn test_error_recovery_with_fallback(_ctx: TestContext) -> Result<(), Box<
 
 // Test nested Result handling
 #[sinex_test]
-async fn test_nested_result_error_propagation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_nested_result_error_propagation(_ctx: TestContext) -> TestResult {
     fn parse_config(data: &str) -> Result<serde_json::Value> {
         serde_json::from_str(data).map_err(|e| anyhow::anyhow!("Config parse error: {}", e))
     }

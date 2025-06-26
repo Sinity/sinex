@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 #[sinex_test]
-async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing JSONB 1GB limit:");
@@ -65,7 +65,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_connection_pool_exhaustion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing connection pool exhaustion:");
@@ -153,7 +153,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_concurrent_btree_index_splits(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_btree_index_splits(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing concurrent B-tree index splits:");
@@ -258,7 +258,7 @@ async fn test_concurrent_btree_index_splits(ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing TimescaleDB chunk boundary operations:");
@@ -322,7 +322,7 @@ async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing queries during chunk compression:");

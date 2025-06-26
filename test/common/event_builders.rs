@@ -1046,7 +1046,7 @@ mod tests {
     use super::*;
     
     #[sinex_test]
-    async fn test_filesystem_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_filesystem_builder(ctx: TestContext) -> TestResult {
         let event = EventBuilder::filesystem()
             .path("/home/user/test.txt")
             .created()
@@ -1062,7 +1062,7 @@ mod tests {
     }
     
     #[sinex_test]
-    async fn test_terminal_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_terminal_builder(ctx: TestContext) -> TestResult {
         let event = EventBuilder::terminal()
             .command("ls -la")
             .success()
@@ -1079,7 +1079,7 @@ mod tests {
     }
     
     #[sinex_test]
-    async fn test_generic_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_generic_builder(ctx: TestContext) -> TestResult {
         let event = EventBuilder::generic("test_source", "test.event")
             .payload(json!({"data": "test"}))
             .build();

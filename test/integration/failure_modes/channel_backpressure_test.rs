@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 /// Test what happens when event channel fills up
 #[sinex_test]
-async fn test_channel_backpressure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     // Small channel to trigger backpressure quickly
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
     
@@ -105,7 +105,7 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> Result<(), Box<
 
 /// Test graceful degradation under memory pressure
 #[sinex_test]
-async fn test_memory_pressure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_memory_pressure_handling(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Track memory usage
@@ -165,7 +165,7 @@ async fn test_memory_pressure_handling(ctx: TestContext) -> Result<(), Box<dyn s
 
 /// Test event source crash and restart
 #[sinex_test]
-async fn test_event_source_crash_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
     struct CrashingEventSource {
         crash_after: u64,
         events_sent: Arc<AtomicU64>,

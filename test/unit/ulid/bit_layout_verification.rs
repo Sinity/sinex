@@ -4,7 +4,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_bit_layout_matches_standard(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_bit_layout_matches_standard(_ctx: TestContext) -> TestResult {
     println!("\n=== CRITICAL: ULID Bit Layout Verification ===");
     
     // Generate a ULID with our implementation
@@ -55,7 +55,7 @@ async fn test_bit_layout_matches_standard(_ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_standard_construction_equivalence(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_standard_construction_equivalence(_ctx: TestContext) -> TestResult {
     println!("\n=== Standard Construction Method Verification ===");
     
     // Test if we can recreate the standard's bit manipulation approach
@@ -126,7 +126,7 @@ async fn test_standard_construction_equivalence(_ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_increment_behavior_analysis(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_increment_behavior_analysis(_ctx: TestContext) -> TestResult {
     println!("\n=== Increment Behavior Analysis ===");
     
     // Analyze how the standard increment should work
@@ -161,7 +161,7 @@ async fn test_increment_behavior_analysis(_ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_our_implementation_problems(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_our_implementation_problems(_ctx: TestContext) -> TestResult {
     println!("\n=== PROBLEMS WITH OUR IMPLEMENTATION ===");
     
     // Generate multiple ULIDs rapidly to test our monotonic behavior

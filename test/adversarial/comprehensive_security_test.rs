@@ -303,7 +303,7 @@ fn security_scenarios() -> Vec<SecurityScenario> {
 
 /// Test all security scenarios comprehensively
 #[sinex_test]
-async fn test_comprehensive_security_scenarios(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_comprehensive_security_scenarios(ctx: TestContext) -> TestResult {
     let scenarios = security_scenarios();
 
     let pool = ctx.pool();
@@ -387,7 +387,7 @@ async fn test_comprehensive_security_scenarios(ctx: TestContext) -> Result<(), B
 
 /// Test path traversal attacks specifically
 #[sinex_test]
-async fn test_path_traversal_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_path_traversal_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PathTraversal))
@@ -398,7 +398,7 @@ async fn test_path_traversal_attacks(_ctx: TestContext) -> Result<(), Box<dyn st
 
 /// Test SQL injection attacks
 #[sinex_test]
-async fn test_sql_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_sql_injection_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::SqlInjection))
@@ -409,7 +409,7 @@ async fn test_sql_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test command injection attacks
 #[sinex_test]
-async fn test_command_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_command_injection_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::CommandInjection))
@@ -420,7 +420,7 @@ async fn test_command_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn
 
 /// Test XSS injection attacks
 #[sinex_test]
-async fn test_xss_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_xss_injection_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::XssInjection))
@@ -431,7 +431,7 @@ async fn test_xss_injection_attacks(_ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test JSON attacks
 #[sinex_test]
-async fn test_json_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::JsonAttack))
@@ -442,7 +442,7 @@ async fn test_json_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::
 
 /// Test unicode exploits
 #[sinex_test]
-async fn test_unicode_exploits(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_unicode_exploits(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::UnicodeExploit))
@@ -453,7 +453,7 @@ async fn test_unicode_exploits(_ctx: TestContext) -> Result<(), Box<dyn std::err
 
 /// Test resource exhaustion attacks
 #[sinex_test]
-async fn test_resource_exhaustion_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_exhaustion_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::ResourceExhaustion))
@@ -464,7 +464,7 @@ async fn test_resource_exhaustion_attacks(_ctx: TestContext) -> Result<(), Box<d
 
 /// Test prototype pollution attacks
 #[sinex_test]
-async fn test_prototype_pollution_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_prototype_pollution_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PrototypePollution))
@@ -475,7 +475,7 @@ async fn test_prototype_pollution_attacks(_ctx: TestContext) -> Result<(), Box<d
 
 /// Test format string attacks
 #[sinex_test]
-async fn test_format_string_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_format_string_attacks(_ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::FormatString))
@@ -485,7 +485,7 @@ async fn test_format_string_attacks(_ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 /// Helper function to run a batch of security tests
-async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecurityScenario>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecurityScenario>) -> TestResult {
     if scenarios.is_empty() {
         println!("No {} scenarios to test", category_name);
         return Ok(());
@@ -583,7 +583,7 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
 
 /// Test filesystem path traversal attacks specifically
 #[sinex_test]
-async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -655,7 +655,7 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Resu
 
 /// Test hash collision DoS attacks
 #[sinex_test]
-async fn test_hash_collision_dos(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
     let mut collision_map = HashMap::new();
     
     // Known hash collision strings
@@ -703,7 +703,7 @@ async fn test_hash_collision_dos(_ctx: TestContext) -> Result<(), Box<dyn std::e
 
 /// Test JSON parser differential attacks
 #[sinex_test]
-async fn test_json_parser_differential(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
     let tricky_json_strings = vec![
         (r#"{"key": 1.0000000000000000000000000000000001}"#, "precision_loss"),
         (r#"{"key": 9007199254740993}"#, "beyond_js_safe_integer"),
@@ -733,7 +733,7 @@ async fn test_json_parser_differential(_ctx: TestContext) -> Result<(), Box<dyn 
 
 /// Test malicious TOML configuration injection
 #[sinex_test]
-async fn test_configuration_injection(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_injection(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let config_dir = temp_dir.path().join("config");
     fs::create_dir_all(&config_dir)?;
@@ -876,7 +876,7 @@ impl SecurityTestResults {
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
         pool: &sqlx::PgPool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> TestResult {
         self.total_tests += 1;
 
         match result {
@@ -945,7 +945,7 @@ impl SecurityTestResults {
         scenario: &SecurityScenario,
         result: Result<Result<sinex_db::models::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
         _pool: &sqlx::PgPool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> TestResult {
         self.total_tests += 1;
 
         match result {
@@ -981,7 +981,7 @@ impl SecurityTestResults {
         Ok(())
     }
 
-    fn record_validation(&mut self, scenario: &SecurityScenario, result: Result<(), Box<dyn std::error::Error>>) {
+    fn record_validation(&mut self, scenario: &SecurityScenario, result: TestResult) {
         match result {
             Ok(_) => {
                 println!("  Validation passed for {}", scenario.name);

@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 use std::sync::Mutex;
 
 #[sinex_test]
-async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: TestContext) -> TestResult {
     // Setup test worker with items
     let _items = worker_test_utils::setup_test_worker(ctx.pool(), "test_worker", 10).await?;
     
@@ -100,7 +100,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(ctx: T
 }
 
 #[sinex_test]
-async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> TestResult {
     // Insert test items
     let _ = worker_test_utils::insert_test_items(ctx.pool(), 20).await?;
     
@@ -175,7 +175,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> TestResult {
     // Insert single test item
     let _ = worker_test_utils::insert_test_items(ctx.pool(), 1).await?;
     
@@ -209,7 +209,7 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> Resul
 }
 
 #[sinex_test]
-async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_high_concurrency_stress_test(ctx: TestContext) -> TestResult {
     // Create many items for stress testing
     let item_count = 100;
     let worker_count = 10;
@@ -301,7 +301,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_worker_failure_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
     // Test that items can be reclaimed after worker failure
     let _ = worker_test_utils::insert_test_items(&ctx.pool(), 5).await?;
     

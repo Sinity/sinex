@@ -11,7 +11,7 @@
 //! use crate::common::test_context::TestContext;
 //! 
 //! #[sinex_test]
-//! async fn my_test(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+//! async fn my_test(ctx: TestContext) -> TestResult {
 //!     let event = ctx.filesystem_event("/test/file");
 //!     ctx.insert_event(&event).await?;
 //!     ctx.wait_for_event_count(1).await?;
@@ -145,14 +145,14 @@ impl TestContext {
     // ===== Database Operations =====
 
     /// Insert an event into the database
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn insert_event(&self, event: &RawEvent) -> TestResult {
         queries::insert_event(self.pool(), event).await?;
         self.created_events.lock().await.push(event.id);
         Ok(())
     }
 
     /// Insert multiple events
-    pub async fn insert_events(&self, events: &[RawEvent]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn insert_events(&self, events: &[RawEvent]) -> TestResult {
         for event in events {
             self.insert_event(event).await?;
         }
@@ -230,7 +230,7 @@ impl TestContext {
     // ===== Timing Helpers =====
 
     /// Wait for a specific number of events to exist
-    pub async fn wait_for_event_count(&self, expected: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_event_count(&self, expected: usize) -> TestResult {
         wait_for_event_count(
             self.pool(),
             expected as i64,
@@ -240,7 +240,7 @@ impl TestContext {
     }
 
     /// Wait for events from a specific source
-    pub async fn wait_for_source_events(&self, source: &str, count: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_source_events(&self, source: &str, count: usize) -> TestResult {
         wait_for_filtered_event_count(
             self.pool(),
             "source = $1",
@@ -262,7 +262,7 @@ impl TestContext {
     }
 
     /// Wait a short time for processing (replaces arbitrary sleeps)
-    pub async fn wait_for_processing(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_processing(&self) -> TestResult {
         // Smart wait that checks for activity
         let initial_count = self.event_count().await?;
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -292,7 +292,7 @@ impl TestContext {
     }
 
     /// Wait for work queue to reach expected count
-    pub async fn wait_for_work_queue(&self, expected: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_work_queue(&self, expected: usize) -> TestResult {
         wait_for_work_queue_count(
             self.pool(),
             expected as i64,
@@ -328,7 +328,7 @@ impl TestContext {
     }
 
     /// Assert that no events exist yet
-    pub async fn assert_no_events(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn assert_no_events(&self) -> TestResult {
         let count = self.event_count().await?;
         pretty_assertions::assert_eq!(count, 0, "Expected no events but found {}", count);
         Ok(())

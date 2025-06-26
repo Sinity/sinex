@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_agent_manifest_create(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
     
     // Create a complete agent manifest
     let result = sqlx::query(
@@ -80,7 +80,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_agent_manifest_update(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(
@@ -143,7 +143,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_agent_manifest_delete(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(
@@ -213,7 +213,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_agent_status_transitions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
     
     // Create agent in pending state
     sqlx::query(
@@ -282,7 +282,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResult {
     
     // Create agent with complex capabilities
     let capabilities = json!({
@@ -348,7 +348,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
     
     // Create multiple agents with different subscriptions
     let agents = vec![

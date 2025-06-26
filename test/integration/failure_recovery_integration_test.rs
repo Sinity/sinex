@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::sync::{mpsc, Mutex};
 
 #[sinex_test]
-async fn test_database_disconnection_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_disconnection_recovery(ctx: TestContext) -> TestResult {
     
     // Test 1: System should handle temporary database unavailability
     let recovery_test = test_database_connection_recovery(ctx.pool()).await?;
@@ -162,7 +162,7 @@ async fn test_connection_pool_recovery(pool: &PgPool) -> Result<bool> {
 }
 
 #[sinex_test]
-async fn test_event_source_crash_recovery(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_crash_recovery(_ctx: TestContext) -> TestResult {
     // Test recovery from event source crashes and restarts
     
     let crash_recovery = test_source_crash_and_restart().await?;
@@ -336,7 +336,7 @@ async fn test_source_monitoring_recovery() -> Result<bool> {
 }
 
 #[sinex_test]
-async fn test_worker_failure_and_retry(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_failure_and_retry(ctx: TestContext) -> TestResult {
     
     // Test worker failure scenarios and retry logic
     let retry_logic = test_worker_retry_logic(ctx.pool()).await?;
@@ -516,7 +516,7 @@ async fn test_concurrent_worker_failures(pool: &PgPool) -> Result<bool> {
 }
 
 #[sinex_test]
-async fn test_resource_exhaustion_recovery(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_exhaustion_recovery(_ctx: TestContext) -> TestResult {
     // Test recovery from various resource exhaustion scenarios
     
     let memory_recovery = test_memory_pressure_recovery().await?;

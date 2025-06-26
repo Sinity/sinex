@@ -3,7 +3,7 @@ use sinex_db::models::{RawEvent, WorkQueueItem, QueueStatus, AgentManifest};
 use chrono::{Utc, Duration};
 use uuid::Uuid;
 #[sinex_test]
-async fn test_ulid_uuid_roundtrip(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_uuid_roundtrip(_ctx: TestContext) -> TestResult {
     // Test ULID to UUID and back
     let original_ulid = Ulid::new();
     let uuid = original_ulid.to_uuid();
@@ -15,7 +15,7 @@ async fn test_ulid_uuid_roundtrip(_ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_raw_event_json_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_json_serialization(_ctx: TestContext) -> TestResult {
     let event = crate::common::events::generic_adversarial_event("test.source", "test.event", json!({"test": true}), Some("1.0.0"));
     
     // Serialize to JSON
@@ -33,7 +33,7 @@ async fn test_raw_event_json_serialization(_ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_work_queue_status_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_status_serialization(_ctx: TestContext) -> TestResult {
     let statuses = vec![
         QueueStatus::Pending,
         QueueStatus::Processing,
@@ -54,7 +54,7 @@ async fn test_work_queue_status_serialization(_ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_work_queue_item_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_item_serialization(_ctx: TestContext) -> TestResult {
     let item = WorkQueueItem {
         queue_id: Ulid::new(),
         raw_event_id: Ulid::new(),
@@ -85,7 +85,7 @@ async fn test_work_queue_item_serialization(_ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_agent_manifest_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_manifest_serialization(_ctx: TestContext) -> TestResult {
     let manifest = AgentManifest {
         agent_name: "test-agent".to_string(),
         description: Some("Test agent for processing events".to_string()),
@@ -131,7 +131,7 @@ async fn test_agent_manifest_serialization(_ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_ulid_json_string_format(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_json_string_format(_ctx: TestContext) -> TestResult {
     let ulid = Ulid::new();
     
     // When serialized as part of a struct, ULID should be a string
@@ -152,7 +152,7 @@ async fn test_ulid_json_string_format(_ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_optional_field_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_optional_field_serialization(_ctx: TestContext) -> TestResult {
     // Test with None values
     let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
@@ -166,7 +166,7 @@ async fn test_optional_field_serialization(_ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_datetime_serialization_format(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_datetime_serialization_format(_ctx: TestContext) -> TestResult {
     let now = Utc::now();
     let event = crate::common::events::generic_adversarial_event("test", "test.type", json!({"test": true}), None);
     
@@ -187,7 +187,7 @@ async fn test_datetime_serialization_format(_ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_large_payload_serialization(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_large_payload_serialization(_ctx: TestContext) -> TestResult {
     // Create a large nested JSON payload
     let mut large_obj = json!({});
     for i in 0..100 {
@@ -213,7 +213,7 @@ async fn test_large_payload_serialization(_ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_uuid_ulid_database_compatibility(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_uuid_ulid_database_compatibility(_ctx: TestContext) -> TestResult {
     // Simulate database storage and retrieval
     let original_ulid = Ulid::new();
     

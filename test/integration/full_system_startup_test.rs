@@ -32,7 +32,7 @@ fn create_comprehensive_config() -> CollectorConfig {
 }
 
 #[sinex_test]
-async fn test_system_startup_with_all_configurations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestResult {
     
     let config = create_comprehensive_config();
     
@@ -347,7 +347,7 @@ async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<boo
 }
 
 #[sinex_test]
-async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> TestResult {
     // Test comprehensive configuration validation
     
     // Test 1: Valid configuration should pass all checks
@@ -379,7 +379,7 @@ async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> Result<(
 }
 
 #[sinex_test]
-async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> TestResult {
     
     let mut config = create_comprehensive_config();
     
@@ -462,7 +462,7 @@ async fn test_annex_fallback_scenario() -> Result<bool> {
 }
 
 #[sinex_test]
-async fn test_system_health_monitoring_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_system_health_monitoring_integration(ctx: TestContext) -> TestResult {
     
     let config = create_comprehensive_config();
     
@@ -542,7 +542,7 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
 }
 
 #[sinex_test]
-async fn test_comprehensive_error_handling_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_comprehensive_error_handling_integration(ctx: TestContext) -> TestResult {
     
     // Test 1: Configuration errors should be handled gracefully
     let config_error_handling = test_configuration_error_handling().await?;

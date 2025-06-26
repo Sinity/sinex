@@ -5,7 +5,7 @@ use crate::common::prelude::*;
 use std::time::Instant;
 
 #[sinex_test]
-async fn test_ulid_monotonic_performance_validation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_monotonic_performance_validation(_ctx: TestContext) -> TestResult {
     println!("\n=== ULID Monotonic Performance Validation ===");
     
     // Single generation performance test

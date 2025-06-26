@@ -57,7 +57,7 @@ impl EventSource for ConfigurableEventSource {
 }
 
 #[sinex_test]
-async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> TestResult {
     // Create initial config file
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
@@ -157,7 +157,7 @@ async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_config_reload_with_source_restart(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_with_source_restart(ctx: TestContext) -> TestResult {
     // Test that sources can be gracefully restarted with new config
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
@@ -222,7 +222,7 @@ async fn test_config_reload_with_source_restart(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_config_validation_before_reload(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_validation_before_reload(ctx: TestContext) -> TestResult {
     // Test that invalid configs are rejected without affecting running sources
     
     let valid_config = CollectorConfig {
@@ -248,7 +248,7 @@ async fn test_config_validation_before_reload(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_partial_reload_capability(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_partial_reload_capability(ctx: TestContext) -> TestResult {
     // Test that specific sources can be reloaded without affecting others
     
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);

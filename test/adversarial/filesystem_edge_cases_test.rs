@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[sinex_test]
-async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
     
@@ -76,7 +76,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn test_directory_unmounted_while_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -156,7 +156,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_watching_special_files(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watching_special_files(ctx: TestContext) -> TestResult {
     // Test watching various special file types that might cause issues
     let special_files = vec![
         "/dev/null",
@@ -199,7 +199,7 @@ async fn test_watching_special_files(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_fifo_pipe_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_fifo_pipe_watching(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let fifo_path = temp_dir.path().join("test_fifo");
     
@@ -251,7 +251,7 @@ async fn test_fifo_pipe_watching(ctx: TestContext) -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn test_rapid_file_creation_deletion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_rapid_file_creation_deletion(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("rapid_changes");
     
@@ -331,7 +331,7 @@ async fn test_rapid_file_creation_deletion(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_watching_symlink_cycles(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_watching_symlink_cycles(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     
     let link_a = temp_dir.path().join("link_a");

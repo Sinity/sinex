@@ -23,7 +23,7 @@ mod basic_functionality {
     use super::*;
     
     #[sinex_test]
-    async fn ulid_creation_and_uniqueness(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn ulid_creation_and_uniqueness(_ctx: TestContext) -> TestResult {
         let ulid1 = Ulid::new();
         let ulid2 = Ulid::new();
         pretty_assertions::assert_ne!(ulid1, ulid2, "Sequential ULIDs must be unique");
@@ -31,7 +31,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn ulid_monotonic_ordering(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn ulid_monotonic_ordering(_ctx: TestContext) -> TestResult {
         let ulid1 = Ulid::new();
         let ulid2 = Ulid::new();
         assert!(ulid2 > ulid1, "Later ULIDs must be greater than earlier ones");
@@ -39,7 +39,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn uuid_conversion_roundtrip(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn uuid_conversion_roundtrip(_ctx: TestContext) -> TestResult {
         for _ in 0..100 {
             let original = Ulid::new();
             let uuid = original.to_uuid();
@@ -54,7 +54,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn string_parsing_and_formatting(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn string_parsing_and_formatting(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let ulid_str = ulid.to_string();
         let parsed = ulid_str.parse::<Ulid>().expect("Valid ULID string should parse");
@@ -65,7 +65,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn display_and_debug_traits(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn display_and_debug_traits(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         
         // Display trait shows the ULID string
@@ -81,7 +81,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn hash_consistency(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn hash_consistency(_ctx: TestContext) -> TestResult {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         
@@ -109,7 +109,7 @@ mod basic_functionality {
     }
     
     #[sinex_test]
-    async fn serde_json_roundtrip(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn serde_json_roundtrip(_ctx: TestContext) -> TestResult {
         let original = Ulid::new();
         
         // Serialize to JSON
@@ -133,7 +133,7 @@ mod edge_cases {
     use std::time::{SystemTime, UNIX_EPOCH};
     
     #[sinex_test]
-    async fn boundary_timestamps(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn boundary_timestamps(_ctx: TestContext) -> TestResult {
         // Test minimum timestamp (Unix epoch)
         let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
         let min_ulid = Ulid::from_datetime(min_datetime);
@@ -157,7 +157,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn extreme_future_date(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn extreme_future_date(_ctx: TestContext) -> TestResult {
         let far_future = Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap();
         
         let ulid_result = std::panic::catch_unwind(|| {
@@ -172,7 +172,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn zero_and_max_ulid_values(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn zero_and_max_ulid_values(_ctx: TestContext) -> TestResult {
         // Test zero ULID
         let zero_bytes = [0u8; 16];
         let zero_ulid = Ulid::from_bytes(zero_bytes).unwrap();
@@ -190,7 +190,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn nil_uuid_handling(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn nil_uuid_handling(_ctx: TestContext) -> TestResult {
         let nil_uuid = Uuid::nil();
         let ulid = Ulid::from_uuid(nil_uuid);
         
@@ -201,7 +201,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn string_case_insensitive_parsing(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn string_case_insensitive_parsing(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         
         let uppercase = ulid.to_string().to_uppercase();
@@ -247,7 +247,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn time_precision_within_same_millisecond(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn time_precision_within_same_millisecond(_ctx: TestContext) -> TestResult {
         let base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
         
         // Generate multiple ULIDs with the same timestamp
@@ -269,7 +269,7 @@ mod edge_cases {
     }
     
     #[sinex_test]
-    async fn lexicographic_ordering_matches_temporal(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn lexicographic_ordering_matches_temporal(_ctx: TestContext) -> TestResult {
         let mut ulids = Vec::new();
         
         for i in 0..10 {
@@ -298,7 +298,7 @@ mod correctness {
     use super::*;
     
     #[sinex_test]
-    async fn crockford_base32_compliance(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn crockford_base32_compliance(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let ulid_str = ulid.to_string();
         
@@ -315,7 +315,7 @@ mod correctness {
     }
     
     #[sinex_test]
-    async fn bit_layout_verification(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn bit_layout_verification(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let bytes = ulid.to_bytes();
         
@@ -349,7 +349,7 @@ mod correctness {
     }
     
     #[sinex_test]
-    async fn binary_representation_endianness(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn binary_representation_endianness(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let bytes = ulid.to_bytes();
         let uuid = ulid.to_uuid();
@@ -377,7 +377,7 @@ mod correctness {
     }
     
     #[sinex_test]
-    async fn monotonic_increment_behavior(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn monotonic_increment_behavior(_ctx: TestContext) -> TestResult {
         // Generate multiple ULIDs rapidly to test monotonic behavior
         let mut ulids = Vec::new();
         for _ in 0..100 {
@@ -413,7 +413,7 @@ mod performance {
     use std::sync::atomic::{AtomicU64, Ordering};
     
     #[sinex_test]
-    async fn rapid_generation_uniqueness(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn rapid_generation_uniqueness(_ctx: TestContext) -> TestResult {
         let generation_count = 10_000;
         let mut ulids = HashSet::new();
         
@@ -440,7 +440,7 @@ mod performance {
     }
     
     #[sinex_test]
-    async fn concurrent_generation_safety(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn concurrent_generation_safety(_ctx: TestContext) -> TestResult {
         let num_threads = 10;
         let ulids_per_thread = 1000;
         let all_ulids = Arc::new(std::sync::Mutex::new(HashSet::new()));
@@ -479,7 +479,7 @@ mod performance {
     
     #[sinex_test]
     #[ignore] // Run with: cargo test performance::throughput -- --ignored
-    async fn throughput_validation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn throughput_validation(_ctx: TestContext) -> TestResult {
         let iterations = 100_000;
         
         let start = Instant::now();

@@ -138,7 +138,7 @@ impl EventSource for ResourceExhaustedSource {
 }
 
 #[sinex_test]
-async fn test_event_source_crash_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel(100);
     let mut crashing_source = CrashingEventSource::new(Duration::from_millis(200));
 
@@ -184,7 +184,7 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_resource_exhaustion_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_exhaustion_handling(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel(100);
     let mut resource_source = ResourceExhaustedSource {
         fd_limit_reached: false,
@@ -229,7 +229,7 @@ async fn test_resource_exhaustion_handling(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_filesystem_source_permission_denied(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_filesystem_source_permission_denied(ctx: TestContext) -> TestResult {
     // Create a directory we can't read (simulated permission denied)
     let temp_dir = TempDir::new()?;
     let protected_dir = temp_dir.path().join("protected");
@@ -278,7 +278,7 @@ async fn test_filesystem_source_permission_denied(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_kitty_socket_unavailable(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_kitty_socket_unavailable(ctx: TestContext) -> TestResult {
     // Try to connect to a non-existent socket
     let config = json!({
         "socket_path": "/tmp/non-existent-kitty-socket-12345",
@@ -316,7 +316,7 @@ async fn test_kitty_socket_unavailable(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_clipboard_source_access_denied(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_clipboard_source_access_denied(ctx: TestContext) -> TestResult {
     // Test clipboard source when X11/Wayland access is denied
     let config = json!({
         "monitor_clipboard": true,
@@ -355,7 +355,7 @@ async fn test_clipboard_source_access_denied(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_event_source_coordination_failures(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_coordination_failures(ctx: TestContext) -> TestResult {
     // Test what happens when multiple sources try to access shared resources
     let temp_dir = TempDir::new()?;
     
@@ -433,7 +433,7 @@ async fn test_event_source_coordination_failures(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_event_source_invalid_configuration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_invalid_configuration(ctx: TestContext) -> TestResult {
     // Test various invalid configurations
     
     // Empty watch patterns
@@ -491,7 +491,7 @@ async fn test_event_source_invalid_configuration(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_source_shutdown_during_active_streaming(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_source_shutdown_during_active_streaming(ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let config = json!({
         "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],

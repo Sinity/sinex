@@ -117,7 +117,7 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
 }
 
 #[sinex_test]
-async fn test_event_validator_normal_payloads(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_validator_normal_payloads(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -161,7 +161,7 @@ async fn test_event_validator_normal_payloads(_ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_event_validator_security_payloads(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_validator_security_payloads(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -185,7 +185,7 @@ async fn test_event_validator_security_payloads(_ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_raw_event_validation_consistency(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_validation_consistency(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -215,7 +215,7 @@ async fn test_raw_event_validation_consistency(_ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_event_validator_edge_cases(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_validator_edge_cases(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     let long_source = "x".repeat(1000);
@@ -251,7 +251,7 @@ mod integration_tests {
     use super::*;
     
     #[sinex_test]
-    async fn test_event_validator_database_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
         let pool = ctx.pool();
         
         // Test loading validator from empty database

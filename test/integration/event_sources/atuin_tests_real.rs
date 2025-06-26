@@ -92,7 +92,7 @@ fn generate_test_commands() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_atuin_reader_initialization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_reader_initialization(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -119,7 +119,7 @@ async fn test_atuin_reader_initialization(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_atuin_event_capture(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_event_capture(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -169,7 +169,7 @@ async fn test_atuin_event_capture(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_atuin_watermarking(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_watermarking(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -254,7 +254,7 @@ async fn test_atuin_watermarking(ctx: TestContext) -> Result<(), Box<dyn std::er
 
 /// Test against real Atuin database if available, otherwise use minimal test database
 #[sinex_test]
-async fn test_real_atuin_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     // If we have real Atuin, try to populate some test data
@@ -322,7 +322,7 @@ async fn test_real_atuin_integration(ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test live Atuin monitoring with automatic command generation
 #[sinex_test]
-async fn test_live_atuin_monitoring(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_live_atuin_monitoring(ctx: TestContext) -> TestResult {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
     
@@ -399,7 +399,7 @@ async fn test_live_atuin_monitoring(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_atuin_production_scale(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_production_scale(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {

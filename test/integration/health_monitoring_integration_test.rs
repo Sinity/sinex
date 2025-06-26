@@ -94,7 +94,7 @@ impl SystemHealthMonitor {
 }
 
 #[sinex_test]
-async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Initialize health monitoring system
@@ -412,7 +412,7 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
 }
 
 #[sinex_test]
-async fn test_health_monitoring_performance_impact(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_health_monitoring_performance_impact(_ctx: TestContext) -> TestResult {
     // Test that health monitoring doesn't significantly impact system performance
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(10), 3);
@@ -478,7 +478,7 @@ impl Clone for SystemHealthMonitor {
 }
 
 #[sinex_test]
-async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);

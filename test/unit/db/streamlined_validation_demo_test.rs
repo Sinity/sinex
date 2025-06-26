@@ -4,7 +4,7 @@ use crate::common::prelude::*;
 use crate::common::{parameterized, scenario_builders, test_dsl};
 
 #[sinex_test]
-async fn test_validation_with_parameterized_helper(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_with_parameterized_helper(_ctx: TestContext) -> TestResult {
     // Before: 25+ lines of repetitive code
     // After: 10 lines with clear test cases
     
@@ -24,7 +24,7 @@ async fn test_validation_with_parameterized_helper(_ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_event_scenarios_with_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_scenarios_with_builder(ctx: TestContext) -> TestResult {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 50+ lines of setup, insertion, and verification
@@ -43,7 +43,7 @@ async fn test_event_scenarios_with_builder(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_worker_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_scenario(ctx: TestContext) -> TestResult {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 100+ lines of worker setup, execution, and verification
@@ -69,7 +69,7 @@ async fn test_worker_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error
 }
 
 #[sinex_test]
-async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> TestResult {
     let pool = crate::common::create_test_db_pool().await.unwrap();
     
     // Before: 150+ lines of complex test orchestration
@@ -98,7 +98,7 @@ async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> TestResult {
     // Before: 50+ lines with repetitive validator creation and assertions
     // After: Concise parameterized test
     
@@ -131,7 +131,7 @@ async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> Result
 
 // Example of how a complex concurrent test can be simplified
 #[sinex_test]
-async fn test_concurrent_operations_streamlined(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_operations_streamlined(ctx: TestContext) -> TestResult {
     use crate::common::parallelization;
     
     let pool = Arc::new(crate::common::create_test_db_pool().await.unwrap());

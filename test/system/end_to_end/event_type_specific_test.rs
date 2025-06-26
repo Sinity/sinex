@@ -229,7 +229,7 @@ async fn test_terminal_utf8_overlong_encoding(_ctx: TestContext) -> Result<(), a
 // ==================== WINDOW MANAGER EVENT ATTACKS ====================
 
 #[sinex_test]
-async fn test_window_geometry_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_window_geometry_overflow(ctx: TestContext) -> TestResult {
     
     let overflow_geometries = vec![
         (i32::MAX, i32::MAX, 100, 100, "Max position"),
@@ -275,7 +275,7 @@ async fn test_window_geometry_overflow(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_window_circular_parent_reference(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_window_circular_parent_reference(_ctx: TestContext) -> TestResult {
     // Window parent-child relationships that form cycles
     let circular_configs = vec![
         vec![("A", "B"), ("B", "C"), ("C", "A")],  // 3-node cycle
@@ -328,7 +328,7 @@ async fn test_window_circular_parent_reference(_ctx: TestContext) -> Result<(), 
 // ==================== CROSS-EVENT-TYPE INTERACTIONS ====================
 
 #[sinex_test]
-async fn test_event_cascade_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_cascade_explosion(ctx: TestContext) -> TestResult {
     
     // Simulate cascading events: filesystem -> terminal -> window
     println!("Testing cascading event explosion:");
@@ -376,7 +376,7 @@ async fn test_event_cascade_explosion(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_event_type_confusion(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_type_confusion(_ctx: TestContext) -> TestResult {
     // Send events to wrong sources
     let confused_events = vec![
         ("filesystem", json!({

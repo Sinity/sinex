@@ -21,7 +21,7 @@ use crate::common::{self, events, assertions, generators};
 /// - Event retrieval by ID works
 /// - All fields round-trip correctly
 #[sinex_test]
-async fn test_insert_and_retrieve_event(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
     // Create a test event using our utilities
     let event = events::filesystem_event(
         event_type_constants::filesystem::FILE_CREATED,
@@ -42,7 +42,7 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> Result<(), Box<dyn 
 
 /// Test batch insertion of multiple events
 #[sinex_test]
-async fn test_batch_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let events = generators::test_events(10);
     
     let mut inserted_ids = Vec::new();
@@ -65,7 +65,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std:
 
 /// Test querying events by source
 #[sinex_test]
-async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert filesystem events
     let fs_event1 = events::file_created_event("/test/file1.txt");
     let fs_event2 = events::file_modified_event("/test/file2.txt");
@@ -89,7 +89,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test invalid event insertion fails appropriately
 #[sinex_test]
-async fn test_invalid_event_insertion_fails(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_event_insertion_fails(ctx: TestContext) -> TestResult {
     let invalid_event = events::invalid_event();
     assertions::assert_event_insertion_fails(ctx.pool(), &invalid_event).await?;
     Ok(())
@@ -97,7 +97,7 @@ async fn test_invalid_event_insertion_fails(ctx: TestContext) -> Result<(), Box<
 
 /// Test ULID ordering in time-based queries
 #[sinex_test]
-async fn test_ulid_time_ordering(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
     // Insert events with a small delay to ensure different timestamps
     let event1 = events::file_created_event("/test/first.txt");
     let id1 = assertions::assert_event_inserted(ctx.pool(), &event1).await?;

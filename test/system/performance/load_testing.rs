@@ -5,7 +5,7 @@ use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
 #[sinex_test(timeout = 60)]
-async fn test_database_insertion_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
     // Test: Basic database insertion performance
     let pool = ctx.pool();
     
@@ -69,7 +69,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_concurrent_insertion_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
     // Test: Concurrent database insertion
     let pool = ctx.pool();
     

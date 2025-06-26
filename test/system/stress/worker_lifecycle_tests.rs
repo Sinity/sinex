@@ -191,7 +191,7 @@ struct RaceWorkerResult {
 }
 
 #[sinex_test]
-async fn test_race_condition_detection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     let agent_name = format!("race_condition_{}", Ulid::new());

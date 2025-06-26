@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
 
 #[sinex_test]
-async fn test_invalid_octal_permissions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_octal_permissions(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // This should FAIL but probably won't due to the bug
@@ -18,7 +18,7 @@ async fn test_invalid_octal_permissions(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_permissions_edge_cases(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_permissions_edge_cases(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Test various edge cases
@@ -52,7 +52,7 @@ async fn test_permissions_edge_cases(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_path_validation_missing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_path_validation_missing(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // The validator doesn't check for path traversal or null bytes!

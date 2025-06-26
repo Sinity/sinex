@@ -5,7 +5,7 @@ use crate::common::database::{TestPool, CleanupStrategy};
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
-async fn test_startup_sequence_robustness(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -212,7 +212,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> Result<(), Box<dy
 
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
-async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -438,7 +438,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> Result
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> TestResult {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -705,7 +705,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[sinex_test]
-async fn test_data_migration_safety(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing

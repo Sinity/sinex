@@ -3,7 +3,7 @@ use crate::common::resources;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 
 #[sinex_test(timeout = 30)]
-async fn test_config_reload_race_condition(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_race_condition(ctx: TestContext) -> TestResult {
     // Create a config manager with a test config file
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -56,7 +56,7 @@ watch_paths = ["/tmp", "/home/user{}"]
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_config_malformed_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_malformed_handling(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     

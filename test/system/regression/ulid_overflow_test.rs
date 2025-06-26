@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_monotonic_ulid_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_monotonic_ulid_overflow(ctx: TestContext) -> TestResult {
     // Create a ULID with all random bytes set to 255 (max value)
     let mut max_bytes = [255u8; 16];
     // Keep the timestamp part valid
@@ -21,7 +21,7 @@ async fn test_monotonic_ulid_overflow(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_monotonic_ulid_rapid_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_monotonic_ulid_rapid_generation(ctx: TestContext) -> TestResult {
     // Generate many ULIDs in the same millisecond
     let mut ulids = Vec::new();
     let mut _prev: Option<Ulid> = None;

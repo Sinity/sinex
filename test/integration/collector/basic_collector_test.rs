@@ -4,7 +4,7 @@ use sinex_db::validation::EventValidator;
 
 /// Test that collector can be created with valid configuration
 #[sinex_test]
-async fn test_collector_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_creation(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -26,7 +26,7 @@ async fn test_collector_creation(_ctx: TestContext) -> Result<(), Box<dyn std::e
 
 /// Test output configuration options
 #[sinex_test]
-async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_output_config_database(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -49,7 +49,7 @@ async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test collector configuration loading
 #[sinex_test]
-async fn test_collector_config_loading(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_config_loading(_ctx: TestContext) -> TestResult {
     // Test default configuration loading
     let result = CollectorConfig::load();
     
@@ -79,7 +79,7 @@ async fn test_collector_config_loading(_ctx: TestContext) -> Result<(), Box<dyn 
 
 /// Test event filtering based on enabled events
 #[sinex_test]
-async fn test_event_filtering(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_filtering(_ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -104,7 +104,7 @@ async fn test_event_filtering(_ctx: TestContext) -> Result<(), Box<dyn std::erro
 
 /// Test collector with file output
 #[sinex_test]
-async fn test_collector_file_output(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_file_output(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -128,7 +128,7 @@ async fn test_collector_file_output(_ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test collector with validator
 #[sinex_test]
-async fn test_collector_with_validator(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_with_validator(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),

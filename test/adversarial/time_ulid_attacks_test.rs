@@ -3,7 +3,7 @@ use chrono::{Utc, TimeZone};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[sinex_test]
-async fn test_ulid_extreme_future_date(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult {
     // Test that Sinex can handle extreme future dates for event timestamps
     let far_future = Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap();
     
@@ -33,7 +33,7 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult {
     let generated = Arc::new(AtomicU64::new(0));
     let ulids = Arc::new(std::sync::Mutex::new(Vec::new()));
     
@@ -74,7 +74,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_ulid_zero_timestamp(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
     // Create ULID with zero timestamp (Unix epoch)
     let epoch = Utc.timestamp_opt(0, 0).unwrap();
     let ulid = Ulid::from_datetime(epoch);
@@ -88,7 +88,7 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_ulid_negative_timestamp(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_negative_timestamp(ctx: TestContext) -> TestResult {
     // Try creating ULID before Unix epoch (should fail or handle gracefully)
     let before_epoch = Utc.timestamp_opt(-1000, 0).unwrap();
     

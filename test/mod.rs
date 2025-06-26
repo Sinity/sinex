@@ -44,7 +44,7 @@
 //!
 //! All tests use the unified `#[sinex_test]` infrastructure providing:
 //! - **Automatic Database Setup**: Shared pool with transaction isolation
-//! - **Standard Error Handling**: `Result<(), Box<dyn std::error::Error>>`
+//! - **Standard Error Handling**: `TestResult`
 //! - **Timing Utilities**: Deterministic waits instead of arbitrary sleeps
 //! - **Test Context**: `TestContext` parameter for consistent resource access
 //! - **Cleanup**: Automatic transaction rollback for perfect test isolation
@@ -55,7 +55,7 @@
 //! use crate::common::prelude::*;
 //!
 //! #[sinex_test]
-//! async fn my_test(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+//! async fn my_test(ctx: TestContext) -> TestResult {
 //!     let pool = ctx.pool();
 //!     // Test implementation
 //!     Ok(())

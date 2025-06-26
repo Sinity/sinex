@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 #[sinex_test]
-async fn test_json_payload_size_limits(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_payload_size_limits(ctx: TestContext) -> TestResult {
     // Test extremely large JSON payloads
     let mut huge_array = vec![];
     for i in 0..10000 {
@@ -25,7 +25,7 @@ async fn test_json_payload_size_limits(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_json_special_characters(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_special_characters(ctx: TestContext) -> TestResult {
     // Test JSON with special characters that might break things
     let evil_payloads = vec![
         json!({ "key": "\u{0000}" }), // Null byte
@@ -49,7 +49,7 @@ async fn test_json_special_characters(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_recursive_json_structure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_recursive_json_structure(ctx: TestContext) -> TestResult {
     // Create a deeply nested structure
     let mut nested = json!({ "value": "base" });
     for i in 0..1000 {

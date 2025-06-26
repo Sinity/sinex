@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use chrono::{Duration, Utc};
 
 #[sinex_test]
-async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Verify raw.events is a hypertable
@@ -40,7 +40,7 @@ async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_timescale_chunk_creation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Clean up any previous test data
@@ -121,7 +121,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_timescale_compression_policy(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Check if compression policy exists
@@ -186,7 +186,7 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_timescale_continuous_aggregates(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Create a continuous aggregate for event counts by source and hour
@@ -275,7 +275,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_timescale_retention_policies(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Check if retention policy exists
@@ -353,7 +353,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_timescale_data_node_stats(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timescale_data_node_stats(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Get hypertable stats

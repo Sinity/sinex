@@ -4,7 +4,7 @@ use tokio::time::{timeout, Duration};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
 #[sinex_test(timeout = 30)]
-async fn test_database_dns_timeout(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_dns_timeout(ctx: TestContext) -> TestResult {
     // Test what happens when database hostname fails to resolve
     
     let fake_hostnames = vec![
@@ -49,7 +49,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test(timeout = 15)]
-async fn test_network_partition_during_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_network_partition_during_processing(ctx: TestContext) -> TestResult {
     // Simulate network partition by creating workers that lose connectivity
     
     let pool = ctx.pool();
@@ -156,7 +156,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test(timeout = 15)]
-async fn test_split_brain_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_split_brain_scenario(ctx: TestContext) -> TestResult {
     // Simulate split-brain where two parts of system think they're primary
     
     let pool = ctx.pool();
@@ -279,7 +279,7 @@ async fn test_split_brain_scenario(ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_tcp_socket_exhaustion(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_tcp_socket_exhaustion(_ctx: TestContext) -> TestResult {
     // Test what happens when we exhaust TCP socket resources
     
     println!("Testing TCP socket exhaustion:");

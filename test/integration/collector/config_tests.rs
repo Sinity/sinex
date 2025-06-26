@@ -4,7 +4,7 @@ use sinex_collector::config::{CollectorConfig, ValidationReport};
 // Removed trivial default config tests - they just verified that defaults contain expected values
 
 #[sinex_test]
-async fn test_config_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_validation(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
     
     // Default config should be valid
@@ -15,7 +15,7 @@ async fn test_config_validation(ctx: TestContext) -> Result<(), Box<dyn std::err
 }
 
 #[sinex_test]
-async fn test_config_validation_report(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_validation_report(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
     
     let report = config.get_validation_report();
@@ -32,7 +32,7 @@ async fn test_config_validation_report(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_invalid_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_invalid_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("invalid_event".to_string());
     
@@ -46,7 +46,7 @@ async fn test_invalid_event_type_validation(ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_malformed_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_malformed_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("1invalid.event".to_string()); // Starts with number
     
@@ -57,7 +57,7 @@ async fn test_malformed_event_type_validation(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_event_config_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_config_validation(ctx: TestContext) -> TestResult {
     // Test by loading an invalid config from string
     let invalid_config_toml = r#"
 enabled_events = ["shell.command.executed_atuin"]
@@ -83,7 +83,7 @@ polling_interval_secs = -1  # Should be positive
 }
 
 #[sinex_test]
-async fn test_cross_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cross_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     
     // Clear existing configurations and enable an event that requires configuration but don't provide it
@@ -102,7 +102,7 @@ async fn test_cross_validation(ctx: TestContext) -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_valid_event_config(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_valid_event_config(ctx: TestContext) -> TestResult {
     // Test by loading a valid config from string
     let valid_config_toml = r#"
 enabled_events = ["shell.command.executed_atuin"]
@@ -120,7 +120,7 @@ polling_interval_secs = 5
 }
 
 #[sinex_test]
-async fn test_validation_report_accumulation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_report_accumulation(ctx: TestContext) -> TestResult {
     let mut report = ValidationReport::new();
     
     assert!(report.valid);
@@ -143,7 +143,7 @@ async fn test_validation_report_accumulation(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_validation_report_merge(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_report_merge(ctx: TestContext) -> TestResult {
     let mut report1 = ValidationReport::new();
     report1.add_error("Error 1".to_string());
     report1.add_warning("Warning 1".to_string());

@@ -4,7 +4,7 @@ use std::fs;
 
 /// Test filesystem monitoring against path traversal attacks
 #[sinex_test]
-async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let watch_root = temp_dir.path();
 
@@ -93,7 +93,7 @@ async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> Result<
 
 /// Test SQL injection protection in dynamic query construction
 #[sinex_test(timeout = 20)]
-async fn test_sql_injection_protection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Create test agent
@@ -285,7 +285,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> Result<(), Box<dyn s
 
 /// Test resource exhaustion attack protection
 #[sinex_test(timeout = 30)]
-async fn test_resource_exhaustion_protection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     let agent_name = format!("exhaustion_test_{}", Ulid::new());
@@ -481,7 +481,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> Result<(), Box
 
 /// Test malicious configuration injection
 #[sinex_test]
-async fn test_configuration_injection_protection(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_injection_protection(_ctx: TestContext) -> TestResult {
     use std::fs;
 
     let temp_dir = resources::temp_dir()?;
@@ -599,7 +599,7 @@ async fn test_configuration_injection_protection(_ctx: TestContext) -> Result<()
 
 /// Test event payload sanitization
 #[sinex_test(timeout = 15)]
-async fn test_malicious_payload_sanitization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test various malicious payload patterns

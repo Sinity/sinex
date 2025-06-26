@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[sinex_test]
-async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing microsecond-level worker claim races:");
@@ -113,7 +113,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_dead_worker_holding_locks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_dead_worker_holding_locks(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing zombie worker scenario:");
@@ -251,7 +251,7 @@ async fn test_dead_worker_holding_locks(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_mass_worker_wakeup_thundering_herd(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_mass_worker_wakeup_thundering_herd(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     println!("Testing thundering herd with 100 workers:");

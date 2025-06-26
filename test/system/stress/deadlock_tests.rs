@@ -4,7 +4,7 @@ use crate::common::prelude::*;
 use super::common::*;
 
 #[sinex_test]
-async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());

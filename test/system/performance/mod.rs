@@ -60,7 +60,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 }
 
 #[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult {
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
@@ -153,7 +153,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_query_latency(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_latency(ctx: TestContext) -> TestResult {
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(

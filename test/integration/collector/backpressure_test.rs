@@ -140,7 +140,7 @@ impl SlowEventProcessor {
 }
 
 #[sinex_test]
-async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestContext) -> TestResult {
     // Create a bounded channel with the same capacity as UnifiedCollector
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
     
@@ -222,7 +222,7 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestCo
 }
 
 #[sinex_test]
-async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> TestResult {
     // Test that the channel properly handles saturation without losing events
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100); // Smaller channel for easier testing
     
@@ -279,7 +279,7 @@ async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> Resul
 }
 
 #[sinex_test]
-async fn test_multiple_sources_backpressure(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_sources_backpressure(_ctx: TestContext) -> TestResult {
     // Test backpressure with multiple event sources feeding into the same channel
     let (tx, rx) = mpsc::channel::<RawEvent>(1000);
     
@@ -344,7 +344,7 @@ async fn test_multiple_sources_backpressure(_ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_channel_close_during_backpressure(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_channel_close_during_backpressure(_ctx: TestContext) -> TestResult {
     // Test what happens when the channel is closed while producer is backpressured
     let (tx, rx) = mpsc::channel::<RawEvent>(10);
     
@@ -382,7 +382,7 @@ async fn test_channel_close_during_backpressure(_ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_backpressure_recovery(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_backpressure_recovery(_ctx: TestContext) -> TestResult {
     // Test that the system recovers properly when backpressure is relieved
     let (tx, mut rx) = mpsc::channel::<RawEvent>(50);
     
@@ -440,7 +440,7 @@ async fn test_backpressure_recovery(_ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_memory_pressure_during_backpressure(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_memory_pressure_during_backpressure(_ctx: TestContext) -> TestResult {
     // Test that memory usage stays reasonable even during extended backpressure
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     

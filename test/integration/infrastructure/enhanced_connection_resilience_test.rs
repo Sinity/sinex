@@ -329,7 +329,7 @@ impl ResilientDbWorker {
 }
 
 #[sinex_test]
-async fn test_connection_pool_under_sustained_pressure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_under_sustained_pressure(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     run_migrations(&pool).await?;
 
@@ -408,7 +408,7 @@ async fn test_connection_pool_under_sustained_pressure(ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> TestResult {
     let metrics = Arc::new(ConnectionMetrics::new());
     let recovery_cycles = 3;
     
@@ -477,7 +477,7 @@ async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn test_connection_pool_deadlock_detection_and_resolution(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_deadlock_detection_and_resolution(_ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 3;
     
     let pool = PgPoolOptions::new()
@@ -608,7 +608,7 @@ async fn test_connection_pool_deadlock_detection_and_resolution(_ctx: TestContex
 }
 
 #[sinex_test]
-async fn test_connection_pool_cascade_failure_recovery(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_cascade_failure_recovery(_ctx: TestContext) -> TestResult {
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Simulate cascade failure: one failure triggers more failures
@@ -694,7 +694,7 @@ async fn test_connection_pool_cascade_failure_recovery(_ctx: TestContext) -> Res
 }
 
 #[sinex_test]
-async fn test_connection_pool_memory_pressure_resilience(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_memory_pressure_resilience(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     let metrics = Arc::new(ConnectionMetrics::new());
     

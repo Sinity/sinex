@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use futures::future::join_all;
 #[sinex_test]
-async fn test_connection_pool_max_connections(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
     // Create a pool with a small max size
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -58,7 +58,7 @@ async fn test_connection_pool_max_connections(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_connection_pool_timeout_behavior(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_timeout_behavior(ctx: TestContext) -> TestResult {
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_millis(500))
@@ -82,7 +82,7 @@ async fn test_connection_pool_timeout_behavior(ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_connection_pool_recovery_after_database_restart(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_recovery_after_database_restart(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Verify initial connection works
@@ -108,7 +108,7 @@ async fn test_connection_pool_recovery_after_database_restart(ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     
     // Spawn many concurrent tasks
@@ -140,7 +140,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_connection_pool_max_lifetime(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
     // Create pool with short max lifetime
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -168,7 +168,7 @@ async fn test_connection_pool_max_lifetime(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_connection_pool_idle_timeout(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_idle_timeout(ctx: TestContext) -> TestResult {
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
@@ -199,7 +199,7 @@ async fn test_connection_pool_idle_timeout(ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_connection_pool_transaction_isolation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_transaction_isolation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     
     // Start a transaction in one task
@@ -244,7 +244,7 @@ async fn test_connection_pool_transaction_isolation(ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_connection_pool_error_recovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_error_recovery(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Cause an error on a connection
@@ -272,7 +272,7 @@ async fn test_connection_pool_error_recovery(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_connection_pool_statement_cache(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     
     // Execute the same prepared statement many times

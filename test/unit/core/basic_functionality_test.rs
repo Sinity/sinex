@@ -16,7 +16,7 @@ use sinex_core::{RawEventBuilder, sources, event_type_constants};
 /// - Auto-generated fields (host, ID) are populated
 /// - ULID format is correct (26 characters)
 #[sinex_test]
-async fn test_raw_event_builder_basic(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::FILESYSTEM,
         event_type_constants::filesystem::FILE_CREATED,
@@ -39,7 +39,7 @@ async fn test_raw_event_builder_basic(_ctx: TestContext) -> Result<(), Box<dyn s
 /// - Different sources and types work correctly
 /// - ULIDs maintain time ordering when created in sequence
 #[sinex_test]
-async fn test_multiple_event_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
         RawEventBuilder::new(
             sources::FILESYSTEM,

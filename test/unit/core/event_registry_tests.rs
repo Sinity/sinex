@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use sinex_core::create_registry;
 
 #[sinex_test]
-async fn test_event_registry_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_creation(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Verify registry is not empty
@@ -16,7 +16,7 @@ async fn test_event_registry_creation(_ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_event_registry_get_event_type(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_get_event_type(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test getting source for event type
@@ -31,7 +31,7 @@ async fn test_event_registry_get_event_type(_ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_event_registry_get_source_events(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_get_source_events(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test filesystem source
@@ -53,7 +53,7 @@ async fn test_event_registry_get_source_events(_ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_event_registry_all_sources(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_all_sources(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Get all unique sources from the event_to_source mapping
@@ -75,7 +75,7 @@ async fn test_event_registry_all_sources(_ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_event_registry_event_type_properties(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_event_type_properties(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test file.created event type
@@ -95,7 +95,7 @@ async fn test_event_registry_event_type_properties(_ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_event_registry_validate_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_validate_payload(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test that schemas are available for validation
@@ -111,7 +111,7 @@ async fn test_event_registry_validate_payload(_ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_event_registry_immutability(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_immutability(_ctx: TestContext) -> TestResult {
     let registry1 = create_registry();
     let registry2 = create_registry();
     
@@ -130,7 +130,7 @@ async fn test_event_registry_immutability(_ctx: TestContext) -> Result<(), Box<d
 }
 
 #[sinex_test]
-async fn test_event_registry_schema_lookup(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_schema_lookup(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test schema lookup by event type name
@@ -143,7 +143,7 @@ async fn test_event_registry_schema_lookup(_ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_event_registry_event_source_mapping(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_event_source_mapping(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test that events are properly mapped to sources
@@ -165,7 +165,7 @@ async fn test_event_registry_event_source_mapping(_ctx: TestContext) -> Result<(
 }
 
 #[sinex_test]
-async fn test_event_registry_concurrent_access(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_concurrent_access(_ctx: TestContext) -> TestResult {
     use std::thread;
     
     let registry = Arc::new(create_registry());
@@ -194,7 +194,7 @@ async fn test_event_registry_concurrent_access(_ctx: TestContext) -> Result<(), 
 
 // Integration test with actual event types
 #[sinex_test]
-async fn test_event_registry_with_real_events(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_registry_with_real_events(_ctx: TestContext) -> TestResult {
     let registry = create_registry();
     
     // Test with actual event types from sinex-events

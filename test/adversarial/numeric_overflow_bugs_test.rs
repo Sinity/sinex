@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use chrono::{DateTime, Utc, Datelike};
 
 #[sinex_test]
-async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> TestResult {
     // BUG 1: In crate/sinex-ulid/src/lib.rs line 66
     // timestamp_ms() returns u64, but we cast to i64 without checking
     // This can overflow for timestamps far in the future
@@ -42,7 +42,7 @@ async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> Resul
 }
 
 #[sinex_test]
-async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> TestResult {
     // Test: Demonstrate that standard ULIDs can violate ordering under high frequency
     // This documents why MonotonicUlidGenerator might be needed for high-throughput scenarios
     
@@ -82,7 +82,7 @@ async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn test_clipboard_copy_count_overflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_clipboard_copy_count_overflow(_ctx: TestContext) -> TestResult {
     // BUG 3: In crate/sinex-events/src/clipboard.rs line 547
     // copy_count is u32 and increments without bounds checking
     
@@ -101,7 +101,7 @@ async fn test_clipboard_copy_count_overflow(_ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_retry_attempts_overflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_retry_attempts_overflow(_ctx: TestContext) -> TestResult {
     // BUG 4: In crate/sinex-db/src/queries.rs lines 270, 500, 905
     // attempts = attempts + 1 without checking for overflow
     
@@ -121,7 +121,7 @@ async fn test_retry_attempts_overflow(_ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_timestamp_arithmetic_underflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timestamp_arithmetic_underflow(_ctx: TestContext) -> TestResult {
     // BUG 5: Timestamp arithmetic that can underflow
     // When calculating durations or time differences
     
@@ -143,7 +143,7 @@ async fn test_timestamp_arithmetic_underflow(_ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_file_size_cast_truncation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_file_size_cast_truncation(_ctx: TestContext) -> TestResult {
     // BUG 6: In crate/sinex-events/src/clipboard.rs line 604
     // size_bytes: content.len() as i64
     // This truncates on 32-bit systems where usize < i64
@@ -166,7 +166,7 @@ async fn test_file_size_cast_truncation(_ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_batch_size_limits(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_batch_size_limits(_ctx: TestContext) -> TestResult {
     // BUG 7: In crate/sinex-worker/src/worker.rs line 70
     // batch_size() as i64 - what if batch_size returns negative or huge value?
     
@@ -197,7 +197,7 @@ async fn test_batch_size_limits(_ctx: TestContext) -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn test_process_id_truncation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_process_id_truncation(_ctx: TestContext) -> TestResult {
     // BUG 8: In crate/sinex-ulid/src/monotonic.rs line 24
     // std::process::id() as u16 - truncates process ID
     
@@ -217,7 +217,7 @@ async fn test_process_id_truncation(_ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_duration_to_seconds_precision_loss(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_duration_to_seconds_precision_loss(_ctx: TestContext) -> TestResult {
     // BUG 9: Duration conversions losing precision
     // Found in multiple places converting Duration to seconds
     
@@ -235,7 +235,7 @@ async fn test_duration_to_seconds_precision_loss(_ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_histogram_counter_overflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_histogram_counter_overflow(_ctx: TestContext) -> TestResult {
     // BUG 10: Metric counters that increment forever without reset
     // These can overflow after long running time
     
@@ -255,7 +255,7 @@ async fn test_histogram_counter_overflow(_ctx: TestContext) -> Result<(), Box<dy
 
 // Additional test for SQL injection via format strings
 #[sinex_test]
-async fn test_dynamic_query_construction(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_dynamic_query_construction(_ctx: TestContext) -> TestResult {
     // While the codebase mostly uses prepared statements correctly,
     // any dynamic query construction is risky
     
@@ -277,7 +277,7 @@ mod panic_tests {
     #[sinex_test]
     #[should_panic(expected = "attempt to add with overflow")]
     #[cfg(debug_assertions)]
-    async fn test_debug_panic_on_overflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_debug_panic_on_overflow(_ctx: TestContext) -> TestResult {
         // In debug mode, arithmetic overflow panics
         let max: u32 = u32::MAX;
         let _overflow = max.checked_add(1).expect("overflow"); // Panics in debug
@@ -285,7 +285,7 @@ mod panic_tests {
     }
     
     #[sinex_test]
-    async fn test_release_silent_overflow(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_release_silent_overflow(_ctx: TestContext) -> TestResult {
         // In release mode, overflow wraps silently
         let max: u32 = u32::MAX;
         let wrapped = max.wrapping_add(1);

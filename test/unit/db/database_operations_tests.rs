@@ -3,7 +3,7 @@ use crate::common::prelude::*;
 // Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 
 #[sinex_test]
-async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = RawEventBuilder::new(
         "filesystem",
@@ -44,7 +44,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_query_events_by_type(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     // Insert events of different types
     let create_event = RawEventBuilder::new(
         "filesystem",
@@ -81,7 +81,7 @@ async fn test_query_events_by_type(ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_work_queue_operations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
     let _agent = queries::upsert_agent_manifest(
         ctx.pool(),
@@ -137,7 +137,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
     let _agent = queries::upsert_agent_manifest(
         ctx.pool(),
@@ -198,7 +198,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_event_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_validation(ctx: TestContext) -> TestResult {
     // Test with valid event
     let valid_event = RawEventBuilder::new(
         "filesystem",
@@ -233,7 +233,7 @@ async fn test_event_validation(ctx: TestContext) -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     use tokio::task::JoinSet;
     
     let _pool = Arc::new(ctx.pool().clone());
@@ -275,7 +275,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
     
     // Insert events with small delays to ensure ULID ordering

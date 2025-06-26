@@ -54,7 +54,7 @@ impl EventProcessor for TestEventProcessor {
 }
 
 #[sinex_test]
-async fn test_event_processor_basic_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
@@ -82,7 +82,7 @@ async fn test_event_processor_basic_processing(ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_event_processor_failure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_processor_failure_handling(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         let processor = TestEventProcessor::new("test_agent".to_string());
         
@@ -107,7 +107,7 @@ async fn test_event_processor_failure_handling(ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_backoff_calculation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_backoff_calculation(_ctx: TestContext) -> TestResult {
     // Test backoff calculation function
     let backoff_0 = calculate_backoff_secs(0);
     let backoff_1 = calculate_backoff_secs(1);
@@ -128,7 +128,7 @@ async fn test_backoff_calculation(_ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_worker_metrics_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_worker_metrics_creation(_ctx: TestContext) -> TestResult {
     let metrics = WorkerMetrics::new("test_agent");
     
     // Test that metrics can be incremented
@@ -148,7 +148,7 @@ async fn test_worker_metrics_creation(_ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_multiple_processors_different_agents(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_processors_different_agents(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
@@ -189,7 +189,7 @@ async fn test_multiple_processors_different_agents(ctx: TestContext) -> Result<(
 }
 
 #[sinex_test]
-async fn test_processor_configuration(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_processor_configuration(_ctx: TestContext) -> TestResult {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
     pretty_assertions::assert_eq!(processor.agent_name(), "test_agent");
@@ -228,7 +228,7 @@ impl EventProcessor for SlowProcessor {
 }
 
 #[sinex_test]
-async fn test_processor_custom_configuration(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_processor_custom_configuration(_ctx: TestContext) -> TestResult {
     let processor = SlowProcessor {
         agent_name: "slow_agent".to_string(),
     };

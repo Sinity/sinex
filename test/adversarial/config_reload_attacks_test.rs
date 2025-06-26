@@ -6,7 +6,7 @@ use crate::common::resources;
 // Removed unused imports
 
 #[sinex_test]
-async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     let sensitive_file = temp_dir.path().join("secrets.txt");
@@ -59,7 +59,7 @@ watch_paths = ["/tmp"]
 }
 
 #[sinex_test]
-async fn test_config_reload_during_partial_write(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_reload_during_partial_write(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
@@ -121,7 +121,7 @@ enabled_events = ["file.cre
 }
 
 #[sinex_test]
-async fn test_config_directory_swap_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_directory_swap_attack(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
     let evil_dir = temp_dir.path().join("evil");
@@ -196,7 +196,7 @@ exfiltrate_to = "https://evil.com/steal"
 }
 
 #[sinex_test]
-async fn test_config_race_condition_memory_leak(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_race_condition_memory_leak(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
@@ -290,7 +290,7 @@ timestamp = "{}"
 }
 
 #[sinex_test]
-async fn test_config_hot_reload_during_event_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_config_hot_reload_during_event_processing(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     

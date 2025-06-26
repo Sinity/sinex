@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 /// Test database connection timeout handling
 #[sinex_test]
-async fn test_database_connection_timeout(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
     // Simulate various network timeout scenarios
     
     #[derive(Debug, Clone)]
@@ -135,7 +135,7 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> Result<(), Box<d
 
 /// Test connection pool behavior under timeout conditions
 #[sinex_test]
-async fn test_connection_pool_timeout_resilience(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_timeout_resilience(_ctx: TestContext) -> TestResult {
     // Simulate connection pool with limited connections
     const POOL_SIZE: usize = 5;
     const NUM_WORKERS: usize = 10;
@@ -218,7 +218,7 @@ async fn test_connection_pool_timeout_resilience(_ctx: TestContext) -> Result<()
 
 /// Test retry logic with exponential backoff
 #[sinex_test]
-async fn test_retry_with_backoff(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_retry_with_backoff(_ctx: TestContext) -> TestResult {
     // Track retry behavior
     let _attempt_count = Arc::new(AtomicU64::new(0));
     let success_after_retry = Arc::new(AtomicU64::new(0));

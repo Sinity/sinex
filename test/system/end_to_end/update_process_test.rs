@@ -7,7 +7,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_database_migration_process(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_migration_process(ctx: TestContext) -> TestResult {
     // Test: Basic database update/migration process
     
     let pool = ctx.pool();
@@ -29,7 +29,7 @@ async fn test_database_migration_process(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_configuration_reload_simulation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_configuration_reload_simulation(_ctx: TestContext) -> TestResult {
     // Test: Simulate configuration reload by re-reading environment
     
     // Simulate configuration change by modifying environment

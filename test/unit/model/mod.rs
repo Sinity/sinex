@@ -3,7 +3,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_raw_event_validation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_validation(_ctx: TestContext) -> TestResult {
     // Test RawEvent can be created with required fields
     let event_id = Ulid::new();
     let payload = json!({"test": "data"});
@@ -19,7 +19,7 @@ async fn test_raw_event_validation(_ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_queue_status_transitions(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     // Test that queue status enum has all expected variants
     use sinex_db::models::QueueStatus;
     
@@ -42,7 +42,7 @@ async fn test_queue_status_transitions(_ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_ulid_ordering_property(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
     // Test that ULID generation produces ordered values
     let ulid1 = Ulid::new();
     std::thread::sleep(std::time::Duration::from_millis(1)); // Ensure time progression
@@ -57,7 +57,7 @@ async fn test_ulid_ordering_property(_ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_json_payload_constraints(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_payload_constraints(_ctx: TestContext) -> TestResult {
     // Test various JSON payload structures that should be valid
     let valid_payloads = vec![
         json!({"event_type": "filesystem", "path": "/tmp/test"}),

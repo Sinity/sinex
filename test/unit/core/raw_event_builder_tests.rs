@@ -3,7 +3,7 @@ use sinex_core::{RawEventBuilder, sources, event_type_constants};
 use chrono::{DateTime, Utc};
 
 #[sinex_test]
-async fn test_raw_event_builder_basic_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_basic_creation(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::FILESYSTEM,
         event_type_constants::filesystem::FILE_CREATED,
@@ -31,7 +31,7 @@ async fn test_raw_event_builder_basic_creation(_ctx: TestContext) -> Result<(), 
 // Removed trivial setter tests - they just verified that .with_X(value) sets the X field
 
 #[sinex_test]
-async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult {
     let complex_payload = json!({
         "nested": {
             "array": [1, 2, 3],
@@ -59,7 +59,7 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::SINEX,
         "system.startup",
@@ -73,7 +73,7 @@ async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult {
     let _builder = RawEventBuilder::new(
         sources::CLIPBOARD,
         "content.copied",
@@ -96,7 +96,7 @@ async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
     
     // Create events in rapid succession
@@ -121,7 +121,7 @@ async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_raw_event_builder_all_fields_set(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_raw_event_builder_all_fields_set(_ctx: TestContext) -> TestResult {
     let orig_time = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z").unwrap().with_timezone(&Utc);
     let schema_id = sinex_ulid::Ulid::new();
     

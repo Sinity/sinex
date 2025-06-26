@@ -4,7 +4,7 @@ use std::process::Command;
 use std::fs;
 
 #[sinex_test]
-async fn test_event_processing_during_dst_change(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_processing_during_dst_change(_ctx: TestContext) -> TestResult {
     // Simulate DST transition (spring forward: 2:00 AM becomes 3:00 AM)
     let utc_base = Utc.with_ymd_and_hms(2024, 3, 10, 7, 0, 0).unwrap(); // 2 AM EST
     
@@ -55,7 +55,7 @@ async fn test_event_processing_during_dst_change(_ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_ulid_generation_with_system_clock_regression(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_generation_with_system_clock_regression(_ctx: TestContext) -> TestResult {
     // This test simulates what happens when system clock goes backwards
     
     // Generate ULID at "current" time
@@ -92,7 +92,7 @@ async fn test_ulid_generation_with_system_clock_regression(_ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn test_ulid_uniqueness_across_processes(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_uniqueness_across_processes(_ctx: TestContext) -> TestResult {
     // This test forks multiple processes to test ULID generation under
     // true multi-process conditions (not just threads)
     
@@ -208,7 +208,7 @@ async fn test_ulid_uniqueness_across_processes(_ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_timezone_confusion_attacks(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_timezone_confusion_attacks(_ctx: TestContext) -> TestResult {
     // Test different timezone interpretations of the same time
     let ambiguous_time_str = "2024-03-10 02:30:00"; // During DST transition
     
@@ -273,7 +273,7 @@ async fn test_timezone_confusion_attacks(_ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_leap_second_handling(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_leap_second_handling(_ctx: TestContext) -> TestResult {
     // Test ULID generation around leap seconds
     // Note: This is theoretical since leap seconds are rare and unpredictable
     
@@ -306,7 +306,7 @@ async fn test_leap_second_handling(_ctx: TestContext) -> Result<(), Box<dyn std:
 }
 
 #[sinex_test]
-async fn test_ulid_with_extreme_clock_skew(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_with_extreme_clock_skew(_ctx: TestContext) -> TestResult {
     // Test what happens with extreme clock skew scenarios
     let base_time = Utc::now();
     

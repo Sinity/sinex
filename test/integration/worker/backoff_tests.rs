@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use sinex_worker::calculate_backoff_secs;
 
 #[sinex_test]
-async fn test_calculate_backoff_basic(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_calculate_backoff_basic(ctx: TestContext) -> TestResult {
     // Test that backoff increases exponentially
     let backoff_0 = calculate_backoff_secs(0);
     let backoff_1 = calculate_backoff_secs(1);
@@ -16,7 +16,7 @@ async fn test_calculate_backoff_basic(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_calculate_backoff_min_max(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_calculate_backoff_min_max(ctx: TestContext) -> TestResult {
     // Test minimum bound
     let backoff_negative = calculate_backoff_secs(-10);
     assert!(backoff_negative >= 1.0);
@@ -28,7 +28,7 @@ async fn test_calculate_backoff_min_max(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_calculate_backoff_jitter(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_calculate_backoff_jitter(ctx: TestContext) -> TestResult {
     // Test that jitter produces different values
     let mut values = HashSet::new();
     for _ in 0..10 {

@@ -5,7 +5,7 @@ use crate::common::prelude::*;
 use chrono::{Utc, Duration};
 
 #[sinex_test]
-async fn test_queue_depth_metric_calculation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     // Test that queue_depth metric correctly counts pending items per agent
     
@@ -61,7 +61,7 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     // Test that dequeue_latency_ms measures time from creation to processing
     
@@ -101,7 +101,7 @@ async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_per_agent_lag_metric_calculation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_per_agent_lag_metric_calculation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     // Test that per_agent_lag measures how far behind each agent is
     
@@ -146,7 +146,7 @@ async fn test_per_agent_lag_metric_calculation(ctx: TestContext) -> Result<(), B
 }
 
 #[sinex_test]
-async fn test_prometheus_metrics_exposition(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_prometheus_metrics_exposition(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     // Test that metrics are properly exposed in Prometheus format
     
@@ -190,7 +190,7 @@ async fn test_prometheus_metrics_exposition(ctx: TestContext) -> Result<(), Box<
 }
 
 #[sinex_test]
-async fn test_metrics_update_frequency(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_metrics_update_frequency(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     // Test that metrics are updated efficiently without excessive database queries
     
@@ -332,7 +332,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn create_test_agent(pool: &PgPool, agent_name: &str) -> TestResult {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 

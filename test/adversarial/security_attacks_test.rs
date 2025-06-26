@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
 
 #[sinex_test]
-async fn test_unicode_path_normalization_bypass(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_unicode_path_normalization_bypass(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Same path in different Unicode normalizations
@@ -30,7 +30,7 @@ async fn test_unicode_path_normalization_bypass(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_null_byte_injection_paths(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_null_byte_injection_paths(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Paths with null bytes - these should be rejected but might not be
@@ -57,7 +57,7 @@ async fn test_null_byte_injection_paths(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_json_hash_collision_dos(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_hash_collision_dos(ctx: TestContext) -> TestResult {
     // Create JSON object with keys that hash to same bucket
     // This is implementation-specific but common pattern
     let mut collision_object = HashMap::new();
@@ -87,7 +87,7 @@ async fn test_json_hash_collision_dos(ctx: TestContext) -> Result<(), Box<dyn st
 }
 
 #[sinex_test]
-async fn test_json_exponential_entity_expansion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_exponential_entity_expansion(ctx: TestContext) -> TestResult {
     // Billion laughs attack variant for JSON
     let mut expanding_json = json!({
         "a1": vec!["x"; 10],
@@ -121,7 +121,7 @@ async fn test_json_exponential_entity_expansion(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_path_case_confusion_attacks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_path_case_confusion_attacks(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Test case variations that might bypass filters
@@ -146,7 +146,7 @@ async fn test_path_case_confusion_attacks(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_json_parser_differential(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_parser_differential(ctx: TestContext) -> TestResult {
     // Different JSON parsers handle edge cases differently
     let tricky_json_strings = vec![
         r#"{"key": 1.0000000000000000000000000000000001}"#,  // Precision loss
@@ -168,7 +168,7 @@ async fn test_json_parser_differential(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_hash_collision_dos_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_hash_collision_dos_attack(ctx: TestContext) -> TestResult {
     // Create JSON object with keys that hash to same bucket using djb2 collision strings
     let mut collision_object = HashMap::new();
     
@@ -217,7 +217,7 @@ async fn test_hash_collision_dos_attack(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_json_nested_array_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_nested_array_explosion(ctx: TestContext) -> TestResult {
     // Test exponentially expanding nested arrays that can cause memory exhaustion
     let mut nested_array = json!([1, 2, 3]);
     
@@ -257,7 +257,7 @@ async fn test_json_nested_array_explosion(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_filesystem_race_condition_attacks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_filesystem_race_condition_attacks(ctx: TestContext) -> TestResult {
     // Simulated TOCTOU (Time-of-check to time-of-use) scenarios
     let suspicious_patterns = vec![
         // Quick file replacement
@@ -276,7 +276,7 @@ async fn test_filesystem_race_condition_attacks(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_command_injection_via_json(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_command_injection_via_json(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Commands that might be interpreted if not properly escaped

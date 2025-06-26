@@ -3,7 +3,7 @@ use sinex_core::{RawEventBuilder, sources, event_type_constants};
 
 /// Test that validation prevents malformed events from being inserted
 #[sinex_test]
-async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
     // Test 1: Valid event should work
     let valid_event = RawEventBuilder::new(
         sources::FILESYSTEM,
@@ -38,7 +38,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(
 
 /// Test event type validation
 #[sinex_test]
-async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_type_validation(ctx: TestContext) -> TestResult {
     // Valid event type should work
     let valid_event = RawEventBuilder::new(
         sources::FILESYSTEM,
@@ -71,7 +71,7 @@ async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std:
 
 /// Test payload validation
 #[sinex_test]
-async fn test_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_payload_validation(ctx: TestContext) -> TestResult {
     // Valid JSON payload should work
     let valid_event = RawEventBuilder::new(
         sources::TERMINAL_KITTY,

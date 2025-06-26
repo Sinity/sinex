@@ -70,7 +70,7 @@ impl EventSource for TestCoordinatedSource {
 }
 
 #[sinex_test]
-async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources with different configurations
@@ -133,7 +133,7 @@ async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_source_failure_isolation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_source_failure_isolation(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources, one will fail
@@ -195,7 +195,7 @@ async fn test_source_failure_isolation(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_source_startup_synchronization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_source_startup_synchronization(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let barrier = Arc::new(Barrier::new(3));
     
@@ -269,7 +269,7 @@ async fn test_source_startup_synchronization(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_registry_based_source_discovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_registry_based_source_discovery(ctx: TestContext) -> TestResult {
     // Test that sources can be discovered and started from registry
     let registry = create_registry();
     
@@ -296,7 +296,7 @@ async fn test_registry_based_source_discovery(ctx: TestContext) -> Result<(), Bo
 }
 
 #[sinex_test]
-async fn test_dynamic_source_addition(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_dynamic_source_addition(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let mut handles = Vec::new();
     

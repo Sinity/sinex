@@ -6,7 +6,7 @@ use crate::common::timing_optimization::EventCounter;
 
 /// Test connection pool exhaustion scenarios
 #[sinex_test]
-async fn test_connection_pool_exhaustion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
     // Simulate a connection pool with limited resources
     const MAX_CONNECTIONS: usize = 10;
     
@@ -169,7 +169,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> Result<(), Box<dyn
 
 /// Test connection leak detection
 #[sinex_test]
-async fn test_connection_leak_detection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 5;
     
     #[derive(Debug)]
@@ -323,7 +323,7 @@ async fn test_connection_leak_detection(ctx: TestContext) -> Result<(), Box<dyn 
 
 /// Test deadlock prevention in connection pool
 #[sinex_test]
-async fn test_connection_deadlock_prevention(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_connection_deadlock_prevention(ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 2; // Small pool to trigger contention
     
     let pool = Arc::new(Semaphore::new(POOL_SIZE));

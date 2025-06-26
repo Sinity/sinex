@@ -15,7 +15,7 @@
 //! use crate::common::prelude::*;
 //!
 //! #[sinex_test]
-//! async fn test_example(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+//! async fn test_example(ctx: TestContext) -> TestResult {
 //!     let event = RawEventBuilder::new("source", "type", json!({})).build();
 //!     insert_event(ctx.pool(), &event).await?;
 //!     ctx.wait_for_event_count(1).await?;

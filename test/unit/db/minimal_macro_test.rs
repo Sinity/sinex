@@ -3,7 +3,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_macro_works(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_macro_works(ctx: TestContext) -> TestResult {
     println!("✅ The procedural macro works!");
     println!("✅ TestContext was injected: {:?}", ctx.test_name());
     println!("✅ We have a database pool!");

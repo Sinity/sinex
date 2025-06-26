@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_agent_heartbeat_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_agent_heartbeat_generation(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(
@@ -82,7 +82,7 @@ async fn test_agent_heartbeat_generation(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_stale_heartbeat_detection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_stale_heartbeat_detection(ctx: TestContext) -> TestResult {
     
     // Create agents with different heartbeat times
     let agents = vec![
@@ -153,7 +153,7 @@ async fn test_stale_heartbeat_detection(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_heartbeat_metrics_tracking(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_metrics_tracking(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(
@@ -243,7 +243,7 @@ async fn test_heartbeat_metrics_tracking(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_heartbeat_based_status_updates(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_based_status_updates(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(
@@ -314,7 +314,7 @@ async fn test_heartbeat_based_status_updates(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_heartbeat_frequency_monitoring(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_heartbeat_frequency_monitoring(ctx: TestContext) -> TestResult {
     
     // Create agent
     sqlx::query(

@@ -143,7 +143,7 @@ impl TestAtuinEntryBuilder {
 }
 
 #[sinex_test]
-async fn test_atuin_reader_initialization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_reader_initialization(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -174,7 +174,7 @@ async fn test_atuin_reader_initialization(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_atuin_event_capture(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_event_capture(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -253,7 +253,7 @@ async fn test_atuin_event_capture(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_atuin_watermarking(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_watermarking(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -384,7 +384,7 @@ async fn test_atuin_watermarking(ctx: TestContext) -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn test_atuin_watermarking_resume_behavior(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_watermarking_resume_behavior(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -531,7 +531,7 @@ async fn test_atuin_watermarking_resume_behavior(ctx: TestContext) -> Result<(),
 }
 
 #[sinex_test]
-async fn test_atuin_timestamp_conversion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_timestamp_conversion(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -588,7 +588,7 @@ async fn test_atuin_timestamp_conversion(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_atuin_error_conditions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_error_conditions(ctx: TestContext) -> TestResult {
     // Test with non-existent database file
     let temp_dir = resources::temp_dir()?;
     let bad_config = AtuinConfig {
@@ -622,7 +622,7 @@ async fn test_atuin_error_conditions(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_atuin_builder_patterns(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_builder_patterns(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -700,7 +700,7 @@ async fn test_atuin_builder_patterns(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_atuin_edge_cases(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_edge_cases(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -767,7 +767,7 @@ async fn test_atuin_edge_cases(ctx: TestContext) -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_atuin_global_history(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_global_history(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -849,7 +849,7 @@ async fn test_atuin_global_history(ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_atuin_performance_with_many_entries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_atuin_performance_with_many_entries(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let db_path = temp_dir.path().join("history.db");
     
@@ -925,7 +925,7 @@ async fn test_atuin_performance_with_many_entries(ctx: TestContext) -> Result<()
 /// This test is ignored by default since it requires a real Atuin installation
 #[sinex_test]
 #[ignore = "requires real Atuin database"]
-async fn test_real_atuin_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
     // Check for real Atuin database in standard locations
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
@@ -1002,7 +1002,7 @@ async fn test_real_atuin_integration(ctx: TestContext) -> Result<(), Box<dyn std
 /// while Atuin is actively being used (without interfering)
 #[sinex_test]
 #[ignore = "requires live Atuin usage"]
-async fn test_live_atuin_monitoring(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_live_atuin_monitoring(ctx: TestContext) -> TestResult {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
     
