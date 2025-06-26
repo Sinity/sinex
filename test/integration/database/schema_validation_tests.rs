@@ -3,7 +3,7 @@ use sinex_core::{RawEventBuilder, sources, event_type_constants};
 
 /// Test that validation prevents malformed events from being inserted
 #[sinex_test]
-async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
     // Test 1: Valid event should work
     let valid_event = RawEventBuilder::new(
         sources::FILESYSTEM,
@@ -16,7 +16,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(
     ).build();
 
     // This should succeed
-    let result = queries::insert_event(ctx.pool(), &valid_event).await;
+    let result = insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok(), "Valid event should be inserted successfully");
 
     // Test 2: Invalid event should fail (empty source)
@@ -30,7 +30,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(
     ).build();
 
     // This should fail
-    let result = queries::insert_event(ctx.pool(), &invalid_event).await;
+    let result = insert_event(ctx.pool(), &invalid_event).await;
     assert!(result.is_err(), "Invalid event with empty source should fail");
 
     Ok(())
@@ -38,7 +38,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> Result<(
 
 /// Test event type validation
 #[sinex_test]
-async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_type_validation(ctx: TestContext) -> TestResult {
     // Valid event type should work
     let valid_event = RawEventBuilder::new(
         sources::FILESYSTEM,
@@ -49,7 +49,7 @@ async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std:
         })
     ).build();
 
-    let result = queries::insert_event(ctx.pool(), &valid_event).await;
+    let result = insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok(), "Valid event type should be accepted");
 
     // Test with agent event type
@@ -63,7 +63,7 @@ async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std:
         })
     ).build();
 
-    let result = queries::insert_event(ctx.pool(), &agent_event).await;
+    let result = insert_event(ctx.pool(), &agent_event).await;
     assert!(result.is_ok(), "Valid agent event should be accepted");
 
     Ok(())
@@ -71,7 +71,7 @@ async fn test_event_type_validation(ctx: TestContext) -> Result<(), Box<dyn std:
 
 /// Test payload validation
 #[sinex_test]
-async fn test_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_payload_validation(ctx: TestContext) -> TestResult {
     // Valid JSON payload should work
     let valid_event = RawEventBuilder::new(
         sources::TERMINAL_KITTY,
@@ -83,7 +83,7 @@ async fn test_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::er
         })
     ).build();
 
-    let result = queries::insert_event(ctx.pool(), &valid_event).await;
+    let result = insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok(), "Valid JSON payload should be accepted");
 
     // Complex nested payload should also work
@@ -103,7 +103,7 @@ async fn test_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::er
         })
     ).build();
 
-    let result = queries::insert_event(ctx.pool(), &complex_event).await;
+    let result = insert_event(ctx.pool(), &complex_event).await;
     assert!(result.is_ok(), "Complex nested payload should be accepted");
 
     Ok(())

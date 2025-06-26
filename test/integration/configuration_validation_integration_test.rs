@@ -13,8 +13,8 @@ use sinex_collector::config::{CollectorConfig, ValidationReport};
 use tempfile::{TempDir, NamedTempFile};
 use tokio::fs;
 
-#[tokio::test]
-async fn test_comprehensive_configuration_validation_pipeline() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_comprehensive_configuration_validation_pipeline(ctx: TestContext) -> TestResult {
     // NOTE: This test is currently disabled due to config structure simplification
     // The CollectorConfig structure was simplified to only include:
     // - enabled_events: Vec<String>
@@ -528,8 +528,8 @@ enabled_events = ["filesystem.file.created"]
     Ok(())
 }
 
-#[tokio::test]
-async fn test_configuration_performance_and_scale() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_performance_and_scale(ctx: TestContext) -> TestResult {
     // Test configuration system performance with large configurations
     
     // Test 1: Large number of enabled events

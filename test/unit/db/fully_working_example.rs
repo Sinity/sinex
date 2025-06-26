@@ -5,7 +5,7 @@ use crate::common::database_helpers;
 
 /// Simplest possible test that actually works
 #[sinex_test]
-async fn test_without_macro(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_without_macro(ctx: TestContext) -> TestResult{
     // Get shared pool
 // Removed: using ctx.pool() directly instead
     
@@ -21,7 +21,7 @@ async fn test_without_macro(ctx: TestContext) -> Result<(), Box<dyn std::error::
 
 /// Test using the new macro - simplified version
 #[sinex_test]
-async fn test_with_new_macro(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_with_new_macro(ctx: TestContext) -> TestResult {
     // The macro should have injected TestContext with a pool
     println!("✅ Macro injected TestContext!");
     println!("✅ Test name: {}", ctx.test_name());
@@ -52,7 +52,7 @@ async fn test_with_new_macro(ctx: TestContext) -> Result<(), Box<dyn std::error:
 
 /// Example of test that would use transactions (when properly implemented)
 #[sinex_test]
-async fn test_transaction_isolation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
     // For now, this uses the shared pool approach
     // In the future, this would use actual transaction isolation
     

@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
-#[test]
-fn test_json_payload_size_limits() {
+#[sinex_test]
+async fn test_json_payload_size_limits(ctx: TestContext) -> TestResult {
     // Test extremely large JSON payloads
     let mut huge_array = vec![];
     for i in 0..10000 {
@@ -21,10 +21,11 @@ fn test_json_payload_size_limits() {
         // PostgreSQL jsonb has a practical limit
         assert!(json_str.len() < 1_000_000_000, "Payload too large for PostgreSQL");
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_special_characters() {
+#[sinex_test]
+async fn test_json_special_characters(ctx: TestContext) -> TestResult {
     // Test JSON with special characters that might break things
     let evil_payloads = vec![
         json!({ "key": "\u{0000}" }), // Null byte
@@ -44,10 +45,11 @@ fn test_json_special_characters() {
             Err(e) => println!("Payload {} failed: {}", i, e),
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_recursive_json_structure() {
+#[sinex_test]
+async fn test_recursive_json_structure(ctx: TestContext) -> TestResult {
     // Create a deeply nested structure
     let mut nested = json!({ "value": "base" });
     for i in 0..1000 {
@@ -62,4 +64,5 @@ fn test_recursive_json_structure() {
     // This might cause stack overflow or other issues
     let result = serde_json::to_string(&event);
     println!("Deep nesting serialization: {:?}", result.is_ok());
+    Ok(())
 }

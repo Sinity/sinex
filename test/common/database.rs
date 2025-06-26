@@ -2,6 +2,12 @@
 //!
 //! This module provides THE single way to access databases in tests,
 //! with automatic cleanup and resource management.
+//!
+//! # Key Features
+//! - Automatic transaction rollback for test isolation
+//! - Configurable cleanup strategies
+//! - Shared database pool optimization
+//! - Extension trait for common test operations
 
 use crate::common::prelude::*;
 use std::ops::{Deref, DerefMut};
@@ -112,7 +118,7 @@ impl DerefMut for TestPool {
 
 /// Clean up test data from database
 async fn cleanup_test_data(pool: &PgPool) -> Result<()> {
-    // Clean up in reverse dependency order
+    // Clean up in reverse dependency order to respect foreign key constraints
     sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
         .execute(pool)
         .await?;
@@ -126,6 +132,11 @@ async fn cleanup_test_data(pool: &PgPool) -> Result<()> {
         .await?;
         
     Ok(())
+}
+
+/// Clean up all test data (more aggressive cleanup)
+pub async fn cleanup_all_test_data(pool: &PgPool) -> Result<()> {
+    cleanup_test_data(pool).await
 }
 
 /// Extension trait for TestPool convenience methods
@@ -155,5 +166,27 @@ impl TestPoolExt for TestPool {
 
     async fn clear_test_data(&self) -> Result<()> {
         cleanup_test_data(&self.inner).await
+    }
+}
+
+/// Additional helper methods for TestPool
+impl TestPool {
+    /// Get event count for specific source
+    pub async fn event_count_by_source(&self, source: &str) -> Result<i64> {
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM raw.events WHERE source = $1",
+            source
+        )
+        .fetch_one(&self.inner)
+        .await?;
+        Ok(count.unwrap_or(0))
+    }
+    
+    /// Check if database is accessible
+    pub async fn check_health(&self) -> Result<bool> {
+        match sqlx::query!("SELECT 1 as test").fetch_one(&self.inner).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 }

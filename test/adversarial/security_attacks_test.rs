@@ -1,8 +1,8 @@
 use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
 
-#[test]
-fn test_unicode_path_normalization_bypass() {
+#[sinex_test]
+async fn test_unicode_path_normalization_bypass(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Same path in different Unicode normalizations
@@ -26,10 +26,11 @@ fn test_unicode_path_normalization_bypass() {
     }
     
     // These might bypass security checks due to normalization
+    Ok(())
 }
 
-#[test]
-fn test_null_byte_injection_paths() {
+#[sinex_test]
+async fn test_null_byte_injection_paths(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Paths with null bytes - these should be rejected but might not be
@@ -52,10 +53,11 @@ fn test_null_byte_injection_paths() {
             Err(e) => println!("Null byte path rejected (good): {:?} - {}", path, e),
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_hash_collision_dos() {
+#[sinex_test]
+async fn test_json_hash_collision_dos(ctx: TestContext) -> TestResult {
     // Create JSON object with keys that hash to same bucket
     // This is implementation-specific but common pattern
     let mut collision_object = HashMap::new();
@@ -81,10 +83,11 @@ fn test_json_hash_collision_dos() {
     if elapsed.as_secs() > 1 {
         println!("VULNERABILITY: Hash collision DoS possible!");
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_exponential_entity_expansion() {
+#[sinex_test]
+async fn test_json_exponential_entity_expansion(ctx: TestContext) -> TestResult {
     // Billion laughs attack variant for JSON
     let mut expanding_json = json!({
         "a1": vec!["x"; 10],
@@ -114,10 +117,11 @@ fn test_json_exponential_entity_expansion() {
     println!("Theoretical expansion size: {} elements", theoretical_size);
     println!("Actual JSON size: {} bytes", 
              serde_json::to_string(&expanding_json).unwrap_or_default().len());
+    Ok(())
 }
 
-#[test]
-fn test_path_case_confusion_attacks() {
+#[sinex_test]
+async fn test_path_case_confusion_attacks(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Test case variations that might bypass filters
@@ -138,10 +142,11 @@ fn test_path_case_confusion_attacks() {
         let result = validator.validate_with_rules("filesystem", "file.created", &event);
         println!("Path '{}' (canonical: '{}'): {:?}", variant, canonical, result.is_ok());
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_parser_differential() {
+#[sinex_test]
+async fn test_json_parser_differential(ctx: TestContext) -> TestResult {
     // Different JSON parsers handle edge cases differently
     let tricky_json_strings = vec![
         r#"{"key": 1.0000000000000000000000000000000001}"#,  // Precision loss
@@ -159,10 +164,11 @@ fn test_json_parser_differential() {
             Err(e) => println!("Parse error: {} -> {}", json_str, e),
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_hash_collision_dos_attack() {
+#[sinex_test]
+async fn test_hash_collision_dos_attack(ctx: TestContext) -> TestResult {
     // Create JSON object with keys that hash to same bucket using djb2 collision strings
     let mut collision_object = HashMap::new();
     
@@ -207,10 +213,11 @@ fn test_hash_collision_dos_attack() {
     if deser_elapsed.as_millis() > 100 {
         println!("POTENTIAL VULNERABILITY: Hash collision affecting deserialization!");
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_nested_array_explosion() {
+#[sinex_test]
+async fn test_json_nested_array_explosion(ctx: TestContext) -> TestResult {
     // Test exponentially expanding nested arrays that can cause memory exhaustion
     let mut nested_array = json!([1, 2, 3]);
     
@@ -246,10 +253,11 @@ fn test_json_nested_array_explosion() {
             break;
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_filesystem_race_condition_attacks() {
+#[sinex_test]
+async fn test_filesystem_race_condition_attacks(ctx: TestContext) -> TestResult {
     // Simulated TOCTOU (Time-of-check to time-of-use) scenarios
     let suspicious_patterns = vec![
         // Quick file replacement
@@ -264,10 +272,11 @@ fn test_filesystem_race_condition_attacks() {
         println!("TOCTOU scenario: {} -> {}", initial, attack);
         // In real test, would create files and race operations
     }
+    Ok(())
 }
 
-#[test]
-fn test_command_injection_via_json() {
+#[sinex_test]
+async fn test_command_injection_via_json(ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     // Commands that might be interpreted if not properly escaped
@@ -291,4 +300,5 @@ fn test_command_injection_via_json() {
         let result = validator.validate_with_rules("terminal", "command.executed", &event);
         println!("Command injection attempt '{}': {:?}", cmd, result.is_ok());
     }
+    Ok(())
 }

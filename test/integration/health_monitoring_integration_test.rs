@@ -93,9 +93,9 @@ impl SystemHealthMonitor {
     }
 }
 
-#[tokio::test]
-async fn test_comprehensive_health_monitoring_system() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
+#[sinex_test]
+async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Initialize health monitoring system
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
@@ -411,8 +411,8 @@ async fn test_system_health_aggregation(monitor: &SystemHealthMonitor) -> Result
     Ok(())
 }
 
-#[tokio::test]
-async fn test_health_monitoring_performance_impact() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_health_monitoring_performance_impact(_ctx: TestContext) -> TestResult {
     // Test that health monitoring doesn't significantly impact system performance
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(10), 3);
@@ -477,9 +477,9 @@ impl Clone for SystemHealthMonitor {
     }
 }
 
-#[tokio::test]
-async fn test_health_monitoring_with_real_workload() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
+#[sinex_test]
+async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
     

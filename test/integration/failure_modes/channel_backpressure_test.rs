@@ -1,10 +1,12 @@
 use crate::common::prelude::*;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
+use sinex_core::{EventSource, EventSourceContext, CoreError};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Test what happens when event channel fills up
-#[tokio::test]
-async fn test_channel_backpressure_handling() {
+#[sinex_test]
+async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     // Small channel to trigger backpressure quickly
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
     
@@ -16,7 +18,7 @@ async fn test_channel_backpressure_handling() {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event = crate::common::events::generic_adversarial_event("fast_producer", "test.event", json!({"test": true}), None);
+            let event = RawEventBuilder::new("fast_producer", "test.event", json!({"test": true})).build();
             
             gen_count.fetch_add(1, Ordering::Relaxed);
             
@@ -97,11 +99,13 @@ async fn test_channel_backpressure_handling() {
     
     assert!(consumed_count > 0, "Expected some events to be consumed");
     assert!(consumed_count + dropped <= generated, "Accounting error");
+    
+    Ok(())
 }
 
 /// Test graceful degradation under memory pressure
-#[tokio::test]
-async fn test_memory_pressure_handling() {
+#[sinex_test]
+async fn test_memory_pressure_handling(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Track memory usage
@@ -114,7 +118,7 @@ async fn test_memory_pressure_handling() {
             let size = 1024 * (i + 1); // 1KB to 100KB
             let _large_data = "x".repeat(size);
             
-            let event = events::large_payload_test_event(size);
+            let event = RawEventBuilder::new("memory_test", "large.payload", json!({"size_kb": size / 1024, "data": _large_data})).build();
             if tx.send(event).await.is_err() {
                 eprintln!("Channel closed at event {}", i);
                 break;
@@ -155,11 +159,13 @@ async fn test_memory_pressure_handling() {
     println!("  Total payload size: {} MB", total_bytes / 1_048_576);
     
     assert!(event_count > 0, "Should process some events");
+    
+    Ok(())
 }
 
 /// Test event source crash and restart
-#[tokio::test]
-async fn test_event_source_crash_recovery() {
+#[sinex_test]
+async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
     struct CrashingEventSource {
         crash_after: u64,
         events_sent: Arc<AtomicU64>,
@@ -179,7 +185,7 @@ async fn test_event_source_crash_recovery() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             for i in 0..100 {
-                let event = crate::common::events::generic_adversarial_event("crashing", "test", json!({"test": true}), None);
+                    let event = RawEventBuilder::new("crashing", "test", json!({"test": true})).build();
                 if tx.send(event).await.is_err() { break; }
                 self.events_sent.fetch_add(1, Ordering::Relaxed);
                 
@@ -196,8 +202,8 @@ async fn test_event_source_crash_recovery() {
     
     // Test automatic restart behavior
     let (tx, mut rx) = mpsc::channel(100);
-    let ctx = EventSourceContext::for_test();
-    let mut source = CrashingEventSource::initialize(ctx)
+    let event_ctx = EventSourceContext::for_test();
+    let mut source = CrashingEventSource::initialize(event_ctx)
         .await
         .unwrap();
     
@@ -241,6 +247,8 @@ async fn test_event_source_crash_recovery() {
     
     // Should have received events before and after crash
     assert!(received.len() > 50, "Should receive events after crash");
+    
+    Ok(())
 }
 
 fn get_current_memory_usage() -> u64 {

@@ -1,10 +1,11 @@
 use crate::common::prelude::*;
+use crate::common::resources;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 
-#[tokio::test]
-async fn test_config_reload_race_condition() {
+#[sinex_test(timeout = 30)]
+async fn test_config_reload_race_condition(ctx: TestContext) -> TestResult {
     // Create a config manager with a test config file
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     let initial_config = r#"
@@ -50,11 +51,13 @@ watch_paths = ["/tmp", "/home/user{}"]
     // Final config should have the last value
     let final_config = manager.get_config().await;
     assert!(final_config.enabled_events.contains(&"file.modified".to_string()));
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_config_malformed_handling() {
-    let temp_dir = tempfile::tempdir().unwrap();
+#[sinex_test(timeout = 30)]
+async fn test_config_malformed_handling(ctx: TestContext) -> TestResult {
+    let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
     // Start with valid config
@@ -76,4 +79,6 @@ async fn test_config_malformed_handling() {
     // Should still have the old valid config
     let current_config = manager.get_config().await;
     pretty_assertions::assert_eq!(current_config.enabled_events.len(), 1);
+    
+    Ok(())
 }

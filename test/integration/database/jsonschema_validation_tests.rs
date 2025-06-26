@@ -11,7 +11,7 @@ use crate::common::schema_test_utils;
 use uuid::Uuid;
 
 #[sinex_test]
-async fn test_json_schema_registration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
     // Register a JSON Schema
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -60,7 +60,7 @@ async fn test_json_schema_registration(ctx: TestContext) -> Result<(), Box<dyn s
 }
 
 #[sinex_test]
-async fn test_json_schema_validation_constraint(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult {
     // First, register a strict schema
     let strict_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -154,7 +154,7 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> Result<(), 
 }
 
 #[sinex_test]
-async fn test_event_type_schema_caching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_type_schema_caching(ctx: TestContext) -> TestResult {
     // Demonstrates using TestContext helpers for more complex scenarios
     let test_run_id = &Uuid::new_v4().to_string()[..8];
     let event_source = format!("cache-test-{}", test_run_id);
@@ -199,7 +199,7 @@ async fn test_event_type_schema_caching(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_schema_evolution(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_schema_evolution(ctx: TestContext) -> TestResult {
     // Test schema version evolution
     let test_run_id = &Uuid::new_v4().to_string()[..8];
     let event_source = format!("evolution-test-{}", test_run_id);
@@ -268,7 +268,7 @@ async fn test_schema_evolution(ctx: TestContext) -> Result<(), Box<dyn std::erro
 }
 
 #[sinex_test]
-async fn test_complex_nested_schema_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_complex_nested_schema_validation(ctx: TestContext) -> TestResult {
     // Test deeply nested schema validation
     let complex_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",

@@ -5,6 +5,19 @@
 //! - Event builder factories for consistent event creation
 //! - Timing helpers to eliminate flaky sleeps
 //! - Common test utilities in one ergonomic interface
+//!
+//! # Usage
+//! ```rust
+//! use crate::common::test_context::TestContext;
+//! 
+//! #[sinex_test]
+//! async fn my_test(ctx: TestContext) -> TestResult {
+//!     let event = ctx.filesystem_event("/test/file");
+//!     ctx.insert_event(&event).await?;
+//!     ctx.wait_for_event_count(1).await?;
+//!     Ok(())
+//! }
+//! ```
 
 use crate::common::prelude::*;
 use crate::common::database::TestPool;
@@ -132,14 +145,14 @@ impl TestContext {
     // ===== Database Operations =====
 
     /// Insert an event into the database
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn insert_event(&self, event: &RawEvent) -> TestResult {
         queries::insert_event(self.pool(), event).await?;
         self.created_events.lock().await.push(event.id);
         Ok(())
     }
 
     /// Insert multiple events
-    pub async fn insert_events(&self, events: &[RawEvent]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn insert_events(&self, events: &[RawEvent]) -> TestResult {
         for event in events {
             self.insert_event(event).await?;
         }
@@ -217,7 +230,7 @@ impl TestContext {
     // ===== Timing Helpers =====
 
     /// Wait for a specific number of events to exist
-    pub async fn wait_for_event_count(&self, expected: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_event_count(&self, expected: usize) -> TestResult {
         wait_for_event_count(
             self.pool(),
             expected as i64,
@@ -227,7 +240,7 @@ impl TestContext {
     }
 
     /// Wait for events from a specific source
-    pub async fn wait_for_source_events(&self, source: &str, count: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_source_events(&self, source: &str, count: usize) -> TestResult {
         wait_for_filtered_event_count(
             self.pool(),
             "source = $1",
@@ -249,7 +262,7 @@ impl TestContext {
     }
 
     /// Wait a short time for processing (replaces arbitrary sleeps)
-    pub async fn wait_for_processing(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_processing(&self) -> TestResult {
         // Smart wait that checks for activity
         let initial_count = self.event_count().await?;
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -257,7 +270,10 @@ impl TestContext {
         // If events are still being created, wait a bit more
         let new_count = self.event_count().await?;
         if new_count > initial_count {
+            // Use a more robust approach for closure capture
             let pool = self.pool().clone();
+            let final_count = new_count;
+            
             self.wait_for_condition(move || {
                 let pool = pool.clone();
                 async move {
@@ -267,7 +283,7 @@ impl TestContext {
                         .await
                         .map(|c| c.unwrap_or(0))
                         .unwrap_or(0);
-                    Ok(count == new_count)
+                    Ok(count == final_count)
                 }
             }).await?;
         }
@@ -276,7 +292,7 @@ impl TestContext {
     }
 
     /// Wait for work queue to reach expected count
-    pub async fn wait_for_work_queue(&self, expected: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait_for_work_queue(&self, expected: usize) -> TestResult {
         wait_for_work_queue_count(
             self.pool(),
             expected as i64,
@@ -312,7 +328,7 @@ impl TestContext {
     }
 
     /// Assert that no events exist yet
-    pub async fn assert_no_events(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn assert_no_events(&self) -> TestResult {
         let count = self.event_count().await?;
         pretty_assertions::assert_eq!(count, 0, "Expected no events but found {}", count);
         Ok(())
@@ -323,12 +339,59 @@ impl TestContext {
         (0..count)
             .map(|i| {
                 self.event_builder(source, "test.batch")
-                    .payload(json!({ "index": i }))
+                    .payload(json!({ "index": i, "batch_id": uuid::Uuid::new_v4() }))
                     .build()
             })
             .collect()
+    }
+    
+    /// Create events with custom time distribution
+    pub fn create_time_distributed_batch(
+        &self, 
+        source: &str, 
+        count: usize,
+        start_time: chrono::DateTime<chrono::Utc>,
+        interval: Duration
+    ) -> Vec<RawEvent> {
+        (0..count)
+            .map(|i| {
+                let timestamp = start_time + chrono::Duration::from_std(interval * i as u32).unwrap();
+                self.event_builder(source, "test.timed_batch")
+                    .payload(json!({ "index": i, "sequence": i }))
+                    .timestamp(timestamp)
+                    .build()
+            })
+            .collect()
+    }
+    
+    /// Get performance metrics for this test context
+    pub fn get_performance_metrics(&self) -> TestPerformanceMetrics {
+        TestPerformanceMetrics {
+            test_name: self.config.test_name.clone(),
+            elapsed_time: self.elapsed(),
+            pool_size: self.config.pool_size,
+        }
     }
 }
 
 // Re-export for convenience
 pub use sinex_db::models::RawEvent as DbRawEvent;
+
+/// Performance metrics for test execution
+#[derive(Debug, Clone)]
+pub struct TestPerformanceMetrics {
+    pub test_name: String,
+    pub elapsed_time: Duration,
+    pub pool_size: u32,
+}
+
+impl TestPerformanceMetrics {
+    pub fn print_summary(&self) {
+        println!(
+            "[{}] Test completed in {:?} (pool size: {})",
+            self.test_name,
+            self.elapsed_time,
+            self.pool_size
+        );
+    }
+}

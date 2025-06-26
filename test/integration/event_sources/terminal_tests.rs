@@ -1,13 +1,13 @@
 use crate::common::prelude::*;
 use sinex_events::terminal::{KittySocketListener, KittyConfig, CommandExecuted, CommandExecutedPayload};
 use sinex_core::{EventSource, EventType};
-use crate::common::resources;
+// use crate::common::resources;  // Not needed anymore
 use chrono::Utc;
 use crate::common::event_sources;
 
-#[tokio::test]
-async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::Error>> {
-    let temp_dir = resources::temp_dir()?;
+#[sinex_test]
+async fn test_kitty_listener_initialization(_ctx: TestContext) -> TestResult {
+    let temp_dir = TempDir::new()?;
     let socket_path = temp_dir.path().join("kitty-test-*");
     
     let config = KittyConfig {
@@ -22,8 +22,8 @@ async fn test_kitty_listener_initialization() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-#[tokio::test]
-async fn test_kitty_event_structure() {
+#[sinex_test]
+async fn test_kitty_event_structure(_ctx: TestContext) -> TestResult {
     // Test that the event payload structure is correct
     let payload = CommandExecutedPayload {
         command_string: "echo test".to_string(),
@@ -41,10 +41,12 @@ async fn test_kitty_event_structure() {
     
     // Verify event type constant
     pretty_assertions::assert_eq!(CommandExecuted::EVENT_NAME, "command.executed");
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_kitty_socket_pattern_matching() {
+#[sinex_test]
+async fn test_kitty_socket_pattern_matching(_ctx: TestContext) -> TestResult {
     let config = KittyConfig {
         socket_path: "/tmp/mykitty-*".to_string(),
         polling_interval_secs: 1,
@@ -52,6 +54,8 @@ async fn test_kitty_socket_pattern_matching() {
     
     // The socket path should support glob patterns
     assert!(config.socket_path.contains("*"), "Socket path should support wildcards");
+    
+    Ok(())
 }
 
 // Note: Full integration tests for Kitty would require an actual Kitty terminal

@@ -1,4 +1,7 @@
 //! Worker test utilities
+//!
+//! This module provides comprehensive utilities for testing worker functionality,
+//! including work queue management, worker lifecycle simulation, and assertion helpers.
 
 use crate::common::prelude::*;
 use sinex_db::models::WorkQueueItem;
@@ -6,6 +9,11 @@ use crate::common::timing_optimization::wait_helpers::{wait_for_work_queue_statu
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &PgPool, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(&pool, "test_worker", item_count).await
+}
+
+/// Insert test items with custom target agent
+pub async fn insert_test_items_for_agent(pool: &PgPool, agent_name: &str, item_count: usize) -> Result<Vec<Ulid>> {
+    setup_test_worker(&pool, agent_name, item_count).await
 }
 
 /// Setup test worker with specified number of work items
@@ -110,6 +118,65 @@ pub async fn count_work_items_by_status(pool: &PgPool, status: &str) -> Result<i
     wait_for_work_queue_status_count(&pool, status, 0, 1)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to count work items by status: {}", e))
+}
+
+/// Count work items by agent
+pub async fn count_work_items_by_agent(pool: &PgPool, agent_name: &str) -> Result<i64> {
+    let count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+    
+    Ok(count)
+}
+
+/// Get work queue statistics
+pub async fn get_work_queue_stats(pool: &PgPool) -> Result<WorkQueueStats> {
+    let row = sqlx::query!(
+        r#"
+        SELECT 
+            COUNT(*) as total,
+            COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+            COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing,
+            COUNT(CASE WHEN status = 'succeeded' THEN 1 END) as succeeded,
+            COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed
+        FROM sinex_schemas.work_queue
+        "#
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(WorkQueueStats {
+        total: row.total.unwrap_or(0),
+        pending: row.pending.unwrap_or(0),
+        processing: row.processing.unwrap_or(0),
+        succeeded: row.succeeded.unwrap_or(0),
+        failed: row.failed.unwrap_or(0),
+    })
+}
+
+/// Work queue statistics for monitoring
+#[derive(Debug, Clone)]
+pub struct WorkQueueStats {
+    pub total: i64,
+    pub pending: i64,
+    pub processing: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+}
+
+impl WorkQueueStats {
+    pub fn print_summary(&self) {
+        println!("=== Work Queue Statistics ===");
+        println!("Total: {}", self.total);
+        println!("Pending: {}", self.pending);
+        println!("Processing: {}", self.processing);
+        println!("Succeeded: {}", self.succeeded);
+        println!("Failed: {}", self.failed);
+    }
 }
 
 /// Cleanup all work queue items
@@ -221,8 +288,13 @@ pub mod lifecycle {
 
         /// Process a single work item
         pub async fn process_item(&self, queue_id: Ulid) -> Result<bool> {
+            self.process_item_with_delay(queue_id, std::time::Duration::from_millis(10)).await
+        }
+        
+        /// Process a work item with custom processing delay
+        pub async fn process_item_with_delay(&self, queue_id: Ulid, delay: std::time::Duration) -> Result<bool> {
             // Simulate processing time
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(delay).await;
 
             // Update work item status
             let result = sqlx::query!(
@@ -246,6 +318,26 @@ pub mod lifecycle {
             }
 
             Ok(success)
+        }
+        
+        /// Simulate processing failure
+        pub async fn fail_item(&self, queue_id: Ulid, error_message: &str) -> Result<bool> {
+            let result = sqlx::query!(
+                r#"
+                UPDATE sinex_schemas.work_queue 
+                SET status = 'failed',
+                    processed_at = NOW(),
+                    processing_worker_id = $1::uuid::ulid,
+                    attempts = attempts + 1
+                WHERE queue_id = $2::uuid::ulid AND status = 'processing'
+                "#,
+                self.worker_id.to_uuid(),
+                queue_id.to_uuid()
+            )
+            .execute(&self.pool)
+            .await?;
+
+            Ok(result.rows_affected() > 0)
         }
 
         /// Get processed count
@@ -309,6 +401,46 @@ pub mod assertions {
             count, 0,
             "Expected work queue to be empty, but found {} items",
             count
+        );
+        
+        Ok(())
+    }
+    
+    /// Assert work queue statistics match expectations
+    pub async fn assert_work_queue_stats(
+        pool: &PgPool,
+        expected_stats: &WorkQueueStats
+    ) -> Result<(), anyhow::Error> {
+        let actual_stats = super::get_work_queue_stats(pool).await?;
+        
+        pretty_assertions::assert_eq!(
+            actual_stats.total, expected_stats.total,
+            "Total work items mismatch"
+        );
+        pretty_assertions::assert_eq!(
+            actual_stats.pending, expected_stats.pending,
+            "Pending work items mismatch"
+        );
+        pretty_assertions::assert_eq!(
+            actual_stats.succeeded, expected_stats.succeeded,
+            "Succeeded work items mismatch"
+        );
+        
+        Ok(())
+    }
+    
+    /// Assert that agent processed expected number of items
+    pub async fn assert_agent_processed_count(
+        pool: &PgPool,
+        agent_name: &str,
+        expected_count: i64
+    ) -> Result<(), anyhow::Error> {
+        let actual_count = super::count_work_items_by_agent(pool, agent_name).await?;
+        
+        pretty_assertions::assert_eq!(
+            actual_count, expected_count,
+            "Agent {} processed {} items, expected {}",
+            agent_name, actual_count, expected_count
         );
         
         Ok(())

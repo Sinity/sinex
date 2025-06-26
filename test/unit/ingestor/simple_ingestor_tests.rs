@@ -77,7 +77,7 @@ impl EventSource for TestEventSource {
 }
 
 #[sinex_test]
-async fn test_event_source_initialization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_initialization(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 5,
@@ -95,7 +95,7 @@ async fn test_event_source_initialization(ctx: TestContext) -> Result<(), Box<dy
 }
 
 #[sinex_test]
-async fn test_event_source_initialization_failure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_initialization_failure(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 1,
@@ -118,7 +118,7 @@ async fn test_event_source_initialization_failure(ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_event_source_streaming(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_streaming(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 3,
         generation_delay_ms: 50,
@@ -161,7 +161,7 @@ async fn test_event_source_streaming(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_event_source_runtime_error(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_runtime_error(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 10,
         generation_delay_ms: 10,
@@ -199,7 +199,7 @@ async fn test_event_source_runtime_error(ctx: TestContext) -> Result<(), Box<dyn
 }
 
 #[sinex_test]
-async fn test_event_source_graceful_shutdown(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_graceful_shutdown(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 1,
         generation_delay_ms: 10,
@@ -217,7 +217,7 @@ async fn test_event_source_graceful_shutdown(ctx: TestContext) -> Result<(), Box
 }
 
 #[sinex_test]
-async fn test_event_source_receiver_drop(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_receiver_drop(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig {
         events_to_generate: 100, // More than we'll receive
         generation_delay_ms: 1,
@@ -297,7 +297,7 @@ impl EventSource for SlowEventSource {
 }
 
 #[sinex_test]
-async fn test_multiple_event_sources(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_multiple_event_sources(ctx: TestContext) -> TestResult{
     let config = TestSourceConfig::default();
     
     let ctx1 = event_sources::test_context(serde_json::to_value(&config)?);
@@ -332,7 +332,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 #[sinex_test]
-async fn test_event_source_database_integration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_event_source_database_integration(ctx: TestContext) -> TestResult{
 // Removed: using ctx.pool() directly instead
     
     let config = TestSourceConfig {

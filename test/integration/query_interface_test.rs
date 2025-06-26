@@ -135,7 +135,7 @@ async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
 
 /// Test agent monitoring commands
 #[sinex_test]
-async fn test_exo_cli_agent_commands(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_exo_cli_agent_commands(ctx: TestContext) -> TestResult{
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = ctx.pool();
     
@@ -178,7 +178,7 @@ async fn test_exo_cli_agent_commands(ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test error handling in CLI
 #[sinex_test]
-async fn test_exo_cli_error_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_exo_cli_error_handling(ctx: TestContext) -> TestResult {
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
     
     // Test 1: Invalid database URL
@@ -220,7 +220,7 @@ async fn test_exo_cli_error_handling(ctx: TestContext) -> Result<(), Box<dyn std
 
 /// Test advanced query features
 #[sinex_test]
-async fn test_exo_cli_advanced_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_exo_cli_advanced_queries(ctx: TestContext) -> TestResult {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = ctx.pool();
     
@@ -297,7 +297,7 @@ async fn test_exo_cli_advanced_queries(ctx: TestContext) -> Result<(), Box<dyn s
 
 /// Test output formatting options
 #[sinex_test]
-async fn test_exo_cli_output_formats(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_exo_cli_output_formats(ctx: TestContext) -> TestResult {
     let _database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = ctx.pool();
     

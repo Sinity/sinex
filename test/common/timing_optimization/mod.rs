@@ -203,4 +203,46 @@ impl TestBarrier {
             }
         }
     }
+    
+    /// Get current participants count
+    pub fn current_count(&self) -> usize {
+        self.counter.load(Ordering::Acquire)
+    }
+    
+    /// Get current generation (number of times barrier has been passed)
+    pub fn generation(&self) -> usize {
+        self.generation.load(Ordering::Acquire)
+    }
+}
+
+/// High-level timing utilities for common test patterns
+pub mod patterns {
+    use super::*;
+    
+    /// Wait for all workers to reach a checkpoint
+    pub async fn wait_for_workers(
+        worker_count: usize,
+        timeout: Duration
+    ) -> Result<TestBarrier, tokio::time::error::Elapsed> {
+        let barrier = TestBarrier::new(worker_count);
+        barrier.wait(timeout).await?;
+        Ok(barrier)
+    }
+    
+    /// Wait for a specific number of events to be processed
+    pub async fn wait_for_event_processing(
+        target_count: usize,
+        timeout: Duration
+    ) -> Result<EventCounter, tokio::time::error::Elapsed> {
+        let counter = EventCounter::new(target_count);
+        counter.wait_for_target(timeout).await?;
+        Ok(counter)
+    }
+    
+    /// Create a progress tracker for multi-phase testing
+    pub fn create_test_phases(phase_names: &[&str]) -> (ProgressTracker, Vec<String>) {
+        let tracker = ProgressTracker::new(phase_names.len());
+        let names = phase_names.iter().map(|s| s.to_string()).collect();
+        (tracker, names)
+    }
 }

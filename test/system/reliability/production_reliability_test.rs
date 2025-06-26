@@ -2,10 +2,9 @@ use crate::common::prelude::*;
 use sinex_db::queries::insert_raw_event;
 
 /// Test graceful degradation under database connectivity issues
-#[tokio::test]
-async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
 
     // Create test agent
     let agent_name = format!("degradation_test_{}", Ulid::new());
@@ -181,10 +180,9 @@ async fn test_graceful_degradation_database_failure() -> Result<(), anyhow::Erro
 }
 
 /// Test resource limits and monitoring under load
-#[tokio::test]
-async fn test_resource_limits_monitoring() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
 
     println!("Testing resource limits and monitoring under load...");
 
@@ -503,10 +501,9 @@ async fn test_resource_limits_monitoring() -> Result<(), anyhow::Error> {
 }
 
 /// Test system behavior under resource exhaustion scenarios
-#[tokio::test]
-async fn test_resource_exhaustion_scenarios() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
 
     println!("Testing resource exhaustion scenarios...");
 

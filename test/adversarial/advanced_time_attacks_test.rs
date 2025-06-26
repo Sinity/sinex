@@ -2,10 +2,9 @@ use crate::common::prelude::*;
 use chrono::{Utc, Duration, TimeZone, FixedOffset, LocalResult};
 use std::process::Command;
 use std::fs;
-use crate::common::resources;
 
-#[test]
-fn test_event_processing_during_dst_change() {
+#[sinex_test]
+async fn test_event_processing_during_dst_change(_ctx: TestContext) -> TestResult {
     // Simulate DST transition (spring forward: 2:00 AM becomes 3:00 AM)
     let utc_base = Utc.with_ymd_and_hms(2024, 3, 10, 7, 0, 0).unwrap(); // 2 AM EST
     
@@ -51,10 +50,12 @@ fn test_event_processing_during_dst_change() {
         
         println!("Fall {}: {:?} -> {:?}", label, timestamp, recovered);
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_ulid_generation_with_system_clock_regression() {
+#[sinex_test]
+async fn test_ulid_generation_with_system_clock_regression(_ctx: TestContext) -> TestResult {
     // This test simulates what happens when system clock goes backwards
     
     // Generate ULID at "current" time
@@ -86,14 +87,16 @@ fn test_ulid_generation_with_system_clock_regression() {
     if ulid1 <= ulid3 {
         println!("WARNING: Micro clock regression caused ULID ordering inversion!");
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_ulid_uniqueness_across_processes() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_ulid_uniqueness_across_processes(_ctx: TestContext) -> TestResult {
     // This test forks multiple processes to test ULID generation under
     // true multi-process conditions (not just threads)
     
-    let temp_dir = resources::temp_dir()?;
+    let temp_dir = TempDir::new()?;
     let output_file = temp_dir.path().join("ulids.txt");
     
     let num_processes = 4;
@@ -200,11 +203,12 @@ fn test_ulid_uniqueness_across_processes() -> Result<(), Box<dyn std::error::Err
     } else {
         println!("No output file generated - all processes failed");
     }
+    
     Ok(())
 }
 
-#[test]
-fn test_timezone_confusion_attacks() {
+#[sinex_test]
+async fn test_timezone_confusion_attacks(_ctx: TestContext) -> TestResult {
     // Test different timezone interpretations of the same time
     let ambiguous_time_str = "2024-03-10 02:30:00"; // During DST transition
     
@@ -264,10 +268,12 @@ fn test_timezone_confusion_attacks() {
             }
         }
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_leap_second_handling() {
+#[sinex_test]
+async fn test_leap_second_handling(_ctx: TestContext) -> TestResult {
     // Test ULID generation around leap seconds
     // Note: This is theoretical since leap seconds are rare and unpredictable
     
@@ -295,10 +301,12 @@ fn test_leap_second_handling() {
     if time_gap != 1 {
         println!("Leap second gap detected: {} seconds instead of 1", time_gap);
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_ulid_with_extreme_clock_skew() {
+#[sinex_test]
+async fn test_ulid_with_extreme_clock_skew(_ctx: TestContext) -> TestResult {
     // Test what happens with extreme clock skew scenarios
     let base_time = Utc::now();
     
@@ -331,4 +339,6 @@ fn test_ulid_with_extreme_clock_skew() {
             }
         }
     }
+    
+    Ok(())
 }

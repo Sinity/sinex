@@ -53,14 +53,14 @@ impl EventProcessor for TestEventProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         let processor = TestEventProcessor::new("test_agent".to_string());
         let process_count = processor.process_count.clone();
         
         // Insert a test item using the utility
-        let queue_ids = worker_test_utils::setup_test_worker(&pool, "test_agent", 1).await?;
+        let queue_ids = worker_test_utils::setup_test_worker(pool, "test_agent", 1).await?;
         let _queue_id = queue_ids[0];
         
         // Process the item
@@ -71,24 +71,24 @@ async fn test_event_processor_basic_processing() -> Result<(), anyhow::Error> {
              WHERE target_agent_name = $1 AND status = 'pending'"
         )
         .bind("test_agent")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
         
-        processor.process_event(&pool, &item).await?;
+        processor.process_event(pool, &item).await?;
         
         pretty_assertions::assert_eq!(process_count.load(Ordering::SeqCst), 1);
         
         Ok(())
 }
 
-#[tokio::test]
-async fn test_event_processor_failure_handling() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_event_processor_failure_handling(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         let processor = TestEventProcessor::new("test_agent".to_string());
         
         processor.should_fail.store(true, Ordering::SeqCst);
         
-        let _queue_id = insert_test_work_item(&pool, "test_agent").await?;
+        let _queue_id = insert_test_work_item(pool, "test_agent").await?;
         
         let item = sqlx::query_as::<_, WorkQueueItem>(
             "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, 
@@ -97,17 +97,17 @@ async fn test_event_processor_failure_handling() -> Result<(), anyhow::Error> {
              WHERE target_agent_name = $1 AND status = 'pending'"
         )
         .bind("test_agent")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
         
-        let result = processor.process_event(&pool, &item).await;
+        let result = processor.process_event(pool, &item).await;
         assert!(result.is_err());
         
         Ok(())
 }
 
-#[tokio::test]
-async fn test_backoff_calculation() {
+#[sinex_test]
+async fn test_backoff_calculation(_ctx: TestContext) -> TestResult {
     // Test backoff calculation function
     let backoff_0 = calculate_backoff_secs(0);
     let backoff_1 = calculate_backoff_secs(1);
@@ -123,10 +123,12 @@ async fn test_backoff_calculation() {
     
     println!("Backoff progression: 0:{:.1}s, 1:{:.1}s, 5:{:.1}s, 10:{:.1}s", 
         backoff_0, backoff_1, backoff_5, backoff_10);
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_worker_metrics_creation() {
+#[sinex_test]
+async fn test_worker_metrics_creation(_ctx: TestContext) -> TestResult {
     let metrics = WorkerMetrics::new("test_agent");
     
     // Test that metrics can be incremented
@@ -141,11 +143,13 @@ async fn test_worker_metrics_creation() {
     pretty_assertions::assert_eq!(metrics.items_claimed.get(), 1.0);
     pretty_assertions::assert_eq!(metrics.items_processed.get(), 1.0);
     pretty_assertions::assert_eq!(metrics.items_failed.get(), 1.0);
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_multiple_processors_different_agents(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         let processor_a = TestEventProcessor::new("agent_a".to_string());
         let processor_b = TestEventProcessor::new("agent_b".to_string());
         
@@ -153,8 +157,8 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
         let count_b = processor_b.process_count.clone();
         
         // Insert items for each agent
-        let _queue_id_a = insert_test_work_item(&pool, "agent_a").await?;
-        let _queue_id_b = insert_test_work_item(&pool, "agent_b").await?;
+        let _queue_id_a = insert_test_work_item(pool, "agent_a").await?;
+        let _queue_id_b = insert_test_work_item(pool, "agent_b").await?;
         
         // Get and process items for each agent
         let item_a = sqlx::query_as::<_, WorkQueueItem>(
@@ -163,7 +167,7 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
              FROM sinex_schemas.work_queue 
              WHERE target_agent_name = 'agent_a'"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
         
         let item_b = sqlx::query_as::<_, WorkQueueItem>(
@@ -172,11 +176,11 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
              FROM sinex_schemas.work_queue 
              WHERE target_agent_name = 'agent_b'"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
         
-        processor_a.process_event(&pool, &item_a).await?;
-        processor_b.process_event(&pool, &item_b).await?;
+        processor_a.process_event(pool, &item_a).await?;
+        processor_b.process_event(pool, &item_b).await?;
         
         pretty_assertions::assert_eq!(count_a.load(Ordering::SeqCst), 1);
         pretty_assertions::assert_eq!(count_b.load(Ordering::SeqCst), 1);
@@ -184,13 +188,15 @@ async fn test_multiple_processors_different_agents() -> Result<(), anyhow::Error
         Ok(())
 }
 
-#[tokio::test]
-async fn test_processor_configuration() {
+#[sinex_test]
+async fn test_processor_configuration(_ctx: TestContext) -> TestResult {
     let processor = TestEventProcessor::new("test_agent".to_string());
     
     pretty_assertions::assert_eq!(processor.agent_name(), "test_agent");
     pretty_assertions::assert_eq!(processor.batch_size(), 1);
     pretty_assertions::assert_eq!(processor.poll_interval_secs(), 1);
+    
+    Ok(())
 }
 
 struct SlowProcessor {
@@ -221,8 +227,8 @@ impl EventProcessor for SlowProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_processor_custom_configuration() {
+#[sinex_test]
+async fn test_processor_custom_configuration(_ctx: TestContext) -> TestResult {
     let processor = SlowProcessor {
         agent_name: "slow_agent".to_string(),
     };
@@ -230,4 +236,6 @@ async fn test_processor_custom_configuration() {
     pretty_assertions::assert_eq!(processor.agent_name(), "slow_agent");
     pretty_assertions::assert_eq!(processor.batch_size(), 5);
     pretty_assertions::assert_eq!(processor.poll_interval_secs(), 2);
+    
+    Ok(())
 }

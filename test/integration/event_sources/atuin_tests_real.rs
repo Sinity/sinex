@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use sinex_events::atuin::{AtuinDbReader, AtuinConfig, CommandExecutedAtuinPayload};
 use sinex_core::EventSource;
-use crate::common::{create_test_db_pool, event_sources};
+use crate::common::event_sources;
 
 /// Get real Atuin database path or create minimal test database if needed
 fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
@@ -91,8 +91,8 @@ fn generate_test_commands() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_reader_initialization(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -102,8 +102,8 @@ async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
         use_file_watch: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
-    let reader = AtuinDbReader::initialize(ctx).await;
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_ok(), "Should initialize with Atuin database");
     
     // Test with non-existent database
@@ -112,14 +112,14 @@ async fn test_atuin_reader_initialization() -> Result<(), anyhow::Error> {
         ..config
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
-    let reader = AtuinDbReader::initialize(ctx).await;
+    let event_ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
+    let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_err(), "Should fail with non-existent database");
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_event_capture(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -129,8 +129,8 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
         use_file_watch: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
-    let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
     // Start reading in background
@@ -168,8 +168,8 @@ async fn test_atuin_event_capture() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_watermarking(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -180,12 +180,12 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     };
     
     // Setup PostgreSQL database for watermarking
-    let pg_pool = create_test_db_pool().await?;
+    let pg_pool = ctx.pool().clone();
     
     // First read with PostgreSQL connection for watermarking
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap())
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap())
         .with_db_pool(pg_pool.clone());
-    let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
+    let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
     let handle = tokio::spawn(async move {
@@ -216,9 +216,9 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
     }
     
     // Second read - should use watermarking to only get new entries
-    let ctx2 = event_sources::test_context(serde_json::to_value(&config).unwrap())
-        .with_db_pool(pg_pool);
-    let mut reader2 = AtuinDbReader::initialize(ctx2).await.unwrap();
+    let event_ctx2 = event_sources::test_context(serde_json::to_value(&config).unwrap())
+        .with_db_pool(pg_pool.clone());
+    let mut reader2 = AtuinDbReader::initialize(event_ctx2).await.unwrap();
     let (tx2, mut rx2) = mpsc::channel(100);
     
     let handle2 = tokio::spawn(async move {
@@ -253,8 +253,8 @@ async fn test_atuin_watermarking() -> Result<(), anyhow::Error> {
 }
 
 /// Test against real Atuin database if available, otherwise use minimal test database
-#[tokio::test]
-async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     // If we have real Atuin, try to populate some test data
@@ -271,8 +271,8 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
         use_file_watch: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
-    let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
     
     let handle = tokio::spawn(async move {
@@ -321,8 +321,8 @@ async fn test_real_atuin_integration() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Test live Atuin monitoring with automatic command generation
-#[tokio::test]
-async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_live_atuin_monitoring(ctx: TestContext) -> TestResult {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
     
@@ -341,8 +341,8 @@ async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> 
         use_file_watch: true, // Use file watching for live updates
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
-    let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(1000);
     
     println!("🔍 Testing live Atuin monitoring with generated commands...");
@@ -398,8 +398,8 @@ async fn test_live_atuin_monitoring() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_atuin_production_scale() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_atuin_production_scale(ctx: TestContext) -> TestResult {
     let db_path = get_or_create_atuin_db()?;
     
     let config = AtuinConfig {
@@ -409,8 +409,8 @@ async fn test_atuin_production_scale() -> Result<(), anyhow::Error> {
         use_file_watch: false,
     };
     
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
-    let mut reader = AtuinDbReader::initialize(ctx).await.unwrap();
+    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(1000);
     
     let start_time = std::time::Instant::now();

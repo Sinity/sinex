@@ -3,8 +3,8 @@ use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::validation::EventValidator;
 
 /// Test that collector can be created with valid configuration
-#[tokio::test]
-async fn test_collector_creation() {
+#[sinex_test]
+async fn test_collector_creation(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -21,11 +21,12 @@ async fn test_collector_creation() {
     
     let _collector = UnifiedCollector::new(config, output_config, None, None);
     // Test passes if creation doesn't panic
+    Ok(())
 }
 
 /// Test output configuration options
 #[sinex_test]
-async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_output_config_database(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -47,8 +48,8 @@ async fn test_output_config_database(ctx: TestContext) -> Result<(), Box<dyn std
 }
 
 /// Test collector configuration loading
-#[tokio::test]
-async fn test_collector_config_loading() {
+#[sinex_test]
+async fn test_collector_config_loading(_ctx: TestContext) -> TestResult {
     // Test default configuration loading
     let result = CollectorConfig::load();
     
@@ -73,11 +74,12 @@ async fn test_collector_config_loading() {
             assert!(!e.to_string().is_empty(), "Error should have a meaningful message: {}", e);
         }
     }
+    Ok(())
 }
 
 /// Test event filtering based on enabled events
-#[tokio::test]
-async fn test_event_filtering() {
+#[sinex_test]
+async fn test_event_filtering(_ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -97,11 +99,12 @@ async fn test_event_filtering() {
     // Test with different event configurations
     config.enabled_events = vec!["terminal".to_string(), "window_manager".to_string()];
     let _collector2 = UnifiedCollector::new(config, output_config, None, None);
+    Ok(())
 }
 
 /// Test collector with file output
-#[tokio::test]
-async fn test_collector_file_output() {
+#[sinex_test]
+async fn test_collector_file_output(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),
@@ -120,11 +123,12 @@ async fn test_collector_file_output() {
     
     // Clean up test file if it exists
     let _ = std::fs::remove_file("/tmp/test_events.jsonl");
+    Ok(())
 }
 
 /// Test collector with validator
 #[sinex_test]
-async fn test_collector_with_validator(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_collector_with_validator(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
         enabled_events: vec!["filesystem".to_string()],
         event: HashMap::new(),

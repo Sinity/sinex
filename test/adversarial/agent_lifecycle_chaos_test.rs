@@ -1,12 +1,12 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
 use sinex_db::{queries, models::AgentManifest};
 use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::Utc;
+use tokio::task::yield_now;
 
-#[tokio::test]
-async fn test_agent_registering_from_multiple_instances() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let agent_name = "chaos-agent";
     let successful_registrations = Arc::new(AtomicU64::new(0));
@@ -102,7 +102,7 @@ async fn test_agent_registering_from_multiple_instances() {
         WHERE agent_name = $1
         "#,
         agent_name
-    ).fetch_all(&pool).await.unwrap();
+    ).fetch_all(pool).await?;
     
     println!("- Agents in database: {}", agents.len());
     
@@ -114,11 +114,13 @@ async fn test_agent_registering_from_multiple_instances() {
     if successes > 1 {
         println!("RACE CONDITION: Multiple instances succeeded registration");
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_heartbeat_from_unregistered_agent() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_heartbeat_from_unregistered_agent(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let phantom_agent = "phantom-agent";
     
@@ -144,7 +146,7 @@ async fn test_heartbeat_from_unregistered_agent() {
             let phantom_agents = sqlx::query!(
                 "SELECT agent_name, version FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 phantom_agent
-            ).fetch_all(&pool).await.unwrap();
+            ).fetch_all(pool).await?;
             
             if !phantom_agents.is_empty() {
                 println!("SECURITY ISSUE: Phantom agent auto-registered from heartbeat!");
@@ -157,11 +159,13 @@ async fn test_heartbeat_from_unregistered_agent() {
             println!("Phantom heartbeat rejected (good): {}", e);
         }
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_downgrade_during_operation() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let agent_name = "version-chaos-agent";
     
@@ -200,16 +204,16 @@ async fn test_agent_downgrade_during_operation() {
         manifest_v2.description.as_deref(),
         manifest_v2.produces_event_types.clone(),
         manifest_v2.subscribes_to_event_types.clone(),
-    ).await.unwrap();
+    ).await?;
     println!("Registered agent v2.0");
     
     // Send some v2.0 events
     let v2_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("2.0.0"));
     
-    queries::insert_event(&pool, &v2_event).await.unwrap();
+    queries::insert_event(&pool, &v2_event).await?;
     println!("Sent v2.0 event");
     
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    yield_now().await;
     
     // Now try to "downgrade" to v1.0 (different capabilities, schema)
     let manifest_v1 = AgentManifest {
@@ -257,7 +261,7 @@ async fn test_agent_downgrade_during_operation() {
             let current_agents = sqlx::query!(
                 "SELECT agent_name, version FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).fetch_all(&pool).await.unwrap();
+            ).fetch_all(pool).await?;
             
             println!("Agents after downgrade attempt: {}", current_agents.len());
             for agent in &current_agents {
@@ -281,11 +285,13 @@ async fn test_agent_downgrade_during_operation() {
             println!("Agent downgrade rejected: {}", e);
         }
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_concurrent_agent_status_updates() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let agent_name = "status-chaos-agent";
     
@@ -318,7 +324,7 @@ async fn test_concurrent_agent_status_updates() {
         manifest.description.as_deref(),
         manifest.produces_event_types.clone(),
         manifest.subscribes_to_event_types.clone(),
-    ).await.unwrap();
+    ).await?;
     
     let mut handles = vec![];
     let status_updates = Arc::new(AtomicU64::new(0));
@@ -364,7 +370,7 @@ async fn test_concurrent_agent_status_updates() {
             }
             
             // Add some processing delay to increase race condition chances
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            yield_now().await;
         });
         
         handles.push(handle);
@@ -376,7 +382,7 @@ async fn test_concurrent_agent_status_updates() {
     let final_agent = sqlx::query!(
         "SELECT agent_name, status FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
-    ).fetch_one(&pool).await.unwrap();
+    ).fetch_one(pool).await?;
     
     let total_updates = status_updates.load(Ordering::SeqCst);
     println!("Status update chaos results:");
@@ -385,11 +391,13 @@ async fn test_concurrent_agent_status_updates() {
     
     // The final status is essentially random due to race conditions
     // This test exposes lost update problems in agent status management
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_agent_zombie_heartbeat_scenario() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     let agent_name = "zombie-agent";
     
@@ -422,10 +430,10 @@ async fn test_agent_zombie_heartbeat_scenario() {
         manifest.description.as_deref(),
         manifest.produces_event_types.clone(),
         manifest.subscribes_to_event_types.clone(),
-    ).await.unwrap();
+    ).await?;
     
     // Simulate agent that stops sending heartbeats but doesn't unregister
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    yield_now().await;
     
     // New agent with same name tries to register (recovery scenario)
     let recovery_manifest = AgentManifest {
@@ -464,7 +472,7 @@ async fn test_agent_zombie_heartbeat_scenario() {
             let agents = sqlx::query!(
                 "SELECT agent_name, version, status, last_heartbeat_ts FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).fetch_all(&pool).await.unwrap();
+            ).fetch_all(pool).await?;
             
             println!("Agents after recovery: {}", agents.len());
             
@@ -492,4 +500,6 @@ async fn test_agent_zombie_heartbeat_scenario() {
             println!("Recovery heartbeat failed: {}", e);
         }
     }
+    
+    Ok(())
 }

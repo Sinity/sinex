@@ -2,8 +2,8 @@ use crate::common::prelude::*;
 use sinex_core::{CoreError, Result as CoreResult};
 use std::io;
 
-#[test]
-fn test_core_error_from_io_error() {
+#[sinex_test]
+async fn test_core_error_from_io_error(_ctx: TestContext) -> TestResult {
     let io_err = io::Error::new(io::ErrorKind::NotFound, "File not found");
     let core_err: CoreError = io_err.into();
     
@@ -11,10 +11,11 @@ fn test_core_error_from_io_error() {
         CoreError::Io(msg) => assert!(msg.contains("File not found")),
         _ => panic!("Expected CoreError::Io variant"),
     }
+    Ok(())
 }
 
-#[test]
-fn test_core_error_from_serde_json_error() {
+#[sinex_test]
+async fn test_core_error_from_serde_json_error(_ctx: TestContext) -> TestResult {
     let json_str = r#"{"invalid": json}"#;
     let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
     let core_err: CoreError = json_err.into();
@@ -23,10 +24,11 @@ fn test_core_error_from_serde_json_error() {
         CoreError::Serialization(msg) => assert!(!msg.is_empty()),
         _ => panic!("Expected CoreError::Serialization variant"),
     }
+    Ok(())
 }
 
-#[test]
-fn test_error_chain_propagation() {
+#[sinex_test]
+async fn test_error_chain_propagation(_ctx: TestContext) -> TestResult {
     fn inner_operation() -> CoreResult<String> {
         Err(CoreError::Database("Connection lost".to_string()))
     }
@@ -46,6 +48,7 @@ fn test_error_chain_propagation() {
     assert!(error_msg.contains("Outer layer"));
     assert!(error_msg.contains("Middle layer"));
     assert!(error_msg.contains("Connection lost"));
+    Ok(())
 }
 
 // Test error propagation in async context
@@ -68,7 +71,7 @@ impl EventSource for FailingEventSource {
 }
 
 #[sinex_test]
-async fn test_event_source_error_propagation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_source_error_propagation(ctx: TestContext) -> TestResult {
     let ctx_local = event_sources::test_context(json!({}));
     let result = FailingEventSource::initialize(ctx_local).await;
     
@@ -80,8 +83,8 @@ async fn test_event_source_error_propagation(ctx: TestContext) -> Result<(), Box
     Ok(())
 }
 
-#[test]
-fn test_validation_error_propagation() {
+#[sinex_test]
+async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
     fn validate_event_type(event_type: &str) -> CoreResult<()> {
         if event_type.is_empty() {
             return Err(CoreError::Validation("Event type cannot be empty".to_string()));
@@ -103,10 +106,11 @@ fn test_validation_error_propagation() {
     // Test valid event type
     let result = validate_event_type("system.startup");
     assert!(result.is_ok());
+    Ok(())
 }
 
-#[test]
-fn test_error_display_implementation() {
+#[sinex_test]
+async fn test_error_display_implementation(_ctx: TestContext) -> TestResult {
     let errors = vec![
         (CoreError::Database("Connection timeout".to_string()), "Database error: Connection timeout"),
         (CoreError::Serialization("Invalid JSON".to_string()), "Serialization error: Invalid JSON"),
@@ -119,11 +123,12 @@ fn test_error_display_implementation() {
     for (error, expected) in errors {
         pretty_assertions::assert_eq!(error.to_string(), expected);
     }
+    Ok(())
 }
 
 // Test error propagation across thread boundaries
 #[sinex_test]
-async fn test_error_propagation_across_tasks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_error_propagation_across_tasks(ctx: TestContext) -> TestResult {
     use tokio::task;
     
     let handle = task::spawn(async {
@@ -141,8 +146,8 @@ async fn test_error_propagation_across_tasks(ctx: TestContext) -> Result<(), Box
 }
 
 // Test error recovery patterns
-#[test]
-fn test_error_recovery_with_fallback() {
+#[sinex_test]
+async fn test_error_recovery_with_fallback(_ctx: TestContext) -> TestResult {
     fn operation_with_fallback() -> Result<String> {
         let primary_result = Err::<String, CoreError>(CoreError::Io("Primary failed".to_string()));
         
@@ -155,11 +160,12 @@ fn test_error_recovery_with_fallback() {
     let result = operation_with_fallback();
     assert!(result.is_ok());
     pretty_assertions::assert_eq!(result.unwrap(), "Fallback value");
+    Ok(())
 }
 
 // Test nested Result handling
-#[test]
-fn test_nested_result_error_propagation() {
+#[sinex_test]
+async fn test_nested_result_error_propagation(_ctx: TestContext) -> TestResult {
     fn parse_config(data: &str) -> Result<serde_json::Value> {
         serde_json::from_str(data).map_err(|e| anyhow::anyhow!("Config parse error: {}", e))
     }
@@ -177,13 +183,14 @@ fn test_nested_result_error_propagation() {
     
     // Test with invalid JSON
     let result = load_and_validate_config("{invalid}");
-    assert!(result.is_err()); // Test serialization error
+    assert!(result.is_err(), "Expected JSON parse error for invalid syntax");
     
     // Test with valid JSON but missing field
     let result = load_and_validate_config(r#"{}"#);
-    assert!(result.is_err()); // Test validation error
+    assert!(result.is_err(), "Expected validation error for missing required field");
     
     // Test with valid config
     let result = load_and_validate_config(r#"{"required_field": "value"}"#);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "Expected valid config to pass validation");
+    Ok(())
 }

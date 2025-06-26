@@ -5,8 +5,8 @@ use tokio::sync::{Semaphore, RwLock};
 use crate::common::timing_optimization::EventCounter;
 
 /// Test connection pool exhaustion scenarios
-#[tokio::test]
-async fn test_connection_pool_exhaustion() {
+#[sinex_test]
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
     // Simulate a connection pool with limited resources
     const MAX_CONNECTIONS: usize = 10;
     
@@ -163,11 +163,13 @@ async fn test_connection_pool_exhaustion() {
         "Pool limit was exceeded");
     assert!(total_rejected > 0, 
         "Expected some rejections under heavy load");
+    
+    Ok(())
 }
 
 /// Test connection leak detection
-#[tokio::test]
-async fn test_connection_leak_detection() {
+#[sinex_test]
+async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 5;
     
     #[derive(Debug)]
@@ -315,11 +317,13 @@ async fn test_connection_leak_detection() {
     assert!(!detected.is_empty(), "Should have detected at least one leak");
     assert!(detected.iter().any(|(_, who)| who == "leaky_actor"),
         "Should have identified the leaky actor");
+    
+    Ok(())
 }
 
 /// Test deadlock prevention in connection pool
-#[tokio::test]
-async fn test_connection_deadlock_prevention() {
+#[sinex_test]
+async fn test_connection_deadlock_prevention(ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 2; // Small pool to trigger contention
     
     let pool = Arc::new(Semaphore::new(POOL_SIZE));
@@ -337,7 +341,7 @@ async fn test_connection_deadlock_prevention() {
         tokio::task::yield_now().await;
         
         println!("Worker A: Trying to acquire second connection...");
-        match timeout(Duration::from_millis(500), pool_a.acquire()).await {
+        match tokio::time::timeout(Duration::from_millis(500), pool_a.acquire()).await {
             Ok(Ok(permit2)) => {
                 println!("Worker A: Got both connections!");
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -370,7 +374,7 @@ async fn test_connection_deadlock_prevention() {
         println!("Worker B: Got first connection");
         
         println!("Worker B: Trying to acquire second connection...");
-        match timeout(Duration::from_millis(500), pool_b.acquire()).await {
+        match tokio::time::timeout(Duration::from_millis(500), pool_b.acquire()).await {
             Ok(Ok(permit2)) => {
                 println!("Worker B: Got both connections!");
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -423,6 +427,8 @@ async fn test_connection_deadlock_prevention() {
     
     // In this scenario, we expect deadlock to be detected
     assert!(was_deadlock, "Expected deadlock scenario to be detected");
-    pretty_assertions::assert_eq!(pool.available_permits(), POOL_SIZE, 
+    assert_eq!(pool.available_permits(), POOL_SIZE, 
         "All connections should be released after deadlock resolution");
+    
+    Ok(())
 }

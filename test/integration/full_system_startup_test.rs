@@ -31,12 +31,8 @@ fn create_comprehensive_config() -> CollectorConfig {
     config
 }
 
-#[tokio::test]
-async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-    
-    // Clean database state
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+#[sinex_test]
+async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestResult {
     
     let config = create_comprehensive_config();
     
@@ -52,7 +48,7 @@ async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Err
     let startup_start = Instant::now();
     
     // 1. Database initialization and health check
-    let db_health = test_database_startup_health(&pool).await?;
+    let db_health = test_database_startup_health(ctx.pool()).await?;
     assert!(db_health, "Database health check should pass");
     
     // 2. Git-annex repository initialization
@@ -65,7 +61,7 @@ async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Err
     assert!(source_health, "Event sources should start healthy");
     
     // 4. Worker system initialization
-    let worker_health = test_worker_system_startup(&pool).await?;
+    let worker_health = test_worker_system_startup(ctx.pool()).await?;
     assert!(worker_health, "Worker system should start healthy");
     
     // 5. Monitoring system activation
@@ -97,7 +93,7 @@ async fn test_system_startup_with_all_configurations() -> Result<(), anyhow::Err
     Ok(())
 }
 
-async fn test_database_startup_health(pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_database_startup_health(pool: &PgPool) -> Result<bool> {
     // Test that all required tables exist and are accessible
     let tables = vec!["raw.events", "sinex_schemas.work_queue", "sinex_schemas.agent_manifests"];
     
@@ -301,18 +297,18 @@ async fn test_clipboard_source_health() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_worker_system_startup(pool: &PgPool) -> Result<bool> {
     // Test that worker system can initialize and claim work
     
     // Insert test work items
-    let test_event = crate::common::create_test_event("worker_startup_test", "system.health_check");
-    let inserted_event = queries::insert_event(&pool, &test_event).await?;
+    let test_event = create_test_event("worker_startup_test", "system.health_check").await;
+    let inserted_event_id = insert_event(&pool, &test_event).await?;
     
     // Add to promotion queue
-    queries::add_to_work_queue(&pool, inserted_event.id, "test-agent", 3).await?;
+    add_to_work_queue(&pool, inserted_event_id, "test-agent", 3).await?;
     
     // Test that workers can claim items
-    let claimed_items = queries::claim_work_queue_items(&pool, 
+    let claimed_items = claim_work_queue_items(&pool, 
         "test-agent", 
         "startup-worker", 
         1
@@ -321,7 +317,7 @@ async fn test_worker_system_startup(pool: &sqlx::PgPool) -> Result<bool> {
     assert!(!claimed_items.is_empty(), "Worker should be able to claim items on startup");
     
     // Clean up
-    queries::complete_work_queue_item(&pool, claimed_items[0].queue_id).await?;
+    complete_work_queue_item(&pool, claimed_items[0].queue_id).await?;
     
     Ok(true)
 }
@@ -350,8 +346,8 @@ async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<boo
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_configuration_validation_end_to_end() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> TestResult {
     // Test comprehensive configuration validation
     
     // Test 1: Valid configuration should pass all checks
@@ -382,10 +378,8 @@ async fn test_configuration_validation_end_to_end() -> Result<(), anyhow::Error>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_graceful_degradation_on_component_failure() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+#[sinex_test]
+async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> TestResult {
     
     let mut config = create_comprehensive_config();
     
@@ -400,7 +394,7 @@ async fn test_graceful_degradation_on_component_failure() -> Result<(), anyhow::
     assert!(startup_result, "System should start even with some source failures");
     
     // Test 2: Database connection issues should be handled gracefully
-    let db_recovery = test_database_recovery_scenario(&pool).await?;
+    let db_recovery = test_database_recovery_scenario(ctx.pool()).await?;
     assert!(db_recovery, "System should recover from temporary database issues");
     
     // Test 3: Git-annex unavailability should not prevent startup
@@ -433,12 +427,12 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
     Ok(successful_sources.load(Ordering::SeqCst))
 }
 
-async fn test_database_recovery_scenario(pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_database_recovery_scenario(pool: &PgPool) -> Result<bool> {
     // Test that system can recover from temporary database issues
     
     // Simulate successful database operations
-    let test_event = crate::common::create_test_event("recovery_test", "system.test");
-    let insert_result = queries::insert_event(&pool, &test_event).await;
+    let test_event = create_test_event("recovery_test", "system.test").await;
+    let insert_result = insert_event(&pool, &test_event).await;
     
     // Should succeed in normal conditions
     assert!(insert_result.is_ok(), "Database insert should succeed in recovery test");
@@ -467,15 +461,13 @@ async fn test_annex_fallback_scenario() -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_system_health_monitoring_integration() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+#[sinex_test]
+async fn test_system_health_monitoring_integration(ctx: TestContext) -> TestResult {
     
     let config = create_comprehensive_config();
     
     // Test 1: Health check system should monitor all components
-    let health_status = test_comprehensive_health_monitoring(&config, &pool).await?;
+    let health_status = test_comprehensive_health_monitoring(&config, ctx.pool()).await?;
     assert!(health_status, "Health monitoring should report system as healthy");
     
     // Test 2: Failure detection should work correctly
@@ -489,7 +481,7 @@ async fn test_system_health_monitoring_integration() -> Result<(), anyhow::Error
     Ok(())
 }
 
-async fn test_comprehensive_health_monitoring(config: &CollectorConfig, pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_comprehensive_health_monitoring(config: &CollectorConfig, pool: &PgPool) -> Result<bool> {
     let mut all_healthy = true;
     
     // Check database health
@@ -549,17 +541,15 @@ async fn test_health_check_recovery_detection() -> Result<bool> {
     Ok(true)
 }
 
-#[tokio::test]
-async fn test_comprehensive_error_handling_integration() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-    crate::common::cleanup::truncate_all_tables(&pool).await?;
+#[sinex_test]
+async fn test_comprehensive_error_handling_integration(ctx: TestContext) -> TestResult {
     
     // Test 1: Configuration errors should be handled gracefully
     let config_error_handling = test_configuration_error_handling().await?;
     assert!(config_error_handling, "Configuration errors should be handled gracefully");
     
     // Test 2: Database errors should be handled with retries
-    let db_error_handling = test_database_error_handling(&pool).await?;
+    let db_error_handling = test_database_error_handling(ctx.pool()).await?;
     assert!(db_error_handling, "Database errors should be handled with retries");
     
     // Test 3: Event source errors should not crash the system
@@ -567,7 +557,7 @@ async fn test_comprehensive_error_handling_integration() -> Result<(), anyhow::E
     assert!(source_error_handling, "Event source errors should be handled gracefully");
     
     // Test 4: Worker errors should be contained
-    let worker_error_handling = test_worker_error_handling(&pool).await?;
+    let worker_error_handling = test_worker_error_handling(ctx.pool()).await?;
     assert!(worker_error_handling, "Worker errors should be contained");
     
     Ok(())
@@ -590,7 +580,7 @@ async fn test_configuration_error_handling() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_database_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_database_error_handling(pool: &PgPool) -> Result<bool> {
     // Test that database errors are handled appropriately
     
     // Test 1: Query with invalid syntax should return error, not panic
@@ -619,30 +609,30 @@ async fn test_event_source_error_handling() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_worker_error_handling(pool: &sqlx::PgPool) -> Result<bool> {
+async fn test_worker_error_handling(pool: &PgPool) -> Result<bool> {
     
     // Test that worker errors are contained and don't affect other workers
     
     // Create test events
-    let test_event1 = crate::common::create_test_event("worker_error_test_1", "system.test");
-    let test_event2 = crate::common::create_test_event("worker_error_test_2", "system.test");
+    let test_event1 = create_test_event("worker_error_test_1", "system.test").await;
+    let test_event2 = create_test_event("worker_error_test_2", "system.test").await;
     
-    let inserted_event1 = queries::insert_event(&pool, &test_event1).await?;
-    let inserted_event2 = queries::insert_event(&pool, &test_event2).await?;
+    let inserted_event1_id = insert_event(&pool, &test_event1).await?;
+    let inserted_event2_id = insert_event(&pool, &test_event2).await?;
     
     // Add both to promotion queue
-    queries::add_to_work_queue(&pool, inserted_event1.id, "test-agent", 3).await?;
-    queries::add_to_work_queue(&pool, inserted_event2.id, "test-agent", 3).await?;
+    add_to_work_queue(&pool, inserted_event1_id, "test-agent", 3).await?;
+    add_to_work_queue(&pool, inserted_event2_id, "test-agent", 3).await?;
     
     // Simulate one worker succeeding and another failing
-    let claimed_items1 = queries::claim_work_queue_items(&pool, "test-agent", "worker1", 1).await?;
-    let claimed_items2 = queries::claim_work_queue_items(&pool, "test-agent", "worker2", 1).await?;
+    let claimed_items1 = claim_work_queue_items(&pool, "test-agent", "worker1", 1).await?;
+    let claimed_items2 = claim_work_queue_items(&pool, "test-agent", "worker2", 1).await?;
     
     assert!(!claimed_items1.is_empty(), "Worker1 should claim an item");
     assert!(!claimed_items2.is_empty(), "Worker2 should claim an item");
     
     // Worker1 completes successfully
-    queries::complete_work_queue_item(&pool, claimed_items1[0].queue_id).await?;
+    complete_work_queue_item(&pool, claimed_items1[0].queue_id).await?;
     
     // Worker2 simulates failure by not completing
     // (In real scenario, this would timeout and be reclaimed)

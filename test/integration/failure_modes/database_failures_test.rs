@@ -153,7 +153,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
 
 /// Test schema migration failure scenarios
 #[sinex_test]
-async fn test_migration_failure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_migration_failure_handling(ctx: TestContext) -> TestResult {
     // This test simulates what happens when migrations fail partway through
     
     #[derive(Debug)]
@@ -247,7 +247,7 @@ async fn test_migration_failure_handling(ctx: TestContext) -> Result<(), Box<dyn
 
 /// Test connection pool behavior under database restart
 #[sinex_test]
-async fn test_database_restart_resilience(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     
     let queries_before = Arc::new(AtomicU64::new(0));
     let queries_during_outage = Arc::new(AtomicU64::new(0));
