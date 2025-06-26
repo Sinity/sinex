@@ -2,8 +2,8 @@ use crate::common::prelude::*;
 use sinex_core::{RawEventBuilder, sources, event_type_constants};
 use chrono::{DateTime, Utc};
 
-#[test]
-fn test_raw_event_builder_basic_creation() {
+#[sinex_test]
+async fn test_raw_event_builder_basic_creation(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::FILESYSTEM,
         event_type_constants::filesystem::FILE_CREATED,
@@ -25,12 +25,13 @@ fn test_raw_event_builder_basic_creation() {
     
     // Verify ULID is valid
     assert!(event.id.to_string().len() == 26);
+    Ok(())
 }
 
 // Removed trivial setter tests - they just verified that .with_X(value) sets the X field
 
-#[test]
-fn test_raw_event_builder_complex_payload() {
+#[sinex_test]
+async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult {
     let complex_payload = json!({
         "nested": {
             "array": [1, 2, 3],
@@ -54,10 +55,11 @@ fn test_raw_event_builder_complex_payload() {
     pretty_assertions::assert_eq!(event.payload["nested"]["array"][1], 2);
     pretty_assertions::assert_eq!(event.payload["unicode"], "测试文件.txt");
     pretty_assertions::assert_eq!(event.payload["nested"]["object"]["number"], 42.5);
+    Ok(())
 }
 
-#[test]
-fn test_raw_event_builder_empty_payload() {
+#[sinex_test]
+async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::SINEX,
         "system.startup",
@@ -67,10 +69,11 @@ fn test_raw_event_builder_empty_payload() {
     pretty_assertions::assert_eq!(event.payload, json!({}));
     pretty_assertions::assert_eq!(event.source, sources::SINEX);
     pretty_assertions::assert_eq!(event.event_type, "system.startup");
+    Ok(())
 }
 
-#[test]
-fn test_raw_event_builder_multiple_builds() {
+#[sinex_test]
+async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult {
     let _builder = RawEventBuilder::new(
         sources::CLIPBOARD,
         "content.copied",
@@ -89,10 +92,11 @@ fn test_raw_event_builder_multiple_builds() {
     pretty_assertions::assert_eq!(event1.source, event2.source);
     pretty_assertions::assert_eq!(event1.event_type, event2.event_type);
     pretty_assertions::assert_eq!(event1.payload, event2.payload);
+    Ok(())
 }
 
-#[test]
-fn test_raw_event_builder_ulid_ordering() {
+#[sinex_test]
+async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
     
     // Create events in rapid succession
@@ -113,10 +117,11 @@ fn test_raw_event_builder_ulid_ordering() {
         assert!(events[i].id.to_string() > events[i-1].id.to_string());
         assert!(events[i].ts_ingest >= events[i-1].ts_ingest);
     }
+    Ok(())
 }
 
-#[test]
-fn test_raw_event_builder_all_fields_set() {
+#[sinex_test]
+async fn test_raw_event_builder_all_fields_set(_ctx: TestContext) -> TestResult {
     let orig_time = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z").unwrap().with_timezone(&Utc);
     let schema_id = sinex_ulid::Ulid::new();
     
@@ -141,4 +146,5 @@ fn test_raw_event_builder_all_fields_set() {
     pretty_assertions::assert_eq!(event.payload_schema_id, Some(schema_id));
     pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
     pretty_assertions::assert_eq!(event.payload["size"], 2048);
+    Ok(())
 }

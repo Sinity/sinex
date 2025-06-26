@@ -1,10 +1,9 @@
 use crate::common::prelude::*;
-use sinex_db::queries;
-use crate::common::create_test_db_pool;
+use std::sync::Barrier;
 
-#[tokio::test]
-async fn test_concurrent_ulid_generation() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test(timeout = 30)]
+async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     let num_tasks = 10;
     let events_per_task = 100;
     let barrier = Arc::new(Barrier::new(num_tasks));
@@ -26,7 +25,7 @@ async fn test_concurrent_ulid_generation() {
                         "event": i
                     }), None);
                 
-                let result = queries::insert_event(&pool, &event).await.unwrap();
+                let result = insert_event(&pool, &event).await.unwrap();
                 ulids.push(result.id);
             }
             ulids
@@ -51,15 +50,17 @@ async fn test_concurrent_ulid_generation() {
         all_ulids.len() - unique_ulids.len(),
         all_ulids.len()
     );
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_worker_double_processing() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test(timeout = 30)]
+async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Insert a test event
     let event = crate::common::events::generic_adversarial_event("test", "worker_test", json!({"test": true}), None);
-    let inserted = queries::insert_event(&pool, &event).await.unwrap();
+    let inserted = insert_event(pool, &event).await.unwrap();
     
     // Simulate two workers trying to claim the same event
     let pool1 = pool.clone();
@@ -109,4 +110,6 @@ async fn test_worker_double_processing() {
     
     println!("Final payload: {}", final_event.payload);
     // This will show that both workers processed it - a bug!
+    
+    Ok(())
 }

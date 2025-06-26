@@ -328,9 +328,9 @@ impl ResilientDbWorker {
     }
 }
 
-#[tokio::test]
-async fn test_connection_pool_under_sustained_pressure() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_connection_pool_under_sustained_pressure(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     run_migrations(&pool).await?;
 
     let metrics = Arc::new(ConnectionMetrics::new());
@@ -407,8 +407,8 @@ async fn test_connection_pool_under_sustained_pressure() -> Result<(), anyhow::E
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_failure_recovery_cycles() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_failure_recovery_cycles(_ctx: TestContext) -> TestResult {
     let metrics = Arc::new(ConnectionMetrics::new());
     let recovery_cycles = 3;
     
@@ -476,8 +476,8 @@ async fn test_connection_pool_failure_recovery_cycles() -> Result<(), anyhow::Er
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_deadlock_detection_and_resolution(_ctx: TestContext) -> TestResult {
     const POOL_SIZE: usize = 3;
     
     let pool = PgPoolOptions::new()
@@ -607,8 +607,8 @@ async fn test_connection_pool_deadlock_detection_and_resolution() -> Result<(), 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_cascade_failure_recovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_connection_pool_cascade_failure_recovery(_ctx: TestContext) -> TestResult {
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Simulate cascade failure: one failure triggers more failures
@@ -693,9 +693,9 @@ async fn test_connection_pool_cascade_failure_recovery() -> Result<(), anyhow::E
     Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_memory_pressure_resilience() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_connection_pool_memory_pressure_resilience(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     let metrics = Arc::new(ConnectionMetrics::new());
     
     // Test large query results under memory pressure

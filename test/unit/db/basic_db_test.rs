@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_basic_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     // Create a simple test event
     let event = RawEventBuilder::new(
         "filesystem",
@@ -28,15 +28,16 @@ async fn test_basic_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-#[test]
-fn test_event_validation_creation() {
+#[sinex_test]
+async fn test_event_validation_creation(_ctx: TestContext) -> TestResult {
     // Test that EventValidator can be created
     let _validator = sinex_db::validation::EventValidator::new();
     // If this compiles and runs, the basic validation infrastructure works
+    Ok(())
 }
 
 #[sinex_test]
-async fn test_database_connection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_database_connection(ctx: TestContext) -> TestResult {
     // Simple test to verify database connectivity
     let result: i32 = sqlx::query_scalar("SELECT 1 as test_value")
         .fetch_one(ctx.pool())

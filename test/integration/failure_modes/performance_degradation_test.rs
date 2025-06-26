@@ -242,7 +242,7 @@ async fn test_cpu_throttling_detection() {
 
 /// Test I/O saturation handling
 #[tokio::test]
-async fn test_io_saturation_handling() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_io_saturation_handling() -> TestResult {
     use tokio::fs::OpenOptions;
     use tokio::io::AsyncWriteExt;
     

@@ -1,5 +1,4 @@
 use crate::common::prelude::*;
-use crate::common;
 use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
@@ -11,11 +10,9 @@ use tracing::info;
 
 /// Comprehensive end-to-end test that exercises the entire pipeline
 /// This single test covers ~70% of the codebase functionality
-#[tokio::test]
-async fn test_complete_event_pipeline() {
-    // Initialize test environment
-    common::env::init_test_logging();
-    let pool = common::create_test_db_pool().await.expect("Failed to create test pool");
+#[sinex_test]
+async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
+    // TestContext provides isolated database and test environment
     
     info!("Starting comprehensive pipeline test");
     
@@ -74,8 +71,16 @@ async fn test_complete_event_pipeline() {
     
     let mut stored_ids = Vec::new();
     for event in collected.iter() {
-        let result = queries::insert_event(&pool, event).await
-            .expect("Failed to insert event");
+        let result = insert_raw_event(
+            ctx.pool(),
+            &event.source,
+            &event.event_type, 
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.as_deref(),
+            event.payload_schema_id
+        ).await?;
         stored_ids.push(result.id);
     }
     
@@ -132,9 +137,8 @@ async fn test_complete_event_pipeline() {
         "#,
         Utc::now() - ChronoDuration::hours(1)
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     assert!(recent_events.count.unwrap() > 0, "Should find recent events");
     
@@ -143,9 +147,8 @@ async fn test_complete_event_pipeline() {
         "SELECT COUNT(*) as count FROM raw.events WHERE source = $1",
         "filesystem"
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     assert!(filesystem_events.count.unwrap() > 0, "Should find filesystem events");
     
@@ -153,9 +156,18 @@ async fn test_complete_event_pipeline() {
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = crate::common::events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
+    let bad_event = RawEventBuilder::new("test", "invalid.event", json!({"test": true})).build();
     
-    queries::insert_event(&pool, &bad_event).await.unwrap();
+    insert_raw_event(
+        ctx.pool(),
+        &bad_event.source,
+        &bad_event.event_type,
+        &bad_event.host,
+        bad_event.payload.clone(),
+        bad_event.ts_orig,
+        bad_event.ingestor_version.as_deref(),
+        bad_event.payload_schema_id
+    ).await?;
     
     // Attempt to process it (would go to DLQ in real system)
     // For now, verify it exists
@@ -163,9 +175,8 @@ async fn test_complete_event_pipeline() {
         "SELECT COUNT(*) as count FROM raw.events WHERE event_type = $1",
         "invalid.event"
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     pretty_assertions::assert_eq!(dlq_check.count.unwrap(), 1, "Bad event should be stored");
     
@@ -174,7 +185,7 @@ async fn test_complete_event_pipeline() {
     
     let agent_name = "test-collector";
     let manifest = queries::upsert_agent_manifest(
-        &pool,
+        ctx.pool(),
         agent_name,
         "0.1.0",
         "running",
@@ -183,8 +194,7 @@ async fn test_complete_event_pipeline() {
         Some(serde_json::json!(["file.created", "file.modified"])),
         None,
     )
-    .await
-    .unwrap();
+    .await?;
     
     pretty_assertions::assert_eq!(manifest.agent_name, agent_name);
     
@@ -198,9 +208,20 @@ async fn test_complete_event_pipeline() {
         version: "0.1.0".to_string(),
     };
     
-    let heartbeat_event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
+    let heartbeat_event = RawEventBuilder::new("test", "test.event", json!({"test": true}))
+        .with_ingestor_version("0.1.0")
+        .build();
     
-    queries::insert_event(&pool, &heartbeat_event).await.unwrap();
+    insert_raw_event(
+        ctx.pool(),
+        &heartbeat_event.source,
+        &heartbeat_event.event_type,
+        &heartbeat_event.host,
+        heartbeat_event.payload.clone(),
+        heartbeat_event.ts_orig,
+        heartbeat_event.ingestor_version.as_deref(),
+        heartbeat_event.payload_schema_id
+    ).await?;
     
     // Update agent heartbeat timestamp
     sqlx::query!(
@@ -209,9 +230,8 @@ async fn test_complete_event_pipeline() {
          WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
-    .await
-    .unwrap();
+    .execute(ctx.pool())
+    .await?;
     
     // Phase 7: Verify Data Integrity
     info!("Verifying data integrity");
@@ -220,9 +240,8 @@ async fn test_complete_event_pipeline() {
     let total_count = sqlx::query!(
         "SELECT COUNT(*) as count FROM raw.events"
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     let expected_count = num_events + 2; // test events + bad event + heartbeat
     pretty_assertions::assert_eq!(
@@ -243,18 +262,16 @@ async fn test_complete_event_pipeline() {
         LIMIT 1
         "#
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     // Re-read and verify unchanged
     let first_event_again = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
         first_event.id
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(ctx.pool())
+    .await?;
     
     pretty_assertions::assert_eq!(
         first_event.payload, 
@@ -266,7 +283,9 @@ async fn test_complete_event_pipeline() {
     
     // Cleanup
     drop(event_tx);
-    collector_task.await.unwrap();
+    collector_task.await?;
+    
+    Ok(())
 }
 
 /// Generate a diverse set of test events
@@ -275,18 +294,17 @@ fn generate_test_events() -> Vec<RawEvent> {
     let base_time = Utc::now();
     
     // Filesystem events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.created",
         serde_json::json!({
             "path": "/test/doc1.txt",
             "size": 1024,
             "created_at": base_time.to_rfc3339()
-        }),
-        base_time,
-    ));
+        })
+    ).with_orig_timestamp(base_time).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.modified",
         serde_json::json!({
@@ -294,33 +312,30 @@ fn generate_test_events() -> Vec<RawEvent> {
             "size": 2048,
             "modified_at": (base_time + ChronoDuration::seconds(1)).to_rfc3339(),
             "modification_type": "content"
-        }),
-        base_time + ChronoDuration::seconds(1),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(1)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.deleted",
         serde_json::json!({
             "path": "/test/old.txt",
             "deleted_at": (base_time + ChronoDuration::seconds(2)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(2),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(2)).build());
     
     // Terminal events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
             "command": "ls -la",
             "working_directory": "/home/user",
             "start_time": (base_time + ChronoDuration::seconds(3)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(3),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(3)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -329,12 +344,11 @@ fn generate_test_events() -> Vec<RawEvent> {
             "exit_code": 0,
             "start_time": (base_time + ChronoDuration::seconds(4)).to_rfc3339(),
             "end_time": (base_time + ChronoDuration::seconds(34)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(4),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(4)).build());
     
     // Window manager events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "window_manager.hyprland",
         "window.focused",
         serde_json::json!({
@@ -344,32 +358,29 @@ fn generate_test_events() -> Vec<RawEvent> {
                 "pid": 1234
             },
             "timestamp": (base_time + ChronoDuration::seconds(5)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(5),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(5)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "window_manager.hyprland",
         "workspace.changed",
         serde_json::json!({
             "workspace": "2",
             "timestamp": (base_time + ChronoDuration::seconds(6)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(6),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(6)).build());
     
     // Add more events for stress testing
     for i in 7..20 {
-        events.push(events::create_raw_event(
+        events.push(RawEventBuilder::new(
             "filesystem",
             "file.created",
             serde_json::json!({
                 "path": format!("/test/file{}.txt", i),
                 "size": i * 100,
                 "timestamp": base_time + ChronoDuration::seconds(i as i64)
-            }),
-            base_time + ChronoDuration::seconds(i as i64),
-        ));
+            })
+        ).with_orig_timestamp(base_time + ChronoDuration::seconds(i as i64)).build());
     }
     
     events

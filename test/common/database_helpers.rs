@@ -168,6 +168,36 @@ pub async fn setup_test_workload(
     Ok((event_ids, work_item_ids))
 }
 
+/// Create a simple test event
+pub async fn create_test_event(source: &str, event_type: &str) -> RawEvent {
+    RawEventBuilder::new(source, event_type, json!({"test": true})).build()
+}
+
+/// Create a test agent with minimal fields
+pub async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, status) 
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (agent_name) DO NOTHING",
+        agent_name, "1.0.0", "Test agent", "running"
+    ).execute(pool).await?;
+    Ok(())
+}
+
+/// Purge old work queue items (TTL cleanup function)
+pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
+    // Purge succeeded items older than 90 days
+    let result = sqlx::query!(
+        "DELETE FROM sinex_schemas.work_queue 
+         WHERE status = 'succeeded' 
+         AND processed_at < NOW() - INTERVAL '90 days'"
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected())
+}
+
 /// Macro for tests that need a clean database pool
 #[macro_export]
 macro_rules! test_with_pool {

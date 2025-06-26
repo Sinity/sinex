@@ -1,4 +1,18 @@
 //! Common test utilities and helpers
+//!
+//! This module provides the foundational testing infrastructure for Sinex,
+//! including database management, event creation, timing utilities, and
+//! comprehensive test context management.
+//!
+//! # Key Modules
+//! - `prelude` - Common imports for all test files
+//! - `test_context` - Unified test context with database and timing helpers
+//! - `event_builders` - Fluent API for creating test events
+//! - `database` - Database pool management and cleanup
+//! - `timing_optimization` - Deterministic wait utilities
+//! - `validation_test_utils` - Event validation testing
+//! - `worker_test_utils` - Worker and work queue testing
+//! - `schema_test_utils` - JSON schema validation testing
 
 #![allow(dead_code)] // Test utilities may not all be used
 #![allow(unused_variables)] // Test patterns
@@ -518,7 +532,7 @@ pub async fn event_exists(pool: &PgPool, event_id: Ulid) -> Result<bool> {
 macro_rules! test_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_inserted(&pool, &event).await?;
             Ok(())
@@ -530,7 +544,7 @@ macro_rules! test_event_insertion {
 macro_rules! test_invalid_event_insertion {
     ($test_name:ident, $event_builder:expr) => {
         #[sinex_test]
-        async fn $test_name(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+        async fn $test_name(pool: sqlx::PgPool) -> TestResult {
             let event = $event_builder;
             crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
             Ok(())
@@ -622,9 +636,32 @@ pub async fn create_agent_with_subscriptions(
         manifest.produces_event_types.clone(),
     ).await?;
     
-    // The agent is registered via upsert_agent_manifest above
-    
     Ok(())
+}
+
+/// Test execution summary for reporting
+#[derive(Debug, Clone)]
+pub struct TestExecutionSummary {
+    pub test_name: String,
+    pub duration: std::time::Duration,
+    pub events_created: usize,
+    pub database_operations: usize,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+impl TestExecutionSummary {
+    pub fn print_report(&self) {
+        println!("=== Test Execution Summary ===");
+        println!("Test: {}", self.test_name);
+        println!("Duration: {:?}", self.duration);
+        println!("Events created: {}", self.events_created);
+        println!("DB operations: {}", self.database_operations);
+        println!("Result: {}", if self.success { "✓ PASS" } else { "✗ FAIL" });
+        if let Some(error) = &self.error_message {
+            println!("Error: {}", error);
+        }
+    }
 }
 
 /// Simple database test utilities
@@ -794,6 +831,9 @@ pub mod schema_test_utils;
 
 /// Worker test utilities
 pub mod worker_test_utils;
+
+/// Coverage assurance utilities
+pub mod coverage_assurance;
 
 /// Event source testing utilities
 #[allow(dead_code)]

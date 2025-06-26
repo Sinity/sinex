@@ -1,9 +1,9 @@
 use crate::common::prelude::*;
 use chrono::{Duration, Utc};
 
-#[tokio::test]
-async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Verify raw.events is a hypertable
     let hypertable_info: Option<(String, String, String, String)> = sqlx::query_as(
@@ -12,7 +12,7 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> 
          FROM timescaledb_information.dimensions 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await?;
     
     assert!(hypertable_info.is_some(), "raw.events should be a hypertable");
@@ -28,7 +28,7 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> 
          FROM timescaledb_information.dimensions 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await?;
     
     assert!(chunk_interval.is_some(), "Expected chunk interval to be set");
@@ -39,13 +39,13 @@ async fn test_raw_events_is_timescale_hypertable() -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
-    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Clean up any previous test data
     let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
-        .execute(&pool)
+        .execute(pool)
         .await;
     
     // Get initial chunk count
@@ -53,9 +53,8 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(pool)
+    .await?;
     
     // Insert events across different time periods to trigger chunk creation
     let time_periods = vec![
@@ -84,9 +83,8 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
         .bind(event.event_type)
         .bind(event.host)
         .bind(event.payload)
-        .execute(&pool)
-        .await
-        .unwrap();
+        .execute(pool)
+        .await?;
     }
     
     // Get new chunk count
@@ -94,9 +92,8 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
         "SELECT COUNT(*) FROM timescaledb_information.chunks 
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    .fetch_one(pool)
+    .await?;
     
     assert!(
         new_chunks >= initial_chunks, 
@@ -115,18 +112,17 @@ async fn test_timescale_chunk_creation() -> anyhow::Result<()> {
         .bind("chunk_test")
         .bind(format!("event_type_{}", i))
         .bind(ts)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        .fetch_one(pool)
+        .await?;
         
         pretty_assertions::assert_eq!(count, 1, "Each event should be in its appropriate chunk");
     }
     Ok(())
 }
 
-#[tokio::test]
-async fn test_timescale_compression_policy() -> anyhow::Result<()> {
-    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Check if compression policy exists
     let compression_policy: Option<(i32,)> = sqlx::query_as(
@@ -136,9 +132,8 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
          AND hypertable_name = 'events'
          AND proc_name = 'compress_chunks'"
     )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    .fetch_optional(pool)
+    .await?;
     
     if compression_policy.is_some() {
         // Get compression settings
@@ -149,9 +144,8 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
              AND hypertable_name = 'events'
              AND proc_name = 'compress_chunks'"
         )
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+        .fetch_optional(pool)
+        .await?;
         
         assert!(compress_after.is_some());
         let days = compress_after.unwrap();
@@ -171,9 +165,8 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
         .bind("old_event")
         .bind("test_host")
         .bind(json!({"seq": i}))
-        .execute(&pool)
-        .await
-        .unwrap();
+        .execute(pool)
+        .await?;
     }
     
     // Check if old chunks are marked for compression
@@ -184,7 +177,7 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
          AND range_end < now() - interval '7 days'
          AND is_compressed = false"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .unwrap_or(0);
     
@@ -192,9 +185,9 @@ async fn test_timescale_compression_policy() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
-    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Create a continuous aggregate for event counts by source and hour
     let result = sqlx::query(
@@ -210,7 +203,7 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
          GROUP BY hour, source, event_type
          WITH NO DATA"
     )
-    .execute(&pool)
+    .execute(pool)
     .await;
     
     // Note: This might fail if the view already exists from previous test runs
@@ -222,7 +215,7 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
                 end_offset => INTERVAL '1 hour',
                 schedule_interval => INTERVAL '1 hour')"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
     }
     
@@ -245,16 +238,15 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
                 .bind(json!({"hour": hour}))
-                .execute(&pool)
-                .await
-                .unwrap();
+                .execute(pool)
+                .await?;
             }
         }
     }
     
     // Refresh the aggregate
     let _ = sqlx::query("CALL refresh_continuous_aggregate('event_counts_hourly', NULL, NULL)")
-        .execute(&pool)
+        .execute(pool)
         .await;
     
     // Query the aggregate
@@ -266,7 +258,7 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
              ORDER BY hour DESC
              LIMIT 5"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await
         .unwrap_or_default();
     
@@ -282,9 +274,9 @@ async fn test_timescale_continuous_aggregates() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_timescale_retention_policies() -> anyhow::Result<()> {
-    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Check if retention policy exists
     let retention_policy: Option<(i32, String)> = sqlx::query_as(
@@ -294,16 +286,15 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
          AND hypertable_name = 'events'
          AND proc_name = 'drop_chunks'"
     )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    .fetch_optional(pool)
+    .await?;
     
     if retention_policy.is_none() {
         // Create a retention policy (drop chunks older than 1 year)
         let result = sqlx::query(
             "SELECT add_retention_policy('raw.events', INTERVAL '1 year')"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
         
         if result.is_ok() {
@@ -329,7 +320,7 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     .bind("very_old_event")
     .bind("test_host")
     .bind(json!({"data": "old"}))
-    .execute(&pool)
+    .execute(pool)
     .await;
     
     // Insert recent event using ULID from recent timestamp
@@ -343,9 +334,8 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     .bind("recent_event")
     .bind("test_host")
     .bind(json!({"data": "recent"}))
-    .execute(&pool)
-    .await
-    .unwrap();
+    .execute(pool)
+    .await?;
     
     // Count chunks that would be dropped by retention policy
     let droppable_chunks: i64 = sqlx::query_scalar(
@@ -354,7 +344,7 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
          AND hypertable_name = 'events'
          AND range_end < now() - interval '1 year'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .unwrap_or(0);
     
@@ -362,9 +352,9 @@ async fn test_timescale_retention_policies() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_timescale_data_node_stats() -> anyhow::Result<()> {
-    let pool = crate::common::database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_timescale_data_node_stats(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     // Get hypertable stats
     let stats: Option<(i64,)> = sqlx::query_as(
@@ -373,9 +363,8 @@ async fn test_timescale_data_node_stats() -> anyhow::Result<()> {
          FROM timescaledb_information.hypertables
          WHERE hypertable_schema = 'raw' AND hypertable_name = 'events'"
     )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    .fetch_optional(pool)
+    .await?;
     
     if let Some((num_chunks,)) = stats {
         println!("Hypertable stats:");
@@ -397,9 +386,8 @@ async fn test_timescale_data_node_stats() -> anyhow::Result<()> {
              ORDER BY range_start DESC NULLS LAST
              LIMIT 5"
         )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        .fetch_all(pool)
+        .await?;
     
     for (name, start, end, compressed) in chunks {
         let start_str = start.map(|s| s.to_string()).unwrap_or_else(|| "NULL".to_string());

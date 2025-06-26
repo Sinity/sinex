@@ -4,7 +4,7 @@ use crate::common::timing_optimization::replacements::wait_for_filtered_event_co
 
 
 #[sinex_test]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
     
@@ -33,7 +33,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> Result<(), Box<dyn 
 
 
 #[sinex_test]
-async fn test_ulid_timestamp_extraction(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_timestamp_extraction(ctx: TestContext) -> TestResult {
     // Create an event with a known ULID
     let event = crate::common::create_test_event("timestamp_test_v2", "test_type_v2");
     let expected_timestamp = event.id.timestamp();
@@ -70,7 +70,7 @@ async fn test_ulid_timestamp_extraction(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_ulid_monotonic_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_monotonic_generation(ctx: TestContext) -> TestResult {
     // Generate multiple ULIDs rapidly to test monotonic behavior
     let mut _prev_ulid = None;
     let mut ulids = Vec::new();
@@ -133,7 +133,7 @@ async fn test_ulid_monotonic_generation(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_ulid_range_queries(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_range_queries(ctx: TestContext) -> TestResult {
     // Insert events with significant time separation to ensure reliable range queries
     let mut first_batch_ulids = Vec::new();
     
@@ -242,7 +242,7 @@ async fn test_ulid_range_queries(ctx: TestContext) -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn test_ulid_in_foreign_keys(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_in_foreign_keys(ctx: TestContext) -> TestResult {
     
     // Insert agent
     sqlx::query(
@@ -295,7 +295,7 @@ async fn test_ulid_in_foreign_keys(ctx: TestContext) -> Result<(), Box<dyn std::
 }
 
 #[sinex_test]
-async fn test_ulid_index_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_ulid_index_performance(ctx: TestContext) -> TestResult {
     // Insert events to test indexing and lookup performance
     let mut test_ulids = Vec::new();
     

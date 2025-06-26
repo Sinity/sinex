@@ -248,7 +248,7 @@ struct WorkerStressResult {
 }
 
 #[sinex_test]
-async fn test_extreme_concurrency_stress(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>>{
+async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult{
 let pool = ctx.pool();
     run_migrations(pool).await?;
 

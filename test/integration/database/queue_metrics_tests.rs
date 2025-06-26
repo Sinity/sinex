@@ -2,44 +2,40 @@
 // Tests for queue_depth, dequeue_latency_ms, and per_agent_lag metrics
 
 use crate::common::prelude::*;
-use crate::common::database_helpers::get_shared_test_pool;
-// Local function definitions at bottom of file
 use chrono::{Utc, Duration};
 
-#[tokio::test]
-async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
-    let pool = get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     // Test that queue_depth metric correctly counts pending items per agent
     
     // Create test agents
     let agent1 = "metrics-agent-1";
     let agent2 = "metrics-agent-2";
     
-    create_test_agent(&pool, agent1).await?;
-    create_test_agent(&pool, agent2).await?;
-    
-    
+    create_test_agent(pool, agent1).await?;
+    create_test_agent(pool, agent2).await?;
     
     // Create test events
-    let event1_id = insert_test_event(&pool, "metrics_test", "event1").await?;
-    let event2_id = insert_test_event(&pool, "metrics_test", "event2").await?;
-    let event3_id = insert_test_event(&pool, "metrics_test", "event3").await?;
+    let event1_id = insert_test_event(pool, "metrics_test", "event1").await?;
+    let event2_id = insert_test_event(pool, "metrics_test", "event2").await?;
+    let event3_id = insert_test_event(pool, "metrics_test", "event3").await?;
     
     // Add to work queue with different statuses
-    add_to_work_queue(&pool, event1_id, agent1, 3).await?; // pending
-    add_to_work_queue(&pool, event2_id, agent1, 3).await?; // pending
-    add_to_work_queue(&pool, event3_id, agent2, 3).await?; // pending
+    add_to_work_queue(pool, event1_id, agent1, 3).await?; // pending
+    add_to_work_queue(pool, event2_id, agent1, 3).await?; // pending
+    add_to_work_queue(pool, event3_id, agent2, 3).await?; // pending
     
     // Mark one as processing to exclude from queue depth
     sqlx::query!(
         "UPDATE sinex_schemas.work_queue SET status = 'processing' WHERE raw_event_id = $1::uuid::ulid",
         event3_id.to_uuid()
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     
     // Calculate queue depth metrics
-    let queue_metrics = calculate_queue_depth_metrics(&pool).await?;
+    let queue_metrics = calculate_queue_depth_metrics(pool).await?;
     
     
     // First, let's check what the function returns and verify against what we expect
@@ -64,20 +60,20 @@ async fn test_queue_depth_metric_calculation() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> {
-    let pool = get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     // Test that dequeue_latency_ms measures time from creation to processing
     
     let agent_name = "latency-test-agent";
-    create_test_agent(&pool, agent_name).await?;
+    create_test_agent(pool, agent_name).await?;
     
     // Create event and add to queue
-    let event_id = insert_test_event(&pool, "latency_test", "event").await?;
-    let work_item = add_to_work_queue(&pool, event_id, agent_name, 3).await?;
+    let event_id = insert_test_event(pool, "latency_test", "event").await?;
+    let work_item = add_to_work_queue(pool, event_id, agent_name, 3).await?;
     
-    // Simulate processing delay
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Wait for any pending work queue operations
+    ctx.wait_for_work_queue(0).await?;
     
     // Mark as processing (simulate worker claim)
     let processing_start = Utc::now();
@@ -90,11 +86,11 @@ async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> 
         work_item.queue_id.to_uuid(),
         processing_start
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     
     // Calculate dequeue latency (this function should exist after implementation)
-    let latency_metrics = calculate_dequeue_latency_metrics(&pool).await?;
+    let latency_metrics = calculate_dequeue_latency_metrics(pool).await?;
     
     // Verify latency is measured
     let agent_metric = latency_metrics.iter().find(|m| m.agent_name == agent_name).unwrap();
@@ -104,24 +100,24 @@ async fn test_dequeue_latency_metric_calculation() -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
-    let pool = get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_per_agent_lag_metric_calculation(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     // Test that per_agent_lag measures how far behind each agent is
     
     let fast_agent = "fast-agent";
     let slow_agent = "slow-agent"; 
     
-    create_test_agent(&pool, fast_agent).await?;
-    create_test_agent(&pool, slow_agent).await?;
+    create_test_agent(pool, fast_agent).await?;
+    create_test_agent(pool, slow_agent).await?;
     
     // Create events at different times
-    let old_event = insert_test_event(&pool, "lag_test", "old_event").await?;
-    let recent_event = insert_test_event(&pool, "lag_test", "recent_event").await?;
+    let old_event = insert_test_event(pool, "lag_test", "old_event").await?;
+    let recent_event = insert_test_event(pool, "lag_test", "recent_event").await?;
     
     // Assign to different agents
-    add_to_work_queue(&pool, old_event, slow_agent, 3).await?;
-    add_to_work_queue(&pool, recent_event, fast_agent, 3).await?;
+    add_to_work_queue(pool, old_event, slow_agent, 3).await?;
+    add_to_work_queue(pool, recent_event, fast_agent, 3).await?;
     
     // Age the old event artificially by updating the work queue created_at time
     sqlx::query!(
@@ -133,11 +129,11 @@ async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
         old_event.to_uuid(),
         Utc::now() - Duration::minutes(10)
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     
     // Calculate lag metrics (this function should exist after implementation)
-    let lag_metrics = calculate_per_agent_lag_metrics(&pool).await?;
+    let lag_metrics = calculate_per_agent_lag_metrics(pool).await?;
     
     // Verify lag measurements
     let slow_agent_metric = lag_metrics.iter().find(|m| m.agent_name == slow_agent).unwrap();
@@ -149,20 +145,20 @@ async fn test_per_agent_lag_metric_calculation() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_prometheus_metrics_exposition() -> Result<(), anyhow::Error> {
-    let pool = get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_prometheus_metrics_exposition(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     // Test that metrics are properly exposed in Prometheus format
     
     let agent_name = "prometheus-test-agent";
-    create_test_agent(&pool, agent_name).await?;
+    create_test_agent(pool, agent_name).await?;
     
     // Create some test data
-    let event_id = insert_test_event(&pool, "prometheus_test", "event").await?;
-    add_to_work_queue(&pool, event_id, agent_name, 3).await?;
+    let event_id = insert_test_event(pool, "prometheus_test", "event").await?;
+    add_to_work_queue(pool, event_id, agent_name, 3).await?;
     
     // Generate Prometheus metrics output (this function should exist after implementation)
-    let prometheus_output = generate_prometheus_metrics(&pool).await?;
+    let prometheus_output = generate_prometheus_metrics(pool).await?;
     
     // Verify Prometheus format
     assert!(prometheus_output.contains("sinex_queue_depth"), "Should contain queue depth metric");
@@ -193,27 +189,27 @@ async fn test_prometheus_metrics_exposition() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_metrics_update_frequency() -> Result<(), anyhow::Error> {
-    let pool = get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_metrics_update_frequency(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     // Test that metrics are updated efficiently without excessive database queries
     
     let agent_name = "frequency-test-agent";
-    create_test_agent(&pool, agent_name).await?;
+    create_test_agent(pool, agent_name).await?;
     
     // Create multiple events
     for i in 0..5 {
-        let event_id = insert_test_event(&pool, "frequency_test", &format!("event_{}", i)).await?;
-        add_to_work_queue(&pool, event_id, agent_name, 3).await?;
+        let event_id = insert_test_event(pool, "frequency_test", &format!("event_{}", i)).await?;
+        add_to_work_queue(pool, event_id, agent_name, 3).await?;
     }
     
     // Measure time for metrics calculation
     let start_time = std::time::Instant::now();
     
     // Calculate all metrics (should be efficient)
-    let _queue_metrics = calculate_queue_depth_metrics(&pool).await?;
-    let _latency_metrics = calculate_dequeue_latency_metrics(&pool).await?;
-    let _lag_metrics = calculate_per_agent_lag_metrics(&pool).await?;
+    let _queue_metrics = calculate_queue_depth_metrics(pool).await?;
+    let _latency_metrics = calculate_dequeue_latency_metrics(pool).await?;
+    let _lag_metrics = calculate_per_agent_lag_metrics(pool).await?;
     
     let duration = start_time.elapsed();
     
@@ -336,7 +332,7 @@ async fn generate_prometheus_metrics(pool: &PgPool) -> Result<String> {
 
 // Test helper functions
 
-async fn create_test_agent(pool: &PgPool, agent_name: &str) -> Result<(), anyhow::Error> {
+async fn create_test_agent(pool: &PgPool, agent_name: &str) -> TestResult {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
@@ -357,7 +353,7 @@ async fn insert_test_event(pool: &PgPool, source: &str, test_data: &str) -> Resu
         "source": source
     });
     
-    let event = insert_raw_event(&pool,
+    let event = insert_raw_event(pool,
         source,
         "test_event",
         "test_host",

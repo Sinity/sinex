@@ -1,18 +1,21 @@
+use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ValidationReport};
 
 // Removed trivial default config tests - they just verified that defaults contain expected values
 
-#[test]
-fn test_config_validation() {
+#[sinex_test]
+async fn test_config_validation(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
     
     // Default config should be valid
     let result = config.validate();
     assert!(result.is_ok(), "Default config should be valid: {:?}", result);
+    
+    Ok(())
 }
 
-#[test]
-fn test_config_validation_report() {
+#[sinex_test]
+async fn test_config_validation_report(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
     
     let report = config.get_validation_report();
@@ -24,10 +27,12 @@ fn test_config_validation_report() {
     
     assert!(report.valid, "Default config should have valid report");
     assert!(report.errors.is_empty(), "Default config should have no errors");
+    
+    Ok(())
 }
 
-#[test]
-fn test_invalid_event_type_validation() {
+#[sinex_test]
+async fn test_invalid_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("invalid_event".to_string());
     
@@ -36,19 +41,23 @@ fn test_invalid_event_type_validation() {
     
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Event type must have at least category.subcategory format"));
+    
+    Ok(())
 }
 
-#[test]
-fn test_malformed_event_type_validation() {
+#[sinex_test]
+async fn test_malformed_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("1invalid.event".to_string()); // Starts with number
     
     let result = config.validate();
     assert!(result.is_err(), "Config with malformed event type should fail validation");
+    
+    Ok(())
 }
 
-#[test]
-fn test_event_config_validation() {
+#[sinex_test]
+async fn test_event_config_validation(ctx: TestContext) -> TestResult {
     // Test by loading an invalid config from string
     let invalid_config_toml = r#"
 enabled_events = ["shell.command.executed_atuin"]
@@ -69,10 +78,12 @@ polling_interval_secs = -1  # Should be positive
         // If TOML parsing itself fails, that's also a validation failure
         assert!(true, "Invalid TOML should fail parsing");
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_cross_validation() {
+#[sinex_test]
+async fn test_cross_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     
     // Clear existing configurations and enable an event that requires configuration but don't provide it
@@ -86,10 +97,12 @@ fn test_cross_validation() {
     
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("missing required 'db_path' configuration"));
+    
+    Ok(())
 }
 
-#[test]
-fn test_valid_event_config() {
+#[sinex_test]
+async fn test_valid_event_config(ctx: TestContext) -> TestResult {
     // Test by loading a valid config from string
     let valid_config_toml = r#"
 enabled_events = ["shell.command.executed_atuin"]
@@ -102,10 +115,12 @@ polling_interval_secs = 5
     let config: CollectorConfig = toml::from_str(valid_config_toml).expect("Valid TOML should parse");
     let result = config.validate();
     assert!(result.is_ok(), "Valid event config should pass validation: {:?}", result);
+    
+    Ok(())
 }
 
-#[test] 
-fn test_validation_report_accumulation() {
+#[sinex_test]
+async fn test_validation_report_accumulation(ctx: TestContext) -> TestResult {
     let mut report = ValidationReport::new();
     
     assert!(report.valid);
@@ -123,10 +138,12 @@ fn test_validation_report_accumulation() {
     pretty_assertions::assert_eq!(report.errors.len(), 1);
     pretty_assertions::assert_eq!(report.warnings.len(), 1);
     pretty_assertions::assert_eq!(report.recommendations.len(), 1);
+    
+    Ok(())
 }
 
-#[test]
-fn test_validation_report_merge() {
+#[sinex_test]
+async fn test_validation_report_merge(ctx: TestContext) -> TestResult {
     let mut report1 = ValidationReport::new();
     report1.add_error("Error 1".to_string());
     report1.add_warning("Warning 1".to_string());
@@ -141,4 +158,6 @@ fn test_validation_report_merge() {
     pretty_assertions::assert_eq!(report1.errors.len(), 2);
     pretty_assertions::assert_eq!(report1.warnings.len(), 1);
     pretty_assertions::assert_eq!(report1.recommendations.len(), 1);
+    
+    Ok(())
 }

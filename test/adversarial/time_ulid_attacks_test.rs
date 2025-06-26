@@ -2,8 +2,8 @@ use crate::common::prelude::*;
 use chrono::{Utc, TimeZone};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[test]
-fn test_ulid_extreme_future_date() {
+#[sinex_test]
+async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult {
     // Test that Sinex can handle extreme future dates for event timestamps
     let far_future = Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap();
     
@@ -29,10 +29,11 @@ fn test_ulid_extreme_future_date() {
     // Verify the ULID is comparable (important for event ordering in Sinex)
     let current_ulid = Ulid::new();
     assert!(ulid > current_ulid, "Future date ULID should be greater than current ULID");
+    Ok(())
 }
 
-#[test]
-fn test_ulid_generation_same_nanosecond() {
+#[sinex_test]
+async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult {
     let generated = Arc::new(AtomicU64::new(0));
     let ulids = Arc::new(std::sync::Mutex::new(Vec::new()));
     
@@ -69,10 +70,11 @@ fn test_ulid_generation_same_nanosecond() {
     
     // This might FAIL if random generation has issues
     pretty_assertions::assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
+    Ok(())
 }
 
-#[test]
-fn test_ulid_zero_timestamp() {
+#[sinex_test]
+async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
     // Create ULID with zero timestamp (Unix epoch)
     let epoch = Utc.timestamp_opt(0, 0).unwrap();
     let ulid = Ulid::from_datetime(epoch);
@@ -82,10 +84,11 @@ fn test_ulid_zero_timestamp() {
     
     // This might fail if implementation assumes positive timestamps
     pretty_assertions::assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
+    Ok(())
 }
 
-#[test] 
-fn test_ulid_negative_timestamp() {
+#[sinex_test]
+async fn test_ulid_negative_timestamp(ctx: TestContext) -> TestResult {
     // Try creating ULID before Unix epoch (should fail or handle gracefully)
     let before_epoch = Utc.timestamp_opt(-1000, 0).unwrap();
     
@@ -105,4 +108,5 @@ fn test_ulid_negative_timestamp() {
             println!("Pre-epoch ULID creation panicked (expected)");
         }
     }
+    Ok(())
 }

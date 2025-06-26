@@ -3,7 +3,7 @@
 use crate::common::prelude::*;
 
 #[sinex_test]
-async fn test_basic_database_operations(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_basic_database_operations(ctx: TestContext) -> TestResult {
     // Test 1: Basic query works
     let result = sqlx::query_scalar!("SELECT 1 + 1 as sum")
         .fetch_one(ctx.pool())
@@ -23,7 +23,7 @@ async fn test_basic_database_operations(ctx: TestContext) -> Result<(), Box<dyn 
 }
 
 #[sinex_test]
-async fn test_event_builders_work(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_event_builders_work(ctx: TestContext) -> TestResult {
     // Test using various event builders
     let fs_event = ctx.filesystem_event("/home/user/document.txt");
     let term_event = ctx.terminal_event("ls -la");
@@ -42,7 +42,7 @@ async fn test_event_builders_work(ctx: TestContext) -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn test_transaction_isolation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
     // Get initial count
     let initial_count = ctx.event_count().await?;
     

@@ -2,9 +2,10 @@ use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use tokio::sync::Mutex;
 use crate::common::resources;
+use std::sync::Arc;
 
-#[tokio::test]
-async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test(timeout = 60)]
+async fn test_unbounded_file_descriptor_explosion(ctx: TestContext) -> TestResult {
     // Try to watch a directory with thousands of files
     let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];
@@ -56,7 +57,7 @@ async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
-async fn test_memory_exhaustion_via_config_reload() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_memory_exhaustion_via_config_reload() -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
     
@@ -123,8 +124,8 @@ watch_paths = {}
     Ok(())
 }
 
-#[test]
-fn test_string_concatenation_memory_bomb() {
+#[sinex_test]
+async fn test_string_concatenation_memory_bomb(ctx: TestContext) -> TestResult {
     // Create event with expanding string pattern
     let mut expanding_string = String::from("a");
     let mut sizes = vec![];
@@ -151,6 +152,7 @@ fn test_string_concatenation_memory_bomb() {
     }
     
     println!("String sizes generated: {:?}", sizes);
+    Ok(())
 }
 
 #[tokio::test]

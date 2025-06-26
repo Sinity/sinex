@@ -22,22 +22,24 @@ use rstest::rstest;
 mod basic_functionality {
     use super::*;
     
-    #[test]
-    fn ulid_creation_and_uniqueness() {
+    #[sinex_test]
+    async fn ulid_creation_and_uniqueness(_ctx: TestContext) -> TestResult {
         let ulid1 = Ulid::new();
         let ulid2 = Ulid::new();
         pretty_assertions::assert_ne!(ulid1, ulid2, "Sequential ULIDs must be unique");
+        Ok(())
     }
     
-    #[test]
-    fn ulid_monotonic_ordering() {
+    #[sinex_test]
+    async fn ulid_monotonic_ordering(_ctx: TestContext) -> TestResult {
         let ulid1 = Ulid::new();
         let ulid2 = Ulid::new();
         assert!(ulid2 > ulid1, "Later ULIDs must be greater than earlier ones");
+        Ok(())
     }
     
-    #[test]
-    fn uuid_conversion_roundtrip() {
+    #[sinex_test]
+    async fn uuid_conversion_roundtrip(_ctx: TestContext) -> TestResult {
         for _ in 0..100 {
             let original = Ulid::new();
             let uuid = original.to_uuid();
@@ -48,20 +50,22 @@ mod basic_functionality {
             pretty_assertions::assert_eq!(original.to_string(), restored.to_string());
             pretty_assertions::assert_eq!(original.to_bytes(), restored.to_bytes());
         }
+        Ok(())
     }
     
-    #[test]
-    fn string_parsing_and_formatting() {
+    #[sinex_test]
+    async fn string_parsing_and_formatting(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
-        let ulid_str = ulid.to_string());
+        let ulid_str = ulid.to_string();
         let parsed = ulid_str.parse::<Ulid>().expect("Valid ULID string should parse");
         
         pretty_assertions::assert_eq!(ulid, parsed);
         pretty_assertions::assert_eq!(ulid_str.len(), 26, "ULID string must be exactly 26 characters");
+        Ok(())
     }
     
-    #[test]
-    fn display_and_debug_traits() {
+    #[sinex_test]
+    async fn display_and_debug_traits(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         
         // Display trait shows the ULID string
@@ -73,10 +77,11 @@ mod basic_functionality {
         let debug = format!("{:?}", ulid);
         assert!(debug.contains("Ulid"));
         assert!(debug.contains(&ulid.to_string()));
+        Ok(())
     }
     
-    #[test]
-    fn hash_consistency() {
+    #[sinex_test]
+    async fn hash_consistency(_ctx: TestContext) -> TestResult {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         
@@ -100,10 +105,11 @@ mod basic_functionality {
         let hash3 = hasher3.finish();
         
         pretty_assertions::assert_ne!(hash1, hash3, "Different ULIDs should have different hashes");
+        Ok(())
     }
     
-    #[test]
-    fn serde_json_roundtrip() {
+    #[sinex_test]
+    async fn serde_json_roundtrip(_ctx: TestContext) -> TestResult {
         let original = Ulid::new();
         
         // Serialize to JSON
@@ -116,6 +122,7 @@ mod basic_functionality {
         // Deserialize back
         let deserialized: Ulid = serde_json::from_str(&json).unwrap();
         pretty_assertions::assert_eq!(original, deserialized);
+        Ok(())
     }
 }
 
@@ -125,8 +132,8 @@ mod edge_cases {
     use chrono::{Utc, TimeZone};
     use std::time::{SystemTime, UNIX_EPOCH};
     
-    #[test]
-    fn boundary_timestamps() {
+    #[sinex_test]
+    async fn boundary_timestamps(_ctx: TestContext) -> TestResult {
         // Test minimum timestamp (Unix epoch)
         let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
         let min_ulid = Ulid::from_datetime(min_datetime);
@@ -146,10 +153,11 @@ mod edge_cases {
         let now_datetime = chrono::DateTime::from_timestamp_millis(now as i64).unwrap();
         let now_ulid = Ulid::from_datetime(now_datetime);
         pretty_assertions::assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
+        Ok(())
     }
     
-    #[test]
-    fn extreme_future_date() {
+    #[sinex_test]
+    async fn extreme_future_date(_ctx: TestContext) -> TestResult {
         let far_future = Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap();
         
         let ulid_result = std::panic::catch_unwind(|| {
@@ -160,10 +168,11 @@ mod edge_cases {
         
         let ulid = ulid_result.unwrap();
         pretty_assertions::assert_eq!(ulid.to_string().len(), 26, "ULID must maintain 26-character format");
+        Ok(())
     }
     
-    #[test]
-    fn zero_and_max_ulid_values() {
+    #[sinex_test]
+    async fn zero_and_max_ulid_values(_ctx: TestContext) -> TestResult {
         // Test zero ULID
         let zero_bytes = [0u8; 16];
         let zero_ulid = Ulid::from_bytes(zero_bytes).unwrap();
@@ -177,20 +186,22 @@ mod edge_cases {
         
         // Verify ordering
         assert!(zero_ulid < max_ulid);
+        Ok(())
     }
     
-    #[test]
-    fn nil_uuid_handling() {
+    #[sinex_test]
+    async fn nil_uuid_handling(_ctx: TestContext) -> TestResult {
         let nil_uuid = Uuid::nil();
         let ulid = Ulid::from_uuid(nil_uuid);
         
         pretty_assertions::assert_eq!(ulid.timestamp().timestamp_millis(), 0);
         pretty_assertions::assert_eq!(ulid.to_uuid(), nil_uuid);
         pretty_assertions::assert_eq!(ulid.to_string(), "00000000000000000000000000");
+        Ok(())
     }
     
-    #[test]
-    fn string_case_insensitive_parsing() {
+    #[sinex_test]
+    async fn string_case_insensitive_parsing(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         
         let uppercase = ulid.to_string().to_uppercase();
@@ -213,6 +224,7 @@ mod edge_cases {
         pretty_assertions::assert_eq!(ulid, parsed_upper);
         pretty_assertions::assert_eq!(ulid, parsed_lower);
         pretty_assertions::assert_eq!(ulid, parsed_mixed);
+        Ok(())
     }
     
     #[rstest]
@@ -234,8 +246,8 @@ mod edge_cases {
         );
     }
     
-    #[test]
-    fn time_precision_within_same_millisecond() {
+    #[sinex_test]
+    async fn time_precision_within_same_millisecond(_ctx: TestContext) -> TestResult {
         let base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
         
         // Generate multiple ULIDs with the same timestamp
@@ -253,10 +265,11 @@ mod edge_cases {
             assert!(ulids[i-1] < ulids[i], "ULIDs must maintain order even within same ms");
             pretty_assertions::assert_ne!(ulids[i-1], ulids[i], "ULIDs must be unique even within same ms");
         }
+        Ok(())
     }
     
-    #[test]
-    fn lexicographic_ordering_matches_temporal() {
+    #[sinex_test]
+    async fn lexicographic_ordering_matches_temporal(_ctx: TestContext) -> TestResult {
         let mut ulids = Vec::new();
         
         for i in 0..10 {
@@ -276,6 +289,7 @@ mod edge_cases {
         // Both orderings should be identical
         pretty_assertions::assert_eq!(string_sorted, ulid_sorted, 
             "Lexicographic ordering must match temporal ordering");
+        Ok(())
     }
 }
 
@@ -283,13 +297,13 @@ mod edge_cases {
 mod correctness {
     use super::*;
     
-    #[test]
-    fn crockford_base32_compliance() {
+    #[sinex_test]
+    async fn crockford_base32_compliance(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
-        let ulid_str = ulid.to_string());
+        let ulid_str = ulid.to_string();
         
         pretty_assertions::assert_eq!(ulid_str.len(), 26, "ULID must be 26 characters");
-        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c);
+        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c));
             "ULID must only contain valid Crockford Base32 characters");
         
         // Verify excluded characters
@@ -297,10 +311,11 @@ mod correctness {
             assert!(!ulid_str.contains(excluded), 
                 "ULID must not contain ambiguous character '{}'", excluded);
         }
+        Ok(())
     }
     
-    #[test]
-    fn bit_layout_verification() {
+    #[sinex_test]
+    async fn bit_layout_verification(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let bytes = ulid.to_bytes();
         
@@ -330,10 +345,11 @@ mod correctness {
         assert!(ulid_timestamp >= hour_ago && ulid_timestamp <= minute_future,
             "Timestamp {} not in reasonable range [{}, {}]", 
             ulid_timestamp, hour_ago, minute_future);
+        Ok(())
     }
     
-    #[test]
-    fn binary_representation_endianness() {
+    #[sinex_test]
+    async fn binary_representation_endianness(_ctx: TestContext) -> TestResult {
         let ulid = Ulid::new();
         let bytes = ulid.to_bytes();
         let uuid = ulid.to_uuid();
@@ -357,10 +373,11 @@ mod correctness {
         
         pretty_assertions::assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp,
             "Timestamp must be correctly encoded in big-endian format");
+        Ok(())
     }
     
-    #[test]
-    fn monotonic_increment_behavior() {
+    #[sinex_test]
+    async fn monotonic_increment_behavior(_ctx: TestContext) -> TestResult {
         // Generate multiple ULIDs rapidly to test monotonic behavior
         let mut ulids = Vec::new();
         for _ in 0..100 {
@@ -385,6 +402,7 @@ mod correctness {
         }
         
         println!("Found {} same-timestamp pairs in 100 rapid ULIDs", same_timestamp_pairs);
+        Ok(())
     }
 }
 
@@ -394,8 +412,8 @@ mod performance {
     use std::time::{Duration, Instant};
     use std::sync::atomic::{AtomicU64, Ordering};
     
-    #[test]
-    fn rapid_generation_uniqueness() {
+    #[sinex_test]
+    async fn rapid_generation_uniqueness(_ctx: TestContext) -> TestResult {
         let generation_count = 10_000;
         let mut ulids = HashSet::new();
         
@@ -418,10 +436,11 @@ mod performance {
         }
         
         println!("Generated {} unique ULIDs in {:?}", generation_count, elapsed);
+        Ok(())
     }
     
-    #[test]
-    fn concurrent_generation_safety() {
+    #[sinex_test]
+    async fn concurrent_generation_safety(_ctx: TestContext) -> TestResult {
         let num_threads = 10;
         let ulids_per_thread = 1000;
         let all_ulids = Arc::new(std::sync::Mutex::new(HashSet::new()));
@@ -455,11 +474,12 @@ mod performance {
         
         pretty_assertions::assert_eq!(final_count, num_threads * ulids_per_thread);
         pretty_assertions::assert_eq!(operations, num_threads * ulids_per_thread as u64);
+        Ok(())
     }
     
-    #[test]
+    #[sinex_test]
     #[ignore] // Run with: cargo test performance::throughput -- --ignored
-    fn throughput_validation() {
+    async fn throughput_validation(_ctx: TestContext) -> TestResult {
         let iterations = 100_000;
         
         let start = Instant::now();
@@ -482,6 +502,7 @@ mod performance {
         assert!(ops_per_sec >= required_ops_per_sec,
             "ULID generation too slow: {:.0} ops/sec < {:.0} required",
             ops_per_sec, required_ops_per_sec);
+        Ok(())
     }
 }
 
@@ -491,16 +512,16 @@ mod properties {
     use chrono::{Utc, Duration as ChronoDuration};
     
     proptest! {
-        #[test]
+        #[sinex_test]
         fn string_roundtrip_property(s in "[0-9A-Z]{26}") {
             if let Ok(ulid) = Ulid::from_str(&s) {
-                let s2 = ulid.to_string());
+                let s2 = ulid.to_string();
                 let ulid2 = Ulid::from_str(&s2).unwrap();
                 prop_assert_eq!(ulid, ulid2);
             }
         }
         
-        #[test]
+        #[sinex_test]
         fn ordering_matches_time_property(a: u64, b: u64) {
             let time_a = Utc::now() + ChronoDuration::milliseconds(a as i64 % 86400000);
             let time_b = Utc::now() + ChronoDuration::milliseconds(b as i64 % 86400000);
@@ -511,7 +532,7 @@ mod properties {
             prop_assert_eq!(ulid_a.cmp(&ulid_b), time_a.cmp(&time_b));
         }
         
-        #[test]
+        #[sinex_test]
         fn bytes_roundtrip_property(bytes: [u8; 16]) {
             if let Ok(ulid) = Ulid::from_bytes(bytes) {
                 let bytes2 = ulid.to_bytes();
@@ -519,7 +540,7 @@ mod properties {
             }
         }
         
-        #[test]
+        #[sinex_test]
         fn uuid_roundtrip_preserves_all_data(bytes: [u8; 16]) {
             if let Ok(original) = Ulid::from_bytes(bytes) {
                 let uuid = original.to_uuid();
@@ -531,5 +552,6 @@ mod properties {
                 prop_assert_eq!(original.timestamp(), restored.timestamp());
             }
         }
+        Ok(())
     }
 }

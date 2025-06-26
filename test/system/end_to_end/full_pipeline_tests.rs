@@ -36,7 +36,7 @@ impl EventSource for PipelineTestSource {
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for _i in 0..self.events_to_generate {
-            let event = crate::common::events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
+            let event = RawEventBuilder::new("pipeline_test", "test_event", json!({"test": true})).build();
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);
@@ -119,9 +119,9 @@ impl EventProcessor for PipelineTestProcessor {
     }
 }
 
-#[tokio::test]
-async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         let events_to_generate = 10;
         let _events_generated = Arc::new(AtomicU32::new(0));
         let events_processed = Arc::new(AtomicU32::new(0));
@@ -275,9 +275,9 @@ async fn test_full_pipeline_end_to_end() -> Result<(), anyhow::Error> {
         Ok(())
 }
 
-#[tokio::test]
-async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_pipeline_with_multiple_workers(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         let events_to_generate = 20;
         let total_processed = Arc::new(AtomicU32::new(0));
         
@@ -388,9 +388,9 @@ async fn test_pipeline_with_multiple_workers() -> Result<(), anyhow::Error> {
         Ok(())
 }
 
-#[tokio::test]
-async fn test_pipeline_error_recovery() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
+#[sinex_test]
+async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
         // Insert some events that will cause errors
         for i in 0..5 {
             let event = RawEventBuilder::new(

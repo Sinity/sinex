@@ -1,12 +1,14 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
-use sinex_db::queries;
 use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use futures::future::join_all;
+use tokio::time::{timeout, Duration};
+use std::sync::Arc;
+use std::time::Instant;
 
-#[tokio::test]
-async fn test_event_payload_approaching_1gb_limit() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     println!("Testing JSONB 1GB limit:");
     
@@ -29,7 +31,7 @@ async fn test_event_payload_approaching_1gb_limit() {
         let event = events::large_payload_test_event(1024);
         
         let start = Instant::now();
-        match queries::insert_event(&pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
@@ -44,7 +46,7 @@ async fn test_event_payload_approaching_1gb_limit() {
                     "#,
                     event.id.to_uuid(),
                     extra_data
-                ).execute(&pool).await;
+                ).execute(pool).await;
                 
                 match update_result {
                     Ok(_) => println!("    UPDATE SUCCESS: Added 100MB more"),
@@ -59,11 +61,12 @@ async fn test_event_payload_approaching_1gb_limit() {
             }
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_exhaustion() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     println!("Testing connection pool exhaustion:");
     
@@ -146,11 +149,12 @@ async fn test_connection_pool_exhaustion() {
     if timeouts == 0 {
         println!("  WARNING: No timeouts - pool might be too large or test too small");
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_concurrent_btree_index_splits() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_concurrent_btree_index_splits(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     println!("Testing concurrent B-tree index splits:");
     
@@ -185,7 +189,7 @@ async fn test_concurrent_btree_index_splits() {
             let mut failed = 0;
             
             for event in events {
-                match queries::insert_event(&pool_clone, &event).await {
+                match insert_event(&pool_clone, &event).await {
                     Ok(_) => success += 1,
                     Err(_) => failed += 1,
                 }
@@ -250,11 +254,12 @@ async fn test_concurrent_btree_index_splits() {
     if query_inconsistencies > 0 {
         println!("  INDEX INCONSISTENCY: Queries saw partial results during splits!");
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_events_spanning_chunk_boundary() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     println!("Testing TimescaleDB chunk boundary operations:");
     
@@ -280,7 +285,7 @@ async fn test_events_spanning_chunk_boundary() {
     for (timestamp, label) in boundary_events {
         let event = crate::common::events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
         
-        match queries::insert_event(&pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => println!("    Inserted {}: {}", label, timestamp),
             Err(e) => println!("    Failed {}: {}", label, e),
         }
@@ -296,7 +301,7 @@ async fn test_events_spanning_chunk_boundary() {
         FROM raw.events 
         WHERE source = 'chunk_test'
         "#
-    ).fetch_one(&pool).await;
+    ).fetch_one(pool).await;
     
     match agg_result {
         Ok(record) => {
@@ -313,11 +318,12 @@ async fn test_events_spanning_chunk_boundary() {
             println!("  Aggregation failed: {}", e);
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_query_during_chunk_compression() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     
     println!("Testing queries during chunk compression:");
     
@@ -328,12 +334,15 @@ async fn test_query_during_chunk_compression() {
     for i in 0..10000 {
         let event = events::large_payload_test_event(1024);
         
-        queries::insert_event(&pool, &event).await.unwrap();
+        insert_event(pool, &event).await.unwrap();
         
         if i % 1000 == 0 {
             println!("  Inserted {} events", i);
         }
     }
+    
+    // Convert to Arc for multi-threading
+    let pool = Arc::new(pool.clone());
     
     // Simulate compression by running queries that would conflict
     let query_tasks = vec![
@@ -344,7 +353,7 @@ async fn test_query_during_chunk_compression() {
                 let start = Instant::now();
                 // Use timing utility for count query during compression stress
                 let count = wait_for_filtered_event_count(
-                    &pool,
+                    &*pool,
                     "source = $1",
                     &["compression_test"],
                     0, // Accept any count
@@ -367,7 +376,7 @@ async fn test_query_during_chunk_compression() {
                 let start = Instant::now();
                 // Use timing utility for range scan during compression stress
                 let count = wait_for_filtered_event_count(
-                    &pool,
+                    &*pool,
                     "source = $1 AND ts_ingest >= $2",
                     &["compression_test"],  // Note: can't bind timestamp easily, but this is a stress test
                     0, // Accept any count
@@ -399,7 +408,7 @@ async fn test_query_during_chunk_compression() {
                     GROUP BY minute
                     ORDER BY minute
                     "#
-                ).fetch_all(&pool).await;
+                ).fetch_all(&*pool).await;
                 
                 match result {
                     Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),
@@ -418,4 +427,5 @@ async fn test_query_during_chunk_compression() {
             Err(e) => println!("  Query {} panicked: {}", i + 1, e),
         }
     }
+    Ok(())
 }

@@ -2,8 +2,8 @@
 
 use crate::common::prelude::*;
 
-#[test]
-fn test_raw_event_validation() {
+#[sinex_test]
+async fn test_raw_event_validation(_ctx: TestContext) -> TestResult {
     // Test RawEvent can be created with required fields
     let event_id = Ulid::new();
     let payload = json!({"test": "data"});
@@ -15,10 +15,11 @@ fn test_raw_event_validation() {
     
     // Validate payload contains expected structure
     assert!(payload.get("test").is_some(), "Payload should contain test data");
+    Ok(())
 }
 
-#[test]
-fn test_queue_status_transitions() {
+#[sinex_test]
+async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     // Test that queue status enum has all expected variants
     use sinex_db::models::QueueStatus;
     
@@ -37,10 +38,11 @@ fn test_queue_status_transitions() {
     // (This is more documentation than validation)
     pretty_assertions::assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
     pretty_assertions::assert_ne!(QueueStatus::Processing, QueueStatus::Succeeded);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_ordering_property() {
+#[sinex_test]
+async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
     // Test that ULID generation produces ordered values
     let ulid1 = Ulid::new();
     std::thread::sleep(std::time::Duration::from_millis(1)); // Ensure time progression
@@ -51,10 +53,11 @@ fn test_ulid_ordering_property() {
     
     // Verify ULID bytes are also ordered
     assert!(ulid1.to_bytes() < ulid2.to_bytes(), "ULID byte representations should be ordered");
+    Ok(())
 }
 
-#[test]
-fn test_json_payload_constraints() {
+#[sinex_test]
+async fn test_json_payload_constraints(_ctx: TestContext) -> TestResult {
     // Test various JSON payload structures that should be valid
     let valid_payloads = vec![
         json!({"event_type": "filesystem", "path": "/tmp/test"}),
@@ -74,4 +77,5 @@ fn test_json_payload_constraints() {
     let serialized = serde_json::to_string(&test_payload).expect("Should serialize");
     let deserialized: serde_json::Value = serde_json::from_str(&serialized).expect("Should deserialize");
     pretty_assertions::assert_eq!(test_payload, deserialized, "Serialization round-trip should preserve data");
+    Ok(())
 }

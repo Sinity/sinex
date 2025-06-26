@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
-use serde_json::{json, Value};
 
 /// Generate JSON payloads for event validation testing
 fn arb_event_payload() -> impl Strategy<Value = Value> {
@@ -117,8 +116,8 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
     ]
 }
 
-#[test]
-fn test_event_validator_normal_payloads() {
+#[sinex_test]
+async fn test_event_validator_normal_payloads(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -158,10 +157,11 @@ fn test_event_validator_normal_payloads() {
             }
         }
     });
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_security_payloads() {
+#[sinex_test]
+async fn test_event_validator_security_payloads(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -181,10 +181,11 @@ fn test_event_validator_security_payloads() {
             }
         }
     });
+    Ok(())
 }
 
-#[test]
-fn test_raw_event_validation_consistency() {
+#[sinex_test]
+async fn test_raw_event_validation_consistency(_ctx: TestContext) -> TestResult {
     proptest!(|(
         source in "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
         event_type in "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
@@ -210,10 +211,11 @@ fn test_raw_event_validation_consistency() {
             }
         }
     });
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_edge_cases() {
+#[sinex_test]
+async fn test_event_validator_edge_cases(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
     
     let long_source = "x".repeat(1000);
@@ -240,16 +242,17 @@ fn test_event_validator_edge_cases() {
         // Should not panic
         let _result = validator.validate(&event);
     }
+    
+    Ok(())
 }
 
 #[cfg(test)]
 mod integration_tests {
     use super::*;
     
-    #[tokio::test]
-    async fn test_event_validator_database_integration() {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await.expect("Failed to create test pool");
-        run_migrations(&pool).await.expect("Failed to run migrations");
+    #[sinex_test]
+    async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
+        let pool = ctx.pool();
         
         // Test loading validator from empty database
         let validator = EventValidator::load_from_db(&pool).await
@@ -274,6 +277,8 @@ mod integration_tests {
                 panic!("Unexpected validation error: {}", e);
             }
         }
+        
+        Ok(())
     }
     
     #[tokio::test] 

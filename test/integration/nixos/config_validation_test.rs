@@ -1,8 +1,8 @@
 use crate::common::prelude::*;
 use std::process::Command;
 
-#[test]
-fn test_nix_config_validation_basic() {
+#[sinex_test]
+async fn test_nix_config_validation_basic(ctx: TestContext) -> TestResult {
     // Test that our Nix configuration validation works for a basic config
     let nix_expr = r#"
     let
@@ -46,10 +46,11 @@ fn test_nix_config_validation_basic() {
     
     // Check that validation completed without errors
     assert!(result.contains("valid"), "Validation should be valid for basic config");
+    Ok(())
 }
 
-#[test]
-fn test_nix_config_validation_invalid_events() {
+#[sinex_test]
+async fn test_nix_config_validation_invalid_events(ctx: TestContext) -> TestResult {
     // Test that invalid event types are caught
     let nix_expr = r#"
     let
@@ -98,10 +99,11 @@ fn test_nix_config_validation_invalid_events() {
     
     // Check that validation caught the invalid events
     assert!(result.contains("false"), "Validation should fail for invalid events");
+    Ok(())
 }
 
-#[test]
-fn test_nix_config_validation_dependencies() {
+#[sinex_test]
+async fn test_nix_config_validation_dependencies(ctx: TestContext) -> TestResult {
     // Test dependency validation
     let nix_expr = r#"
     let
@@ -153,10 +155,11 @@ fn test_nix_config_validation_dependencies() {
     // Check that dependency validation caught the errors
     assert!(result.contains("false"), "Dependency validation should fail");
     assert!(result.contains("errors"), "Should contain dependency errors");
+    Ok(())
 }
 
-#[test] 
-fn test_nix_toml_validation() {
+#[sinex_test]
+async fn test_nix_toml_validation(ctx: TestContext) -> TestResult {
     // Test TOML syntax validation
     let nix_expr = r#"
     let
@@ -203,10 +206,11 @@ fn test_nix_toml_validation() {
     
     // Check that valid TOML passes validation
     assert!(result.contains("true"), "Valid TOML should pass validation");
+    Ok(())
 }
 
-#[test]
-fn test_nix_config_optimization_suggestions() {
+#[sinex_test]
+async fn test_nix_config_optimization_suggestions(ctx: TestContext) -> TestResult {
     // Test optimization suggestions
     let nix_expr = r#"
     let
@@ -264,4 +268,5 @@ fn test_nix_config_optimization_suggestions() {
     // Check that suggestions were generated
     assert!(result.contains("performance"), "Should generate performance suggestions");
     assert!(result.contains("security"), "Should generate security suggestions");
+    Ok(())
 }
