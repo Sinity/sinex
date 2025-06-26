@@ -265,11 +265,6 @@ pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Re
     Ok(())
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use complete_work_queue_item instead")]
-pub async fn complete_promotion_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
-    complete_work_queue_item(pool, queue_id).await
-}
 
 /// Mark a work queue item as failed and schedule retry
 pub async fn fail_work_queue_item(
@@ -324,16 +319,6 @@ pub async fn fail_work_queue_item_permanently(
     Ok(())
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use fail_work_queue_item instead")]
-pub async fn fail_promotion_queue_item(
-    pool: DbPoolRef<'_>,
-    queue_id: Ulid,
-    error_message: &str,
-    next_retry_ts: Timestamp,
-) -> Result<()> {
-    fail_work_queue_item(pool, queue_id, error_message, next_retry_ts).await
-}
 
 /// Update agent heartbeat timestamp
 pub async fn update_agent_heartbeat(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
@@ -633,7 +618,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
         FROM raw.events
         WHERE id = $1::uuid::ulid
         "#,
-        event_id.to_uuid()
+        ulid_to_uuid(event_id)
     )
     .fetch_one(pool)
     .await?;
@@ -875,16 +860,6 @@ pub async fn add_to_work_queue(
     })
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use add_to_work_queue instead")]
-pub async fn add_to_promotion_queue(
-    pool: DbPoolRef<'_>,
-    raw_event_id: Ulid,
-    target_agent_name: &str,
-    max_attempts: i32,
-) -> Result<WorkQueueItem> {
-    add_to_work_queue(pool, raw_event_id, target_agent_name, max_attempts).await
-}
 
 /// Get the next work queue item for processing
 pub async fn get_next_work_item(
@@ -946,14 +921,6 @@ pub async fn get_next_work_item(
     }
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use get_next_work_item instead")]
-pub async fn get_next_promotion_item(
-    pool: DbPoolRef<'_>,
-    target_agent_name: &str,
-) -> Result<Option<WorkQueueItem>> {
-    get_next_work_item(pool, target_agent_name).await
-}
 
 /// Complete a work queue item (mark as completed)
 pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
@@ -971,11 +938,6 @@ pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<(
     Ok(())
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use complete_work_item instead")]
-pub async fn complete_promotion_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
-    complete_work_item(pool, queue_id).await
-}
 
 /// Fail a work queue item and optionally retry or move to DLQ
 pub async fn fail_work_item(
@@ -1037,15 +999,6 @@ pub async fn fail_work_item(
     Ok(())
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use fail_work_item instead")]
-pub async fn fail_promotion_item(
-    pool: DbPoolRef<'_>,
-    queue_id: Ulid,
-    error_message: &str,
-) -> Result<()> {
-    fail_work_item(pool, queue_id, error_message).await
-}
 
 /// Get a work queue item by ID
 pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
@@ -1090,11 +1043,6 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
     })
 }
 
-/// Legacy alias for backward compatibility
-#[deprecated(note = "Use get_work_item_by_id instead")]
-pub async fn get_promotion_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
-    get_work_item_by_id(pool, queue_id).await
-}
 
 /// Purge old completed work queue items based on TTL policy
 /// Removes items with status 'succeeded' or 'failed' that have processed_at older than 90 days

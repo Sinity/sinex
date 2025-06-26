@@ -100,7 +100,7 @@ pub async fn create_test_work_items(
         sqlx::query!(
             "INSERT INTO raw.events (id, source, event_type, payload, ts_orig, host) 
              VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
-            event_id.to_uuid(), 
+            sinex_db::ulid_to_uuid(event_id), 
             "test_source", 
             format!("test.event.{}", i),
             serde_json::json!({"test": true, "index": i}),
@@ -112,7 +112,7 @@ pub async fn create_test_work_items(
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name, status) 
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4)",
-            queue_id.to_uuid(), event_id.to_uuid(), 
+            sinex_db::ulid_to_uuid(queue_id), sinex_db::ulid_to_uuid(event_id), 
             agent_name, "pending"
         ).execute(pool).await?;
         items.push(queue_id);
