@@ -22,7 +22,7 @@ pub struct JournalEntryPayload {
     /// Timestamp from journal (microseconds since epoch)
     pub timestamp_us: i64,
     /// Parsed timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Hostname
     pub hostname: Option<String>,
     /// Unit name (for systemd services)
@@ -63,9 +63,9 @@ pub struct JournalSyncPayload {
     /// Number of entries processed
     pub entries_count: u64,
     /// Time range start
-    pub time_start: Option<DateTime<Utc>>,
+    pub time_start: OptionalTimestamp,
     /// Time range end
-    pub time_end: Option<DateTime<Utc>>,
+    pub time_end: OptionalTimestamp,
     /// Duration in milliseconds
     pub duration_ms: u64,
 }

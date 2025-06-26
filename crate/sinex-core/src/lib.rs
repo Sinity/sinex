@@ -15,6 +15,10 @@ pub use event_source_base::EventSourceBase;
 pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
 pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 
+// Common type aliases for time handling
+pub type Timestamp = chrono::DateTime<chrono::Utc>;
+pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

@@ -27,7 +27,7 @@ pub struct TerminalScrollbackCapturedPayload {
     pub scrollback_lines: usize,
     pub includes_screen: bool,
     pub has_ansi_codes: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Command output captured (using shell integration)
@@ -38,7 +38,7 @@ pub struct CommandOutputCapturedPayload {
     pub output_text: String,
     pub output_type: String, // "last_cmd_output", "last_non_empty_output", etc.
     pub cwd: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -118,7 +118,7 @@ struct KittyWindow {
 
 pub struct ScrollbackCapture {
     config: ScrollbackConfig,
-    last_capture_times: HashMap<u32, DateTime<Utc>>,
+    last_capture_times: HashMap<u32, Timestamp>,
     last_scrollback_hashes: HashMap<u32, u64>,
     command_event_rx: Option<mpsc::Receiver<CommandExecutedEvent>>,
 }
@@ -127,7 +127,7 @@ pub struct ScrollbackCapture {
 struct CommandExecutedEvent {
     window_id: u32,
     #[allow(dead_code)]
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
 }
 
 #[async_trait]

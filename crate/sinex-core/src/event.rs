@@ -9,7 +9,7 @@ pub struct RawEventBuilder {
     source: String,
     event_type: String,
     payload: serde_json::Value,
-    ts_orig: Option<DateTime<Utc>>,
+    ts_orig: OptionalTimestamp,
     host: Option<String>,
     ingestor_version: Option<String>,
     payload_schema_id: Option<Ulid>,
@@ -28,7 +28,7 @@ impl RawEventBuilder {
         }
     }
 
-    pub fn with_orig_timestamp(mut self, ts: DateTime<Utc>) -> Self {
+    pub fn with_orig_timestamp(mut self, ts: Timestamp) -> Self {
         self.ts_orig = Some(ts);
         self
     }

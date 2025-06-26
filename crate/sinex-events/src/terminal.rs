@@ -21,8 +21,8 @@ pub struct CommandExecutedPayload {
     pub command_string: String,
     pub cwd: String,
     pub exit_code: i32,
-    pub ts_start_orig: DateTime<Utc>,
-    pub ts_end_orig: DateTime<Utc>,
+    pub ts_start_orig: Timestamp,
+    pub ts_end_orig: Timestamp,
 }
 
 // ============================================================================
@@ -69,7 +69,7 @@ struct KittyWindow {
 
 pub struct KittySocketListener {
     config: KittyConfig,
-    last_command_times: Arc<Mutex<HashMap<u32, DateTime<Utc>>>>,
+    last_command_times: Arc<Mutex<HashMap<u32, Timestamp>>>,
 }
 
 // Implement EventSourceBase to get common functionality

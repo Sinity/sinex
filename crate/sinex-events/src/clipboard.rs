@@ -42,7 +42,7 @@ pub struct ClipboardChangedPayload {
     /// Blob ID from core_blobs table if stored
     pub blob_id: Option<String>,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Clipboard selection event (Linux primary selection)
@@ -67,7 +67,7 @@ pub struct ClipboardSelectionPayload {
     /// Blob ID from core_blobs table if stored
     pub blob_id: Option<String>,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -150,8 +150,8 @@ pub struct ClipboardMonitor {
 struct ClipboardHistoryEntry {
     content_hash: String,
     #[allow(dead_code)]
-    first_seen: DateTime<Utc>,
-    last_seen: DateTime<Utc>,
+    first_seen: Timestamp,
+    last_seen: Timestamp,
     #[allow(dead_code)]
     content_type: String,
     copy_count: u32,

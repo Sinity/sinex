@@ -16,7 +16,7 @@ use tracing::{info, warn};
 /// Single second of metric data
 #[derive(Debug, Clone, Serialize)]
 pub struct SecondMetrics {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub cpu_percent: f32,
     pub memory_mb: u64,
     pub events_count: u64,
@@ -81,7 +81,7 @@ pub struct SourceMetrics {
     pub events_total: u64,
     pub errors_total: u64,
     pub bytes_processed: u64,
-    pub last_event_time: Option<DateTime<Utc>>,
+    pub last_event_time: OptionalTimestamp,
     #[serde(flatten)]
     pub custom: HashMap<String, JsonValue>,
 }

@@ -27,8 +27,8 @@ pub struct CommandExecutedAtuinPayload {
     pub atuin_history_id: String,
     pub atuin_session_id: String,
     pub timestamp: i64,  // Unix timestamp in nanoseconds
-    pub ts_start_orig: DateTime<Utc>,
-    pub ts_end_orig: DateTime<Utc>,
+    pub ts_start_orig: Timestamp,
+    pub ts_end_orig: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_session_ulid: Option<String>,
 }

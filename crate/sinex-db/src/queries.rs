@@ -12,7 +12,7 @@ pub async fn insert_raw_event(
     event_type: &str,
     host: &str,
     payload: serde_json::Value,
-    ts_orig: Option<DateTime<Utc>>,
+    ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
 ) -> Result<RawEvent> {
@@ -26,7 +26,7 @@ pub async fn insert_raw_event_with_validator(
     event_type: &str,
     host: &str,
     payload: serde_json::Value,
-    ts_orig: Option<DateTime<Utc>>,
+    ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
     validator: Option<&EventValidator>,
@@ -275,7 +275,7 @@ pub async fn fail_work_queue_item(
     pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
-    next_retry_ts: DateTime<Utc>,
+    next_retry_ts: Timestamp,
 ) -> Result<()> {
     sqlx::query!(
         r#"
@@ -329,7 +329,7 @@ pub async fn fail_promotion_queue_item(
     pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
-    next_retry_ts: DateTime<Utc>,
+    next_retry_ts: Timestamp,
 ) -> Result<()> {
     fail_work_queue_item(pool, queue_id, error_message, next_retry_ts).await
 }
@@ -541,7 +541,7 @@ pub async fn get_retryable_dlq_events(
 pub async fn update_dlq_retry_attempt(
     pool: DbPoolRef,
     dlq_id: Ulid,
-    next_retry_at: Option<DateTime<Utc>>,
+    next_retry_at: OptionalTimestamp,
 ) -> Result<()> {
     sqlx::query!(
         r#"
@@ -780,8 +780,8 @@ pub async fn get_events_by_type(pool: DbPoolRef, event_type: &str, limit: i64) -
 /// Get events within a time range
 pub async fn get_events_in_time_range(
     pool: DbPoolRef, 
-    start_time: DateTime<Utc>, 
-    end_time: DateTime<Utc>
+    start_time: Timestamp, 
+    end_time: Timestamp
 ) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"

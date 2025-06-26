@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHeartbeat {
     pub component_name: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub status: HealthStatus,
     pub uptime_seconds: u64,
     pub memory_usage_mb: u32,
@@ -290,7 +290,7 @@ pub struct SystemHealth {
     pub degraded_components: u32,
     pub failed_components: u32,
     pub total_components: u32,
-    pub last_updated: DateTime<Utc>,
+    pub last_updated: Timestamp,
 }
 
 /// Heartbeat emission task that can be spawned in services

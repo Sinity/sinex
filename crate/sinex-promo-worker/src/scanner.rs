@@ -33,7 +33,7 @@ pub struct ScannerState {
     /// Last processed event ID for each source
     pub last_event_ids: HashMap<String, Ulid>,
     /// Timestamp of last scan
-    pub last_scan_ts: Option<DateTime<Utc>>,
+    pub last_scan_ts: OptionalTimestamp,
 }
 
 impl Default for ScannerState {
@@ -120,7 +120,7 @@ impl EventScanner {
     async fn fetch_new_events(
         &self,
         pool: DbPoolRef,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         // Build dynamic query based on whether we have last event IDs
         if self.state.last_event_ids.is_empty() {
@@ -136,7 +136,7 @@ impl EventScanner {
     async fn fetch_by_timestamp(
         &self,
         pool: DbPoolRef,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         let records = sqlx::query!(
             r#"
@@ -183,7 +183,7 @@ impl EventScanner {
     async fn fetch_by_event_ids(
         &self,
         pool: DbPoolRef,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<RawEvent>> {
         // For simplicity, we'll fetch all events newer than any of our last IDs
         // In production, you might want per-source queries for efficiency

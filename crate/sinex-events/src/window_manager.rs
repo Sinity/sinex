@@ -27,7 +27,7 @@ pub struct WindowFocusedPayload {
     pub window_address: String,
     pub window_class: String,
     pub window_title: String,
-    pub focused_at: DateTime<Utc>,
+    pub focused_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -36,13 +36,13 @@ pub struct WindowOpenedPayload {
     pub workspace_id: String,
     pub window_class: String,
     pub window_title: String,
-    pub opened_at: DateTime<Utc>,
+    pub opened_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WindowClosedPayload {
     pub window_address: String,
-    pub closed_at: DateTime<Utc>,
+    pub closed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -50,26 +50,26 @@ pub struct WindowMovedPayload {
     pub window_address: String,
     pub from_workspace: Option<String>,
     pub to_workspace: String,
-    pub moved_at: DateTime<Utc>,
+    pub moved_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceChangedPayload {
     pub workspace_id: String,
     pub workspace_name: String,
-    pub changed_at: DateTime<Utc>,
+    pub changed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MonitorFocusedPayload {
     pub monitor_name: String,
     pub workspace_id: String,
-    pub focused_at: DateTime<Utc>,
+    pub focused_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StateSnapshotPayload {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub monitors: serde_json::Value,
     pub workspaces: serde_json::Value,
     pub clients: serde_json::Value,
@@ -176,7 +176,7 @@ struct CacheEntry {
 #[derive(Debug, Clone)]
 struct FocusHistoryEntry {
     #[allow(dead_code)]
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
     #[allow(dead_code)]
     window_address: String,
     #[allow(dead_code)]

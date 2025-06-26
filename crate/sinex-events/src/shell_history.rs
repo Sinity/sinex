@@ -25,7 +25,7 @@ pub struct ShellHistoryCommandPayload {
     pub history_line_number: Option<usize>,
     pub source_file: String,
     /// Best-effort timestamp extraction (zsh extended history or file mtime)
-    pub ts_command_approx: Option<DateTime<Utc>>,
+    pub ts_command_approx: OptionalTimestamp,
 }
 
 // ============================================================================

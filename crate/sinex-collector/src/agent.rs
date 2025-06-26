@@ -83,14 +83,14 @@ pub struct AgentManifest {
     pub config_schema_id: Option<Ulid>,
     pub produces_event_types: HashMap<String, Vec<String>>, // source -> [event_types]
     pub repo_url: Option<String>,
-    pub last_heartbeat_ts: Option<DateTime<Utc>>,
-    pub registered_at: Option<DateTime<Utc>>,
+    pub last_heartbeat_ts: OptionalTimestamp,
+    pub registered_at: OptionalTimestamp,
 }
 
 /// Agent metrics tracker
 #[derive(Debug, Clone)]
 pub struct AgentMetrics {
-    pub start_time: DateTime<Utc>,
+    pub start_time: Timestamp,
     pub events_processed: u64,
     pub dlq_count: u64,
     agent_name: String,

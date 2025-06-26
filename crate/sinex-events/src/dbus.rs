@@ -29,7 +29,7 @@ pub struct DbusSignalPayload {
     /// Signal arguments as JSON
     pub args: serde_json::Value,
     /// Timestamp
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// D-Bus method call event (for important method calls)
@@ -42,7 +42,7 @@ pub struct DbusMethodCallPayload {
     pub interface: String,
     pub method: String,
     pub args: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Notification event (specialized from D-Bus signals)
@@ -55,7 +55,7 @@ pub struct NotificationPayload {
     pub timeout: i32,
     pub actions: Vec<String>,
     pub hints: HashMap<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Media playback event (from MPRIS interface)
@@ -81,7 +81,7 @@ pub struct MediaPlaybackPayload {
     pub can_pause: bool,
     pub can_seek: bool,
     pub art_url: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Power event
@@ -89,7 +89,7 @@ pub struct MediaPlaybackPayload {
 pub struct PowerEventPayload {
     pub event_type: String, // PrepareForSleep, PowerProfileChanged, etc.
     pub details: serde_json::Value,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Hardware device event (via UDisks2, UPower, etc)
@@ -103,7 +103,7 @@ pub struct HardwareEventPayload {
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Session/idle event
@@ -112,7 +112,7 @@ pub struct SessionEventPayload {
     pub event_type: String, // idle, active, locked, unlocked
     pub session_id: Option<String>,
     pub idle_time_ms: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// PolicyKit authorization event
@@ -125,7 +125,7 @@ pub struct PolicyKitEventPayload {
     pub requesting_user: Option<String>,
     pub authorized: bool,
     pub challenge_occurred: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Bluetooth device event
@@ -139,7 +139,7 @@ pub struct BluetoothEventPayload {
     pub connected: bool,
     pub paired: bool,
     pub trusted: bool,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Network manager event
@@ -151,7 +151,7 @@ pub struct NetworkEventPayload {
     pub ssid: Option<String>,
     pub ip_address: Option<String>,
     pub state: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Screen saver/lock event
@@ -160,7 +160,7 @@ pub struct ScreenSaverEventPayload {
     pub active: bool,
     pub locked: bool,
     pub idle_time_ms: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Mount/unmount event
@@ -173,7 +173,7 @@ pub struct MountEventPayload {
     pub label: Option<String>,
     pub uuid: Option<String>,
     pub size_bytes: Option<u64>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================

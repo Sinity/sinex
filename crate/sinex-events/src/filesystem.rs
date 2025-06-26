@@ -19,7 +19,7 @@ use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Re
 pub struct FileCreatedPayload {
     pub path: PathBuf,
     pub size: u64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub permissions: Option<u32>,
 }
 
@@ -27,14 +27,14 @@ pub struct FileCreatedPayload {
 pub struct FileModifiedPayload {
     pub path: PathBuf,
     pub size: u64,
-    pub modified_at: DateTime<Utc>,
+    pub modified_at: Timestamp,
     pub modification_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileDeletedPayload {
     pub path: PathBuf,
-    pub deleted_at: DateTime<Utc>,
+    pub deleted_at: Timestamp,
 }
 
 // ============================================================================

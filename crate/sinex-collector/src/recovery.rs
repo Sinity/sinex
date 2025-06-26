@@ -68,7 +68,7 @@ pub enum CollectorError {
 pub struct ErrorContext {
     pub collector: String,
     pub operation: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub trace_id: Option<String>,
     pub additional: HashMap<String, String>,
 }
@@ -126,7 +126,7 @@ impl CollectorError {
 /// Failed event wrapper for DLQ storage
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DlqEntry {
-    pub failed_at: DateTime<Utc>,
+    pub failed_at: Timestamp,
     pub failure_reason: String,
     pub retry_count: u32,
     pub original_event: RawEvent,

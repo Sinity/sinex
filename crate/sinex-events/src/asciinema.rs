@@ -24,7 +24,7 @@ pub struct AsciinemaSessionStartedPayload {
     pub command: String,
     pub title: Option<String>,
     pub env: HashMap<String, String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub recording_file: PathBuf,
 }
 
@@ -103,7 +103,7 @@ struct RecordingSession {
     id: String,
     #[allow(dead_code)]
     file_path: PathBuf,
-    start_time: DateTime<Utc>,
+    start_time: Timestamp,
     last_size: u64,
     header: Option<AsciinemaHeader>,
 }
