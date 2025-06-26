@@ -13,7 +13,7 @@ pub trait EventProcessor: Send + Sync {
     /// Process a single event from the work queue
     async fn process_event(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef,
         item: &WorkQueueItem,
     ) -> Result<()>;
 
@@ -166,7 +166,7 @@ pub async fn start_metrics_server(port: u16) -> anyhow::Result<()> {
 }
 
 /// Update queue metrics from database
-pub async fn update_queue_metrics(pool: &PgPool) -> Result<()> {
+pub async fn update_queue_metrics(pool: DbPoolRef) -> Result<()> {
     use sinex_db::metrics::{calculate_all_queue_metrics};
     
     let metrics = calculate_all_queue_metrics(pool).await?;
@@ -326,7 +326,7 @@ mod tests {
     impl EventProcessor for MockEventProcessor {
         async fn process_event(
             &self,
-            _pool: &PgPool,
+            _pool: DbPoolRef,
             _item: &WorkQueueItem,
         ) -> Result<()> {
             if self.should_fail {

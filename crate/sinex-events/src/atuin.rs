@@ -173,7 +173,7 @@ impl AtuinDbReader {
         ))?
     }
     
-    async fn get_startup_info_from_pool(&self, pool: &PgPool) -> Result<(Option<i64>, usize)> {
+    async fn get_startup_info_from_pool(&self, pool: DbPoolRef) -> Result<(Option<i64>, usize)> {
         use sqlx::Row;
         
         // Get both last timestamp and count in one query

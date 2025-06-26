@@ -75,7 +75,7 @@ impl EventScanner {
     }
     
     /// Scan for new events that need promotion
-    pub async fn scan_new_events(&mut self, pool: &PgPool) -> Result<Vec<RawEvent>> {
+    pub async fn scan_new_events(&mut self, pool: DbPoolRef) -> Result<Vec<RawEvent>> {
         let start_time = if let Some(last_scan) = self.state.last_scan_ts {
             last_scan
         } else if self.config.process_historical {
@@ -119,7 +119,7 @@ impl EventScanner {
     /// Fetch events newer than the given timestamp
     async fn fetch_new_events(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef,
         since: DateTime<Utc>,
     ) -> Result<Vec<RawEvent>> {
         // Build dynamic query based on whether we have last event IDs
@@ -135,7 +135,7 @@ impl EventScanner {
     /// Fetch events using timestamp filter
     async fn fetch_by_timestamp(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef,
         since: DateTime<Utc>,
     ) -> Result<Vec<RawEvent>> {
         let records = sqlx::query!(
@@ -182,7 +182,7 @@ impl EventScanner {
     /// Fetch events using last known event IDs per source
     async fn fetch_by_event_ids(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef,
         since: DateTime<Utc>,
     ) -> Result<Vec<RawEvent>> {
         // For simplicity, we'll fetch all events newer than any of our last IDs
@@ -253,7 +253,7 @@ impl EventScanner {
     /// Get events that don't have work queue entries yet
     pub async fn get_unqueued_events(
         &self,
-        pool: &PgPool,
+        pool: DbPoolRef,
         limit: usize,
     ) -> Result<Vec<RawEvent>> {
         let records = sqlx::query!(

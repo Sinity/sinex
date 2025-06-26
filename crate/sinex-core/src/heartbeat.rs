@@ -41,7 +41,7 @@ pub enum HeartbeatError {
 impl ComponentHeartbeat {
     /// Collect system metrics and emit heartbeat to database
     pub async fn collect_and_emit(
-        pool: &PgPool,
+        pool: DbPoolRef,
         component_name: &str,
     ) -> Result<(), HeartbeatError> {
         let heartbeat = Self::collect_metrics(component_name).await?;
@@ -206,7 +206,7 @@ impl ComponentHeartbeat {
     
     /// Get latest heartbeat for a specific component
     pub async fn get_latest_for_component(
-        pool: &PgPool,
+        pool: DbPoolRef,
         component_name: &str,
     ) -> Result<Option<Self>, HeartbeatError> {
         let result = sqlx::query!(
@@ -244,7 +244,7 @@ impl ComponentHeartbeat {
     }
     
     /// Get system health overview
-    pub async fn get_system_health(pool: &PgPool) -> Result<SystemHealth, HeartbeatError> {
+    pub async fn get_system_health(pool: DbPoolRef) -> Result<SystemHealth, HeartbeatError> {
         let result = sqlx::query!(
             "SELECT * FROM get_system_health_status()"
         ).fetch_one(pool).await?;

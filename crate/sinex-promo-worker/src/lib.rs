@@ -93,7 +93,7 @@ impl WorkRouter {
 
 /// Create work queue entries for new events
 pub async fn create_work_entries(
-    pool: &PgPool,
+    pool: DbPoolRef,
     events: Vec<RawEvent>,
     router: &WorkRouter,
 ) -> Result<usize> {
@@ -145,7 +145,7 @@ pub async fn create_work_entries(
 
 /// Insert a single work queue entry
 async fn insert_work_queue_entry(
-    pool: &PgPool,
+    pool: DbPoolRef,
     event_id: Ulid,
     agent_name: &str,
 ) -> Result<bool> {
@@ -166,7 +166,7 @@ async fn insert_work_queue_entry(
 }
 
 /// Get all active agent manifests
-pub async fn get_active_manifests(pool: &PgPool) -> Result<Vec<AgentManifest>> {
+pub async fn get_active_manifests(pool: DbPoolRef) -> Result<Vec<AgentManifest>> {
     let records = sqlx::query!(
         r#"
         SELECT 

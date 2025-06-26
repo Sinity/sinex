@@ -62,7 +62,7 @@ impl EventValidator {
     }
     
     /// Load JSON schemas from database and create a validator
-    pub async fn load_from_db(pool: &PgPool) -> Result<Self> {
+    pub async fn load_from_db(pool: DbPoolRef) -> Result<Self> {
         let mut validator = Self::new();
         
         // Load all active schemas from database

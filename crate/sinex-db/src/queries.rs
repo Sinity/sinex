@@ -7,7 +7,7 @@ use sqlx::PgPool;
 
 /// Insert a raw event with ULID type conversion (compile-time safe with manual mapping)
 pub async fn insert_raw_event(
-    pool: &PgPool,
+    pool: DbPoolRef,
     source: &str,
     event_type: &str,
     host: &str,
@@ -21,7 +21,7 @@ pub async fn insert_raw_event(
 
 /// Insert a raw event with optional validation
 pub async fn insert_raw_event_with_validator(
-    pool: &PgPool,
+    pool: DbPoolRef,
     source: &str,
     event_type: &str,
     host: &str,
@@ -91,7 +91,7 @@ pub async fn insert_raw_event_with_validator(
 }
 
 /// Insert a RawEvent struct directly with optional validation
-pub async fn insert_event(pool: &PgPool, event: &RawEvent) -> Result<RawEvent> {
+pub async fn insert_event(pool: DbPoolRef, event: &RawEvent) -> Result<RawEvent> {
     insert_raw_event(
         pool,
         &event.source,
@@ -105,7 +105,7 @@ pub async fn insert_event(pool: &PgPool, event: &RawEvent) -> Result<RawEvent> {
 }
 
 /// Insert a RawEvent struct directly with validation
-pub async fn insert_event_with_validator(pool: &PgPool, event: &RawEvent, validator: Option<&EventValidator>) -> Result<RawEvent> {
+pub async fn insert_event_with_validator(pool: DbPoolRef, event: &RawEvent, validator: Option<&EventValidator>) -> Result<RawEvent> {
     insert_raw_event_with_validator(
         pool,
         &event.source,
@@ -121,7 +121,7 @@ pub async fn insert_event_with_validator(pool: &PgPool, event: &RawEvent, valida
 
 /// Register or update an agent manifest
 pub async fn upsert_agent_manifest(
-    pool: &PgPool,
+    pool: DbPoolRef,
     agent_name: &str,
     version: &str,
     status: &str,
@@ -179,7 +179,7 @@ pub async fn upsert_agent_manifest(
 
 /// Claim items from the work queue for processing
 pub async fn claim_work_queue_items(
-    pool: &PgPool,
+    pool: DbPoolRef,
     target_agent_name: &str,
     worker_id: &str,
     batch_size: i64,
@@ -249,7 +249,7 @@ pub async fn claim_work_queue_items(
 }
 
 /// Mark a work queue item as successfully processed
-pub async fn complete_work_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+pub async fn complete_work_queue_item(pool: DbPoolRef, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue 
@@ -266,13 +266,13 @@ pub async fn complete_work_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<(
 
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use complete_work_queue_item instead")]
-pub async fn complete_promotion_queue_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+pub async fn complete_promotion_queue_item(pool: DbPoolRef, queue_id: Ulid) -> Result<()> {
     complete_work_queue_item(pool, queue_id).await
 }
 
 /// Mark a work queue item as failed and schedule retry
 pub async fn fail_work_queue_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
     next_retry_ts: DateTime<Utc>,
@@ -300,7 +300,7 @@ pub async fn fail_work_queue_item(
 
 /// Mark a work queue item as permanently failed
 pub async fn fail_work_queue_item_permanently(
-    pool: &PgPool,
+    pool: DbPoolRef,
     queue_id: Ulid,
     failure_reason: &str,
 ) -> Result<()> {
@@ -326,7 +326,7 @@ pub async fn fail_work_queue_item_permanently(
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use fail_work_queue_item instead")]
 pub async fn fail_promotion_queue_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
     next_retry_ts: DateTime<Utc>,
@@ -335,7 +335,7 @@ pub async fn fail_promotion_queue_item(
 }
 
 /// Update agent heartbeat timestamp
-pub async fn update_agent_heartbeat(pool: &PgPool, agent_name: &str) -> Result<()> {
+pub async fn update_agent_heartbeat(pool: DbPoolRef, agent_name: &str) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.agent_manifests
@@ -352,7 +352,7 @@ pub async fn update_agent_heartbeat(pool: &PgPool, agent_name: &str) -> Result<(
 
 /// Insert an event into the DLQ
 pub async fn insert_dlq_event(
-    pool: &PgPool,
+    pool: DbPoolRef,
     failed_event_id: Ulid,
     agent_name: &str,
     source: &str,
@@ -418,7 +418,7 @@ pub async fn insert_dlq_event(
 
 /// Get retryable DLQ events that are ready for retry for a specific agent
 pub async fn get_retryable_dlq_events_for_agent(
-    pool: &PgPool,
+    pool: DbPoolRef,
     agent_name: &str,
     limit: i64,
 ) -> Result<Vec<DlqEvent>> {
@@ -480,7 +480,7 @@ pub async fn get_retryable_dlq_events_for_agent(
 
 /// Get retryable DLQ events that are ready for retry for all agents
 pub async fn get_retryable_dlq_events(
-    pool: &PgPool,
+    pool: DbPoolRef,
     limit: i64,
 ) -> Result<Vec<DlqEvent>> {
     let records = sqlx::query!(
@@ -539,7 +539,7 @@ pub async fn get_retryable_dlq_events(
 
 /// Update DLQ event retry attempt
 pub async fn update_dlq_retry_attempt(
-    pool: &PgPool,
+    pool: DbPoolRef,
     dlq_id: Ulid,
     next_retry_at: Option<DateTime<Utc>>,
 ) -> Result<()> {
@@ -563,7 +563,7 @@ pub async fn update_dlq_retry_attempt(
 
 /// Mark DLQ event as resolved
 pub async fn resolve_dlq_event(
-    pool: &PgPool,
+    pool: DbPoolRef,
     dlq_id: Ulid,
     resolved_by: &str,
 ) -> Result<()> {
@@ -585,7 +585,7 @@ pub async fn resolve_dlq_event(
 }
 
 /// Get DLQ statistics
-pub async fn get_dlq_stats(pool: &PgPool) -> Result<serde_json::Value> {
+pub async fn get_dlq_stats(pool: DbPoolRef) -> Result<serde_json::Value> {
     let stats = sqlx::query!(
         r#"
         SELECT 
@@ -616,7 +616,7 @@ pub async fn get_dlq_stats(pool: &PgPool) -> Result<serde_json::Value> {
 }
 
 /// Get an event by its ULID
-pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent> {
+pub async fn get_event_by_id(pool: DbPoolRef, event_id: Ulid) -> Result<RawEvent> {
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -651,7 +651,7 @@ pub async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent> 
 }
 
 /// Get recent events ordered by timestamp (most recent first)
-pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_recent_events(pool: DbPoolRef, limit: i64) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -692,7 +692,7 @@ pub async fn get_recent_events(pool: &PgPool, limit: i64) -> Result<Vec<RawEvent
 }
 
 /// Get events by source
-pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_source(pool: DbPoolRef, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -735,7 +735,7 @@ pub async fn get_events_by_source(pool: &PgPool, source: &str, limit: i64) -> Re
 }
 
 /// Get events by event type
-pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_type(pool: DbPoolRef, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -779,7 +779,7 @@ pub async fn get_events_by_type(pool: &PgPool, event_type: &str, limit: i64) -> 
 
 /// Get events within a time range
 pub async fn get_events_in_time_range(
-    pool: &PgPool, 
+    pool: DbPoolRef, 
     start_time: DateTime<Utc>, 
     end_time: DateTime<Utc>
 ) -> Result<Vec<RawEvent>> {
@@ -825,7 +825,7 @@ pub async fn get_events_in_time_range(
 
 /// Add an event to the work queue
 pub async fn add_to_work_queue(
-    pool: &PgPool,
+    pool: DbPoolRef,
     raw_event_id: Ulid,
     target_agent_name: &str,
     max_attempts: i32,
@@ -877,7 +877,7 @@ pub async fn add_to_work_queue(
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use add_to_work_queue instead")]
 pub async fn add_to_promotion_queue(
-    pool: &PgPool,
+    pool: DbPoolRef,
     raw_event_id: Ulid,
     target_agent_name: &str,
     max_attempts: i32,
@@ -887,7 +887,7 @@ pub async fn add_to_promotion_queue(
 
 /// Get the next work queue item for processing
 pub async fn get_next_work_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     target_agent_name: &str,
 ) -> Result<Option<WorkQueueItem>> {
     let record = sqlx::query!(
@@ -948,14 +948,14 @@ pub async fn get_next_work_item(
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use get_next_work_item instead")]
 pub async fn get_next_promotion_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     target_agent_name: &str,
 ) -> Result<Option<WorkQueueItem>> {
     get_next_work_item(pool, target_agent_name).await
 }
 
 /// Complete a work queue item (mark as completed)
-pub async fn complete_work_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+pub async fn complete_work_item(pool: DbPoolRef, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
@@ -972,13 +972,13 @@ pub async fn complete_work_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
 
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use complete_work_item instead")]
-pub async fn complete_promotion_item(pool: &PgPool, queue_id: Ulid) -> Result<()> {
+pub async fn complete_promotion_item(pool: DbPoolRef, queue_id: Ulid) -> Result<()> {
     complete_work_item(pool, queue_id).await
 }
 
 /// Fail a work queue item and optionally retry or move to DLQ
 pub async fn fail_work_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
 ) -> Result<()> {
@@ -1039,7 +1039,7 @@ pub async fn fail_work_item(
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use fail_work_item instead")]
 pub async fn fail_promotion_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     queue_id: Ulid,
     error_message: &str,
 ) -> Result<()> {
@@ -1047,7 +1047,7 @@ pub async fn fail_promotion_item(
 }
 
 /// Get a work queue item by ID
-pub async fn get_work_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<WorkQueueItem> {
+pub async fn get_work_item_by_id(pool: DbPoolRef, queue_id: Ulid) -> Result<WorkQueueItem> {
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -1091,13 +1091,13 @@ pub async fn get_work_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<WorkQu
 
 /// Legacy alias for backward compatibility
 #[deprecated(note = "Use get_work_item_by_id instead")]
-pub async fn get_promotion_item_by_id(pool: &PgPool, queue_id: Ulid) -> Result<WorkQueueItem> {
+pub async fn get_promotion_item_by_id(pool: DbPoolRef, queue_id: Ulid) -> Result<WorkQueueItem> {
     get_work_item_by_id(pool, queue_id).await
 }
 
 /// Purge old completed work queue items based on TTL policy
 /// Removes items with status 'succeeded' or 'failed' that have processed_at older than 90 days
-pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
+pub async fn purge_old_work_queue_items(pool: DbPoolRef) -> Result<u64> {
     let result = sqlx::query!(
         r#"
         DELETE FROM sinex_schemas.work_queue
@@ -1113,7 +1113,7 @@ pub async fn purge_old_work_queue_items(pool: &PgPool) -> Result<u64> {
 }
 
 /// Get count of work queue items eligible for purging (for monitoring)
-pub async fn count_purgeable_work_queue_items(pool: &PgPool) -> Result<i64> {
+pub async fn count_purgeable_work_queue_items(pool: DbPoolRef) -> Result<i64> {
     let result = sqlx::query!(
         r#"
         SELECT COUNT(*) as count
@@ -1131,7 +1131,7 @@ pub async fn count_purgeable_work_queue_items(pool: &PgPool) -> Result<i64> {
 
 /// Get DLQ items for a specific agent
 pub async fn get_dlq_items(
-    pool: &PgPool,
+    pool: DbPoolRef,
     agent_name: &str,
     limit: i64,
 ) -> Result<Vec<DlqEvent>> {
@@ -1191,7 +1191,7 @@ pub async fn get_dlq_items(
 
 /// Create a test agent for use in tests
 pub async fn create_test_agent(
-    pool: &PgPool,
+    pool: DbPoolRef,
     agent_name: &str,
     description: &str,
 ) -> Result<AgentManifest> {
@@ -1209,7 +1209,7 @@ pub async fn create_test_agent(
 
 /// Insert a work queue item for testing
 pub async fn insert_work_queue_item(
-    pool: &PgPool,
+    pool: DbPoolRef,
     raw_event_id: Ulid,
     target_agent_name: &str,
 ) -> Result<WorkQueueItem> {
@@ -1256,7 +1256,7 @@ pub async fn insert_work_queue_item(
 }
 
 /// Refresh the routing cache materialized view
-pub async fn refresh_routing_cache(pool: &PgPool) -> Result<()> {
+pub async fn refresh_routing_cache(pool: DbPoolRef) -> Result<()> {
     sqlx::query!("SELECT sinex_router.refresh_routing_cache()")
         .execute(pool)
         .await?;
@@ -1264,7 +1264,7 @@ pub async fn refresh_routing_cache(pool: &PgPool) -> Result<()> {
 }
 
 /// Run the batch router function to process unrouted events
-pub async fn run_batch_router(pool: &PgPool) -> Result<i64> {
+pub async fn run_batch_router(pool: DbPoolRef) -> Result<i64> {
     let result = sqlx::query!(
         "SELECT sinex_router.batch_route_events() as count"
     )
@@ -1281,7 +1281,7 @@ pub struct QueueDepthMetric {
     pub queue_depth: i64,
 }
 
-pub async fn calculate_queue_depth_metrics(pool: &PgPool) -> Result<Vec<QueueDepthMetric>> {
+pub async fn calculate_queue_depth_metrics(pool: DbPoolRef) -> Result<Vec<QueueDepthMetric>> {
     let metrics = sqlx::query!(
         r#"
         SELECT 

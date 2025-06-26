@@ -13,11 +13,18 @@ pub use queries::{
     get_next_work_item, complete_work_item, fail_work_item
 };
 
+// Re-export type aliases for convenience
+pub use {DbPool, DbPoolRef};
+
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::time::Duration;
 use tracing::info;
+
+// Common type aliases for database operations
+pub type DbPool = PgPool;
+pub type DbPoolRef<'a> = &'a PgPool;
 
 /// Create a database connection pool with default settings
 pub async fn create_pool(database_url: &str) -> Result<PgPool> {
@@ -58,7 +65,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations
-pub async fn run_migrations(pool: &PgPool) -> Result<()> {
+pub async fn run_migrations(pool: DbPoolRef) -> Result<()> {
     sqlx::migrate!("../../migrations")
         .run(pool)
         .await?;
