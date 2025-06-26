@@ -1,11 +1,9 @@
 use crate::common::prelude::*;
-use sinex_db::queries::insert_raw_event;
 
 /// Test input validation for event sources and types
-#[tokio::test]
-async fn test_event_source_validation() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_event_source_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Test various malicious source names
     let long_string_1000 = "A".repeat(1000);
@@ -75,8 +73,8 @@ async fn test_event_source_validation() -> Result<(), anyhow::Error> {
     let mut validation_results = Vec::new();
 
     for (i, malicious_source) in malicious_sources.iter().enumerate() {
-        let test_event = insert_raw_event(
-            &pool,
+        let test_event = queries::insert_raw_event(
+            pool,
             malicious_source,
             "validation_test",
             "localhost", 
@@ -93,7 +91,7 @@ async fn test_event_source_validation() -> Result<(), anyhow::Error> {
                     "SELECT source FROM raw.events WHERE id = $1::uuid::ulid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
                 let validation_result = ValidationResult {
@@ -161,7 +159,7 @@ async fn test_event_source_validation() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE event_type = 'validation_test'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
 
     Ok(())
 }
@@ -175,10 +173,9 @@ struct ValidationResult {
 }
 
 /// Test JSON payload validation and sanitization
-#[tokio::test]
-async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_json_payload_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Test various malicious JSON structures
     let malicious_payloads = vec![
@@ -254,8 +251,8 @@ async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
         // Test insertion with timeout to prevent hangs
         let insert_result = timeout(
             Duration::from_secs(3),
-            insert_raw_event(
-                &pool,
+            queries::insert_raw_event(
+                pool,
                 "payload.validation",
                 "malicious_json",
                 "localhost",
@@ -273,7 +270,7 @@ async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
                     "SELECT payload FROM raw.events WHERE id = $1::uuid::ulid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
                 let original_str = malicious_payload.to_string();
@@ -345,7 +342,7 @@ async fn test_json_payload_validation() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'payload.validation'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
 
     Ok(())
 }
@@ -391,10 +388,9 @@ fn check_dangerous_content(content: &str) -> bool {
 }
 
 /// Test error handling for malformed inputs
-#[tokio::test]
-async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_malformed_input_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Test agent creation with malformed names
     let long_agent_name = "a".repeat(1000);
@@ -433,7 +429,7 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
             "1.0.0",
             "Malformed name test"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         match agent_creation {
@@ -445,7 +441,7 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
                     "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                     malformed_name
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await
                 .ok();
             }
@@ -480,8 +476,8 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
     let mut event_validation_results = Vec::new();
 
     for (source, event_type, host, payload) in malformed_events {
-        let event_result = insert_raw_event(
-            &pool,
+        let event_result = queries::insert_raw_event(
+            pool,
             source,
             event_type,
             host,
@@ -528,18 +524,17 @@ async fn test_malformed_input_handling() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", valid_agent)
-        .execute(&pool).await?;
+        .execute(pool).await?;
     sqlx::query!("DELETE FROM raw.events WHERE source IN ('', 'test')")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
 
     Ok(())
 }
 
 /// Test boundary conditions and edge cases
-#[tokio::test]
-async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_input_boundary_conditions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Test size boundaries
     let normal_string = "a".repeat(100);
@@ -577,8 +572,8 @@ async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
         // Test as event source
         let source_result = timeout(
             Duration::from_secs(3),
-            insert_raw_event(
-                &pool,
+            queries::insert_raw_event(
+                pool,
                 test_value,
                 "boundary_test",
                 "localhost",
@@ -592,8 +587,8 @@ async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
         // Test as JSON payload value
         let payload_result = timeout(
             Duration::from_secs(3),
-            insert_raw_event(
-                &pool,
+            queries::insert_raw_event(
+                pool,
                 "boundary.test",
                 "payload_test", 
                 "localhost",
@@ -646,7 +641,7 @@ async fn test_input_boundary_conditions() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE event_type IN ('boundary_test', 'payload_test')")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
 
     Ok(())
 }

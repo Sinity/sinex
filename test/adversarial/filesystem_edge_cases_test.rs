@@ -5,8 +5,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[tokio::test]
-async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
     
@@ -75,8 +75,8 @@ async fn test_file_permission_revoked_while_watching() -> Result<(), Box<dyn std
     Ok(())
 }
 
-#[tokio::test]
-async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_directory_unmounted_while_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -155,8 +155,8 @@ async fn test_directory_unmounted_while_watching() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[tokio::test]
-async fn test_watching_special_files() {
+#[sinex_test]
+async fn test_watching_special_files(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test watching various special file types that might cause issues
     let special_files = vec![
         "/dev/null",
@@ -195,10 +195,11 @@ async fn test_watching_special_files() {
             }
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_fifo_pipe_watching() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_fifo_pipe_watching(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let fifo_path = temp_dir.path().join("test_fifo");
     
@@ -249,8 +250,8 @@ async fn test_fifo_pipe_watching() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_rapid_file_creation_deletion() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_rapid_file_creation_deletion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("rapid_changes");
     
@@ -329,8 +330,8 @@ async fn test_rapid_file_creation_deletion() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-#[tokio::test]
-async fn test_watching_symlink_cycles() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test]
+async fn test_watching_symlink_cycles(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     
     let link_a = temp_dir.path().join("link_a");

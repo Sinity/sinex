@@ -20,7 +20,7 @@ async fn test_routing_cache_view_exists(ctx: TestContext) -> Result<(), Box<dyn 
     .fetch_one(pool)
     .await?;
     
-    pretty_assertions::assert_eq!(view_exists.count.unwrap(), 1, "routing_cache materialized view should exist");
+    pretty_assertions::assert_eq!(view_exists.count.unwrap_or(0), 1, "routing_cache materialized view should exist");
     Ok(())
 }
 
@@ -178,7 +178,7 @@ async fn test_batch_router_avoids_duplicate_routing(ctx: TestContext) -> Result<
     .fetch_one(pool)
     .await?;
     
-    pretty_assertions::assert_eq!(work_items.count.unwrap(), 1, "Should have exactly 1 work queue item");
+    pretty_assertions::assert_eq!(work_items.count.unwrap_or(0), 1, "Should have exactly 1 work queue item");
     
     Ok(())
 }

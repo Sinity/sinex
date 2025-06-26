@@ -3,8 +3,8 @@ use sinex_collector::config::{CollectorConfig, ConfigManager};
 use tokio::sync::Mutex;
 use crate::common::resources;
 
-#[tokio::test]
-async fn test_unbounded_file_descriptor_explosion() -> Result<(), Box<dyn std::error::Error>> {
+#[sinex_test(timeout = 60)]
+async fn test_unbounded_file_descriptor_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Try to watch a directory with thousands of files
     let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];

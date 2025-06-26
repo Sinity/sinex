@@ -5,6 +5,19 @@
 //! - Event builder factories for consistent event creation
 //! - Timing helpers to eliminate flaky sleeps
 //! - Common test utilities in one ergonomic interface
+//!
+//! # Usage
+//! ```rust
+//! use crate::common::test_context::TestContext;
+//! 
+//! #[sinex_test]
+//! async fn my_test(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+//!     let event = ctx.filesystem_event("/test/file");
+//!     ctx.insert_event(&event).await?;
+//!     ctx.wait_for_event_count(1).await?;
+//!     Ok(())
+//! }
+//! ```
 
 use crate::common::prelude::*;
 use crate::common::database::TestPool;
@@ -257,7 +270,10 @@ impl TestContext {
         // If events are still being created, wait a bit more
         let new_count = self.event_count().await?;
         if new_count > initial_count {
+            // Use a more robust approach for closure capture
             let pool = self.pool().clone();
+            let final_count = new_count;
+            
             self.wait_for_condition(move || {
                 let pool = pool.clone();
                 async move {
@@ -267,7 +283,7 @@ impl TestContext {
                         .await
                         .map(|c| c.unwrap_or(0))
                         .unwrap_or(0);
-                    Ok(count == new_count)
+                    Ok(count == final_count)
                 }
             }).await?;
         }
@@ -323,12 +339,59 @@ impl TestContext {
         (0..count)
             .map(|i| {
                 self.event_builder(source, "test.batch")
-                    .payload(json!({ "index": i }))
+                    .payload(json!({ "index": i, "batch_id": uuid::Uuid::new_v4() }))
                     .build()
             })
             .collect()
+    }
+    
+    /// Create events with custom time distribution
+    pub fn create_time_distributed_batch(
+        &self, 
+        source: &str, 
+        count: usize,
+        start_time: chrono::DateTime<chrono::Utc>,
+        interval: Duration
+    ) -> Vec<RawEvent> {
+        (0..count)
+            .map(|i| {
+                let timestamp = start_time + chrono::Duration::from_std(interval * i as u32).unwrap();
+                self.event_builder(source, "test.timed_batch")
+                    .payload(json!({ "index": i, "sequence": i }))
+                    .timestamp(timestamp)
+                    .build()
+            })
+            .collect()
+    }
+    
+    /// Get performance metrics for this test context
+    pub fn get_performance_metrics(&self) -> TestPerformanceMetrics {
+        TestPerformanceMetrics {
+            test_name: self.config.test_name.clone(),
+            elapsed_time: self.elapsed(),
+            pool_size: self.config.pool_size,
+        }
     }
 }
 
 // Re-export for convenience
 pub use sinex_db::models::RawEvent as DbRawEvent;
+
+/// Performance metrics for test execution
+#[derive(Debug, Clone)]
+pub struct TestPerformanceMetrics {
+    pub test_name: String,
+    pub elapsed_time: Duration,
+    pub pool_size: u32,
+}
+
+impl TestPerformanceMetrics {
+    pub fn print_summary(&self) {
+        println!(
+            "[{}] Test completed in {:?} (pool size: {})",
+            self.test_name,
+            self.elapsed_time,
+            self.pool_size
+        );
+    }
+}

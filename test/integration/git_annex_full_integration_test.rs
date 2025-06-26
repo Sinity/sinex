@@ -5,6 +5,10 @@
 //! repository management, and fallback scenarios.
 
 use crate::common::prelude::*;
+use sinex_db::queries::{
+    insert_event, add_to_work_queue, claim_work_queue_items, 
+    complete_work_queue_item, fail_work_queue_item
+};
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -149,9 +153,9 @@ impl GitAnnexTestRepo {
     
 }
 
-#[tokio::test]
-async fn test_git_annex_integration_with_event_pipeline() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
+#[sinex_test]
+async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> Result<(), anyhow::Error> {
+    let pool = ctx.pool();
     
     let annex_repo = GitAnnexTestRepo::new().await?;
     
@@ -175,7 +179,7 @@ async fn test_git_annex_integration_with_event_pipeline() -> Result<(), anyhow::
     Ok(())
 }
 
-async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_large_file_event_capture(pool: &PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
     // Test capturing events with large files that should be stored in git-annex
     
     // Create large test files (> 1KB to trigger git-annex)
@@ -212,8 +216,8 @@ async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnne
     ).build();
     
     // Insert events into database
-    let large_event = queries::insert_event(&pool, &large_file_event).await?;
-    let medium_event = queries::insert_event(&pool, &medium_file_event).await?;
+    let large_event = insert_event(&pool, &large_file_event).await?;
+    let medium_event = insert_event(&pool, &medium_file_event).await?;
     
     // Verify events are stored correctly
     let retrieved_large = crate::common::get_event_by_id(&pool, large_event.id).await?;
@@ -239,7 +243,7 @@ async fn test_large_file_event_capture(pool: &sqlx::PgPool, annex_repo: &GitAnne
     Ok(())
 }
 
-async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_event_processing_with_annex_blobs(pool: &PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
     // Test event processing that involves retrieving and processing git-annex stored content
     
     // Create test files with various content types
@@ -287,11 +291,11 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
     
     let mut event_ids = Vec::new();
     for event in &events {
-        let inserted_event = queries::insert_event(&pool, event).await?;
+        let inserted_event = insert_event(&pool, event).await?;
         event_ids.push(inserted_event.id);
         
         // Add to promotion queue for processing
-        queries::add_to_work_queue(&pool, inserted_event.id, "annex-test-agent", 3).await?;
+        add_to_work_queue(&pool, inserted_event.id, "annex-test-agent", 3).await?;
     }
     
     // Simulate worker processing events with git-annex content retrieval
@@ -299,7 +303,7 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
     
     for (i, event_id) in event_ids.iter().enumerate() {
         // Claim work item
-        let claimed_items = queries::claim_work_queue_items(&pool, 
+        let claimed_items = claim_work_queue_items(&pool, 
             "annex-test-agent", 
             &format!("annex-worker-{}", i), 
             1
@@ -344,21 +348,21 @@ async fn test_event_processing_with_annex_blobs(pool: &sqlx::PgPool, annex_repo:
         }
         
         // Complete processing
-        queries::complete_work_queue_item(&pool, queue_item.queue_id).await?;
+        complete_work_queue_item(&pool, queue_item.queue_id).await?;
     }
     
     // Verify all events were processed successfully
     pretty_assertions::assert_eq!(processed_events.len(), 3, "All events should be processed");
     
     // Check that promotion queue is empty
-    let remaining_work = queries::claim_work_queue_items(&pool, "annex-test-agent", "cleanup-worker", 10).await?;
+    let remaining_work = claim_work_queue_items(&pool, "annex-test-agent", "cleanup-worker", 10).await?;
     assert!(remaining_work.is_empty(), "No work should remain in queue");
     
     println!("✅ Event processing with git-annex blob integration successful");
     Ok(())
 }
 
-async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_worker_system_annex_integration(pool: &PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
     // Test that the worker system can handle concurrent access to git-annex files
     
     // Create multiple files for concurrent processing
@@ -388,8 +392,8 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
             })
         ).build();
         
-        let inserted_event = queries::insert_event(&pool, &event).await?;
-        queries::add_to_work_queue(&pool, inserted_event.id, "concurrent-test-agent", 3).await?;
+        let inserted_event = insert_event(&pool, &event).await?;
+        add_to_work_queue(&pool, inserted_event.id, "concurrent-test-agent", 3).await?;
         event_ids.push(inserted_event.id);
     }
     
@@ -412,7 +416,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
             
             loop {
                 // Try to claim work
-                let claimed = queries::claim_work_queue_items(&pool, "concurrent-test-agent", &worker_name, 1).await;
+                let claimed = claim_work_queue_items(&pool, "concurrent-test-agent", &worker_name, 1).await;
                 
                 match claimed {
                     Ok(items) => {
@@ -442,18 +446,18 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
                                                 file_count_processed.fetch_add(1, Ordering::SeqCst);
                                                 
                                                 // Complete successfully
-                                                let _ = queries::complete_work_queue_item(&pool, item.queue_id).await;
+                                                let _ = complete_work_queue_item(&pool, item.queue_id).await;
                                                 success_count.fetch_add(1, Ordering::SeqCst);
                                             } else {
                                                 failure_count.fetch_add(1, Ordering::SeqCst);
                                                 let next_retry = chrono::Utc::now() + chrono::Duration::minutes(5);
-                                                let _ = queries::fail_work_queue_item(&pool, item.queue_id, "File read failed", next_retry).await;
+                                                let _ = fail_work_queue_item(&pool, item.queue_id, "File read failed", next_retry).await;
                                             }
                                         }
                                         _ => {
                                             failure_count.fetch_add(1, Ordering::SeqCst);
                                             let next_retry = chrono::Utc::now() + chrono::Duration::minutes(5);
-                                            let _ = queries::fail_work_queue_item(&pool, item.queue_id, "Git-annex get failed", next_retry).await;
+                                            let _ = fail_work_queue_item(&pool, item.queue_id, "Git-annex get failed", next_retry).await;
                                         }
                                     }
                                 }
@@ -496,7 +500,7 @@ async fn test_worker_system_annex_integration(pool: &sqlx::PgPool, annex_repo: &
     Ok(())
 }
 
-async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
+async fn test_query_interface_annex_integration(pool: &PgPool, annex_repo: &GitAnnexTestRepo) -> Result<(), anyhow::Error> {
     // Test that query interface can access git-annex stored content
     
     // Create test files with searchable content
@@ -525,7 +529,7 @@ async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo:
             })
         ).build();
         
-        let inserted_event = queries::insert_event(&pool, &event).await?;
+        let inserted_event = insert_event(&pool, &event).await?;
         document_events.push((inserted_event.id, filename, key));
     }
     
@@ -595,9 +599,9 @@ async fn test_query_interface_annex_integration(pool: &sqlx::PgPool, annex_repo:
     Ok(())
 }
 
-#[tokio::test]
-async fn test_git_annex_fallback_scenarios() -> Result<(), anyhow::Error> {
-    let pool = TestPool::with_strategy(CleanupStrategy::Truncate).await?;
+#[sinex_test]
+async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> Result<(), anyhow::Error> {
+    let pool = ctx.pool();
     
     // Test system behavior when git-annex is not available
     test_annex_unavailable_fallback(&pool).await?;
@@ -611,7 +615,7 @@ async fn test_git_annex_fallback_scenarios() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_unavailable_fallback(pool: &PgPool) -> Result<(), anyhow::Error> {
     // Test system behavior when git-annex is not available
     
     // Create events that would normally use git-annex
@@ -630,7 +634,7 @@ async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), anyh
     ).build();
     
     // Insert event (should succeed even without git-annex)
-    let inserted_event = queries::insert_event(&pool, &fallback_event).await?;
+    let inserted_event = insert_event(&pool, &fallback_event).await?;
     
     // Verify event was stored
     let retrieved_event = crate::common::get_event_by_id(&pool, inserted_event.id).await?;
@@ -646,7 +650,7 @@ async fn test_annex_unavailable_fallback(pool: &sqlx::PgPool) -> Result<(), anyh
     Ok(())
 }
 
-async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_operation_failure_handling(pool: &PgPool) -> Result<(), anyhow::Error> {
     // Test handling of git-annex operation failures
     
     // Simulate scenarios where git-annex operations might fail
@@ -672,7 +676,7 @@ async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<()
         ).build();
         
         // Event should be stored despite git-annex failure
-        let inserted_event = queries::insert_event(&pool, &failure_event).await?;
+        let inserted_event = insert_event(&pool, &failure_event).await?;
         
         // Verify error is recorded
         let retrieved = crate::common::get_event_by_id(&pool, inserted_event.id).await?;
@@ -691,7 +695,7 @@ async fn test_annex_operation_failure_handling(pool: &sqlx::PgPool) -> Result<()
     Ok(())
 }
 
-async fn test_annex_recovery_scenarios(pool: &sqlx::PgPool) -> Result<(), anyhow::Error> {
+async fn test_annex_recovery_scenarios(pool: &PgPool) -> Result<(), anyhow::Error> {
     // Test system recovery when git-annex becomes available again
     
     let temp_dir = TempDir::new()?;
@@ -720,7 +724,7 @@ async fn test_annex_recovery_scenarios(pool: &sqlx::PgPool) -> Result<(), anyhow
             })
         ).build();
         
-        let inserted_event = queries::insert_event(&pool, &outage_event).await?;
+        let inserted_event = insert_event(&pool, &outage_event).await?;
         outage_event_ids.push((inserted_event.id, filename, content));
     }
     
@@ -776,7 +780,7 @@ async fn test_annex_recovery_scenarios(pool: &sqlx::PgPool) -> Result<(), anyhow
                         })
                     ).build();
                     
-                    let _ = queries::insert_event(&pool, &migration_event).await?;
+                    let _ = insert_event(&pool, &migration_event).await?;
                 }
             }
             

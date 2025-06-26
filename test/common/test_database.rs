@@ -1,6 +1,15 @@
 //! Test database isolation through separate databases
 //! 
 //! Each test gets its own database for perfect isolation.
+//! This approach ensures complete test independence at the cost
+//! of increased setup time and resource usage.
+//!
+//! # Usage
+//! ```rust
+//! let test_db = TestDatabase::create("my_test").await?;
+//! // Use test_db.pool for database operations
+//! // Database is automatically cleaned up on drop
+//! ```
 
 use crate::common::prelude::*;
 use sqlx::postgres::PgConnection;
@@ -26,10 +35,16 @@ impl TestDatabase {
         // Parse and modify to connect to postgres database for admin operations
         let admin_url = base_url.replace("/sinex_dev", "/postgres");
         
-        // Generate unique database name
+        // Generate unique database name with safety checks
         let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let sanitized_name = test_name
+            .replace("::", "_")
+            .replace(" ", "_")
+            .replace("-", "_")
+            .replace(".", "_")
+            .to_lowercase();
         let name = format!("test_{}_{}_{}",
-            test_name.replace("::", "_").replace(" ", "_").to_lowercase(),
+            sanitized_name.chars().take(20).collect::<String>(), // Limit length
             std::process::id(),
             counter
         );
@@ -74,19 +89,65 @@ impl Drop for TestDatabase {
         // We can't do async in drop, so spawn a task
         tokio::spawn(async move {
             if let Ok(mut conn) = PgConnection::connect(&admin_url).await {
-                // Force disconnect all connections
-                let disconnect_query = format!(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-                    db_name
-                );
-                let _ = sqlx::query(&disconnect_query).execute(&mut conn).await;
-                
-                // Drop the database
-                let drop_query = format!("DROP DATABASE IF EXISTS {}", db_name);
-                let _ = sqlx::query(&drop_query).execute(&mut conn).await;
+                // Force disconnect all connections with retry logic
+                for attempt in 0..3 {
+                    let disconnect_query = format!(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
+                        db_name
+                    );
+                    let _ = sqlx::query(&disconnect_query).execute(&mut conn).await;
+                    
+                    // Wait a bit for connections to close
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
+                    
+                    // Try to drop the database
+                    let drop_query = format!("DROP DATABASE IF EXISTS {}", db_name);
+                    if sqlx::query(&drop_query).execute(&mut conn).await.is_ok() {
+                        break;
+                    }
+                }
                 
                 let _ = conn.close().await;
             }
         });
     }
+}
+
+/// Utility functions for test database management
+impl TestDatabase {
+    /// Check if the database is healthy
+    pub async fn check_health(&self) -> Result<bool> {
+        match sqlx::query!("SELECT 1 as health_check").fetch_one(&self.pool).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+    
+    /// Get database statistics
+    pub async fn get_stats(&self) -> Result<DatabaseStats> {
+        let row = sqlx::query!(
+            r#"
+            SELECT 
+                (SELECT COUNT(*) FROM raw.events) as event_count,
+                (SELECT COUNT(*) FROM sinex_schemas.agent_manifests) as agent_count,
+                (SELECT COUNT(*) FROM sinex_schemas.work_queue) as work_queue_count
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        
+        Ok(DatabaseStats {
+            event_count: row.event_count.unwrap_or(0),
+            agent_count: row.agent_count.unwrap_or(0),
+            work_queue_count: row.work_queue_count.unwrap_or(0),
+        })
+    }
+}
+
+/// Database statistics for debugging
+#[derive(Debug, Clone)]
+pub struct DatabaseStats {
+    pub event_count: i64,
+    pub agent_count: i64,
+    pub work_queue_count: i64,
 }

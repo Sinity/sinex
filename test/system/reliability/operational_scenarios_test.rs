@@ -1,11 +1,11 @@
 use crate::common::prelude::*;
 use std::fs;
-use sinex_db::{queries::insert_raw_event, run_migrations};
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use crate::common::database::{TestPool, CleanupStrategy};
 
 /// Test startup sequence robustness and error handling
-#[tokio::test]
-async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
+#[sinex_test(timeout = 60)]
+async fn test_startup_sequence_robustness(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -28,7 +28,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
         Duration::from_secs(5),
         async {
             let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-            run_migrations(&pool).await?;
+            run_migrations(pool.pool()).await?;
             
             // Verify basic functionality after startup
             let schema_count: i64 = sqlx::query_scalar!(
@@ -47,7 +47,7 @@ async fn test_startup_sequence_robustness() -> Result<(), anyhow::Error> {
             .await?
             .unwrap_or(0);
             
-            Ok::<(i64, i64), anyhow::Error>((schema_count, table_count))
+            Ok::<(i64, i64), Box<dyn std::error::Error>>((schema_count, table_count))
         }
     ).await;
 

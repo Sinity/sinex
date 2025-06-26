@@ -36,7 +36,7 @@ impl EventSource for PipelineTestSource {
     
     async fn stream_events(&mut self, event_tx: mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
         for _i in 0..self.events_to_generate {
-            let event = crate::common::events::generic_adversarial_event("pipeline_test", "test_event", json!({"test": true}), None);
+            let event = RawEventBuilder::new("pipeline_test", "test_event", json!({"test": true})).build();
             
             event_tx.send(event).await.map_err(|e| sinex_core::CoreError::Io(e.to_string()))?;
             self.events_generated.fetch_add(1, Ordering::SeqCst);

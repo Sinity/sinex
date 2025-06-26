@@ -1,10 +1,12 @@
 use crate::common::prelude::*;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, CoreError};
+use sinex_core::{EventSource, EventSourceContext, CoreError};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Test configuration reload during active event processing
-#[tokio::test]
-async fn test_config_reload_during_processing() {
+#[sinex_test]
+async fn test_config_reload_during_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Track state across reload
     let events_before_reload = Arc::new(AtomicU64::new(0));
     let events_after_reload = Arc::new(AtomicU64::new(0));
@@ -44,8 +46,8 @@ async fn test_config_reload_during_processing() {
         type Config = serde_json::Value;
         const SOURCE_NAME: &'static str = "configurable";
         
-        async fn initialize(ctx: EventSourceContext) -> Result<Self, CoreError> {
-            let interval_ms = ctx.config
+        async fn initialize(source_ctx: EventSourceContext) -> Result<Self, CoreError> {
+            let interval_ms = source_ctx.config
                 .get("interval_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(100);
@@ -60,7 +62,7 @@ async fn test_config_reload_during_processing() {
         
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             loop {
-                let event = crate::common::events::generic_adversarial_event("test", "config.test", json!({"test": true}), None);
+                let event = RawEventBuilder::new("test", "config.test", json!({"test": true})).build();
                 if tx.send(event).await.is_err() { return Ok(()); }
                 
                 if self.reload_flag.load(Ordering::Relaxed) {
@@ -138,11 +140,13 @@ async fn test_config_reload_during_processing() {
     // After reload with 10ms interval, we should see significantly more events
     assert!(post_reload_count > pre_reload_count * 5, 
         "Expected at least 5x more events after config reload");
+    
+    Ok(())
 }
 
 /// Test config validation during reload
-#[tokio::test]
-async fn test_invalid_config_reload_handling() {
+#[sinex_test]
+async fn test_invalid_config_reload_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that invalid config changes are rejected gracefully
     
     let valid_config = serde_json::json!({
@@ -200,11 +204,13 @@ async fn test_invalid_config_reload_handling() {
         assert!(result.is_err(), "Config {} should have failed validation", i);
         println!("Config {} validation error: {:?}", i, result.err());
     }
+    
+    Ok(())
 }
 
 /// Test graceful handling of config reload timing
-#[tokio::test] 
-async fn test_config_reload_timing() {
+#[sinex_test] 
+async fn test_config_reload_timing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test various timing scenarios for config reload
     
     #[derive(Debug, Clone)]
@@ -253,4 +259,6 @@ async fn test_config_reload_timing() {
             _ => assert!(result.is_ok()),
         }
     }
+    
+    Ok(())
 }

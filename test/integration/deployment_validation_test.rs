@@ -1,11 +1,10 @@
 //! Deployment validation tests
 //! Ensures the system meets deployment readiness criteria
 
-// use sinex_core::prelude::*; // No prelude module exists
 use crate::common::prelude::*;
 
-#[tokio::test]
-async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_systemd_notify_protocol(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use mock_types::{SystemdNotifier, SystemdEvent};
     
     // Test normal service lifecycle with proper notification sequence
@@ -46,8 +45,8 @@ async fn test_systemd_notify_protocol() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_systemd_watchdog_failure_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use mock_types::{SystemdNotifier, SystemdEvent};
     
     // Test service behavior when watchdog fails
@@ -89,8 +88,8 @@ async fn test_systemd_watchdog_failure_handling() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_graceful_shutdown_handling() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_graceful_shutdown_handling(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
     
     // Simulate a service with graceful shutdown
@@ -128,8 +127,8 @@ async fn test_graceful_shutdown_handling() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_resource_limits_configuration() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_resource_limits_configuration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Verify resource limit configurations are valid
     
     let presets = vec![
@@ -165,8 +164,8 @@ async fn test_resource_limits_configuration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_health_endpoint_response() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_health_endpoint_response(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate health check endpoint
     let mut health_checker = HealthChecker::new();
     
@@ -203,8 +202,8 @@ async fn test_health_endpoint_response() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_configuration_validation() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_configuration_validation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test various configuration scenarios
     
     // Valid configuration
@@ -250,8 +249,8 @@ async fn test_configuration_validation() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_database_migration_state() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_database_migration_state(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Verify migration tracking works correctly
     
     let migration_tracker = MigrationTracker::new();
@@ -273,8 +272,8 @@ async fn test_database_migration_state() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_backup_directory_structure() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_backup_directory_structure(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     
     // Verify backup directories can be created
     let backup_paths = vec![
@@ -303,8 +302,8 @@ async fn test_backup_directory_structure() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_log_rotation_configuration() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_log_rotation_configuration(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Verify log rotation settings
     
     let log_config = LogRotationConfig {
@@ -322,8 +321,8 @@ async fn test_log_rotation_configuration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_monitoring_metrics_exposition() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_monitoring_metrics_exposition(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Verify metrics can be collected and exposed
     
     let mut metrics_collector = MetricsCollector::new();
@@ -349,8 +348,8 @@ async fn test_monitoring_metrics_exposition() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_security_hardening_options() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_security_hardening_options(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Verify security configurations
     
     let security_config = SecurityConfig::default();
@@ -373,8 +372,8 @@ async fn test_security_hardening_options() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_deployment_checklist_automation() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_deployment_checklist_automation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Automated deployment readiness check
     
     let mut checklist = DeploymentChecklist::new();

@@ -1,23 +1,35 @@
 //! Deterministic wait utilities that replace arbitrary sleeps
+//!
+//! This module provides condition-based waiting functions that eliminate
+//! flaky test behavior caused by arbitrary sleep statements. All functions
+//! use exponential backoff and proper timeout handling.
 
 use crate::common::prelude::*;
 use super::EventCounter;
 
 /// Replace `sleep(Duration::from_millis(10))` with proper synchronization
 pub async fn wait_for_database_ready(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    wait_for_database_ready_with_timeout(pool, 10).await
+}
+
+/// Wait for database with custom timeout
+pub async fn wait_for_database_ready_with_timeout(pool: &sqlx::PgPool, timeout_secs: u64) -> anyhow::Result<()> {
     let start = Instant::now();
-    let timeout_duration = Duration::from_secs(10);
+    let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        match sqlx::query("SELECT 1").fetch_one(pool).await {
+        match sqlx::query("SELECT 1 as health_check").fetch_one(pool).await {
             Ok(_) => return Ok(()),
             Err(_) => {
-                tokio::task::yield_now().await;
+                // Use exponential backoff instead of yield_now
+                let elapsed = start.elapsed();
+                let backoff = Duration::from_millis(10.min(elapsed.as_millis() as u64));
+                tokio::time::sleep(backoff).await;
             }
         }
     }
 
-    anyhow::bail!("Database not ready within timeout")
+    anyhow::bail!("Database not ready within {} seconds", timeout_secs)
 }
 
 /// Replace polling loops with event-driven waits
@@ -317,19 +329,41 @@ where
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
+    let mut backoff = Duration::from_millis(10);
+    const MAX_BACKOFF: Duration = Duration::from_millis(1000);
 
     while start.elapsed() < timeout_duration {
         if condition().await? {
             return Ok(());
         }
 
-        // Use exponential backoff
-        let elapsed = start.elapsed();
-        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        // Use capped exponential backoff
         tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 
     anyhow::bail!("Condition not met within {} seconds", timeout_secs)
+}
+
+/// Wait for multiple conditions to be met simultaneously
+pub async fn wait_for_multiple_conditions<F, Fut>(
+    mut conditions: Vec<F>,
+    timeout_secs: u64,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    wait_for_condition(move || {
+        async {
+            for condition in &mut conditions {
+                if !condition().await? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+    }, timeout_secs).await
 }
 
 /// Wait for a condition with timeout, returning whether condition was met

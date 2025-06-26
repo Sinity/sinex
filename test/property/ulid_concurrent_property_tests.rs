@@ -1,7 +1,8 @@
-use proptest::prelude::*;
 use crate::common::prelude::*;
+use proptest::prelude::*;
 use std::sync::{Arc, Barrier};
 use std::thread;
+use std::time::{Duration, Instant};
 use chrono::{Utc, Duration as ChronoDuration};
 
 /// Test concurrent ULID generation properties

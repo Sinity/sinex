@@ -1,12 +1,10 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
-use sinex_db::queries;
 use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
-#[tokio::test]
-async fn test_event_payload_approaching_1gb_limit() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing JSONB 1GB limit:");
     
@@ -44,7 +42,7 @@ async fn test_event_payload_approaching_1gb_limit() {
                     "#,
                     event.id.to_uuid(),
                     extra_data
-                ).execute(&pool).await;
+                ).execute(pool).await;
                 
                 match update_result {
                     Ok(_) => println!("    UPDATE SUCCESS: Added 100MB more"),
@@ -59,11 +57,12 @@ async fn test_event_payload_approaching_1gb_limit() {
             }
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_connection_pool_exhaustion() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing connection pool exhaustion:");
     
@@ -146,11 +145,12 @@ async fn test_connection_pool_exhaustion() {
     if timeouts == 0 {
         println!("  WARNING: No timeouts - pool might be too large or test too small");
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_concurrent_btree_index_splits() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_concurrent_btree_index_splits(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing concurrent B-tree index splits:");
     
@@ -250,11 +250,12 @@ async fn test_concurrent_btree_index_splits() {
     if query_inconsistencies > 0 {
         println!("  INDEX INCONSISTENCY: Queries saw partial results during splits!");
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_events_spanning_chunk_boundary() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing TimescaleDB chunk boundary operations:");
     
@@ -296,7 +297,7 @@ async fn test_events_spanning_chunk_boundary() {
         FROM raw.events 
         WHERE source = 'chunk_test'
         "#
-    ).fetch_one(&pool).await;
+    ).fetch_one(pool).await;
     
     match agg_result {
         Ok(record) => {
@@ -313,11 +314,12 @@ async fn test_events_spanning_chunk_boundary() {
             println!("  Aggregation failed: {}", e);
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_query_during_chunk_compression() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing queries during chunk compression:");
     
@@ -399,7 +401,7 @@ async fn test_query_during_chunk_compression() {
                     GROUP BY minute
                     ORDER BY minute
                     "#
-                ).fetch_all(&pool).await;
+                ).fetch_all(pool).await;
                 
                 match result {
                     Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),
@@ -418,4 +420,5 @@ async fn test_query_during_chunk_compression() {
             Err(e) => println!("  Query {} panicked: {}", i + 1, e),
         }
     }
+    Ok(())
 }

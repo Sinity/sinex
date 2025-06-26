@@ -5,13 +5,12 @@
 //! Note: Complex system coordination tests disabled until test infrastructure is complete
 
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
 
-#[tokio::test]
-async fn test_database_migration_process() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_database_migration_process(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test: Basic database update/migration process
     
-    let pool = create_test_db_pool().await?;
+    let pool = ctx.pool();
     
     // Test that migrations can be applied
     let migration_result = run_migrations(&pool).await;
@@ -21,7 +20,7 @@ async fn test_database_migration_process() -> anyhow::Result<()> {
     let table_check = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM information_schema.tables 
          WHERE table_schema IN ('raw', 'sinex_schemas')"
-    ).fetch_one(&pool).await?;
+    ).fetch_one(pool).await?;
     
     assert!(table_check.unwrap_or(0) > 0, "Expected database tables not found");
     
@@ -29,8 +28,8 @@ async fn test_database_migration_process() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_configuration_reload_simulation() -> anyhow::Result<()> {
+#[sinex_test]
+async fn test_configuration_reload_simulation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test: Simulate configuration reload by re-reading environment
     
     // Simulate configuration change by modifying environment

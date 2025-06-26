@@ -71,7 +71,16 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
     
     let mut stored_ids = Vec::new();
     for event in collected.iter() {
-        let result = queries::insert_event(ctx.pool(), event).await?;
+        let result = insert_raw_event(
+            ctx.pool(),
+            &event.source,
+            &event.event_type, 
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.as_deref(),
+            event.payload_schema_id.as_ref()
+        ).await?;
         stored_ids.push(result.id);
     }
     
@@ -147,9 +156,18 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
     info!("Testing error handling and DLQ");
     
     // Insert an event that will fail processing
-    let bad_event = crate::common::events::generic_adversarial_event("test", "invalid.event", json!({"test": true}), None);
+    let bad_event = RawEventBuilder::new("test", "invalid.event", json!({"test": true})).build();
     
-    queries::insert_event(ctx.pool(), &bad_event).await?;
+    insert_raw_event(
+        ctx.pool(),
+        &bad_event.source,
+        &bad_event.event_type,
+        &bad_event.host,
+        bad_event.payload.clone(),
+        bad_event.ts_orig,
+        bad_event.ingestor_version.as_deref(),
+        bad_event.payload_schema_id.as_ref()
+    ).await?;
     
     // Attempt to process it (would go to DLQ in real system)
     // For now, verify it exists
@@ -190,9 +208,20 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> Result<(), Box<dyn st
         version: "0.1.0".to_string(),
     };
     
-    let heartbeat_event = crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), Some("0.1.0"));
+    let heartbeat_event = RawEventBuilder::new("test", "test.event", json!({"test": true}))
+        .with_ingestor_version("0.1.0")
+        .build();
     
-    queries::insert_event(ctx.pool(), &heartbeat_event).await?;
+    insert_raw_event(
+        ctx.pool(),
+        &heartbeat_event.source,
+        &heartbeat_event.event_type,
+        &heartbeat_event.host,
+        heartbeat_event.payload.clone(),
+        heartbeat_event.ts_orig,
+        heartbeat_event.ingestor_version.as_deref(),
+        heartbeat_event.payload_schema_id.as_ref()
+    ).await?;
     
     // Update agent heartbeat timestamp
     sqlx::query!(
@@ -265,18 +294,17 @@ fn generate_test_events() -> Vec<RawEvent> {
     let base_time = Utc::now();
     
     // Filesystem events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.created",
         serde_json::json!({
             "path": "/test/doc1.txt",
             "size": 1024,
             "created_at": base_time.to_rfc3339()
-        }),
-        base_time,
-    ));
+        })
+    ).with_orig_timestamp(base_time).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.modified",
         serde_json::json!({
@@ -284,33 +312,30 @@ fn generate_test_events() -> Vec<RawEvent> {
             "size": 2048,
             "modified_at": (base_time + ChronoDuration::seconds(1)).to_rfc3339(),
             "modification_type": "content"
-        }),
-        base_time + ChronoDuration::seconds(1),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(1)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "filesystem",
         "file.deleted",
         serde_json::json!({
             "path": "/test/old.txt",
             "deleted_at": (base_time + ChronoDuration::seconds(2)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(2),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(2)).build());
     
     // Terminal events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
             "command": "ls -la",
             "working_directory": "/home/user",
             "start_time": (base_time + ChronoDuration::seconds(3)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(3),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(3)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "terminal.kitty",
         "command.executed",
         serde_json::json!({
@@ -319,12 +344,11 @@ fn generate_test_events() -> Vec<RawEvent> {
             "exit_code": 0,
             "start_time": (base_time + ChronoDuration::seconds(4)).to_rfc3339(),
             "end_time": (base_time + ChronoDuration::seconds(34)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(4),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(4)).build());
     
     // Window manager events
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "window_manager.hyprland",
         "window.focused",
         serde_json::json!({
@@ -334,32 +358,29 @@ fn generate_test_events() -> Vec<RawEvent> {
                 "pid": 1234
             },
             "timestamp": (base_time + ChronoDuration::seconds(5)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(5),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(5)).build());
     
-    events.push(events::create_raw_event(
+    events.push(RawEventBuilder::new(
         "window_manager.hyprland",
         "workspace.changed",
         serde_json::json!({
             "workspace": "2",
             "timestamp": (base_time + ChronoDuration::seconds(6)).to_rfc3339()
-        }),
-        base_time + ChronoDuration::seconds(6),
-    ));
+        })
+    ).with_orig_timestamp(base_time + ChronoDuration::seconds(6)).build());
     
     // Add more events for stress testing
     for i in 7..20 {
-        events.push(events::create_raw_event(
+        events.push(RawEventBuilder::new(
             "filesystem",
             "file.created",
             serde_json::json!({
                 "path": format!("/test/file{}.txt", i),
                 "size": i * 100,
                 "timestamp": base_time + ChronoDuration::seconds(i as i64)
-            }),
-            base_time + ChronoDuration::seconds(i as i64),
-        ));
+            })
+        ).with_orig_timestamp(base_time + ChronoDuration::seconds(i as i64)).build());
     }
     
     events

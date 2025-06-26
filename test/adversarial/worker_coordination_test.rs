@@ -1,13 +1,12 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use chrono::Utc;
 use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[tokio::test]
-async fn test_worker_claim_exact_same_microsecond() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing microsecond-level worker claim races:");
     
@@ -16,7 +15,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     for _i in 0..10 {
         let event = crate::common::events::generic_adversarial_event("test", "work.item", json!({"test": true}), None);
         
-        queries::insert_event(&pool, &event).await.unwrap();
+        queries::insert_event(pool, &event).await.unwrap();
         event_ids.push(event.id);
     }
     
@@ -27,7 +26,7 @@ async fn test_worker_claim_exact_same_microsecond() {
     let mut handles = vec![];
     
     for worker_id in 0..5 {
-        let pool_clone = pool.clone();
+        let pool_clone = ctx.pool().clone();
         let barrier_clone = barrier.clone();
         let double_claims_clone = double_claims.clone();
         let event_ids_clone = event_ids.clone();
@@ -109,22 +108,24 @@ async fn test_worker_claim_exact_same_microsecond() {
     if total_claimed > event_ids.len() {
         println!("  RACE CONDITION: More claims than events!");
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_dead_worker_holding_locks() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_dead_worker_holding_locks(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing zombie worker scenario:");
     
     // Insert work item
     let work_event = crate::common::events::generic_adversarial_event("test", "critical.work", json!({"importance": "high"}), None);
     
-    queries::insert_event(&pool, &work_event).await.unwrap();
+    queries::insert_event(pool, &work_event).await.unwrap();
     
     // Zombie worker - claims but doesn't process
     let zombie_handle = {
-        let pool_clone = pool.clone();
+        let pool_clone = ctx.pool().clone();
         let event_id = work_event.id;
         
         tokio::spawn(async move {
@@ -169,7 +170,7 @@ async fn test_dead_worker_holding_locks() {
     let mut healthy_workers = vec![];
     
     for worker_id in 0..3 {
-        let pool_clone = pool.clone();
+        let pool_clone = ctx.pool().clone();
         let event_id = work_event.id;
         
         let handle = tokio::spawn(async move {
@@ -235,7 +236,7 @@ async fn test_dead_worker_holding_locks() {
         WHERE id::uuid = $1::uuid
         "#,
         work_event.id.to_uuid()
-    ).execute(&pool).await;
+    ).execute(pool).await;
     
     match recovery_result {
         Ok(result) => {
@@ -245,11 +246,13 @@ async fn test_dead_worker_holding_locks() {
             println!("  Recovery failed: {}", e);
         }
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mass_worker_wakeup_thundering_herd() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_mass_worker_wakeup_thundering_herd(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     println!("Testing thundering herd with 100 workers:");
     
@@ -262,7 +265,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     let mut worker_handles = vec![];
     
     for worker_id in 0..100 {
-        let pool_clone = pool.clone();
+        let pool_clone = ctx.pool().clone();
         let signal_clone = wakeup_signal.clone();
         let waiting_clone = waiting_workers.clone();
         let errors_clone = connection_errors.clone();
@@ -347,7 +350,7 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     // Insert single work item
     let work_event = crate::common::events::generic_adversarial_event("thundering_herd", "single.work", json!({"value": "high"}), None);
     
-    queries::insert_event(&pool, &work_event).await.unwrap();
+    queries::insert_event(pool, &work_event).await.unwrap();
     
     // Measure database load
     let load_start = Instant::now();
@@ -412,4 +415,6 @@ async fn test_mass_worker_wakeup_thundering_herd() {
     if errors > 20 {
         println!("  THUNDERING HERD EFFECT: High error rate indicates database overload!");
     }
+    
+    Ok(())
 }

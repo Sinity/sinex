@@ -3,7 +3,6 @@ use sinex_core::{EventSource, EventSourceContext, RawEvent, create_registry};
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Barrier};
-use crate::common::event_sources;
 
 // Test source that can simulate different behaviors
 struct TestCoordinatedSource {
@@ -70,8 +69,8 @@ impl EventSource for TestCoordinatedSource {
     }
 }
 
-#[tokio::test]
-async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources with different configurations
@@ -79,13 +78,13 @@ async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Erro
     let mut source_controls = Vec::new();
     
     for i in 0..3 {
-        let ctx = event_sources::test_context(json!({
+        let source_ctx = EventSourceContext::new(json!({
             "source_id": format!("source_{}", i),
             "startup_delay_ms": i * 100, // Staggered startup
             "event_delay_ms": 50,
         }));
         
-        let mut source = TestCoordinatedSource::initialize(ctx).await?;
+        let mut source = TestCoordinatedSource::initialize(source_ctx).await?;
         let events_generated = source.events_generated.clone();
         let should_fail = source.should_fail.clone();
         
@@ -133,8 +132,8 @@ async fn test_multiple_sources_lifecycle_management() -> Result<(), anyhow::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_source_failure_isolation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     
     // Start multiple sources, one will fail
@@ -142,12 +141,12 @@ async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
     let mut source_controls = Vec::new();
     
     for i in 0..3 {
-        let ctx = event_sources::test_context(json!({
+        let source_ctx = EventSourceContext::new(json!({
             "source_id": format!("source_{}", i),
             "event_delay_ms": 50,
         }));
         
-        let mut source = TestCoordinatedSource::initialize(ctx).await?;
+        let mut source = TestCoordinatedSource::initialize(source_ctx).await?;
         let should_fail = source.should_fail.clone();
         
         source_controls.push(should_fail);
@@ -195,8 +194,8 @@ async fn test_source_failure_isolation() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_source_startup_synchronization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let barrier = Arc::new(Barrier::new(3));
     
@@ -208,12 +207,12 @@ async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
         let tx_clone = tx.clone();
         
         let handle = tokio::spawn(async move {
-            let ctx = event_sources::test_context(json!({
+            let source_ctx = EventSourceContext::new(json!({
                 "source_id": format!("source_{}", i),
                 "event_delay_ms": 50,
             }));
             
-            let mut _source = TestCoordinatedSource::initialize(ctx).await?;
+            let mut _source = TestCoordinatedSource::initialize(source_ctx).await?;
             
             // Wait for all sources to initialize
             barrier_clone.wait().await;
@@ -242,7 +241,7 @@ async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
                 tokio::task::yield_now().await;
             }
             
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         });
         
         handles.push(handle);
@@ -269,8 +268,8 @@ async fn test_source_startup_synchronization() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_registry_based_source_discovery() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_registry_based_source_discovery(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that sources can be discovered and started from registry
     let registry = create_registry();
     
@@ -296,19 +295,19 @@ async fn test_registry_based_source_discovery() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_dynamic_source_addition() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_dynamic_source_addition(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let mut handles = Vec::new();
     
     // Start with 2 sources
     for i in 0..2 {
-        let ctx = event_sources::test_context(json!({
+        let source_ctx = EventSourceContext::new(json!({
             "source_id": format!("initial_{}", i),
             "event_delay_ms": 100,
         }));
         
-        let mut source = TestCoordinatedSource::initialize(ctx).await?;
+        let mut source = TestCoordinatedSource::initialize(source_ctx).await?;
         let should_fail = source.should_fail.clone();
         
         let tx_clone = tx.clone();
@@ -326,12 +325,12 @@ async fn test_dynamic_source_addition() -> Result<(), anyhow::Error> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     
     // Add a new source dynamically
-    let ctx = event_sources::test_context(json!({
+    let source_ctx = EventSourceContext::new(json!({
         "source_id": "dynamic_source",
         "event_delay_ms": 50,
     }));
     
-    let mut new_source = TestCoordinatedSource::initialize(ctx).await?;
+    let mut new_source = TestCoordinatedSource::initialize(source_ctx).await?;
     let new_should_fail = new_source.should_fail.clone();
     
     let tx_clone = tx.clone();

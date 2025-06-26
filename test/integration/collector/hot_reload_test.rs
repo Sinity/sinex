@@ -1,10 +1,8 @@
 use crate::common::prelude::*;
 use sinex_collector::config::CollectorConfig;
-use sinex_core::{EventSource, EventSourceContext, RawEvent};
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use tokio::sync::{mpsc, Mutex};
 use std::io::Write;
-use crate::common::event_sources;
 
 // Mock event source that can track configuration changes
 struct ConfigurableEventSource {
@@ -58,8 +56,8 @@ impl EventSource for ConfigurableEventSource {
     }
 }
 
-#[tokio::test]
-async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Create initial config file
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
@@ -95,10 +93,10 @@ async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error>
     });
     
     // Simulate collector behavior - start source
-    let ctx = event_sources::test_context(json!({
+    let source_ctx = EventSourceContext::new(json!({
         "event_interval_ms": 100
     }));
-    let mut source = ConfigurableEventSource::initialize(ctx).await?;
+    let mut source = ConfigurableEventSource::initialize(source_ctx).await?;
     let should_stop = source.should_stop.clone();
     let config_version = source.config_version.clone();
     let event_interval = source.event_interval_ms.clone();
@@ -158,13 +156,13 @@ async fn test_config_hot_reload_without_data_loss() -> Result<(), anyhow::Error>
     Ok(())
 }
 
-#[tokio::test]
-async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_config_reload_with_source_restart(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that sources can be gracefully restarted with new config
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
     
     // Start with one configuration
-    let ctx1 = event_sources::test_context(json!({
+    let ctx1 = EventSourceContext::new(json!({
         "event_interval_ms": 200,
         "source_id": "instance_1"
     }));
@@ -189,7 +187,7 @@ async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     handle1.await??;
     
     // Start new source with different config
-    let ctx2 = event_sources::test_context(json!({
+    let ctx2 = EventSourceContext::new(json!({
         "event_interval_ms": 100,
         "source_id": "instance_2"
     }));
@@ -223,8 +221,8 @@ async fn test_config_reload_with_source_restart() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_config_validation_before_reload() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_config_validation_before_reload(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that invalid configs are rejected without affecting running sources
     
     let valid_config = CollectorConfig {
@@ -249,8 +247,8 @@ async fn test_config_validation_before_reload() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_partial_reload_capability() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_partial_reload_capability(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that specific sources can be reloaded without affecting others
     
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
@@ -260,11 +258,11 @@ async fn test_partial_reload_capability() -> Result<(), anyhow::Error> {
     let mut stop_flags = Vec::new();
     
     for i in 0..2 {
-        let ctx = event_sources::test_context(json!({
+        let source_ctx = EventSourceContext::new(json!({
             "event_interval_ms": 100,
             "source_id": format!("source_{}", i)
         }));
-        let mut source = ConfigurableEventSource::initialize(ctx).await?;
+        let mut source = ConfigurableEventSource::initialize(source_ctx).await?;
         let stop = source.should_stop.clone();
         stop_flags.push(stop);
         

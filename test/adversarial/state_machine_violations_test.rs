@@ -1,14 +1,13 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
 use sinex_db::queries;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[tokio::test]
-async fn test_shutdown_signal_during_initialization() {
+#[sinex_test]
+async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate shutdown signal arriving during database migration/startup
     
-    let pool = create_test_db_pool().await.unwrap();
-    let pool_clone = pool.clone();
+    let pool = ctx.pool();
+    let pool_clone = ctx.pool().clone();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
     let init_completed = Arc::new(AtomicU64::new(0));
     
@@ -78,7 +77,7 @@ async fn test_shutdown_signal_during_initialization() {
     
     // Check database state - might be partially initialized
     let event_count = sqlx::query!("SELECT COUNT(*) as count FROM raw.events WHERE source = 'init'")
-        .fetch_one(&pool)
+        .fetch_one(ctx.pool())
         .await
         .unwrap();
     
@@ -87,10 +86,12 @@ async fn test_shutdown_signal_during_initialization() {
     if event_count.count.unwrap_or(0) > 0 && init_completed.load(Ordering::SeqCst) == 0 {
         println!("PARTIAL STATE: Database has init events but initialization was interrupted");
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_multiple_concurrent_shutdown_signals() {
+#[sinex_test]
+async fn test_multiple_concurrent_shutdown_signals(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when multiple shutdown signals arrive simultaneously
     
     let shutdown_count = Arc::new(AtomicU64::new(0));
@@ -193,11 +194,13 @@ async fn test_multiple_concurrent_shutdown_signals() {
     if cleanup_attempts.load(Ordering::SeqCst) > 5 {
         println!("REDUNDANT CLEANUP: Tasks attempted cleanup multiple times!");
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_event_router_state_corruption() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_event_router_state_corruption(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     // Create events that test state transitions
     let state_events = vec![
@@ -246,7 +249,7 @@ async fn test_event_router_state_corruption() {
     // Check final state consistency
     let events = sqlx::query!(
         "SELECT event_type, payload FROM raw.events WHERE source = 'filesystem' ORDER BY ts_ingest"
-    ).fetch_all(&pool).await.unwrap();
+    ).fetch_all(pool).await.unwrap();
     
     println!("\nEvent sequence analysis:");
     let mut file_state = "nonexistent";
@@ -279,11 +282,13 @@ async fn test_event_router_state_corruption() {
         println!("STATE MACHINE VIOLATION: Detected {} impossible transitions", 
                  corruption_detected.load(Ordering::SeqCst));
     }
+    
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_worker_state_machine_corruption() {
-    let pool = create_test_db_pool().await.unwrap();
+#[sinex_test]
+async fn test_worker_state_machine_corruption(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
     
     // Create a job that will be processed by workers
     let test_event = crate::common::events::generic_adversarial_event("test", "worker.test", json!({"test": true}), None);
@@ -362,7 +367,7 @@ async fn test_worker_state_machine_corruption() {
     let final_event = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
         test_event.id.to_uuid()
-    ).fetch_one(&pool).await.unwrap();
+    ).fetch_one(pool).await.unwrap();
     
     println!("\nWorker state machine test results:");
     println!("- Successful claims: {}", successful_claims.load(Ordering::SeqCst));
@@ -376,4 +381,6 @@ async fn test_worker_state_machine_corruption() {
     if state_violations.load(Ordering::SeqCst) > 0 {
         println!("STATE CORRUPTION: Workers interfered with each other's state!");
     }
+    
+    Ok(())
 }

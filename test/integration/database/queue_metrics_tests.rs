@@ -72,8 +72,8 @@ async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> Result<(),
     let event_id = insert_test_event(pool, "latency_test", "event").await?;
     let work_item = add_to_work_queue(pool, event_id, agent_name, 3).await?;
     
-    // Simulate processing delay
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Wait for any pending work queue operations
+    ctx.wait_for_work_queue(0).await?;
     
     // Mark as processing (simulate worker claim)
     let processing_start = Utc::now();

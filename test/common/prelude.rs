@@ -49,6 +49,11 @@ pub use crate::common::{
 // Database helpers
 // NEW: Unified database access
 pub use crate::common::database::{TestPool, CleanupStrategy, TestPoolExt};
+pub use crate::common::database_helpers::{
+    create_test_event, 
+    // create_test_agent, purge_old_work_queue_items - available but unused currently
+};
+pub use crate::common::{create_test_db_pool};
 // Test macro - THE way to define tests
 pub use sinex_test_macros::sinex_test;
 // Test context - THE way to write tests (only import when needed)
@@ -67,7 +72,9 @@ pub use crate::common::insert_event;
 // Query shortcuts
 pub use sinex_db::queries::{
     add_to_work_queue,
-    // Other missing functions
+    claim_work_queue_items,
+    complete_work_queue_item,
+    fail_work_queue_item,
     insert_raw_event,
     calculate_queue_depth_metrics,
 };

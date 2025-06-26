@@ -1,11 +1,11 @@
 use crate::common::prelude::*;
+use crate::common::resources;
 use std::fs;
-use sinex_db::queries::insert_raw_event;
 
 /// Test filesystem monitoring against path traversal attacks
-#[tokio::test]
-async fn test_filesystem_path_traversal_protection() -> Result<(), anyhow::Error> {
-    let temp_dir = TempDir::new()?;
+#[sinex_test]
+async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = resources::temp_dir()?;
     let watch_root = temp_dir.path();
 
     // Create legitimate directories
@@ -92,10 +92,9 @@ async fn test_filesystem_path_traversal_protection() -> Result<(), anyhow::Error
 }
 
 /// Test SQL injection protection in dynamic query construction
-#[tokio::test]
-async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test(timeout = 20)]
+async fn test_sql_injection_protection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Create test agent
     let agent_name = format!("sql_injection_test_{}", Ulid::new());
@@ -106,7 +105,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
         "1.0.0",
         "SQL injection security test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // SQL injection attack patterns targeting common query parameters
@@ -147,7 +146,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
         // Test 1: Event source field injection
         let malicious_source = injection_payload;
         let event_result = insert_raw_event(
-            &pool,
+            pool,
             malicious_source,
             "injection_test",
             "localhost",
@@ -164,7 +163,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
                     "SELECT source FROM raw.events WHERE id = $1::uuid::ulid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
                 if stored_source != *injection_payload {
@@ -178,7 +177,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
                 let agent_count: i64 = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -208,7 +207,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
             "1.0.0",
             "Injection test agent"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         match agent_creation {
@@ -219,7 +218,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
                      WHERE agent_name LIKE $1",
                     format!("test%{}", injection_payload.chars().take(10).collect::<String>())
                 )
-                .fetch_all(&pool)
+                .fetch_all(pool)
                 .await
                 .unwrap_or_default();
 
@@ -235,7 +234,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
                     "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                     malicious_agent_name
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await
                 .ok();
             }
@@ -250,7 +249,7 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
              WHERE description LIKE $1 LIMIT 10",
             format!("%{}%", injection_payload)
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await;
 
         if let Err(e) = search_result {
@@ -277,18 +276,17 @@ async fn test_sql_injection_protection() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE '%DROP%' OR source LIKE '%UNION%' OR source LIKE '%OR%'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-        .execute(&pool).await?;
+        .execute(pool).await?;
 
     Ok(())
 }
 
 /// Test resource exhaustion attack protection
-#[tokio::test]
-async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test(timeout = 30)]
+async fn test_resource_exhaustion_protection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     let agent_name = format!("exhaustion_test_{}", Ulid::new());
     
@@ -300,7 +298,7 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
         "1.0.0",
         "Resource exhaustion test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Test 1: Memory exhaustion via large payloads
@@ -323,7 +321,7 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
     let memory_attack_result = timeout(
         Duration::from_secs(3),
         insert_raw_event(
-            &pool,
+            pool,
             "memory.exhaustion",
             "large_payload",
             "localhost",
@@ -343,7 +341,7 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
             // Check if system is still responsive
             let health_check_start = std::time::Instant::now();
             let health_result = sqlx::query_scalar!("SELECT 1")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await;
             let health_check_duration = health_check_start.elapsed();
 
@@ -398,7 +396,7 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
     let remaining_capacity_test = timeout(
         Duration::from_secs(3),
         sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-            .fetch_one(&pool)
+            .fetch_one(pool)
     ).await;
 
     match remaining_capacity_test {
@@ -440,7 +438,7 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
         let complexity_result = timeout(
             Duration::from_secs(3),
             sqlx::query(complex_query)
-                .execute(&pool)
+                .execute(pool)
         ).await;
 
         match complexity_result {
@@ -474,19 +472,19 @@ async fn test_resource_exhaustion_protection() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'memory.exhaustion'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-        .execute(&pool).await?;
+        .execute(pool).await?;
 
     Ok(())
 }
 
 /// Test malicious configuration injection
-#[tokio::test]
-async fn test_configuration_injection_protection() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_injection_protection(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
 
-    let temp_dir = TempDir::new()?;
+    let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
     fs::create_dir_all(&config_dir)?;
 
@@ -600,10 +598,9 @@ async fn test_configuration_injection_protection() -> Result<(), anyhow::Error> 
 }
 
 /// Test event payload sanitization
-#[tokio::test]
-async fn test_malicious_payload_sanitization() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test(timeout = 15)]
+async fn test_malicious_payload_sanitization(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     // Test various malicious payload patterns
     let malicious_payloads = vec![
@@ -661,7 +658,7 @@ async fn test_malicious_payload_sanitization() -> Result<(), anyhow::Error> {
         println!("Testing malicious payload {}", i + 1);
 
         let result = insert_raw_event(
-            &pool,
+            pool,
             "security.payload_test",
             "malicious_payload",
             "localhost",
@@ -680,7 +677,7 @@ async fn test_malicious_payload_sanitization() -> Result<(), anyhow::Error> {
                     "SELECT payload FROM raw.events WHERE id = $1::uuid::ulid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
                 let stored_str = stored_payload.to_string();
@@ -738,7 +735,7 @@ async fn test_malicious_payload_sanitization() -> Result<(), anyhow::Error> {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'security.payload_test'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
 
     Ok(())
 }

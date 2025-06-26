@@ -1,4 +1,8 @@
 //! Validation test utilities
+//!
+//! This module provides comprehensive utilities for testing event validation
+//! logic, including assertion helpers, test data generators, and performance
+//! benchmarking tools.
 
 use crate::common::prelude::*;
 use sinex_db::validation::{EventValidator, ValidationError};
@@ -37,33 +41,96 @@ pub async fn create_test_validator_from_db(pool: &PgPool) -> Result<EventValidat
     EventValidator::load_from_db(pool).await
 }
 
+/// Create test validator with specific rules
+pub fn create_test_validator_with_rules(rules: Vec<ValidationRule>) -> EventValidator {
+    let mut validator = EventValidator::new();
+    for rule in rules {
+        validator.add_rule(rule);
+    }
+    validator
+}
+
+/// Validation rule for testing purposes
+#[derive(Debug, Clone)]
+pub struct ValidationRule {
+    pub source: String,
+    pub event_type: String,
+    pub required_fields: Vec<String>,
+    pub optional_fields: Vec<String>,
+}
+
+impl ValidationRule {
+    pub fn new(source: &str, event_type: &str) -> Self {
+        Self {
+            source: source.to_string(),
+            event_type: event_type.to_string(),
+            required_fields: Vec::new(),
+            optional_fields: Vec::new(),
+        }
+    }
+    
+    pub fn require_field(mut self, field: &str) -> Self {
+        self.required_fields.push(field.to_string());
+        self
+    }
+    
+    pub fn optional_field(mut self, field: &str) -> Self {
+        self.optional_fields.push(field.to_string());
+        self
+    }
+}
+
 /// Test event validation helpers
 pub mod events {
     use super::*;
+    use crate::common::event_builders::EventBuilder;
 
     /// Create a valid filesystem event for testing
     pub fn valid_filesystem_event() -> RawEvent {
-        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        EventBuilder::filesystem()
+            .path("/test/valid/file.txt")
+            .created()
+            .size(1024)
+            .permissions(0o644)
+            .build()
     }
 
     /// Create an invalid filesystem event (missing required fields)
     pub fn invalid_filesystem_event() -> RawEvent {
-        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        EventBuilder::generic("filesystem", "file.created")
+            .payload(json!({"invalid": true})) // Missing required 'path' field
+            .build()
     }
 
     /// Create a valid terminal event for testing
     pub fn valid_terminal_event() -> RawEvent {
-        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        EventBuilder::terminal()
+            .command("echo test")
+            .success()
+            .duration_ms(100)
+            .build()
     }
 
     /// Create an event with unknown source/type
     pub fn unknown_event() -> RawEvent {
-        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        EventBuilder::generic("unknown_source", "unknown.event_type")
+            .payload(json!({"data": "test"}))
+            .build()
     }
 
     /// Create an event with malformed payload
     pub fn malformed_payload_event() -> RawEvent {
-        crate::common::events::generic_adversarial_event("test", "test.event", json!({"test": true}), None)
+        EventBuilder::generic("test", "malformed.payload")
+            .payload(json!({"circular_ref": null})) // Simplified malformed payload
+            .build()
+    }
+    
+    /// Create event with invalid data types
+    pub fn invalid_type_event() -> RawEvent {
+        EventBuilder::filesystem()
+            .path("/test/file.txt")
+            .created()
+            .build()
     }
 }
 
@@ -229,6 +296,58 @@ pub mod performance {
         }
 
         Ok(start.elapsed())
+    }
+    
+    /// Measure validation latency percentiles
+    pub fn measure_validation_percentiles(
+        validator: &EventValidator,
+        events: &[RawEvent],
+        iterations: usize
+    ) -> ValidationPerformanceReport {
+        let mut durations = Vec::new();
+        
+        for event in events {
+            for _ in 0..iterations {
+                let start = Instant::now();
+                let _ = validator.validate(event);
+                durations.push(start.elapsed());
+            }
+        }
+        
+        durations.sort();
+        let len = durations.len();
+        
+        ValidationPerformanceReport {
+            total_operations: len,
+            min_duration: durations[0],
+            max_duration: durations[len - 1],
+            p50_duration: durations[len / 2],
+            p95_duration: durations[(len * 95) / 100],
+            p99_duration: durations[(len * 99) / 100],
+        }
+    }
+}
+
+/// Performance report for validation benchmarks
+#[derive(Debug, Clone)]
+pub struct ValidationPerformanceReport {
+    pub total_operations: usize,
+    pub min_duration: Duration,
+    pub max_duration: Duration,
+    pub p50_duration: Duration,
+    pub p95_duration: Duration,
+    pub p99_duration: Duration,
+}
+
+impl ValidationPerformanceReport {
+    pub fn print_summary(&self) {
+        println!("=== Validation Performance Report ===");
+        println!("Total operations: {}", self.total_operations);
+        println!("Min: {:?}", self.min_duration);
+        println!("P50: {:?}", self.p50_duration);
+        println!("P95: {:?}", self.p95_duration);
+        println!("P99: {:?}", self.p99_duration);
+        println!("Max: {:?}", self.max_duration);
     }
 }
 

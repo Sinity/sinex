@@ -1,9 +1,15 @@
 //! Coverage assurance utilities to ensure test streamlining doesn't reduce scope
+//! 
+//! This module provides comprehensive test coverage tracking to ensure that
+//! test migrations and streamlining efforts don't inadvertently reduce the
+//! scope of testing. It tracks various dimensions of test coverage including
+//! event types, validation rules, error conditions, and concurrency scenarios.
 
 use crate::common::prelude::*;
 use std::collections::{HashSet, HashMap};
 use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
+use std::time::{Duration, Instant};
 
 /// Global test coverage tracker
 static COVERAGE_TRACKER: Lazy<Arc<Mutex<CoverageTracker>>> = Lazy::new(|| {
@@ -274,13 +280,24 @@ impl ComparisonResult {
     pub fn print_summary(&self) {
         println!("=== Test Coverage Comparison ===");
         println!("Test count change: {:+}", self.test_count_change);
+        
+        let reduction_pct = if self.line_count_change < 0 {
+            (self.line_count_change.abs() as f64 / 100.0) * 100.0
+        } else {
+            0.0
+        };
         println!("Line count change: {:+} ({:.1}% reduction)", 
-                 self.line_count_change,
-                 (self.line_count_change as f64 / 100.0).abs());
+                 self.line_count_change, reduction_pct);
+        
+        let density_change_pct = if self.assertion_density_before != 0.0 {
+            ((self.assertion_density_after - self.assertion_density_before) / self.assertion_density_before * 100.0)
+        } else {
+            0.0
+        };
         println!("Assertion density: {:.2} → {:.2} ({:+.1}%)",
                  self.assertion_density_before,
                  self.assertion_density_after,
-                 ((self.assertion_density_after - self.assertion_density_before) / self.assertion_density_before * 100.0));
+                 density_change_pct);
         
         if !self.scenarios_removed.is_empty() {
             println!("⚠️  Scenarios removed: {:?}", self.scenarios_removed);
@@ -306,6 +323,16 @@ impl PropertyCoverage {
     
     pub fn record_property(&mut self, property: &str, cases: usize) {
         *self.properties_tested.entry(property.to_string()).or_insert(0) += cases;
+    }
+    
+    /// Get all tested properties
+    pub fn get_tested_properties(&self) -> &HashMap<String, usize> {
+        &self.properties_tested
+    }
+    
+    /// Get total test cases across all properties
+    pub fn get_total_cases(&self) -> usize {
+        self.properties_tested.values().sum()
     }
     
     pub fn ensure_minimum_cases(&self, property: &str, min_cases: usize) -> bool {

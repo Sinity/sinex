@@ -1,11 +1,8 @@
 use crate::common::prelude::*;
-use crate::common::create_test_db_pool;
-use sinex_db::queries;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::net::{TcpListener, TcpStream};
 
-#[tokio::test]
-async fn test_database_dns_timeout() {
+#[sinex_test(timeout = 30)]
+async fn test_database_dns_timeout(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when database hostname fails to resolve
     
     let fake_hostnames = vec![
@@ -46,18 +43,19 @@ async fn test_database_dns_timeout() {
             }
         }
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_network_partition_during_processing() {
+#[sinex_test(timeout = 15)]
+async fn test_network_partition_during_processing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate network partition by creating workers that lose connectivity
     
-    let pool = create_test_db_pool().await.unwrap();
+    let pool = ctx.pool();
     
     // Create test event to be processed
     let test_event = crate::common::events::generic_adversarial_event("partition_test", "network.test", json!({"test": true}), None);
     
-    queries::insert_event(&pool, &test_event).await.unwrap();
+    insert_event(pool, &test_event).await?;
     
     let partition_events = Arc::new(AtomicU64::new(0));
     let successful_operations = Arc::new(AtomicU64::new(0));
@@ -145,20 +143,21 @@ async fn test_network_partition_during_processing() {
     let final_event = sqlx::query!(
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
         test_event.id.to_uuid()
-    ).fetch_one(&pool).await.unwrap();
+    ).fetch_one(pool).await?;
     
     println!("- Final event payload: {}", final_event.payload);
     
     if partition_events.load(Ordering::SeqCst) == 0 {
         println!("WARNING: No network partition events simulated");
     }
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_split_brain_scenario() {
+#[sinex_test(timeout = 15)]
+async fn test_split_brain_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate split-brain where two parts of system think they're primary
     
-    let pool = create_test_db_pool().await.unwrap();
+    let pool = ctx.pool();
     
     // Create shared state that both "brains" will try to manage
     let shared_resource_id = Ulid::new();
@@ -177,7 +176,7 @@ async fn test_split_brain_scenario() {
             for i in 0..10 {
                 let event = crate::common::events::generic_adversarial_event("brain_a", "primary.operation", json!({"test": true}), None);
                 
-                match queries::insert_event(&pool, &event).await {
+                match insert_event(&pool, &event).await {
                     Ok(_) => {
                         ops_a.fetch_add(1, Ordering::SeqCst);
                         println!("Brain A operation {} committed", i);
@@ -206,7 +205,7 @@ async fn test_split_brain_scenario() {
             for i in 0..10 {
                 let event = crate::common::events::generic_adversarial_event("brain_b", "primary.operation", json!({"test": true}), None);
                 
-                match queries::insert_event(&pool, &event).await {
+                match insert_event(&pool, &event).await {
                     Ok(_) => {
                         ops_b.fetch_add(1, Ordering::SeqCst);
                         println!("Brain B operation {} committed", i);
@@ -234,7 +233,7 @@ async fn test_split_brain_scenario() {
         ORDER BY ts_ingest
         "#,
         shared_resource_id.to_string()
-    ).fetch_all(&pool).await.unwrap();
+    ).fetch_all(pool).await?;
     
     println!("\nSplit-brain scenario results:");
     println!("- Brain A operations: {}", brain_a_operations.load(Ordering::SeqCst));
@@ -274,10 +273,11 @@ async fn test_split_brain_scenario() {
     if brain_a_operations.load(Ordering::SeqCst) > 0 && brain_b_operations.load(Ordering::SeqCst) > 0 {
         println!("DATA INCONSISTENCY: Multiple primary nodes wrote to shared resource!");
     }
+    Ok(())
 }
 
-#[test]
-fn test_tcp_socket_exhaustion() {
+#[sinex_test(timeout = 30)]
+async fn test_tcp_socket_exhaustion(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test what happens when we exhaust TCP socket resources
     
     println!("Testing TCP socket exhaustion:");
@@ -342,4 +342,5 @@ fn test_tcp_socket_exhaustion() {
             println!("- Recovery failed: {}", e);
         }
     }
+    Ok(())
 }

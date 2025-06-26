@@ -4,26 +4,22 @@ use crate::common::prelude::*;
 use crate::common::{scenario_builders, coverage_assurance, parameterized};
 use crate::common::coverage_assurance::{CoverageTracker, CoverageAssertion};
 
-#[test]
-fn test_coverage_tracking_in_streamlined_tests() {
+#[sinex_test]
+async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Reset tracker for clean test
     CoverageTracker::reset();
     
     // Run streamlined test
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let pool = crate::common::create_test_db_pool().await.unwrap();
-        
-        scenario_builders::EventScenarioBuilder::new()
-            .with_filesystem_event("/valid/path.txt", true)
-            .with_filesystem_event("", false)
-            .with_filesystem_event("relative/path", false)
-            .with_filesystem_event("/path/with\0null", false)
-            .with_terminal_event("ls -la", true)
-            .with_terminal_event("", false)
-            .execute(&pool)
-            .await
-            .unwrap();
-    });
+    scenario_builders::EventScenarioBuilder::new()
+        .with_filesystem_event("/valid/path.txt", true)
+        .with_filesystem_event("", false)
+        .with_filesystem_event("relative/path", false)
+        .with_filesystem_event("/path/with\0null", false)
+        .with_terminal_event("ls -la", true)
+        .with_terminal_event("", false)
+        .execute(ctx.pool())
+        .await
+        .unwrap();
     
     // Get coverage report
     let report = CoverageTracker::get_coverage_report();
@@ -37,6 +33,8 @@ fn test_coverage_tracking_in_streamlined_tests() {
     println!("  Event types tested: {}", report.event_types_count);
     println!("  Edge cases tested: {}", report.total_edge_cases);
     println!("  Edge case categories: {:?}", report.details.edge_cases);
+    
+    Ok(())
 }
 
 #[test]

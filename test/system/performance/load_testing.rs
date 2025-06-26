@@ -1,19 +1,13 @@
 //! Simplified load testing using existing test infrastructure
 //! Note: Complex collector/worker testing disabled until test infrastructure is complete
 
-use crate::common::create_test_db_pool;
-use sinex_db::{queries, run_migrations};
-use sinex_core::RawEventBuilder;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 
-#[tokio::test]
-async fn test_database_insertion_performance() -> anyhow::Result<()> {
+#[sinex_test(timeout = 60)]
+async fn test_database_insertion_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test: Basic database insertion performance
-    let pool = create_test_db_pool().await?;
-    run_migrations(&pool).await?;
+    let pool = ctx.pool();
     
     let target_events = 1000; // Reduced from 10k for stability
     let start_time = Instant::now();
@@ -30,7 +24,7 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
             })
         ).build();
         
-        match queries::insert_event(&pool, &event).await {
+        match insert_event(pool, &event).await {
             Ok(_) => {
                 events_inserted.fetch_add(1, Ordering::Relaxed);
             }
@@ -74,11 +68,10 @@ async fn test_database_insertion_performance() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
+#[sinex_test(timeout = 60)]
+async fn test_concurrent_insertion_performance(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test: Concurrent database insertion
-    let pool = create_test_db_pool().await?;
-    run_migrations(&pool).await?;
+    let pool = ctx.pool();
     
     let events_per_worker = 100;
     let num_workers = 5;
@@ -102,7 +95,7 @@ async fn test_concurrent_insertion_performance() -> anyhow::Result<()> {
                     })
                 ).build();
                 
-                if queries::insert_event(&pool_clone, &event).await.is_ok() {
+                if insert_event(&pool_clone, &event).await.is_ok() {
                     inserted += 1;
                 }
                 
