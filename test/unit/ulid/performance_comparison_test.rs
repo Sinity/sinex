@@ -4,8 +4,8 @@
 use crate::common::prelude::*;
 use std::time::Instant;
 
-#[test]
-fn test_ulid_monotonic_performance_validation() {
+#[sinex_test]
+async fn test_ulid_monotonic_performance_validation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== ULID Monotonic Performance Validation ===");
     
     // Single generation performance test
@@ -152,4 +152,5 @@ fn test_ulid_monotonic_performance_validation() {
     println!("✅ Suitable for high-throughput event capture systems");
     println!("✅ Perfect ordering guarantee maintained under load");
     println!("✅ Test completed successfully");
+    Ok(())
 }

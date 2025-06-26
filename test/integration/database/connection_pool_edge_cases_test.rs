@@ -1,6 +1,8 @@
 use crate::common::prelude::*;
 use sqlx::postgres::PgPoolOptions;
 use std::time::{Duration, Instant};
+use std::sync::Arc;
+use futures::future::join_all;
 #[sinex_test]
 async fn test_connection_pool_max_connections(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Create a pool with a small max size

@@ -211,10 +211,9 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> Result<(), Box<dy
 }
 
 /// Test shutdown sequence and graceful termination
-#[tokio::test]
-async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     println!("Testing shutdown sequence and graceful termination...");
 
@@ -293,7 +292,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Err
         Duration::from_secs(3),
         async {
             // New connection should work
-            let verification_pool = database_helpers::get_shared_test_pool().await?;
+            let verification_pool = ctx.pool();
             
             // Check that committed transactions are persisted - use timing utility
             let committed_events = wait_for_filtered_event_count(
@@ -343,7 +342,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Err
         Duration::from_secs(5),
         async {
             // Get pool outside of spawn to avoid Send issues
-            let pool = database_helpers::get_shared_test_pool().await?;
+            let pool = ctx.pool().clone();
             
             // Create long-running operation
             let long_operation = tokio::spawn(async move {
@@ -380,7 +379,7 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Err
     let stability_check = timeout(
                 Duration::from_secs(2),
                 async {
-                    let pool = database_helpers::get_shared_test_pool().await?;
+                    let pool = ctx.pool();
                     
                     // Database should still be responsive
                     let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
@@ -438,8 +437,8 @@ async fn test_shutdown_sequence_graceful_termination() -> Result<(), anyhow::Err
 }
 
 /// Test configuration validation and hot reload scenarios
-#[tokio::test]
-async fn test_configuration_validation_and_reload() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -705,8 +704,8 @@ channel_buffer_size = 10000
 }
 
 /// Test data migration safety and version compatibility
-#[tokio::test]
-async fn test_data_migration_safety() -> Result<(), anyhow::Error> {
+#[sinex_test]
+async fn test_data_migration_safety(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing

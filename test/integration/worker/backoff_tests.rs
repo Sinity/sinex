@@ -1,8 +1,8 @@
 use crate::common::prelude::*;
 use sinex_worker::calculate_backoff_secs;
 
-#[test]
-fn test_calculate_backoff_basic() {
+#[sinex_test]
+async fn test_calculate_backoff_basic(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that backoff increases exponentially
     let backoff_0 = calculate_backoff_secs(0);
     let backoff_1 = calculate_backoff_secs(1);
@@ -12,10 +12,11 @@ fn test_calculate_backoff_basic() {
     assert!(backoff_0 >= 48.0 && backoff_0 <= 72.0); // 60 * 0.8 to 60 * 1.2
     assert!(backoff_1 >= 96.0 && backoff_1 <= 144.0); // 120 * 0.8 to 120 * 1.2
     assert!(backoff_2 >= 192.0 && backoff_2 <= 288.0); // 240 * 0.8 to 240 * 1.2
+    Ok(())
 }
 
-#[test]
-fn test_calculate_backoff_min_max() {
+#[sinex_test]
+async fn test_calculate_backoff_min_max(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test minimum bound
     let backoff_negative = calculate_backoff_secs(-10);
     assert!(backoff_negative >= 1.0);
@@ -23,10 +24,11 @@ fn test_calculate_backoff_min_max() {
     // Test maximum bound (should cap at 24 hours)
     let backoff_large = calculate_backoff_secs(20);
     assert!(backoff_large <= 24.0 * 3600.0);
+    Ok(())
 }
 
-#[test]
-fn test_calculate_backoff_jitter() {
+#[sinex_test]
+async fn test_calculate_backoff_jitter(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that jitter produces different values
     let mut values = HashSet::new();
     for _ in 0..10 {
@@ -34,4 +36,5 @@ fn test_calculate_backoff_jitter() {
     }
     // With jitter, we should get at least 2 different values
     assert!(values.len() >= 2);
+    Ok(())
 }

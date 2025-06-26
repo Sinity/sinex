@@ -1045,8 +1045,8 @@ pub fn agent_heartbeat(name: &str) -> RawEvent {
 mod tests {
     use super::*;
     
-    #[test]
-    fn test_filesystem_builder() {
+    #[sinex_test]
+    async fn test_filesystem_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         let event = EventBuilder::filesystem()
             .path("/home/user/test.txt")
             .created()
@@ -1058,10 +1058,11 @@ mod tests {
         pretty_assertions::assert_eq!(event.event_type, "file.created");
         pretty_assertions::assert_eq!(event.payload["path"], "/home/user/test.txt");
         pretty_assertions::assert_eq!(event.payload["size"], 1024);
+        Ok(())
     }
     
-    #[test]
-    fn test_terminal_builder() {
+    #[sinex_test]
+    async fn test_terminal_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         let event = EventBuilder::terminal()
             .command("ls -la")
             .success()
@@ -1074,15 +1075,17 @@ mod tests {
         pretty_assertions::assert_eq!(event.payload["command"], "ls -la");
         pretty_assertions::assert_eq!(event.payload["exit_code"], 0);
         pretty_assertions::assert_eq!(event.payload["duration_ms"], 150);
+        Ok(())
     }
     
-    #[test]
-    fn test_generic_builder() {
+    #[sinex_test]
+    async fn test_generic_builder(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         let event = EventBuilder::generic("test_source", "test.event")
             .payload(json!({"data": "test"}))
             .build();
             
         pretty_assertions::assert_eq!(event.source, "test_source");
         pretty_assertions::assert_eq!(event.event_type, "test.event");
+        Ok(())
     }
 }

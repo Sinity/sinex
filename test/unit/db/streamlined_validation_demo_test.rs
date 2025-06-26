@@ -3,8 +3,8 @@
 use crate::common::prelude::*;
 use crate::common::{parameterized, scenario_builders, test_dsl};
 
-#[test]
-fn test_validation_with_parameterized_helper() {
+#[sinex_test]
+async fn test_validation_with_parameterized_helper(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Before: 25+ lines of repetitive code
     // After: 10 lines with clear test cases
     
@@ -17,11 +17,10 @@ fn test_validation_with_parameterized_helper() {
         ("unicode path", json!({"path": "/home/用户/文档.txt", "size": 1024}), true),
     ];
     
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        parameterized::test_validation_pairs(test_cases, |payload| {
-            RawEventBuilder::new("filesystem", "file.created", payload).build()
-        }).await;
-    });
+    parameterized::test_validation_pairs(test_cases, |payload| {
+        RawEventBuilder::new("filesystem", "file.created", payload).build()
+    }).await;
+    Ok(())
 }
 
 #[sinex_test]
@@ -98,8 +97,8 @@ async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> Result<(), Box<dyn 
     Ok(())
 }
 
-#[test]
-fn test_multiple_validation_rules_streamlined() {
+#[sinex_test]
+async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Before: 50+ lines with repetitive validator creation and assertions
     // After: Concise parameterized test
     
@@ -127,6 +126,7 @@ fn test_multiple_validation_rules_streamlined() {
         let invalid_event = creator(json!({}));
         validation_test_utils::assert_invalid_event(&invalid_event, "");
     }
+    Ok(())
 }
 
 // Example of how a complex concurrent test can be simplified

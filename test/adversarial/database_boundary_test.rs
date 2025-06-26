@@ -1,6 +1,10 @@
 use crate::common::prelude::*;
 use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
+use futures::future::join_all;
+use tokio::time::{timeout, Duration};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::time::Instant;
 
 #[sinex_test]
 async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
@@ -27,7 +31,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> Result<()
         let event = events::large_payload_test_event(1024);
         
         let start = Instant::now();
-        match queries::insert_event(&pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
@@ -185,7 +189,7 @@ async fn test_concurrent_btree_index_splits(ctx: TestContext) -> Result<(), Box<
             let mut failed = 0;
             
             for event in events {
-                match queries::insert_event(&pool_clone, &event).await {
+                match insert_event(&pool_clone, &event).await {
                     Ok(_) => success += 1,
                     Err(_) => failed += 1,
                 }
@@ -281,7 +285,7 @@ async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> Result<(), Box
     for (timestamp, label) in boundary_events {
         let event = crate::common::events::generic_adversarial_event("chunk_test", "boundary.test", json!({"test": true}), None);
         
-        match queries::insert_event(&pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => println!("    Inserted {}: {}", label, timestamp),
             Err(e) => println!("    Failed {}: {}", label, e),
         }
@@ -330,7 +334,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box
     for i in 0..10000 {
         let event = events::large_payload_test_event(1024);
         
-        queries::insert_event(&pool, &event).await.unwrap();
+        insert_event(&pool, &event).await.unwrap();
         
         if i % 1000 == 0 {
             println!("  Inserted {} events", i);

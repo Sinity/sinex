@@ -190,10 +190,9 @@ struct RaceWorkerResult {
     timeouts: u64,
 }
 
-#[tokio::test]
-async fn test_race_condition_detection() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_race_condition_detection(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     let agent_name = format!("race_condition_{}", Ulid::new());
 

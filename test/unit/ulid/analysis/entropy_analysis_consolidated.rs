@@ -63,9 +63,9 @@ mod entropy_analysis {
 
     /// Test the precise entropy calculation with arbitrary precision
     /// This demonstrates the mathematical foundation of our analysis
-    #[test]
+    #[sinex_test]
     #[ignore] // Run with: cargo test entropy_analysis -- --ignored
-    fn test_precise_entropy_calculation() {
+    async fn test_precise_entropy_calculation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n=== PRECISE ENTROPY ANALYSIS ===");
         
         // Using Python for arbitrary precision calculation
@@ -91,12 +91,13 @@ print(f"Scientific notation: {result:.25e}")
         let f64_value = 100_000_f64 / (2_f64.powi(80) * std::f64::consts::LN_2);
         println!("IEEE 754 f64 value: {:.17e} bits", f64_value);
         println!("Precision limit: ~17 significant digits");
+        Ok(())
     }
 
     /// Test demonstrating why this entropy gain is negligible
-    #[test]
+    #[sinex_test]
     #[ignore]
-    fn test_practical_significance() {
+    async fn test_practical_significance(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n=== PRACTICAL SIGNIFICANCE ANALYSIS ===");
         
         let entropy_gain = 1.1933693676497481e-19; // f64 precision
@@ -134,12 +135,13 @@ print(f"Scientific notation: {result:.25e}")
         println!("  Security improvement: {:.3e}%", (entropy_gain / 128.0) * 100.0);
         
         println!("\n🎯 CONCLUSION: Entropy gain is negligible for all practical purposes");
+        Ok(())
     }
 
     /// Test demonstrating the complexity vs benefit trade-off
-    #[test]
+    #[sinex_test]
     #[ignore]
-    fn test_complexity_vs_benefit() {
+    async fn test_complexity_vs_benefit(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n=== COMPLEXITY VS BENEFIT ANALYSIS ===");
         
         println!("Current approach (simple +1):");
@@ -164,12 +166,13 @@ print(f"Scientific notation: {result:.25e}")
         println!("  Information content improvement: negligible");
         
         println!("\n🎯 VERDICT: Complexity costs >> Benefits");
+        Ok(())
     }
 
     /// Test bit-level verification that our implementation matches standard
-    #[test]
+    #[sinex_test]
     #[ignore] 
-    fn test_bit_layout_verification() {
+    async fn test_bit_layout_verification(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
         println!("\n=== BIT LAYOUT VERIFICATION ===");
         
         // This test verifies our monotonic implementation produces identical
@@ -226,6 +229,7 @@ print(f"Scientific notation: {result:.25e}")
         }
         
         println!("\n🎯 BIT LAYOUT: Our implementation produces valid, ordered ULIDs");
+        Ok(())
     }
 }
 

@@ -3,10 +3,9 @@ use crate::common::prelude::*;
 // Stress test specific imports
 use super::common::*;
 
-#[tokio::test]
-async fn test_coordinated_deadlock_scenario() -> Result<(), anyhow::Error> {
-    let pool = database_helpers::get_shared_test_pool().await?;
-    run_migrations(&pool).await?;
+#[sinex_test]
+async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = ctx.pool();
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 

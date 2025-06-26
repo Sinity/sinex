@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[test]
-fn test_ulid_uuid_roundtrip_preserves_data() {
+#[sinex_test]
+async fn test_ulid_uuid_roundtrip_preserves_data(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that ULID -> UUID -> ULID preserves all data
     for _ in 0..1000 {
         let original = Ulid::new();
@@ -16,10 +16,11 @@ fn test_ulid_uuid_roundtrip_preserves_data() {
         pretty_assertions::assert_eq!(original.timestamp(), restored.timestamp());
         pretty_assertions::assert_eq!(original.to_string(), restored.to_string());
     }
+    Ok(())
 }
 
-#[test]
-fn test_ulid_boundary_timestamps() {
+#[sinex_test]
+async fn test_ulid_boundary_timestamps(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test minimum timestamp (Unix epoch)
     let min_datetime = chrono::DateTime::from_timestamp_millis(0).unwrap();
     let min_ulid = Ulid::from_datetime(min_datetime);
@@ -39,10 +40,11 @@ fn test_ulid_boundary_timestamps() {
     let now_datetime = chrono::DateTime::from_timestamp_millis(now as i64).unwrap();
     let now_ulid = Ulid::from_datetime(now_datetime);
     pretty_assertions::assert_eq!(now_ulid.timestamp().timestamp_millis(), now as i64);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_string_case_insensitive_parsing() {
+#[sinex_test]
+async fn test_ulid_string_case_insensitive_parsing(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let ulid = Ulid::new();
     
     let uppercase = ulid.to_string().to_uppercase();
@@ -61,10 +63,11 @@ fn test_ulid_string_case_insensitive_parsing() {
     pretty_assertions::assert_eq!(ulid, parsed_upper);
     pretty_assertions::assert_eq!(ulid, parsed_lower);
     pretty_assertions::assert_eq!(ulid, parsed_mixed);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_invalid_string_parsing() {
+#[sinex_test]
+async fn test_ulid_invalid_string_parsing(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test various invalid ULID strings
     let invalid_strings = vec![
         "",                                  // Empty
@@ -86,10 +89,11 @@ fn test_ulid_invalid_string_parsing() {
             invalid
         );
     }
+    Ok(())
 }
 
-#[test]
-fn test_ulid_zero_and_max_values() {
+#[sinex_test]
+async fn test_ulid_zero_and_max_values(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test zero ULID
     let zero_bytes = [0u8; 16];
     let zero_ulid = Ulid::from_bytes(zero_bytes).unwrap();
@@ -103,10 +107,11 @@ fn test_ulid_zero_and_max_values() {
     
     // Verify ordering
     assert!(zero_ulid < max_ulid);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_rapid_generation_same_millisecond() {
+#[sinex_test]
+async fn test_ulid_rapid_generation_same_millisecond(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test: Generate many ULIDs rapidly and check for collisions
     // This tests whether standard ULID generation is sufficient for rapid generation
     
@@ -137,10 +142,11 @@ fn test_ulid_rapid_generation_same_millisecond() {
     }
     
     println!("Successfully generated {} unique, ordered ULIDs", generation_count);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_concurrent_generation_uniqueness() {
+#[sinex_test]
+async fn test_ulid_concurrent_generation_uniqueness(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let num_threads = 10;
     let ulids_per_thread = 1000;
     let all_ulids = Arc::new(Mutex::new(HashSet::new()));
@@ -172,10 +178,11 @@ fn test_ulid_concurrent_generation_uniqueness() {
         num_threads * ulids_per_thread,
         "All generated ULIDs should be unique"
     );
+    Ok(())
 }
 
-#[test]
-fn test_ulid_uuid_nil_handling() {
+#[sinex_test]
+async fn test_ulid_uuid_nil_handling(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test conversion of nil UUID
     let nil_uuid = Uuid::nil();
     let ulid = Ulid::from_uuid(nil_uuid);
@@ -183,10 +190,11 @@ fn test_ulid_uuid_nil_handling() {
     pretty_assertions::assert_eq!(ulid.timestamp().timestamp_millis(), 0);
     pretty_assertions::assert_eq!(ulid.to_uuid(), nil_uuid);
     pretty_assertions::assert_eq!(ulid.to_string(), "00000000000000000000000000");
+    Ok(())
 }
 
-#[test]
-fn test_ulid_time_precision_edge_cases() {
+#[sinex_test]
+async fn test_ulid_time_precision_edge_cases(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test sub-millisecond precision handling
     let _base_time = chrono::DateTime::from_timestamp_millis(1234567890123).unwrap();
     
@@ -200,10 +208,11 @@ fn test_ulid_time_precision_edge_cases() {
         assert!(ulids[i-1] < ulids[i], "ULID ordering failed at index {}: {} >= {}", i, ulids[i-1], ulids[i]);
         pretty_assertions::assert_ne!(ulids[i-1], ulids[i]);
     }
+    Ok(())
 }
 
-#[test]
-fn test_ulid_lexicographic_ordering_matches_temporal() {
+#[sinex_test]
+async fn test_ulid_lexicographic_ordering_matches_temporal(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Generate ULIDs at different times
     // Generate ULIDs at different times
     let mut ulids = Vec::new();
@@ -225,10 +234,11 @@ fn test_ulid_lexicographic_ordering_matches_temporal() {
     // Both orderings should be identical
     pretty_assertions::assert_eq!(string_sorted, ulid_sorted, 
         "Lexicographic ordering should match temporal ordering");
+    Ok(())
 }
 
-#[test]
-fn test_ulid_binary_representation_endianness() {
+#[sinex_test]
+async fn test_ulid_binary_representation_endianness(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let ulid = Ulid::new();
     let bytes = ulid.to_bytes();
     let uuid = ulid.to_uuid();
@@ -250,10 +260,11 @@ fn test_ulid_binary_representation_endianness() {
         (timestamp_bytes[5] as u64);
     
     pretty_assertions::assert_eq!(timestamp.timestamp_millis() as u64, reconstructed_timestamp);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_display_debug_traits() {
+#[sinex_test]
+async fn test_ulid_display_debug_traits(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let ulid = Ulid::new();
     
     // Display trait should show the ULID string
@@ -265,10 +276,11 @@ fn test_ulid_display_debug_traits() {
     let debug = format!("{:?}", ulid);
     assert!(debug.contains("Ulid"));
     assert!(debug.contains(&ulid.to_string()));
+    Ok(())
 }
 
-#[test]
-fn test_ulid_timestamp_overflow_panic() {
+#[sinex_test]
+async fn test_ulid_timestamp_overflow_panic(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test with max valid timestamp for ULID (2^48 - 1 milliseconds) - this should work
     let max_valid_timestamp = (1u64 << 48) - 1;
     let max_datetime = chrono::DateTime::from_timestamp_millis(max_valid_timestamp as i64).unwrap();
@@ -276,10 +288,11 @@ fn test_ulid_timestamp_overflow_panic() {
     
     // Note: Testing overflow behavior depends on ULID implementation
     // Some implementations may wrap or saturate rather than panic
+    Ok(())
 }
 
-#[test]
-fn test_ulid_serde_json_roundtrip() {
+#[sinex_test]
+async fn test_ulid_serde_json_roundtrip(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let original = Ulid::new();
     
     // Serialize to JSON
@@ -292,10 +305,11 @@ fn test_ulid_serde_json_roundtrip() {
     // Deserialize back
     let deserialized: Ulid = serde_json::from_str(&json).unwrap();
     pretty_assertions::assert_eq!(original, deserialized);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_hash_consistency() {
+#[sinex_test]
+async fn test_ulid_hash_consistency(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     
@@ -319,4 +333,5 @@ fn test_ulid_hash_consistency() {
     let hash3 = hasher3.finish();
     
     pretty_assertions::assert_ne!(hash1, hash3);
+    Ok(())
 }

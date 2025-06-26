@@ -1,4 +1,5 @@
 use crate::common::prelude::*;
+use tokio::time::{timeout, Duration};
 
 /// Test input validation for event sources and types
 #[sinex_test]
@@ -73,7 +74,7 @@ async fn test_event_source_validation(ctx: TestContext) -> Result<(), Box<dyn st
     let mut validation_results = Vec::new();
 
     for (i, malicious_source) in malicious_sources.iter().enumerate() {
-        let test_event = queries::insert_raw_event(
+        let test_event = insert_raw_event(
             pool,
             malicious_source,
             "validation_test",
@@ -251,7 +252,7 @@ async fn test_json_payload_validation(ctx: TestContext) -> Result<(), Box<dyn st
         // Test insertion with timeout to prevent hangs
         let insert_result = timeout(
             Duration::from_secs(3),
-            queries::insert_raw_event(
+            insert_raw_event(
                 pool,
                 "payload.validation",
                 "malicious_json",
@@ -476,7 +477,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> Result<(), Box<dyn s
     let mut event_validation_results = Vec::new();
 
     for (source, event_type, host, payload) in malformed_events {
-        let event_result = queries::insert_raw_event(
+        let event_result = insert_raw_event(
             pool,
             source,
             event_type,
@@ -572,7 +573,7 @@ async fn test_input_boundary_conditions(ctx: TestContext) -> Result<(), Box<dyn 
         // Test as event source
         let source_result = timeout(
             Duration::from_secs(3),
-            queries::insert_raw_event(
+            insert_raw_event(
                 pool,
                 test_value,
                 "boundary_test",
@@ -587,7 +588,7 @@ async fn test_input_boundary_conditions(ctx: TestContext) -> Result<(), Box<dyn 
         // Test as JSON payload value
         let payload_result = timeout(
             Duration::from_secs(3),
-            queries::insert_raw_event(
+            insert_raw_event(
                 pool,
                 "boundary.test",
                 "payload_test", 

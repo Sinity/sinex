@@ -28,11 +28,12 @@ async fn test_basic_event_insertion(ctx: TestContext) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-#[test]
-fn test_event_validation_creation() {
+#[sinex_test]
+async fn test_event_validation_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that EventValidator can be created
     let _validator = sinex_db::validation::EventValidator::new();
     // If this compiles and runs, the basic validation infrastructure works
+    Ok(())
 }
 
 #[sinex_test]

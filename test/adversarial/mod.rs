@@ -83,7 +83,7 @@ pub mod utils {
             },
             "deeply_nested" => create_deeply_nested_json(100),
             "unicode_attack" => json!({
-                "data": "\u0000\u0001\u0002\u0003\uFEFF\uFFFE\uFFFF"
+                "data": "\u{0000}\u{0001}\u{0002}\u{0003}\u{FEFF}\u{FFFE}\u{FFFF}"
             }),
             _ => json!({ "generic_attack": true })
         }

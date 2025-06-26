@@ -2,6 +2,9 @@ use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use tokio::sync::Mutex;
 use crate::common::resources;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use tokio::time::{timeout, Duration};
+use std::process::Command;
 
 #[sinex_test(timeout = 60)]
 async fn test_unbounded_file_descriptor_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
@@ -123,8 +126,8 @@ watch_paths = {}
     Ok(())
 }
 
-#[test]
-fn test_string_concatenation_memory_bomb() {
+#[sinex_test]
+async fn test_string_concatenation_memory_bomb(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Create event with expanding string pattern
     let mut expanding_string = String::from("a");
     let mut sizes = vec![];
@@ -151,6 +154,7 @@ fn test_string_concatenation_memory_bomb() {
     }
     
     println!("String sizes generated: {:?}", sizes);
+    Ok(())
 }
 
 #[tokio::test]

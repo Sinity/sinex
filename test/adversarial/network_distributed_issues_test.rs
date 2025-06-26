@@ -1,5 +1,7 @@
 use crate::common::prelude::*;
 use std::net::{TcpListener, TcpStream};
+use tokio::time::{timeout, Duration};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
 #[sinex_test(timeout = 30)]
 async fn test_database_dns_timeout(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

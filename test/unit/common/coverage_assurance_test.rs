@@ -37,8 +37,8 @@ async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> Result
     Ok(())
 }
 
-#[test]
-fn test_coverage_assertion_ensures_minimum_coverage() {
+#[sinex_test]
+async fn test_coverage_assertion_ensures_minimum_coverage(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     CoverageTracker::reset();
     
     // Define minimum coverage expectations based on original tests
@@ -53,6 +53,7 @@ fn test_coverage_assertion_ensures_minimum_coverage() {
     
     // This will panic if coverage has decreased
     coverage_assertion.assert_coverage_maintained();
+    Ok(())
 }
 
 fn simulate_comprehensive_test_suite() {
@@ -99,8 +100,8 @@ fn simulate_comprehensive_test_suite() {
     CoverageTracker::record_edge_case("unicode", "rtl_text");
 }
 
-#[test]
-fn test_coverage_comparison_shows_improvement() {
+#[sinex_test]
+async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use coverage_assurance::{CoverageSnapshot, CoverageComparison};
     
     // Original verbose test coverage
@@ -142,10 +143,11 @@ fn test_coverage_comparison_shows_improvement() {
             "Assertion density should improve");
     assert!(comparison.scenarios_removed.is_empty(), "Should not remove scenarios");
     assert!(!comparison.scenarios_added.is_empty(), "Should add new scenarios");
+    Ok(())
 }
 
-#[test]
-fn test_property_coverage_tracking() {
+#[sinex_test]
+async fn test_property_coverage_tracking(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use coverage_assurance::PropertyCoverage;
     
     let mut prop_coverage = PropertyCoverage::new();
@@ -159,11 +161,12 @@ fn test_property_coverage_tracking() {
     assert!(prop_coverage.ensure_minimum_cases("ulid_monotonic_ordering", 100));
     assert!(prop_coverage.ensure_minimum_cases("event_payload_validation", 100));
     assert!(prop_coverage.ensure_minimum_cases("concurrent_worker_safety", 50));
+    Ok(())
 }
 
 /// Macro usage example
-#[test]
-fn test_coverage_tracking_macro() {
+#[sinex_test]
+async fn test_coverage_tracking_macro(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use crate::track_test_coverage;
     
     CoverageTracker::reset();
@@ -181,4 +184,5 @@ fn test_coverage_tracking_macro() {
     pretty_assertions::assert_eq!(report.error_conditions_count, 1);
     pretty_assertions::assert_eq!(report.concurrency_scenarios_count, 1);
     pretty_assertions::assert_eq!(report.total_edge_cases, 1);
+    Ok(())
 }

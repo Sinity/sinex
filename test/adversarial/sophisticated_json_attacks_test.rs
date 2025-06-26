@@ -2,8 +2,8 @@ use crate::common::prelude::*;
 use std::time::{Duration, Instant};
 use sinex_db::validation::EventValidator;
 
-#[test]
-fn test_circular_json_references() {
+#[sinex_test]
+async fn test_circular_json_references(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that Sinex's event validation handles circular JSON references safely
     let circular_json = json!({
         "data": {
@@ -47,10 +47,11 @@ fn test_circular_json_references() {
             assert!(!e.to_string().is_empty(), "Validation error should provide meaningful message");
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_billion_laughs_attack() {
+#[sinex_test]
+async fn test_json_billion_laughs_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test that Sinex can handle exponentially expanding JSON without resource exhaustion
     // Each level exponentially expands the previous
     
@@ -105,10 +106,11 @@ fn test_json_billion_laughs_attack() {
     // Assert that Sinex can handle at least a few levels of expansion
     assert!(successful_levels >= 3, "Should handle at least 3 levels of exponential expansion");
     assert!(max_serialization_time < Duration::from_secs(5), "Serialization should not take excessively long");
+    Ok(())
 }
 
-#[test]
-fn test_json_unicode_normalization_bypass() {
+#[sinex_test]
+async fn test_json_unicode_normalization_bypass(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Different Unicode representations that might bypass validation
     
     let unicode_variants = vec![
@@ -150,10 +152,11 @@ fn test_json_unicode_normalization_bypass() {
             }
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_depth_stack_overflow() {
+#[sinex_test]
+async fn test_json_depth_stack_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test deeply nested JSON that could cause stack overflow during parsing/validation
     
     // Create JSON with extreme depth that might cause stack overflow
@@ -236,10 +239,11 @@ fn test_json_depth_stack_overflow() {
             }
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_key_confusion_attack() {
+#[sinex_test]
+async fn test_json_key_confusion_attack(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test various key representations that might be treated as equivalent
     
     let key_variants = vec![
@@ -287,4 +291,5 @@ fn test_json_key_confusion_attack() {
         println!("  KEY COLLISION: {} unique values for {} keys!", 
                  unique_values.len(), key_variants.len());
     }
+    Ok(())
 }

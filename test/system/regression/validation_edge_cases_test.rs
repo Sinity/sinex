@@ -1,8 +1,8 @@
 use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
 
-#[test]
-fn test_invalid_octal_permissions() {
+#[sinex_test]
+async fn test_invalid_octal_permissions(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // This should FAIL but probably won't due to the bug
@@ -14,10 +14,11 @@ fn test_invalid_octal_permissions() {
     
     let result = validator.validate_with_rules("filesystem", "file.created", &invalid_octal);
     assert!(result.is_err(), "Should reject invalid octal permissions like '888'");
+    Ok(())
 }
 
-#[test]
-fn test_permissions_edge_cases() {
+#[sinex_test]
+async fn test_permissions_edge_cases(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // Test various edge cases
@@ -47,10 +48,11 @@ fn test_permissions_edge_cases() {
             assert!(result.is_err(), "Should reject {}: {}", desc, perms);
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_path_validation_missing() {
+#[sinex_test]
+async fn test_path_validation_missing(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // The validator doesn't check for path traversal or null bytes!
@@ -72,4 +74,5 @@ fn test_path_validation_missing() {
         // This will likely PASS but shouldn't for security reasons
         println!("Path '{}' validation: {:?}", path, result.is_ok());
     }
+    Ok(())
 }

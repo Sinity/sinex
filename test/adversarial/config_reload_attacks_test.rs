@@ -3,6 +3,9 @@ use sinex_collector::config::{CollectorConfig, ConfigManager};
 use std::fs;
 use std::os::unix;
 use crate::common::resources;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use tokio::time::{timeout, Duration};
+use futures::future::join_all;
 
 #[sinex_test]
 async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

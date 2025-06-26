@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 
-#[test]
-fn test_monotonic_ulid_overflow() {
+#[sinex_test]
+async fn test_monotonic_ulid_overflow(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Create a ULID with all random bytes set to 255 (max value)
     let mut max_bytes = [255u8; 16];
     // Keep the timestamp part valid
@@ -17,10 +17,11 @@ fn test_monotonic_ulid_overflow() {
     
     // The next ULID should be greater than max_ulid
     assert!(next_ulid > max_ulid, "Monotonic ULID should handle overflow");
+    Ok(())
 }
 
-#[test] 
-fn test_monotonic_ulid_rapid_generation() {
+#[sinex_test]
+async fn test_monotonic_ulid_rapid_generation(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Generate many ULIDs in the same millisecond
     let mut ulids = Vec::new();
     let mut _prev: Option<Ulid> = None;
@@ -43,4 +44,5 @@ fn test_monotonic_ulid_rapid_generation() {
     for ulid in &ulids {
         assert!(unique.insert(ulid.to_string()), "Found duplicate ULID!");
     }
+    Ok(())
 }

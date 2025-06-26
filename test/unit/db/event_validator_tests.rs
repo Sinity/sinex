@@ -2,30 +2,33 @@ use crate::common::prelude::*;
 use sinex_db::validation::EventValidator;
 use crate::common::{events, validation_test_utils};
 
-#[test]
-fn test_event_validator_creation() {
+#[sinex_test]
+async fn test_event_validator_creation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let _validator = EventValidator::new();
     // Validator should be created successfully
     // This test ensures the constructor doesn't panic
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_valid_filesystem_event() {
+#[sinex_test]
+async fn test_event_validator_valid_filesystem_event(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = events::filesystem_event(
         "file.created",
         "/home/user/document.txt"
     );
     validation_test_utils::assert_valid_event(&event);
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_valid_terminal_event() {
+#[sinex_test]
+async fn test_event_validator_valid_terminal_event(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = events::kitty_event("ls -la /home");
     validation_test_utils::assert_valid_event(&event);
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_valid_window_manager_event() {
+#[sinex_test]
+async fn test_event_validator_valid_window_manager_event(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = events::hyprland_event(
         "window.focus",
         json!({
@@ -36,10 +39,11 @@ fn test_event_validator_valid_window_manager_event() {
         })
     );
     validation_test_utils::assert_valid_event(&event);
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_invalid_empty_source() {
+#[sinex_test]
+async fn test_event_validator_invalid_empty_source(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = RawEventBuilder::new(
         "", // Empty source
         "file.created",
@@ -47,10 +51,11 @@ fn test_event_validator_invalid_empty_source() {
     ).build();
     
     validation_test_utils::assert_invalid_event(&event, "source");
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_invalid_empty_event_type() {
+#[sinex_test]
+async fn test_event_validator_invalid_empty_event_type(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let event = RawEventBuilder::new(
         "filesystem",
         "", // Empty event type
@@ -58,10 +63,11 @@ fn test_event_validator_invalid_empty_event_type() {
     ).build();
     
     validation_test_utils::assert_invalid_event(&event, "event_type");
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_invalid_null_payload() {
+#[sinex_test]
+async fn test_event_validator_invalid_null_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     let event = RawEventBuilder::new(
@@ -72,10 +78,11 @@ fn test_event_validator_invalid_null_payload() {
     
     let result = validator.validate(&event);
     assert!(result.is_err(), "Event with null payload should fail validation");
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_filesystem_missing_path() {
+#[sinex_test]
+async fn test_event_validator_filesystem_missing_path(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     let event = RawEventBuilder::new(
@@ -95,10 +102,11 @@ fn test_event_validator_filesystem_missing_path() {
         let error = result.unwrap_err();
         assert!(error.to_string().contains("path") || error.to_string().contains("required"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_filesystem_invalid_path() {
+#[sinex_test]
+async fn test_event_validator_filesystem_invalid_path(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     // Test with various invalid path scenarios
     let invalid_paths = [
         "", // Empty path
@@ -125,10 +133,11 @@ fn test_event_validator_filesystem_invalid_path() {
             assert!(error.to_string().contains("path") || error.to_string().contains("invalid"));
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_terminal_invalid_exit_code() {
+#[sinex_test]
+async fn test_event_validator_terminal_invalid_exit_code(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     let event = RawEventBuilder::new(
@@ -144,10 +153,11 @@ fn test_event_validator_terminal_invalid_exit_code() {
     let _result = validator.validate(&event);
     // The validator should handle this gracefully, whether it passes or fails
     // This tests that extreme values don't cause panics
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_large_payload() {
+#[sinex_test]
+async fn test_event_validator_large_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // Create a large payload
@@ -166,10 +176,11 @@ fn test_event_validator_large_payload() {
     let _result = validator.validate(&event);
     // The validator should handle large payloads gracefully
     // This might pass or fail depending on size limits, but shouldn't panic
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_deeply_nested_payload() {
+#[sinex_test]
+async fn test_event_validator_deeply_nested_payload(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // Create deeply nested JSON
@@ -189,10 +200,11 @@ fn test_event_validator_deeply_nested_payload() {
     
     let _result = validator.validate(&event);
     // Should handle deep nesting without stack overflow
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_unicode_content() {
+#[sinex_test]
+async fn test_event_validator_unicode_content(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     let event = RawEventBuilder::new(
@@ -208,10 +220,11 @@ fn test_event_validator_unicode_content() {
     
     let result = validator.validate(&event);
     assert!(result.is_ok(), "Unicode content should be handled correctly");
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_concurrent_validation() {
+#[sinex_test]
+async fn test_event_validator_concurrent_validation(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     use std::thread;
     
     let validator = Arc::new(EventValidator::new());
@@ -240,10 +253,11 @@ fn test_event_validator_concurrent_validation() {
         let result = handle.join().unwrap();
         assert!(result.is_ok(), "Concurrent validation should succeed");
     }
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_unknown_source() {
+#[sinex_test]
+async fn test_event_validator_unknown_source(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     let event = RawEventBuilder::new(
@@ -255,10 +269,11 @@ fn test_event_validator_unknown_source() {
     let _result = validator.validate(&event);
     // Should handle unknown sources gracefully - might pass or fail
     // depending on validation policy, but shouldn't panic
+    Ok(())
 }
 
-#[test]
-fn test_event_validator_hardcoded_rules() {
+#[sinex_test]
+async fn test_event_validator_hardcoded_rules(_ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {
     let validator = EventValidator::new();
     
     // Test that hardcoded validation rules are working
@@ -285,4 +300,5 @@ fn test_event_validator_hardcoded_rules() {
             // The test ensures the validator handles all cases gracefully
         }
     }
+    Ok(())
 }
