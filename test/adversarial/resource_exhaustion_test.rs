@@ -2,9 +2,7 @@ use crate::common::prelude::*;
 use sinex_collector::config::{CollectorConfig, ConfigManager};
 use tokio::sync::Mutex;
 use crate::common::resources;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use tokio::time::{timeout, Duration};
-use std::process::Command;
+use std::sync::Arc;
 
 #[sinex_test(timeout = 60)]
 async fn test_unbounded_file_descriptor_explosion(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> {

@@ -3,7 +3,7 @@ use chrono::Utc;
 use crate::common::timing_optimization::replacements::{wait_for_filtered_event_count};
 use futures::future::join_all;
 use tokio::time::{timeout, Duration};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[sinex_test]
@@ -334,12 +334,15 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box
     for i in 0..10000 {
         let event = events::large_payload_test_event(1024);
         
-        insert_event(&pool, &event).await.unwrap();
+        insert_event(pool, &event).await.unwrap();
         
         if i % 1000 == 0 {
             println!("  Inserted {} events", i);
         }
     }
+    
+    // Convert to Arc for multi-threading
+    let pool = Arc::new(pool.clone());
     
     // Simulate compression by running queries that would conflict
     let query_tasks = vec![
@@ -350,7 +353,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box
                 let start = Instant::now();
                 // Use timing utility for count query during compression stress
                 let count = wait_for_filtered_event_count(
-                    &pool,
+                    &*pool,
                     "source = $1",
                     &["compression_test"],
                     0, // Accept any count
@@ -373,7 +376,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box
                 let start = Instant::now();
                 // Use timing utility for range scan during compression stress
                 let count = wait_for_filtered_event_count(
-                    &pool,
+                    &*pool,
                     "source = $1 AND ts_ingest >= $2",
                     &["compression_test"],  // Note: can't bind timestamp easily, but this is a stress test
                     0, // Accept any count
@@ -405,7 +408,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> Result<(), Box
                     GROUP BY minute
                     ORDER BY minute
                     "#
-                ).fetch_all(pool).await;
+                ).fetch_all(&*pool).await;
                 
                 match result {
                     Ok(rows) => format!("Aggregation: {} buckets in {:?}", rows.len(), start.elapsed()),

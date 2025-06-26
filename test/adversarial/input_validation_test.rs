@@ -463,7 +463,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> Result<(), Box<dyn s
         "1.0.0",
         "Valid test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Test malformed event creation
