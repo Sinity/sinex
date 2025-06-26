@@ -184,7 +184,7 @@ pub mod utils {
             r#"
             SELECT COUNT(*) FROM (
                 SELECT 1 FROM sinex_schemas.work_queue wq
-                LEFT JOIN raw.events e ON wq.raw_event_id = e.id::uuid
+                LEFT JOIN raw.events e ON wq.raw_event_id::uuid = e.id::uuid
                 WHERE e.id IS NULL
             ) violations
             "#

@@ -109,7 +109,7 @@ pub mod utils {
     }
     
     /// Create test events to verify collector is processing
-    pub fn create_test_events_batch(count: usize) -> Vec<crate::common::events::RawEvent> {
+    pub fn create_test_events_batch(count: usize) -> Vec<RawEvent> {
         (0..count).map(|i| {
             crate::common::event_builders::EventBuilder::generic("test_source", "collector.test")
                 .payload(json!({ "index": i, "test_id": uuid::Uuid::new_v4() }))

@@ -94,13 +94,13 @@ pub mod utils {
         source_name: &str,
         min_events: usize,
         timeout_secs: u64
-    ) -> Result<Vec<crate::common::events::DbRawEvent>> {
+    ) -> Result<Vec<RawEvent>> {
         let start = std::time::Instant::now();
         let timeout_duration = Duration::from_secs(timeout_secs);
         
         loop {
             let events = sqlx::query_as!(
-                crate::common::events::DbRawEvent,
+                RawEvent,
                 r#"
                 SELECT id::uuid as "id: Ulid", source, event_type, ts_ingest, ts_orig, 
                        host, ingestor_version, payload_schema_id::uuid as "payload_schema_id: Option<Ulid>", payload
@@ -139,19 +139,27 @@ pub mod utils {
     }
     
     /// Validation error types
-    #[derive(Debug, thiserror::Error)]
+    #[derive(Debug)]
     pub enum ValidationError {
-        #[error("Missing required field: {field}")]
         MissingField { field: String },
-        
-        #[error("Invalid field value: {field} = {value}")]
         InvalidValue { field: String, value: String },
     }
+    
+    impl std::fmt::Display for ValidationError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ValidationError::MissingField { field } => write!(f, "Missing required field: {}", field),
+                ValidationError::InvalidValue { field, value } => write!(f, "Invalid field value: {} = {}", field, value),
+            }
+        }
+    }
+    
+    impl std::error::Error for ValidationError {}
     
     /// Create mock event source for testing
     pub struct MockEventSource {
         pub name: String,
-        pub events_to_generate: Vec<crate::common::events::RawEvent>,
+        pub events_to_generate: Vec<RawEvent>,
         pub events_sent: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
     
@@ -164,14 +172,14 @@ pub mod utils {
             }
         }
         
-        pub fn with_events(mut self, events: Vec<crate::common::events::RawEvent>) -> Self {
+        pub fn with_events(mut self, events: Vec<RawEvent>) -> Self {
             self.events_to_generate = events;
             self
         }
         
         pub async fn simulate_events(
             &self,
-            tx: tokio::sync::mpsc::Sender<crate::common::events::RawEvent>
+            tx: tokio::sync::mpsc::Sender<RawEvent>
         ) -> Result<()> {
             for event in &self.events_to_generate {
                 tx.send(event.clone()).await

@@ -99,7 +99,7 @@ pub mod utils {
     }
     
     /// Generate test data with specific characteristics
-    pub fn generate_adversarial_events(count: usize, attack_pattern: &str) -> Vec<crate::common::events::RawEvent> {
+    pub fn generate_adversarial_events(count: usize, attack_pattern: &str) -> Vec<RawEvent> {
         (0..count).map(|i| {
             crate::common::events::generic_adversarial_event(
                 "adversarial_test",

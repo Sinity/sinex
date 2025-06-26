@@ -7,14 +7,14 @@
 
 use crate::common::prelude::*;
 use std::collections::{HashSet, HashMap};
-use std::sync::{Arc, Mutex};
-use once_cell::sync::Lazy;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Global test coverage tracker
-static COVERAGE_TRACKER: Lazy<Arc<Mutex<CoverageTracker>>> = Lazy::new(|| {
-    Arc::new(Mutex::new(CoverageTracker::new()))
-});
+static COVERAGE_TRACKER: OnceLock<Arc<Mutex<CoverageTracker>>> = OnceLock::new();
+
+fn get_coverage_tracker() -> &'static Arc<Mutex<CoverageTracker>> {
+    COVERAGE_TRACKER.get_or_init(|| Arc::new(Mutex::new(CoverageTracker::new())))
+}
 
 /// Track what aspects of the system are being tested
 #[derive(Debug, Default)]
@@ -50,27 +50,27 @@ impl CoverageTracker {
     }
     
     pub fn record_event_type_tested(source: &str, event_type: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.tested_event_types.insert((source.to_string(), event_type.to_string()));
     }
     
     pub fn record_validation_rule(rule: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.validation_rules_tested.insert(rule.to_string());
     }
     
     pub fn record_error_condition(condition: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.error_conditions_tested.insert(condition.to_string());
     }
     
     pub fn record_concurrency_scenario(scenario: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.concurrency_scenarios.insert(scenario.to_string());
     }
     
     pub fn record_edge_case(category: &str, case: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.edge_cases
             .entry(category.to_string())
             .or_insert_with(Vec::new)
@@ -78,12 +78,12 @@ impl CoverageTracker {
     }
     
     pub fn record_db_operation(operation: &str) {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.db_operations.insert(operation.to_string());
     }
     
     pub fn get_coverage_report() -> CoverageReport {
-        let tracker = COVERAGE_TRACKER.lock().unwrap();
+        let tracker = get_coverage_tracker().lock().unwrap();
         CoverageReport {
             event_types_count: tracker.tested_event_types.len(),
             validation_rules_count: tracker.validation_rules_tested.len(),
@@ -103,7 +103,7 @@ impl CoverageTracker {
     }
     
     pub fn reset() {
-        let mut tracker = COVERAGE_TRACKER.lock().unwrap();
+        let mut tracker = get_coverage_tracker().lock().unwrap();
         *tracker = CoverageTracker::new();
     }
 }

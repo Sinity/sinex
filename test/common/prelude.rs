@@ -22,11 +22,12 @@ pub use serde_json::{json, Value};
 pub use sinex_ulid::Ulid;
 pub use sinex_core::{
     EventSource, EventSourceContext, 
-    RawEvent, RawEventBuilder,
+    RawEventBuilder,
     sources, event_type_constants,
 };
 pub use sinex_db::{
     queries, run_migrations,
+    models::RawEvent,
 };
 // ===== Async Runtime =====
 pub use tokio::sync::{mpsc, Barrier};
