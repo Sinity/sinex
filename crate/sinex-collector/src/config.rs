@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_core::ConfigValue;
+use sinex_core::{ConfigValue, ConfigExtractor};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -269,103 +269,78 @@ impl CollectorConfig {
     
     /// Validate Atuin-specific configuration
     fn validate_atuin_config(&self, config: &ConfigValue) -> Result<()> {
-        if let Some(table) = config.as_table() {
-            if let Some(db_path) = table.get("db_path") {
-                if let Some(path_str) = db_path.as_str() {
-                    // Check if path is absolute (not starting with ~, which is relative to home)
-                    if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
-                        return Err(anyhow!("db_path must be an absolute path or start with ~/"));
-                    }
-                } else {
-                    return Err(anyhow!("db_path must be a string"));
-                }
-            }
-            
-            if let Some(poll_interval) = table.get("polling_interval_secs") {
-                if let Some(interval) = poll_interval.as_integer() {
-                    if interval <= 0 {
-                        return Err(anyhow!("polling_interval_secs must be greater than 0"));
-                    }
-                } else {
-                    return Err(anyhow!("polling_interval_secs must be an integer"));
-                }
+        // Validate path format if present
+        if let Some(path_str) = config.optional_str("db_path") {
+            if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
+                return Err(anyhow!("db_path must be an absolute path or start with ~/"));
             }
         }
+        
+        // Validate polling interval range if present  
+        if let Some(interval) = config.optional_i64("polling_interval_secs") {
+            if interval <= 0 {
+                return Err(anyhow!("polling_interval_secs must be greater than 0"));
+            }
+        }
+        
         Ok(())
     }
     
     /// Validate Kitty terminal configuration
     fn validate_kitty_config(&self, config: &ConfigValue) -> Result<()> {
-        if let Some(table) = config.as_table() {
-            if let Some(socket_path) = table.get("kitty_socket_path") {
-                if let Some(path_str) = socket_path.as_str() {
-                    if !Path::new(path_str).is_absolute() {
-                        return Err(anyhow!("kitty_socket_path must be an absolute path"));
-                    }
-                } else {
-                    return Err(anyhow!("kitty_socket_path must be a string"));
-                }
-            }
-            
-            if let Some(max_lines) = table.get("max_scrollback_lines") {
-                if let Some(lines) = max_lines.as_integer() {
-                    if lines < 100 || lines > 1_000_000 {
-                        return Err(anyhow!("max_scrollback_lines must be between 100 and 1,000,000"));
-                    }
-                } else {
-                    return Err(anyhow!("max_scrollback_lines must be an integer"));
-                }
+        // Validate socket path format if present
+        if let Some(path_str) = config.optional_str("kitty_socket_path") {
+            if !Path::new(path_str).is_absolute() {
+                return Err(anyhow!("kitty_socket_path must be an absolute path"));
             }
         }
+        
+        // Validate scrollback lines range if present
+        if let Some(lines) = config.optional_i64("max_scrollback_lines") {
+            if lines < 100 || lines > 1_000_000 {
+                return Err(anyhow!("max_scrollback_lines must be between 100 and 1,000,000"));
+            }
+        }
+        
         Ok(())
     }
     
     /// Validate filesystem monitoring configuration
     fn validate_filesystem_config(&self, config: &ConfigValue) -> Result<()> {
-        if let Some(table) = config.as_table() {
-            if let Some(watch_patterns) = table.get("watch_patterns") {
-                if let Some(patterns) = watch_patterns.as_array() {
-                    for pattern in patterns {
-                        if let Some(pattern_str) = pattern.as_str() {
-                            // Basic validation - should start with / or ~/
-                            if !pattern_str.starts_with('/') && !pattern_str.starts_with("~/") {
-                                return Err(anyhow!("Watch patterns should be absolute paths or start with ~/"));
-                            }
-                        } else {
-                            return Err(anyhow!("Watch patterns must be strings"));
-                        }
-                    }
-                } else {
-                    return Err(anyhow!("watch_patterns must be an array"));
+        // Validate watch patterns if present
+        if let Ok(patterns_array) = config.require_array("watch_patterns") {
+            for (i, pattern_value) in patterns_array.iter().enumerate() {
+                let pattern_str = pattern_value.as_str()
+                    .ok_or_else(|| anyhow!("Watch pattern at index {} must be a string", i))?;
+                
+                if !pattern_str.starts_with('/') && !pattern_str.starts_with("~/") {
+                    return Err(anyhow!(
+                        "Watch pattern '{}' should be an absolute path or start with ~/", 
+                        pattern_str
+                    ));
                 }
             }
         }
+        
         Ok(())
     }
     
     /// Validate clipboard monitoring configuration
     fn validate_clipboard_config(&self, config: &ConfigValue) -> Result<()> {
-        if let Some(table) = config.as_table() {
-            if let Some(poll_interval) = table.get("poll_interval_ms") {
-                if let Some(interval) = poll_interval.as_integer() {
-                    if interval <= 0 || interval > 60000 {
-                        return Err(anyhow!("poll_interval_ms must be between 1 and 60000"));
-                    }
-                } else {
-                    return Err(anyhow!("poll_interval_ms must be an integer"));
-                }
-            }
-            
-            if let Some(max_history) = table.get("max_history_entries") {
-                if let Some(entries) = max_history.as_integer() {
-                    if entries < 1 || entries > 100_000 {
-                        return Err(anyhow!("max_history_entries must be between 1 and 100,000"));
-                    }
-                } else {
-                    return Err(anyhow!("max_history_entries must be an integer"));
-                }
+        // Validate polling interval range if present
+        if let Some(interval) = config.optional_i64("poll_interval_ms") {
+            if interval <= 0 || interval > 60000 {
+                return Err(anyhow!("poll_interval_ms must be between 1 and 60000"));
             }
         }
+        
+        // Validate max history entries range if present
+        if let Some(entries) = config.optional_i64("max_history_entries") {
+            if entries < 1 || entries > 100_000 {
+                return Err(anyhow!("max_history_entries must be between 1 and 100,000"));
+            }
+        }
+        
         Ok(())
     }
     
