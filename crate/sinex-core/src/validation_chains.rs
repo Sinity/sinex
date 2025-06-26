@@ -55,7 +55,7 @@ impl ValidationChain<String> {
         if self.value.is_empty() {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: "cannot be empty".to_string(),
+                message: "cannot be empty".to_string(),
             });
         }
         self
@@ -66,7 +66,7 @@ impl ValidationChain<String> {
         if self.value.len() < min {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("must be at least {} characters long", min),
+                message: format!("must be at least {} characters long", min),
             });
         }
         self
@@ -77,7 +77,7 @@ impl ValidationChain<String> {
         if self.value.len() > max {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("must be at most {} characters long", max),
+                message: format!("must be at most {} characters long", max),
             });
         }
         self
@@ -88,7 +88,7 @@ impl ValidationChain<String> {
         if !pattern.is_match(&self.value) {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("does not match pattern: {}", pattern.as_str()),
+                message: format!("does not match pattern: {}", pattern.as_str()),
             });
         }
         self
@@ -101,7 +101,7 @@ impl ValidationChain<String> {
             Err(_) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
-                    reason: "contains unsafe path characters or patterns".to_string(),
+                    message: "contains unsafe path characters or patterns".to_string(),
                 });
             }
         }
@@ -115,7 +115,7 @@ impl ValidationChain<String> {
             Err(e) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
-                    reason: format!("invalid URL: {}", e),
+                    message: format!("invalid URL: {}", e),
                 });
             }
         }
@@ -127,7 +127,7 @@ impl ValidationChain<String> {
         if crate::validation::contains_shell_metacharacters(&self.value) {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: "contains shell metacharacters".to_string(),
+                message: "contains shell metacharacters".to_string(),
             });
         }
         self
@@ -141,7 +141,7 @@ impl ValidationChain<String> {
         if !predicate(&self.value) {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: error_message.to_string(),
+                message: error_message.to_string(),
             });
         }
         self
@@ -158,7 +158,7 @@ where
         if self.value < min {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("must be at least {}", min),
+                message: format!("must be at least {}", min),
             });
         }
         self
@@ -169,7 +169,7 @@ where
         if self.value > max {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("must be at most {}", max),
+                message: format!("must be at most {}", max),
             });
         }
         self
@@ -180,7 +180,7 @@ where
         if self.value < range.start || self.value >= range.end {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("must be between {} and {} (exclusive)", range.start, range.end),
+                message: format!("must be between {} and {} (exclusive)", range.start, range.end),
             });
         }
         self
@@ -247,7 +247,7 @@ impl ValidationChain<JsonValue> {
         if calculate_json_depth(&self.value) > depth {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                reason: format!("JSON nesting exceeds maximum depth of {}", depth),
+                message: format!("JSON nesting exceeds maximum depth of {}", depth),
             });
         }
         self
@@ -260,14 +260,14 @@ impl ValidationChain<JsonValue> {
                 if json_str.len() > bytes {
                     self.errors.push(ValidationError::InvalidValue {
                         field: self.field_name.clone(),
-                        reason: format!("JSON size ({} bytes) exceeds maximum of {} bytes", json_str.len(), bytes),
+                        message: format!("JSON size ({} bytes) exceeds maximum of {} bytes", json_str.len(), bytes),
                     });
                 }
             }
             Err(_) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
-                    reason: "failed to serialize JSON for size check".to_string(),
+                    message: "failed to serialize JSON for size check".to_string(),
                 });
             }
         }
@@ -281,7 +281,7 @@ impl ValidationChain<JsonValue> {
             Err(_) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
-                    reason: "JSON structure has excessive expansion ratio".to_string(),
+                    message: "JSON structure has excessive expansion ratio".to_string(),
                 });
             }
         }
@@ -296,7 +296,7 @@ impl ValidationChain<crate::RawEvent> {
         if self.value.source.is_empty() {
             self.errors.push(ValidationError::InvalidValue {
                 field: "source".to_string(),
-                reason: "cannot be empty".to_string(),
+                message: "cannot be empty".to_string(),
             });
         }
         self
@@ -307,7 +307,7 @@ impl ValidationChain<crate::RawEvent> {
         if self.value.event_type.is_empty() {
             self.errors.push(ValidationError::InvalidValue {
                 field: "event_type".to_string(),
-                reason: "cannot be empty".to_string(),
+                message: "cannot be empty".to_string(),
             });
         }
         self
@@ -419,7 +419,7 @@ impl MultiValidator {
                     // to store errors differently
                     all_errors.push(ValidationError::InvalidValue {
                         field: "multiple".to_string(),
-                        reason: msg,
+                        message: msg,
                     });
                 }
             }

@@ -82,6 +82,18 @@ pub enum ValidationError {
     
     #[error("Business rule validation failed: {0}")]
     BusinessRule(String),
+    
+    #[error("Invalid value for field {field}: {message}")]
+    InvalidValue { field: String, message: String },
+    
+    #[error("Invalid type for field {field}: expected {expected}, got {actual}")]
+    InvalidType { field: String, expected: String, actual: String },
+    
+    #[error("Schema validation error: {0}")]
+    SchemaValidation(String),
+    
+    #[error("Missing required field: {field}")]
+    MissingField { field: String },
 }
 
 impl From<std::io::Error> for CoreError {
@@ -111,8 +123,7 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 /// This is the canonical event structure used throughout the system.
 /// NOTE: This struct uses ULID directly. When using with SQLX queries,
 /// use type overrides like: `id::uuid as "id: _"` for proper type inference
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct RawEvent {
     pub id: Ulid,
     pub source: String,
