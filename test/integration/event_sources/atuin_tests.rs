@@ -3,7 +3,7 @@ use crate::common::{event_sources, resources};
 use chrono::{TimeZone, Utc};
 use sinex_core::{EventSource, EventType};
 use sinex_db::RawEvent;
-use sinex_events::atuin::{
+use sinex_events_terminal::atuin::{
     AtuinConfig, AtuinDbReader, CommandExecutedAtuin, CommandExecutedAtuinPayload,
 };
 

@@ -33,10 +33,10 @@
       clipboard = true;           # Clipboard content changes
       systemEvents = true;        # D-Bus, journal, system events
       
-      # Advanced features (disabled by default, enable when needed)
-      processMonitoring = false;  # All process launches (needs root)
-      networkMonitoring = false;  # Network connections (needs root)
-      screenCapture = false;      # Screenshots with OCR (privacy sensitive)
+      # Advanced features (disabled by default - not yet implemented)
+      processMonitoring = false;  # All process launches (not implemented)
+      networkMonitoring = false;  # Network connections (not implemented)
+      screenCapture = false;      # Screenshots with OCR (not implemented)
     };
 
     # Observability: simple on/off (on = full monitoring stack)

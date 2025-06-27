@@ -40,10 +40,10 @@ services.sinex = {
     clipboard = true;           # Clipboard changes
     systemEvents = true;        # D-Bus, journal, system
     
-    # Advanced (disabled by default)
-    processMonitoring = false;  # All processes (needs root)
-    networkMonitoring = false;  # Network (needs root) 
-    screenCapture = false;      # Screenshots (privacy sensitive)
+    # Advanced (disabled by default - not yet implemented)
+    processMonitoring = false;  # All processes (not implemented)
+    networkMonitoring = false;  # Network (not implemented) 
+    screenCapture = false;      # Screenshots (not implemented)
   };
   
   # Observability: simple on/off (on = full stack)

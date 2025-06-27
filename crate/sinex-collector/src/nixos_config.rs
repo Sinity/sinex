@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Direct configuration structure that matches NixOS module options
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,7 +185,7 @@ impl NixosConfig {
     /// Convert to the legacy CollectorConfig format for backward compatibility
     pub fn to_legacy_config(&self) -> Result<super::CollectorConfig> {
         let mut enabled_events = Vec::new();
-        let mut event_config = HashMap::new();
+        let event_config = HashMap::new();
         let mut flat_config = HashMap::new();
 
         // Build enabled events list based on source settings

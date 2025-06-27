@@ -413,9 +413,10 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> Result
 
     for (source_name, description) in available_sources {
         let config_info = verify_event_source_config(source_name, description).await?;
+        let is_available = config_info["available"].as_bool().unwrap_or(false);
         event_sources.insert(source_name.to_string(), config_info);
 
-        if config_info["available"].as_bool().unwrap_or(false) {
+        if is_available {
             messages.push(format!("✓ Event source '{}' is available", source_name));
         } else {
             messages.push(format!("ℹ Event source '{}' is not available", source_name));

@@ -306,9 +306,8 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
     for service_name in dependency_services {
         match check_systemd_service(service_name).await {
             Ok(service_data) => {
-                service_info.insert(service_name.to_string(), service_data);
-
                 let status = service_data["status"].as_str().unwrap_or("unknown");
+                service_info.insert(service_name.to_string(), service_data.clone());
                 if status == "active" {
                     messages.push(format!("✓ Dependency service '{}' is active", service_name));
                 } else {

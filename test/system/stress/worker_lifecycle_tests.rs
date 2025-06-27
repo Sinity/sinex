@@ -390,7 +390,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -399,7 +399,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 

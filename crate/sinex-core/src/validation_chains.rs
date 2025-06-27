@@ -1,7 +1,6 @@
 use crate::{CoreError, JsonValue, Result, ValidationError};
 use regex::Regex;
 use serde_json::Value;
-use std::marker::PhantomData;
 use url::Url;
 
 /// A validation chain that accumulates errors and provides fluent API for validation
@@ -448,28 +447,6 @@ impl Default for MultiValidator {
     }
 }
 
-// Wrapper to make ValidationChain implement Validator
-struct ValidationChainValidator<T> {
-    chain: ValidationChain<T>,
-    _phantom: PhantomData<T>,
-}
-
-impl<T: Send> Validator for ValidationChainValidator<T> {
-    fn validate(&self) -> Result<()> {
-        if self.chain.is_valid() {
-            Ok(())
-        } else {
-            let combined_message = self
-                .chain
-                .errors()
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-            Err(CoreError::Validation(combined_message))
-        }
-    }
-}
 
 // Helper function to calculate JSON depth
 fn calculate_json_depth(value: &Value) -> usize {

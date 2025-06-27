@@ -1,9 +1,10 @@
 use crate::common::prelude::*;
 use crate::common::{event_sources, resources};
-use sinex_events::{
-    asciinema::AsciinemaRecorder, clipboard::ClipboardMonitor, filesystem::FilesystemMonitor,
-    scrollback::ScrollbackCapture, terminal::KittySocketListener,
+use sinex_events_terminal::{
+    asciinema::AsciinemaRecorder, scrollback::ScrollbackCapture, terminal::KittySocketListener,
 };
+use sinex_events_desktop::clipboard::ClipboardMonitor;
+use sinex_events_fs::filesystem::FilesystemMonitor;
 use std::fs;
 
 #[sinex_test]

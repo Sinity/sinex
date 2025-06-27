@@ -1,4 +1,5 @@
 use crate::common::prelude::*;
+use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Test transaction rollback scenarios

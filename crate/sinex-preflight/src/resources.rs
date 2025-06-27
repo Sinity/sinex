@@ -50,8 +50,6 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
     // CPU load verification
     match verify_cpu_capacity(&mut messages).await {
         Ok(cpu_info) => {
-            details.insert("cpu", cpu_info);
-
             // Check if system is under high load
             if let Some(load) = cpu_info.get("load_average_1min").and_then(|v| v.as_f64()) {
                 if load > 8.0 {
@@ -59,6 +57,8 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
                     has_warnings = true;
                 }
             }
+            
+            details.insert("cpu", cpu_info);
         }
         Err(e) => {
             messages.push(format!("✗ CPU verification failed: {}", e));
@@ -248,10 +248,10 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
     use sysinfo::{CpuExt, System, SystemExt};
 
     let mut sys = System::new_all();
-    sys.refresh_cpu();
+    sys.refresh_cpu_all();
 
     let cpu_count = sys.cpus().len();
-    let load_avg = sys.load_average();
+    let load_avg = System::load_average();
 
     // Basic CPU requirements for Sinex
     let min_cpu_count = 2;
@@ -297,9 +297,10 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Val
     for dir_path in directories_to_check {
         match check_directory_permissions(dir_path).await {
             Ok(perms) => {
+                let is_writable = perms["writable"].as_bool().unwrap_or(false);
                 permissions_info.insert(dir_path.to_string(), perms);
 
-                if perms["writable"].as_bool().unwrap_or(false) {
+                if is_writable {
                     messages.push(format!("✓ Directory {} is writable", dir_path));
                 } else {
                     messages.push(format!("✗ Directory {} is not writable", dir_path));

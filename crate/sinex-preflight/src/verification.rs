@@ -10,11 +10,13 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use sinex_db::{ulid_to_uuid, uuid_to_ulid};
+use sinex_ulid::Ulid;
 use sqlx::PgPool;
+use uuid::Uuid;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use crate::VerificationStatus;
 
@@ -238,36 +240,32 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value
 }
 
 async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
-    let test_id = Uuid::new_v4();
+    let _test_id = Ulid::new();
     let test_source = "sinex-preflight-integration-test";
     let test_event_type = "verification.crud_test";
 
     // CREATE: Insert a test event
     let insert_result = sqlx::query!(
         r#"
-        INSERT INTO raw.events (id, source, event_type, payload, ts_ingest)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO raw.events (source, event_type, host, payload)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id::uuid as "id!"
         "#,
-        test_id,
         test_source,
         test_event_type,
+        "localhost",
         json!({"test": "crud_operations", "operation": "insert"})
     )
-    .execute(pool)
+    .fetch_one(pool)
     .await
     .context("Failed to insert test event")?;
-
-    if insert_result.rows_affected() != 1 {
-        bail!(
-            "Insert operation affected {} rows, expected 1",
-            insert_result.rows_affected()
-        );
-    }
+    
+    let inserted_id = uuid_to_ulid(insert_result.id);
 
     // READ: Query the test event
     let read_result = sqlx::query!(
-        "SELECT id, source, event_type, payload FROM raw.events WHERE id = $1",
-        test_id
+        "SELECT id::uuid as \"id!\", source, event_type, payload FROM raw.events WHERE id = $1::uuid::ulid",
+        ulid_to_uuid(inserted_id)
     )
     .fetch_optional(pool)
     .await
@@ -285,9 +283,9 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 
     // UPDATE: Modify the test event payload
     let update_result = sqlx::query!(
-        "UPDATE raw.events SET payload = $1 WHERE id = $2",
+        "UPDATE raw.events SET payload = $1 WHERE id = $2::uuid::ulid",
         json!({"test": "crud_operations", "operation": "update", "modified": true}),
-        test_id
+        ulid_to_uuid(inserted_id)
     )
     .execute(pool)
     .await
@@ -301,7 +299,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // DELETE: Remove the test event
-    let delete_result = sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id)
+    let delete_result = sqlx::query!("DELETE FROM raw.events WHERE id = $1::uuid::ulid", ulid_to_uuid(inserted_id))
         .execute(pool)
         .await
         .context("Failed to delete test event")?;
@@ -314,7 +312,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // Verify deletion
-    let verify_result = sqlx::query!("SELECT id FROM raw.events WHERE id = $1", test_id)
+    let verify_result = sqlx::query!("SELECT id FROM raw.events WHERE id = $1::uuid::ulid", ulid_to_uuid(inserted_id))
         .fetch_optional(pool)
         .await
         .context("Failed to verify deletion")?;
@@ -333,20 +331,20 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 }
 
 async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
-    let test_id_1 = Uuid::new_v4();
-    let test_id_2 = Uuid::new_v4();
+    let _test_id_1 = Ulid::new();
+    let _test_id_2 = Ulid::new();
 
     // Test successful transaction
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
     sqlx::query!(
         r#"
-        INSERT INTO raw.events (id, source, event_type, payload, ts_ingest)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO raw.events (source, event_type, host, payload)
+        VALUES ($1, $2, $3, $4)
         "#,
-        test_id_1,
         "sinex-preflight-tx-test",
         "verification.transaction_test",
+        "localhost",
         json!({"test": "transaction", "phase": "commit"})
     )
     .execute(&mut *tx)
@@ -355,13 +353,18 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     tx.commit().await.context("Failed to commit transaction")?;
 
-    // Verify committed transaction
-    let committed_event = sqlx::query!("SELECT id FROM raw.events WHERE id = $1", test_id_1)
-        .fetch_optional(pool)
-        .await
-        .context("Failed to verify committed transaction")?;
+    // Verify committed transaction exists (we can't predict the auto-generated ID)
+    let committed_event = sqlx::query!(
+        "SELECT COUNT(*) as count FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "sinex-preflight-tx-test",
+        "verification.transaction_test", 
+        "commit"
+    )
+    .fetch_one(pool)
+    .await
+    .context("Failed to verify committed transaction")?;
 
-    if committed_event.is_none() {
+    if committed_event.count.unwrap_or(0) == 0 {
         bail!("Committed transaction event not found");
     }
 
@@ -373,12 +376,12 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     sqlx::query!(
         r#"
-        INSERT INTO raw.events (id, source, event_type, payload, ts_ingest)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO raw.events (source, event_type, host, payload)
+        VALUES ($1, $2, $3, $4)
         "#,
-        test_id_2,
         "sinex-preflight-tx-test",
         "verification.transaction_test",
+        "localhost",
         json!({"test": "transaction", "phase": "rollback"})
     )
     .execute(&mut *tx)
@@ -389,21 +392,31 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
         .await
         .context("Failed to rollback transaction")?;
 
-    // Verify rolled back transaction
-    let rollback_event = sqlx::query!("SELECT id FROM raw.events WHERE id = $1", test_id_2)
-        .fetch_optional(pool)
-        .await
-        .context("Failed to verify rollback transaction")?;
+    // Verify rolled back transaction doesn't exist
+    let rollback_event = sqlx::query!(
+        "SELECT COUNT(*) as count FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "sinex-preflight-tx-test",
+        "verification.transaction_test",
+        "rollback"
+    )
+    .fetch_one(pool)
+    .await
+    .context("Failed to verify rollback transaction")?;
 
-    if rollback_event.is_some() {
+    if rollback_event.count.unwrap_or(0) > 0 {
         bail!("Rollback transaction event found (should not exist)");
     }
 
     // Cleanup committed event
-    sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id_1)
-        .execute(pool)
-        .await
-        .context("Failed to cleanup committed test event")?;
+    sqlx::query!(
+        "DELETE FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "sinex-preflight-tx-test",
+        "verification.transaction_test",
+        "commit"
+    )
+    .execute(pool)
+    .await
+    .context("Failed to cleanup committed test event")?;
 
     Ok(())
 }
@@ -418,21 +431,21 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
     for i in 0..operation_count {
         let pool_clone = pool.clone();
         join_set.spawn(async move {
-            let test_id = Uuid::new_v4();
             let result = sqlx::query!(
                 r#"
-                INSERT INTO raw.events (id, source, event_type, payload, ts_ingest)
-                VALUES ($1, $2, $3, $4, NOW())
+                INSERT INTO raw.events (source, event_type, host, payload)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id::uuid as "id!"
                 "#,
-                test_id,
                 "sinex-preflight-concurrent-test",
                 "verification.concurrent_test",
+                "localhost",
                 json!({"test": "concurrent", "operation_id": i})
             )
-            .execute(&pool_clone)
+            .fetch_one(&pool_clone)
             .await;
 
-            (test_id, result)
+            result
         });
     }
 
@@ -442,11 +455,11 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
     // Wait for all operations to complete
     while let Some(result) = join_set.join_next().await {
         match result {
-            Ok((test_id, Ok(_))) => {
+            Ok(Ok(insert_result)) => {
                 successful_operations += 1;
-                test_ids.push(test_id);
+                test_ids.push(uuid_to_ulid(insert_result.id));
             }
-            Ok((_, Err(e))) => {
+            Ok(Err(e)) => {
                 warn!("Concurrent operation failed: {}", e);
             }
             Err(e) => {
@@ -455,13 +468,15 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
         }
     }
 
-    // Cleanup test events
-    for test_id in test_ids {
-        sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id)
-            .execute(pool)
-            .await
-            .ok(); // Ignore cleanup errors
-    }
+    // Cleanup test events using source and event_type filter 
+    sqlx::query!(
+        "DELETE FROM raw.events WHERE source = $1 AND event_type = $2",
+        "sinex-preflight-concurrent-test",
+        "verification.concurrent_test"
+    )
+    .execute(pool)
+    .await
+    .ok(); // Ignore cleanup errors
 
     if successful_operations == 0 {
         bail!("No concurrent operations succeeded");
@@ -847,7 +862,7 @@ async fn test_database_performance(pool: &PgPool) -> Result<Value> {
     let total_time: f64 = query_times.iter().sum();
     let average_time = total_time / query_times.len() as f64;
     let min_time = query_times.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-    let max_time = query_times.iter().fold(0.0, |a, &b| a.max(b));
+    let max_time = query_times.iter().fold(0.0f64, |a, &b| a.max(b));
 
     Ok(json!({
         "query_count": query_count,
@@ -867,7 +882,7 @@ async fn test_memory_usage() -> Result<Value> {
 
     let current_pid = std::process::id();
 
-    if let Some(process) = sys.process(current_pid.into()) {
+    if let Some(process) = sys.process((current_pid as usize).into()) {
         Ok(json!({
             "memory_usage_kb": process.memory(),
             "virtual_memory_kb": process.virtual_memory(),

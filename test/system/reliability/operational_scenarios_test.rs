@@ -165,6 +165,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             .ok(); // Ignore errors if table doesn't exist
 
             // Try to run migrations with corrupted state
+            let migration_result = sqlx::migrate!("./migrations").run(&*pool).await;
 
             match migration_result {
                 Ok(()) => {

@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
 use sinex_core::{EventSource, EventType};
-use sinex_events::terminal::{
+use sinex_events_terminal::terminal::{
     CommandExecuted, CommandExecutedPayload, KittyConfig, KittySocketListener,
 };
 // use crate::common::resources;  // Not needed anymore

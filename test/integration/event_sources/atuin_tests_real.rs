@@ -1,7 +1,7 @@
 use crate::common::event_sources;
 use crate::common::prelude::*;
 use sinex_core::EventSource;
-use sinex_events::atuin::{AtuinConfig, AtuinDbReader, CommandExecutedAtuinPayload};
+use sinex_events_terminal::atuin::{AtuinConfig, AtuinDbReader, CommandExecutedAtuinPayload};
 
 /// Get real Atuin database path or create minimal test database if needed
 fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {

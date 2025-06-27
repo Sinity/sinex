@@ -2,9 +2,9 @@ use crate::common::event_sources;
 use crate::common::prelude::*;
 use sinex_core::{CoreError, EventSource, EventSourceContext, RawEventBuilder};
 use sinex_db::RawEvent;
-use sinex_events::{
-    clipboard::ClipboardMonitor, filesystem::FilesystemMonitor, terminal::KittySocketListener,
-};
+use sinex_events_desktop::clipboard::ClipboardMonitor;
+use sinex_events_fs::filesystem::FilesystemMonitor;
+use sinex_events_terminal::terminal::KittySocketListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::time::{sleep, timeout};
 

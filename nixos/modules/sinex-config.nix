@@ -94,23 +94,23 @@ in
         description = "Monitor D-Bus signals, journal, and system events";
       };
 
-      # Optional advanced sources (disabled by default)
+      # Optional advanced sources (disabled by default - not yet implemented)
       processMonitoring = mkOption {
         type = types.bool;
         default = false;
-        description = "Monitor all process launches (requires elevated permissions)";
+        description = "Monitor all process launches (not yet implemented)";
       };
 
       networkMonitoring = mkOption {
         type = types.bool;
         default = false;
-        description = "Monitor network connections (requires elevated permissions)";
+        description = "Monitor network connections (not yet implemented)";
       };
 
       screenCapture = mkOption {
         type = types.bool;
         default = false;
-        description = "Periodic screenshots with OCR (privacy sensitive)";
+        description = "Periodic screenshots with OCR (not yet implemented - privacy sensitive)";
       };
     };
 
@@ -275,6 +275,8 @@ in
       group = cfg.database.user;
       home = cfg.directories.state;
       createHome = true;
+      # Add to systemd-journal group for journal access
+      extraGroups = [ "systemd-journal" ];
     };
 
     users.groups.${cfg.database.user} = mkIf (cfg.database.user != "root") {};

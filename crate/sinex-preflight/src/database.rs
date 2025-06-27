@@ -10,7 +10,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
@@ -94,8 +94,9 @@ pub async fn verify_postgresql_extensions() -> Result<(VerificationStatus, Value
     for (extension_name, description) in required_extensions {
         match verify_single_extension(&pool, extension_name, description).await {
             Ok(status) => {
+                let is_available = status["available"].as_bool().unwrap_or(false);
                 extension_status.insert(extension_name.to_string(), status);
-                if status["available"].as_bool().unwrap_or(false) {
+                if is_available {
                     messages.push(format!("✓ Extension '{}' available", extension_name));
                 } else {
                     messages.push(format!("✗ Extension '{}' NOT available", extension_name));
@@ -340,26 +341,40 @@ async fn test_extension_functionality(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     messages: &mut Vec<String>,
 ) -> Result<()> {
-    // Test UUID generation
-    sqlx::query!("SELECT uuid_generate_v4() as test_uuid")
-        .fetch_one(&mut **tx)
-        .await
-        .context("Failed to test uuid-ossp functionality")?;
-
-    // Test ULID generation (if available)
-    if let Ok(_) = sqlx::query!("SELECT gen_ulid() as test_ulid")
+    // Test UUID generation (using standard PostgreSQL function)
+    if let Ok(_) = sqlx::query!("SELECT gen_random_uuid() as test_uuid")
         .fetch_one(&mut **tx)
         .await
     {
-        messages.push("✓ ULID generation tested".to_string());
+        messages.push("✓ UUID generation tested".to_string());
+    } else {
+        messages.push("⚠ UUID generation not available".to_string());
     }
 
-    // Test TimescaleDB (if available)
-    if let Ok(_) = sqlx::query!("SELECT timescaledb_version() as version")
+    // Test ULID generation (if available) - use dynamic query to avoid compile-time check
+    match sqlx::query("SELECT gen_ulid()::text as test_ulid")
         .fetch_one(&mut **tx)
         .await
     {
-        messages.push("✓ TimescaleDB functionality tested".to_string());
+        Ok(_) => {
+            messages.push("✓ ULID generation tested".to_string());
+        }
+        Err(_) => {
+            messages.push("⚠ ULID extension not available".to_string());
+        }
+    }
+
+    // Test TimescaleDB (if available) - use dynamic query to avoid compile-time check
+    match sqlx::query("SELECT timescaledb_version()::text as version")
+        .fetch_one(&mut **tx)
+        .await
+    {
+        Ok(_) => {
+            messages.push("✓ TimescaleDB functionality tested".to_string());
+        }
+        Err(_) => {
+            messages.push("⚠ TimescaleDB extension not available".to_string());
+        }
     }
 
     // Test JSON schema validation (if available)
@@ -430,7 +445,7 @@ async fn perform_migration_dry_run(
     info!("Performing migration dry-run");
 
     // Create a separate database connection for the dry-run
-    let database_url =
+    let _database_url =
         std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
 
     // For a true dry-run, we'd create a temporary database or use a transaction
@@ -481,7 +496,7 @@ async fn perform_migration_dry_run(
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 struct MigrationFile {
     version: i64,
     description: String,

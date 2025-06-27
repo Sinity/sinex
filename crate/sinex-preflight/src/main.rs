@@ -79,7 +79,7 @@ enum OutputFormat {
     Text,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Clone, Debug, Serialize, Deserialize, clap::ValueEnum, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 enum VerificationPhase {
     Database,
@@ -104,7 +104,7 @@ struct VerificationReport {
     errors: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 enum VerificationStatus {
     #[serde(rename = "PASS")]
     Pass,
@@ -308,11 +308,11 @@ async fn collect_system_info() -> Result<SystemInfo> {
 
     Ok(SystemInfo {
         hostname: gethostname::gethostname().to_string_lossy().to_string(),
-        uptime_seconds: sys.uptime(),
+        uptime_seconds: System::uptime(),
         available_memory_gb: sys.available_memory() as f64 / 1024.0 / 1024.0 / 1024.0,
         available_disk_gb: get_available_disk_space()?,
         cpu_count: sys.cpus().len(),
-        load_average: sys.load_average().one,
+        load_average: System::load_average().one,
     })
 }
 
