@@ -35,6 +35,13 @@ in
       description = "Sinex package to use";
     };
 
+    cliPackage = mkOption {
+      type = types.package;
+      default = pkgs.sinex-cli or (import ../. { }).packages.${pkgs.system}.sinexCli;
+      defaultText = literalExpression "pkgs.sinex-cli";
+      description = "Sinex CLI package to use";
+    };
+
     # Simplified target user configuration
     targetUser = mkOption {
       type = types.str;
@@ -219,7 +226,10 @@ in
 
   config = mkIf cfg.enable {
     # Environment packages
-    environment.systemPackages = with pkgs; [ asciinema ];
+    environment.systemPackages = with pkgs; [ 
+      asciinema 
+      cfg.cliPackage
+    ];
 
     # Apply preset configurations based on capture intensity
     services.sinex = mkMerge [

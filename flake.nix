@@ -76,6 +76,42 @@
               cp -r migrations $out/share/sinex/
             '';
           };
+          # Package the Python CLI tool
+          sinex-cli = pkgs.python3Packages.buildPythonApplication rec {
+            pname = "sinex-cli";
+            version = "0.1.0";
+            format = "other";
+            
+            src = ./cli;
+            
+            propagatedBuildInputs = with pkgs.python3Packages; [
+              click
+              psycopg2
+              rich
+              pyyaml
+            ];
+            
+            installPhase = ''
+              mkdir -p $out/bin
+              cp exo.py $out/bin/sinex-cli
+              chmod +x $out/bin/sinex-cli
+              
+              # Also provide 'exo' as an alias
+              ln -s $out/bin/sinex-cli $out/bin/exo
+            '';
+            
+            # Add a simple check to ensure the CLI can import dependencies
+            checkPhase = ''
+              $out/bin/sinex-cli --help > /dev/null
+            '';
+            
+            meta = with pkgs.lib; {
+              description = "Sinex CLI - Query your digital memory";
+              license = licenses.mit;
+              maintainers = [ ];
+            };
+          };
+
           # Build pg_jsonschema from pre-built deb
           pg_jsonschema = pkgs.stdenv.mkDerivation rec {
             pname = "pg_jsonschema";
@@ -111,6 +147,8 @@
             sinexPromoWorker = buildRustPackage "sinex-promo-worker";
             unifiedCollector = buildRustPackage "sinex-collector";
             healthAggregator = buildRustPackage "sinex-health-aggregator";
+            sinexPreflight = buildRustPackage "sinex-preflight";
+            sinexCli = sinex-cli;
             default = buildRustPackage "sinex-collector";
             inherit pg_jsonschema;
           };
