@@ -361,15 +361,15 @@ pub enum JsonType {
 
 impl JsonType {
     fn matches(&self, value: &Value) -> bool {
-        match (self, value) {
-            (JsonType::Null, Value::Null) => true,
-            (JsonType::Bool, Value::Bool(_)) => true,
-            (JsonType::Number, Value::Number(_)) => true,
-            (JsonType::String, Value::String(_)) => true,
-            (JsonType::Array, Value::Array(_)) => true,
-            (JsonType::Object, Value::Object(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self, value),
+            (JsonType::Null, Value::Null)
+                | (JsonType::Bool, Value::Bool(_))
+                | (JsonType::Number, Value::Number(_))
+                | (JsonType::String, Value::String(_))
+                | (JsonType::Array, Value::Array(_))
+                | (JsonType::Object, Value::Object(_))
+        )
     }
 }
 
@@ -405,7 +405,7 @@ impl MultiValidator {
     }
 
     /// Add a validator to the collection
-    pub fn add<T: Validator + 'static>(mut self, validator: T) -> Self {
+    pub fn with_validator<T: Validator + 'static>(mut self, validator: T) -> Self {
         self.validators.push(Box::new(validator));
         self
     }
@@ -415,17 +415,14 @@ impl MultiValidator {
         let mut all_errors = Vec::new();
 
         for validator in self.validators {
-            if let Err(e) = validator.validate() {
-                // Extract validation errors from CoreError
-                if let CoreError::Validation(msg) = e {
-                    // Parse the combined error message back into individual errors
-                    // This is a simplified approach - in production you might want
-                    // to store errors differently
-                    all_errors.push(ValidationError::InvalidValue {
-                        field: "multiple".to_string(),
-                        message: msg,
-                    });
-                }
+            if let Err(CoreError::Validation(msg)) = validator.validate() {
+                // Parse the combined error message back into individual errors
+                // This is a simplified approach - in production you might want
+                // to store errors differently
+                all_errors.push(ValidationError::InvalidValue {
+                    field: "multiple".to_string(),
+                    message: msg,
+                });
             }
         }
 

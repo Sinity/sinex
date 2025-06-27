@@ -8,6 +8,7 @@ use chrono::Utc;
 use sinex_ulid::Ulid;
 
 /// Insert a raw event with ULID type conversion (compile-time safe with manual mapping)
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_raw_event(
     pool: DbPoolRef<'_>,
     source: &str,
@@ -33,6 +34,7 @@ pub async fn insert_raw_event(
 }
 
 /// Insert a raw event with optional validation
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_raw_event_with_validator(
     pool: DbPoolRef<'_>,
     source: &str,
@@ -140,6 +142,7 @@ pub async fn insert_event_with_validator(
 }
 
 /// Register or update an agent manifest
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_agent_manifest(
     pool: DbPoolRef<'_>,
     agent_name: &str,
@@ -354,6 +357,7 @@ pub async fn update_agent_heartbeat(pool: DbPoolRef<'_>, agent_name: &str) -> Re
 }
 
 /// Insert an event into the DLQ
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_dlq_event(
     pool: DbPoolRef<'_>,
     failed_event_id: Ulid,

@@ -221,16 +221,17 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
     }
 }
 
+/*
 /// Specialized implementation for RawEvent channels with metrics
 /// Note: Temporarily disabled due to RawEvent being moved to sinex-db
-/*
 pub struct MonitoredEventSender {
     inner: mpsc::Sender<RawEvent>,
     monitor: ChannelMonitor,
     source_name: String,
 }*/
 
-/* MonitoredEventSender implementation temporarily commented out due to RawEvent move
+/*
+/// MonitoredEventSender implementation temporarily commented out due to RawEvent move
 impl MonitoredEventSender {
     /// Create a new monitored event sender
     pub fn new(sender: mpsc::Sender<RawEvent>, source_name: String) -> Self {
@@ -307,7 +308,7 @@ impl BackpressureManager {
             sleep(self.current_delay).await;
         } else if queue_depth < self.low_watermark {
             // Decrease delay when queue is draining
-            self.current_delay = self.current_delay / 2;
+            self.current_delay /= 2;
         }
     }
 

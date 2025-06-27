@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::VerificationStatus;
 
@@ -350,8 +350,6 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> Result<Value>
 }
 
 async fn test_toml_generation(messages: &mut Vec<String>) -> Result<Value> {
-    use std::process::Command;
-
     info!("Testing TOML configuration generation");
 
     // Test that we can generate a valid TOML configuration

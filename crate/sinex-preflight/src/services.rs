@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::VerificationStatus;
 

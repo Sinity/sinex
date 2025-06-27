@@ -18,13 +18,11 @@ fn parse_timeout_attr(attr: TokenStream) -> Option<u64> {
     }
 
     // Try to parse as a simple expression like `timeout = 30`
-    if let Ok(meta) = syn::parse::<Meta>(attr) {
-        if let Meta::NameValue(nv) = meta {
-            if nv.path.is_ident("timeout") {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Int(lit_int) = &expr_lit.lit {
-                        return lit_int.base10_parse().ok();
-                    }
+    if let Ok(Meta::NameValue(nv)) = syn::parse::<Meta>(attr) {
+        if nv.path.is_ident("timeout") {
+            if let Expr::Lit(expr_lit) = &nv.value {
+                if let Lit::Int(lit_int) = &expr_lit.lit {
+                    return lit_int.base10_parse().ok();
                 }
             }
         }
@@ -42,7 +40,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Validate it's async
     if input.sig.asyncness.is_none() {
-        return syn::Error::new_spanned(&input.sig.fn_token, "sinex_test functions must be async")
+        return syn::Error::new_spanned(input.sig.fn_token, "sinex_test functions must be async")
             .to_compile_error()
             .into();
     }

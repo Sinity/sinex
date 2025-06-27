@@ -173,10 +173,13 @@ fn navigate_path<'a>(value: &'a ConfigValue, path: &str) -> Result<&'a ConfigVal
     Ok(current)
 }
 
+/// Type alias for configuration validators to reduce complexity
+type ConfigValidatorFn = Box<dyn Fn(&ConfigValue) -> Result<()>>;
+
 /// Builder for configuration validation
 pub struct ConfigValidator {
     required_fields: Vec<String>,
-    validators: Vec<Box<dyn Fn(&ConfigValue) -> Result<()>>>,
+    validators: Vec<ConfigValidatorFn>,
 }
 
 impl ConfigValidator {

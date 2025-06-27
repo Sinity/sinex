@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::VerificationStatus;
 
@@ -112,7 +112,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
 }
 
 async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value> {
-    use sysinfo::{System, SystemExt};
+    use sysinfo::System;
 
     let mut sys = System::new_all();
     sys.refresh_memory();
@@ -245,7 +245,7 @@ fn get_disk_space(path: &str) -> Result<(f64, f64)> {
 }
 
 async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
-    use sysinfo::{CpuExt, System, SystemExt};
+    use sysinfo::System;
 
     let mut sys = System::new_all();
     sys.refresh_cpu_all();
@@ -409,7 +409,7 @@ async fn test_dns_resolution() -> Result<()> {
 }
 
 async fn test_localhost_connectivity() -> Result<()> {
-    use std::net::{SocketAddr, TcpStream};
+    use std::net::SocketAddr;
     use std::time::Duration;
 
     // Test localhost connectivity by attempting to connect to a common port
@@ -467,7 +467,7 @@ fn check_file_descriptor_limits() -> Result<Value> {
         getrlimit(Resource::RLIMIT_NOFILE).context("Failed to get file descriptor limits")?;
 
     let min_recommended = 1024;
-    let meets_requirements = soft.unwrap_or(0) >= min_recommended;
+    let meets_requirements = soft >= min_recommended;
 
     Ok(json!({
         "soft_limit": soft,

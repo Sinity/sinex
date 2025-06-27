@@ -5,9 +5,11 @@
  * This implements the Pre-Flight Verification Model for zero-downtime, safe deployments.
  */
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use sinex_db::ulid_to_uuid;
+use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -20,7 +22,6 @@ mod resources;
 mod services;
 mod verification;
 
-use verification::*;
 
 #[derive(Parser)]
 #[command(name = "sinex-preflight")]
@@ -301,7 +302,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult
 }
 
 async fn collect_system_info() -> Result<SystemInfo> {
-    use sysinfo::{CpuExt, System, SystemExt};
+    use sysinfo::System;
 
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -400,21 +401,17 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     sqlx::query!(
         r#"
         INSERT INTO component_heartbeats (
+            id,
             component_name,
-            instance_id,
             status,
-            metadata,
-            last_seen
-        ) VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (component_name, instance_id) 
-        DO UPDATE SET
-            status = EXCLUDED.status,
-            metadata = EXCLUDED.metadata,
-            last_seen = EXCLUDED.last_seen
+            binary_version,
+            metrics
+        ) VALUES ($1::uuid, $2, $3, $4, $5)
         "#,
+        ulid_to_uuid(Ulid::new()),
         "sinex-preflight",
-        report.verification_id.to_string(),
         status_str,
+        env!("CARGO_PKG_VERSION"),
         serde_json::to_value(report)?
     )
     .execute(&pool)
@@ -517,13 +514,13 @@ async fn generate_verification_report(
     let recent_verifications = sqlx::query!(
         r#"
         SELECT 
-            instance_id,
+            id::uuid as "id!",
             status,
-            metadata,
-            last_seen
+            metrics,
+            timestamp
         FROM component_heartbeats 
         WHERE component_name = 'sinex-preflight'
-        ORDER BY last_seen DESC
+        ORDER BY timestamp DESC
         LIMIT 10
         "#
     )
@@ -533,7 +530,8 @@ async fn generate_verification_report(
 
     let report = if detailed {
         serde_json::json!({
-            "recent_verifications": recent_verifications,
+            "verification_count": recent_verifications.len(),
+            "latest_status": recent_verifications.first().map(|v| &v.status),
             "system_info": collect_system_info().await?
         })
     } else {
@@ -550,7 +548,9 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 println!(
                     "  {} - {} ({})",
-                    verification.last_seen, verification.status, verification.instance_id
+                    verification.timestamp.map_or("N/A".to_string(), |t| t.to_string()), 
+                    verification.status, 
+                    verification.id
                 );
             }
         }

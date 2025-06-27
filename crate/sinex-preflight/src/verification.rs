@@ -13,10 +13,9 @@ use serde_json::{json, Value};
 use sinex_db::{ulid_to_uuid, uuid_to_ulid};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
-use uuid::Uuid;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use std::time::Instant;
+use tracing::{info, warn};
 
 use crate::VerificationStatus;
 
@@ -312,7 +311,8 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // Verify deletion
-    let verify_result = sqlx::query!("SELECT id FROM raw.events WHERE id = $1::uuid::ulid", ulid_to_uuid(inserted_id))
+    let id_as_uuid = ulid_to_uuid(inserted_id);
+    let verify_result = sqlx::query!("SELECT id::uuid as \"id!\" FROM raw.events WHERE id::uuid = $1", id_as_uuid)
         .fetch_optional(pool)
         .await
         .context("Failed to verify deletion")?;
@@ -489,12 +489,12 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     let mut tested_extensions = HashMap::new();
 
     // Test UUID generation
-    match sqlx::query!("SELECT uuid_generate_v4() as test_uuid")
+    match sqlx::query!("SELECT gen_random_uuid() as test_uuid")
         .fetch_one(pool)
         .await
     {
         Ok(_) => {
-            tested_extensions.insert("uuid-ossp", json!({"status": "working"}));
+            tested_extensions.insert("uuid-builtin", json!({"status": "working"}));
         }
         Err(e) => {
             tested_extensions.insert(
@@ -508,7 +508,7 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     }
 
     // Test ULID generation (if available)
-    match sqlx::query!("SELECT gen_ulid() as test_ulid")
+    match sqlx::query!("SELECT gen_ulid()::text as test_ulid")
         .fetch_one(pool)
         .await
     {
@@ -526,8 +526,8 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
         }
     }
 
-    // Test TimescaleDB (if available)
-    match sqlx::query!("SELECT timescaledb_version() as version")
+    // Test TimescaleDB extension by checking version
+    match sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
         .fetch_one(pool)
         .await
     {
@@ -536,7 +536,7 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
                 "timescaledb",
                 json!({
                     "status": "working",
-                    "version": result.version
+                    "version": result.extversion
                 }),
             );
         }
@@ -661,26 +661,26 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     // Simulate rapid event ingestion
     for i in 0..event_count {
-        let test_id = Uuid::new_v4();
-        test_ids.push(test_id);
-
-        sqlx::query!(
+        let result = sqlx::query!(
             r#"
-            INSERT INTO raw.events (id, source, event_type, payload, ts_ingest)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO raw.events (source, event_type, host, payload)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id::uuid as "id!"
             "#,
-            test_id,
             "sinex-preflight-pipeline-test",
             "verification.ingestion_test",
+            "localhost",
             json!({
                 "test": "event_ingestion",
                 "sequence": i,
                 "timestamp": chrono::Utc::now()
             })
         )
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .context("Failed to insert pipeline test event")?;
+
+        test_ids.push(result.id);
     }
 
     // Verify all events were inserted
@@ -694,13 +694,14 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     let inserted_count = count_result.count.unwrap_or(0) as usize;
 
-    // Cleanup test events
-    for test_id in test_ids {
-        sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id)
-            .execute(pool)
-            .await
-            .ok(); // Ignore cleanup errors
-    }
+    // Cleanup test events using source filter (more efficient)
+    sqlx::query!(
+        "DELETE FROM raw.events WHERE source = $1",
+        "sinex-preflight-pipeline-test"
+    )
+    .execute(pool)
+    .await
+    .ok(); // Ignore cleanup errors
 
     if inserted_count < event_count {
         bail!(
@@ -739,18 +740,31 @@ async fn test_work_queue_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // Test basic queue operations
-    let test_id = Uuid::new_v4();
 
     // Test queue insertion (this would typically be done by the router)
+    // First create a test event to reference
+    let test_event = sqlx::query!(
+        r#"
+        INSERT INTO raw.events (source, event_type, host, payload)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id::uuid as "id!"
+        "#,
+        "sinex-preflight-work-queue-test",
+        "verification.work_queue_test",
+        "localhost",
+        json!({"test": "work_queue_operations"})
+    )
+    .fetch_one(pool)
+    .await
+    .context("Failed to create test event for work queue")?;
+
     match sqlx::query!(
         r#"
-        INSERT INTO sinex_schemas.work_queue (id, event_id, queue_name, payload, created_at)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
+        VALUES ($1::uuid, $2)
         "#,
-        Uuid::new_v4(),
-        test_id,
-        "test-queue",
-        json!({"test": "work_queue_operations"})
+        test_event.id,
+        "batch-test-agent"
     )
     .execute(pool)
     .await
@@ -758,8 +772,17 @@ async fn test_work_queue_operations(pool: &PgPool) -> Result<Value> {
         Ok(_) => {
             // Clean up test queue entry
             sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE event_id = $1",
-                test_id
+                "DELETE FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
+                test_event.id
+            )
+            .execute(pool)
+            .await
+            .ok();
+
+            // Clean up test event
+            sqlx::query!(
+                "DELETE FROM raw.events WHERE source = $1",
+                "sinex-preflight-work-queue-test"
             )
             .execute(pool)
             .await
@@ -875,7 +898,7 @@ async fn test_database_performance(pool: &PgPool) -> Result<Value> {
 }
 
 async fn test_memory_usage() -> Result<Value> {
-    use sysinfo::{ProcessExt, System, SystemExt};
+    use sysinfo::System;
 
     let mut sys = System::new_all();
     sys.refresh_all();

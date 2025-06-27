@@ -40,7 +40,7 @@ pub struct Ulid(InnerUlid);
 
 impl fmt::Debug for Ulid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ulid({})", self.to_string())
+        write!(f, "Ulid({})", self)
     }
 }
 
@@ -108,7 +108,7 @@ impl Ulid {
 
     /// Get the timestamp component
     pub fn timestamp(&self) -> Timestamp {
-        DateTime::from_timestamp_millis(self.0.timestamp_ms() as i64).unwrap_or_else(|| Utc::now())
+        DateTime::from_timestamp_millis(self.0.timestamp_ms() as i64).unwrap_or_else(Utc::now)
     }
 
     /// Convert to UUID for PostgreSQL storage

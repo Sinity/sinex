@@ -221,7 +221,7 @@ where
     }
 }
 
-/// Integration with anyhow - removed to avoid conflict with blanket impl
+// Integration with anyhow - removed to avoid conflict with blanket impl
 
 // Implement Clone for CoreError to support error chaining
 impl Clone for CoreError {

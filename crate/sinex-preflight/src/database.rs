@@ -12,9 +12,9 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
-use crate::{PhaseResult, VerificationStatus};
+use crate::VerificationStatus;
 
 /// Verify database connectivity and basic operations
 pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value, Vec<String>)> {
@@ -341,41 +341,23 @@ async fn test_extension_functionality(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     messages: &mut Vec<String>,
 ) -> Result<()> {
-    // Test UUID generation (using standard PostgreSQL function)
-    if let Ok(_) = sqlx::query!("SELECT gen_random_uuid() as test_uuid")
+    // Test UUID generation
+    sqlx::query!("SELECT gen_random_uuid() as test_uuid")
         .fetch_one(&mut **tx)
         .await
-    {
-        messages.push("✓ UUID generation tested".to_string());
-    } else {
-        messages.push("⚠ UUID generation not available".to_string());
-    }
+        .context("Failed to test UUID generation functionality")?;
 
-    // Test ULID generation (if available) - use dynamic query to avoid compile-time check
-    match sqlx::query("SELECT gen_ulid()::text as test_ulid")
+    // Test ULID generation
+    sqlx::query!("SELECT gen_ulid()::text as test_ulid")
         .fetch_one(&mut **tx)
         .await
-    {
-        Ok(_) => {
-            messages.push("✓ ULID generation tested".to_string());
-        }
-        Err(_) => {
-            messages.push("⚠ ULID extension not available".to_string());
-        }
-    }
+        .context("Failed to test ULID generation functionality")?;
 
-    // Test TimescaleDB (if available) - use dynamic query to avoid compile-time check
-    match sqlx::query("SELECT timescaledb_version()::text as version")
+    // Test TimescaleDB extension by checking version
+    sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
         .fetch_one(&mut **tx)
         .await
-    {
-        Ok(_) => {
-            messages.push("✓ TimescaleDB functionality tested".to_string());
-        }
-        Err(_) => {
-            messages.push("⚠ TimescaleDB extension not available".to_string());
-        }
-    }
+        .context("Failed to verify TimescaleDB extension")?;
 
     // Test JSON schema validation (if available)
     if let Ok(_) =

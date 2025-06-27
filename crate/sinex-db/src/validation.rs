@@ -212,11 +212,13 @@ pub enum ValidationError {
     SchemaNotFound(Ulid),
 }
 
+/// Type alias for validation functions to reduce complexity
+type ValidationRuleFn = Box<dyn Fn(&Value) -> Result<(), ValidationError> + Send + Sync>;
+
 /// Combined event validator that supports both hardcoded rules and JSON schema validation
 pub struct EventValidator {
     /// Hardcoded validation rules for specific event types
-    rules:
-        HashMap<(String, String), Box<dyn Fn(&Value) -> Result<(), ValidationError> + Send + Sync>>,
+    rules: HashMap<(String, String), ValidationRuleFn>,
     /// JSON schema validators loaded from database
     schemas: HashMap<Ulid, jsonschema::JSONSchema>,
 }
@@ -363,7 +365,7 @@ impl EventValidator {
                 |v| v.as_str().map(|s| s.to_string()),
                 "string",
             )? {
-                if !perms_str.chars().all(|c| c >= '0' && c <= '7')
+                if !perms_str.chars().all(|c| ('0'..='7').contains(&c))
                     || (perms_str.len() != 3 && perms_str.len() != 4)
                 {
                     return Err(ValidationError::InvalidValue {

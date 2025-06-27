@@ -134,7 +134,7 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
     fn estimate_expanded_size(
         value: &Value,
         depth: usize,
-        seen_refs: &mut std::collections::HashSet<String>,
+        _seen_refs: &mut std::collections::HashSet<String>,
     ) -> Result<usize> {
         if depth > 10 {
             return Err(CoreError::Validation(
@@ -147,14 +147,14 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
                 let mut size = 0;
                 for (k, v) in map {
                     size += k.len();
-                    size += estimate_expanded_size(v, depth + 1, seen_refs)?;
+                    size += estimate_expanded_size(v, depth + 1, _seen_refs)?;
                 }
                 Ok(size)
             }
             Value::Array(arr) => {
                 let mut size = 0;
                 for v in arr {
-                    size += estimate_expanded_size(v, depth + 1, seen_refs)?;
+                    size += estimate_expanded_size(v, depth + 1, _seen_refs)?;
                 }
                 // Check for exponential expansion
                 if depth > 3 && arr.len() > 100 {
