@@ -47,7 +47,7 @@ pub mod connection_pool_edge_cases_test;
 /// Common utilities for database testing
 pub mod utils {
     use crate::common::prelude::*;
-    use chrono::{DateTime, Utc};
+    // use chrono::{DateTime, Utc};
 
     /// Create test schema for validation
     pub async fn create_test_schema(

@@ -308,9 +308,9 @@ impl ComparisonResult {
         );
 
         let density_change_pct = if self.assertion_density_before != 0.0 {
-            ((self.assertion_density_after - self.assertion_density_before)
+            (self.assertion_density_after - self.assertion_density_before)
                 / self.assertion_density_before
-                * 100.0)
+                * 100.0
         } else {
             0.0
         };

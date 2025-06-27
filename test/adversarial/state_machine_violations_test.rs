@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult {
     // Simulate shutdown signal arriving during database migration/startup
 
-    let pool = ctx.pool();
+    let _pool = ctx.pool();
     let pool_clone = ctx.pool().clone();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
     let init_completed = Arc::new(AtomicU64::new(0));

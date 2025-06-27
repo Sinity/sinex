@@ -65,7 +65,7 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                CoreError::other("Failed to receive from channel")
+                CoreError::Other("Failed to receive from channel")
                     .with_context("test_name", test_name)
                     .with_source(e)
                     .build()

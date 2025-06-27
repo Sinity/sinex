@@ -31,7 +31,7 @@ pub mod multi_source_coordination_test;
 pub mod utils {
     use crate::common::prelude::*;
     use serde_json::{json, Value};
-    use std::path::Path;
+    // use std::path::Path;
 
     /// Create a minimal collector configuration
     pub fn create_minimal_config() -> Value {

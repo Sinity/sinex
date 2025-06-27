@@ -29,11 +29,11 @@ pub mod terminal_tests;
 
 /// Common utilities for event source testing
 pub mod utils {
-    use crate::common::event_builders::EventBuilder;
+    // use crate::common::event_builders::EventBuilder;
     use crate::common::prelude::*;
     use serde_json::{json, Value};
     use std::path::Path;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::Duration;
 
     /// Create filesystem event source configuration
     pub fn create_filesystem_config(watch_path: &str) -> Value {

@@ -44,8 +44,8 @@ pub use sinex_core::{
     event_type_constants, parse_duration, sources,
     unified_collector::{create_registry, EventRegistry},
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
-    ConfigValidator, ConfigValue, CoreError, ErrorContext, EventSource, EventSourceContext,
-    JsonType, MultiValidator, RawEventBuilder, ResultExt, ValidationChain,
+    ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext,
+    MultiValidator, RawEventBuilder, ResultExt, ValidationChain,
 };
 pub use sinex_db::{
     prelude::{AgentManifest, QueueStatus, WorkQueueItem},
@@ -67,7 +67,7 @@ pub use crate::common::{database_helpers, event_builders::EventBuilder, event_so
 // Event builders - THE way to create events
 // Database helpers
 // NEW: Unified database access
-pub use crate::common::create_test_db_pool;
+// pub use crate::common::create_test_db_pool;
 pub use crate::common::database::{CleanupStrategy, TestPool, TestPoolExt};
 pub use crate::common::database_helpers::{
     create_test_event,
@@ -93,24 +93,23 @@ pub use sinex_db::queries::{
 };
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
-    assert_channel_send_success, assert_channel_send_timeout, assert_completes_within,
-    assert_config_extraction, assert_config_valid, assert_database_state, assert_eq_with_context,
-    assert_event_inserted_with_context, assert_events_equivalent, assert_validation_fails,
+    assert_channel_send_success, assert_database_state, assert_eq_with_context,
+    assert_event_inserted_with_context, assert_events_equivalent,
     assert_validation_passes, assert_with_context, assert_with_validation, TestAssertionBatch,
 };
 // ===== Configuration Testing =====
-pub use crate::common::config_test_utils::{
-    extraction as config_extraction, scenarios as config_scenarios, test_configs,
-    validation as config_validation, CollectorTestConfig, DatabaseTestConfig, SourcesTestConfig,
-    TestConfigFactory,
-};
+// pub use crate::common::config_test_utils::{
+//     extraction as config_extraction, scenarios as config_scenarios, test_configs,
+//     validation as config_validation, CollectorTestConfig, DatabaseTestConfig, SourcesTestConfig,
+//     TestConfigFactory,
+// };
 // ===== Channel Testing =====
-pub use crate::common::channel_test_utils::{
-    backpressure as channel_backpressure, behavior as channel_behavior,
-    monitoring as channel_monitoring, performance as channel_performance,
-    scenarios as channel_scenarios, ChannelHealthReport, ChannelPerformanceReport,
-    TestChannelSetup,
-};
+// pub use crate::common::channel_test_utils::{
+//     backpressure as channel_backpressure, behavior as channel_behavior,
+//     monitoring as channel_monitoring, performance as channel_performance,
+//     scenarios as channel_scenarios, ChannelHealthReport, ChannelPerformanceReport,
+//     TestChannelSetup,
+// };
 // ===== Assertion Enhancements =====
 // Use pretty_assertions for better diffs
 // ===== Constants =====

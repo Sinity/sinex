@@ -266,7 +266,7 @@ pub mod assertions {
     pub fn assert_multi_validator_accumulates_errors(
         validators: Vec<ValidationChain<String>>,
     ) -> Result<()> {
-        let mut multi_validator = MultiValidator::new();
+        let multi_validator = MultiValidator::new();
 
         for chain in validators {
             if !chain.is_valid() {

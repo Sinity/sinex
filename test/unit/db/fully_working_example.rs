@@ -1,6 +1,6 @@
 //! Fully working example of the new test infrastructure
 
-use crate::common::database_helpers;
+// use crate::common::database_helpers;
 use crate::common::prelude::*;
 
 /// Simplest possible test that actually works
