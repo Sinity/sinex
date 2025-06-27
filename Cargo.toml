@@ -9,6 +9,7 @@ members = [
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
+    "crate/sinex-preflight",
     "crate/sinex-test-macros",
 ]
 resolver = "2"

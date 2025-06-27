@@ -22,6 +22,7 @@ in
     ./event-sources.nix
     ./blob-storage.nix
     ./monitoring.nix
+    ./preflight-verification.nix
   ];
 
   options.services.sinex = {

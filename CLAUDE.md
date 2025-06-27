@@ -14,6 +14,18 @@ Sinex is an event-driven data capture system that records everything happening o
 - **Workers**: Process events concurrently using `SELECT FOR UPDATE SKIP LOCKED`
 - **Query Interface**: Python CLI for exploring captured events
 
+## 🚀 Deployment Philosophy
+
+Sinex follows the **Pre-Flight Verification Model** for deployments:
+
+- **Zero Trust Deployments**: Every deployment must prove it works before activation
+- **Fail Safe, Not Sorry**: Bad deployments are caught before they impact service
+- **Automatic Recovery**: System self-heals through verification and rollback
+- **Observable Deployments**: Clear visibility into what's happening at each stage
+- **No Manual Heroics**: Deployment failures trigger automatic rollback, not pagers
+
+This philosophy ensures that "every path is ecstatic" - deployments either succeed completely or fail safely with automatic recovery.
+
 ## 🏗️ Key Patterns & Conventions
 
 ### EventSource Pattern
@@ -114,6 +126,7 @@ let mut batch = TestAssertionBatch::new("test_batch");
 - [ ] Tests pass: `just test`
 - [ ] SQLX cache updated: `just sqlx-check`
 - [ ] Nix build works: `nix build`
+- [ ] Pre-flight verification passes: `sinex-preflight verify`
 - [ ] Changes committed: `git status` shows clean
 - [ ] Documentation updated if patterns changed
 
@@ -128,26 +141,32 @@ sinex/
 │   ├── sinex-collector/      # UnifiedCollector binary
 │   ├── sinex-events/         # All event source implementations
 │   ├── sinex-worker/         # Worker implementations
-│   ├── sinex-promo-worker/   # Promotion queue worker
-│   └── sinex-annex/          # Git Annex integration
+│   ├── sinex-promo-worker/   # Promotion queue worker (router)
+│   ├── sinex-annex/          # Git Annex integration
+│   ├── sinex-preflight/      # Pre-flight verification system
+│   └── sinex-health-aggregator/ # Health monitoring aggregation
 ├── config/                   # Example configurations
 │   ├── unified-collector/    # Collector config examples
 │   └── clipboard-with-annex.toml
 ├── test/                    # Hierarchically organized test suites
 │   ├── unit/                # Unit tests (component isolation)
 │   │   ├── core/            # Core library tests
-│   │   └── db/              # Database model tests
+│   │   ├── db/              # Database model tests
+│   │   └── preflight/       # Pre-flight verification unit tests
 │   ├── integration/         # Integration tests (component interaction)
 │   │   ├── database/        # Database integration tests
 │   │   ├── collector/       # Collector integration tests
 │   │   ├── worker/          # Worker integration tests
-│   │   └── event_sources/   # Event source integration tests
+│   │   ├── event_sources/   # Event source integration tests
+│   │   └── preflight_verification_test.rs  # Pre-flight integration tests
 │   ├── system/              # System-level tests (full system validation)
 │   │   ├── end_to_end/      # Complete pipeline tests
 │   │   ├── external/        # External service integration
 │   │   ├── performance/     # Performance and benchmarking
-│   │   └── regression/      # Regression tests for specific bugs
+│   │   ├── regression/      # Regression tests for specific bugs
+│   │   └── preflight_system_test.rs  # Pre-flight system tests
 │   ├── nixos-vm/            # NixOS VM integration tests
+│   │   └── preflight_deployment_test.nix  # VM deployment tests
 │   ├── cli/                 # Python CLI tests
 │   ├── agent/               # Agent lifecycle tests
 │   ├── common/              # Shared test utilities and helpers
@@ -158,7 +177,8 @@ sinex/
 │   └── adversarial/         # Stress and security tests
 ├── migrations/              # SQL schema migrations (sqlx)
 ├── script/                  # Utility scripts
-│   └── init_git_annex.sh    # Git annex repository setup
+│   ├── init_git_annex.sh    # Git annex repository setup
+│   └── run-preflight-tests.sh  # Comprehensive pre-flight test runner
 ├── spec/                    # Documentation
 │   ├── SADI.md             # Start here - doc index
 │   ├── STAD.md             # Architecture document
@@ -172,6 +192,16 @@ sinex/
 │       ├── claude/         # My working area
 │       ├── security/       # Security documentation
 │       └── tims/           # Implementation specs
+├── nixos/                   # NixOS deployment modules
+│   ├── modules/            # Modular service definitions
+│   │   ├── default.nix     # Main module entry point
+│   │   ├── database.nix    # Database configuration
+│   │   ├── event-sources.nix # Event source configurations
+│   │   ├── blob-storage.nix # Git-annex blob storage
+│   │   ├── monitoring.nix  # Prometheus/Grafana monitoring
+│   │   ├── health-checks.nix # Health monitoring
+│   │   └── preflight-verification.nix # Pre-flight verification
+│   └── config-gen.nix      # Configuration file generation
 └── cli/                     # Python query tools
     └── exo.py              # Main CLI interface
 ```
@@ -403,6 +433,147 @@ cargo test -- --nocapture      # See test output
 RUST_LOG=debug cargo run       # Debug logging
 ```
 
+## 🚀 Deployment Strategy: Pre-Flight Verification Model
+
+### Overview
+
+Sinex uses the **Pre-Flight Verification Model** for zero-downtime, highly reliable deployments. This model ensures that new versions are thoroughly verified BEFORE they become active, preventing deployment failures from impacting service availability.
+
+**Core Philosophy**: "Verification as a Prerequisite" - No deployment proceeds unless pre-flight verification passes.
+
+### Pre-Flight Verification System
+
+The `sinex-preflight` binary performs comprehensive system verification across 7 phases:
+
+1. **Database**: Connectivity, schema validation, CRUD operations
+2. **Extensions**: PostgreSQL extension availability and functionality  
+3. **Migrations**: Dry-run validation of pending schema changes
+4. **Resources**: Memory, disk, CPU, and filesystem capacity
+5. **Configuration**: TOML generation and validation
+6. **Services**: Binary availability and dependency checking
+7. **Integration**: End-to-end pipeline validation
+
+### Deployment Commands
+
+#### Manual Pre-Flight Verification
+```bash
+# Run complete verification (all phases)
+sinex-preflight verify --timeout 120
+
+# Run specific verification phases
+sinex-preflight migration-dry-run
+sinex-preflight resource-check
+sinex-preflight extension-check
+
+# Generate verification report
+sinex-preflight report --detailed
+```
+
+#### Standard Deployment (Automatic Verification)
+```bash
+# Preferred deployment method - includes automatic pre-flight verification
+sudo systemctl restart sinex-update
+
+# Individual service control (also requires pre-flight)
+sudo systemctl restart sinex-unified-collector
+sudo systemctl restart sinex-promo-worker
+```
+
+### NixOS Configuration
+
+Enable pre-flight verification in your NixOS configuration:
+
+```nix
+services.sinex = {
+  enable = true;
+  targetUser = "myuser";
+  
+  # Pre-flight verification settings (enabled by default)
+  preflightVerification = {
+    enable = true;
+    timeout = 120;
+    failureAction = "abort";  # abort | warn | ignore
+    recordResults = true;
+    skipPhases = [];  # e.g., ["resources"] to skip resource checks
+  };
+  
+  # Update configuration
+  update = {
+    enable = true;
+    gracePeriod = 30;
+    healthCheckTimeout = 60;
+    rollbackOnFailure = true;
+    preserveData = true;
+  };
+};
+```
+
+### Deployment Workflow
+
+1. **Pre-Flight Verification**: System validates all components work correctly
+2. **Graceful Shutdown**: Old services stop with configurable grace period
+3. **Service Startup**: New services start (already verified to work)
+4. **Health Monitoring**: Post-deployment health checks
+5. **Automatic Rollback**: If health checks fail, system reverts automatically
+
+### Key Benefits
+
+- **Zero Downtime**: Services only restart after verification passes
+- **Automatic Rollback**: Failed deployments revert without manual intervention
+- **Comprehensive Validation**: All system aspects verified before changes
+- **Clear Diagnostics**: Detailed error reporting for any failures
+- **Idempotent**: Multiple deployment attempts are safe
+
+### Troubleshooting Deployments
+
+#### Check Pre-Flight Status
+```bash
+# View recent verification results
+systemctl status sinex-preflight
+
+# Check verification logs
+journalctl -u sinex-preflight -f
+
+# View detailed verification report
+sinex-preflight report --detailed --output json | jq
+```
+
+#### Common Issues
+
+**Database Connection Failures**:
+- Ensure PostgreSQL is running: `systemctl status postgresql`
+- Check DATABASE_URL environment variable
+- Verify database permissions and schema
+
+**Extension Verification Failures**:
+- Install required extensions (pg_jsonschema, pgx_ulid, timescaledb)
+- Check extension versions match requirements
+
+**Resource Constraint Failures**:
+- Verify sufficient disk space (10GB+ recommended)
+- Check available memory (2GB+ recommended)
+- Ensure CPU load is reasonable
+
+**Migration Failures**:
+- Run migration dry-run manually: `sinex-preflight migration-dry-run`
+- Check for incompatible schema changes
+- Verify SQLX cache is up to date: `just sqlx-check`
+
+### Testing Pre-Flight Verification
+
+Run the comprehensive test suite:
+```bash
+# Run all pre-flight tests
+./script/run-preflight-tests.sh all
+
+# Run specific test categories
+./script/run-preflight-tests.sh unit
+./script/run-preflight-tests.sh integration
+./script/run-preflight-tests.sh system
+./script/run-preflight-tests.sh vm
+./script/run-preflight-tests.sh performance
+```
+
 ## 🗄️ Database Schema
 
 **Core Tables**:
@@ -445,8 +616,10 @@ postgresql:///sinex_dev?host=/run/postgresql
 - `sinex-collector` - UnifiedCollector binary and coordination
 - `sinex-events` - All specific event source implementations
 - `sinex-worker` - Event processing workers
-- `sinex-promo-worker` - Promotion queue worker
+- `sinex-promo-worker` - Promotion queue worker (routes events to work queues)
 - `sinex-annex` - Git Annex integration for large files
+- `sinex-preflight` - Pre-flight verification system for deployments
+- `sinex-health-aggregator` - Health monitoring and aggregation service
 
 ## 📚 Where to Look
 
@@ -795,12 +968,32 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ### Deployment Workflow
 
+#### Modern Pre-Flight Verification Deployment:
+1. **Run manual verification** (optional): `sinex-preflight verify --timeout 120`
+2. **Deploy with automatic verification**: `sudo systemctl restart sinex-update`
+3. **Monitor deployment progress**: `journalctl -u sinex-update -f`
+4. **Verify health post-deployment**: `systemctl status sinex-unified-collector sinex-promo-worker`
+5. **Check verification report**: `sinex-preflight report --detailed`
+
+#### Service Coordination:
+- **Automatic Dependencies**: Services require pre-flight verification to pass
+- **Graceful Handoff**: Old services stop only after new ones are verified
+- **Health Monitoring**: Continuous heartbeat monitoring during deployment
+- **Automatic Rollback**: Failed deployments revert without manual intervention
+
 #### NixOS Module Development:
 1. **Test in development**: Use NixOS VM tests first
 2. **Validate configuration**: `nix flake check`
-3. **Test actual deployment**: On development system
+3. **Test actual deployment**: On development system with pre-flight verification
 4. **Update documentation**: Module options and examples
 5. **Create migration guide**: For existing deployments
+
+#### Deployment Safety Features:
+- **Pre-flight verification** validates all components before changes
+- **Transactional deployments** ensure atomic updates
+- **Resource validation** prevents deployments when constraints exist
+- **Migration dry-runs** test schema changes before applying
+- **Extension verification** ensures required PostgreSQL extensions available
 
 #### Health Monitoring Protocol:
 1. **Every service** must emit heartbeat events every 30-60 seconds
@@ -868,7 +1061,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - **Uptime target**: 99.9% for data collection
 - **Data loss tolerance**: Zero tolerance for event loss
 - **Recovery time**: <15 minutes for service restart
-- **Rollback time**: <5 minutes for configuration issues
+- **Rollback time**: <5 minutes for configuration issues (automatic with pre-flight)
+- **Deployment success rate**: 99.9% with pre-flight verification
+- **Mean time to recovery**: <2 minutes with automatic rollback
+- **Verification coverage**: 100% of critical components before deployment
 
 ### Agent Coordination
 - **Conflict resolution**: <24 hours for merge conflicts
@@ -894,9 +1090,12 @@ For any agent completing work on Sinex:
 
 ### Operational Success
 - [ ] Deployment is idempotent and reliable
+- [ ] Pre-flight verification passes before deployment
 - [ ] Health monitoring provides useful visibility
-- [ ] Rollback procedures work as expected
+- [ ] Rollback procedures work automatically
 - [ ] System performance is maintained or improved
+- [ ] Zero downtime during deployments
+- [ ] Deployment failures are caught before service impact
 
 ### Knowledge Success
 - [ ] CLAUDE.md updated with new patterns or changes
