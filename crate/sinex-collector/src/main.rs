@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
+use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector, nixos_config::NixosConfig};
 use sinex_db::{create_pool, validation::EventValidator};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,9 +10,13 @@ use tracing::{error, info, warn};
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Sinex unified event collector")]
 struct Args {
-    /// Configuration file path
-    #[arg(short, long, env = "SINEX_CONFIG")]
+    /// Configuration file path (supports NixOS-generated TOML format)
+    #[arg(short, long)]
     config: Option<PathBuf>,
+
+    /// Git-annex repository path (required if not in config file)
+    #[arg(long)]
+    annex_repo: Option<String>,
 
     /// Run in dry-run mode (no database writes, just log events)
     #[arg(long)]
@@ -31,12 +35,20 @@ struct Args {
     verbose: bool,
 
     /// Log level
-    #[arg(long, env = "RUST_LOG", default_value = "info")]
+    #[arg(long, default_value = "info")]
     log_level: String,
 
     /// Validate configuration and exit
     #[arg(long)]
     validate_config: bool,
+
+    /// Database connection pool size
+    #[arg(long, default_value = "25")]
+    pool_size: u32,
+
+    /// Disable specific event sources (comma-separated)
+    #[arg(long)]
+    disable: Option<String>,
 }
 
 #[tokio::main]
@@ -50,11 +62,51 @@ async fn main() -> Result<()> {
 
     info!("Starting Sinex Collector");
 
-    // Load configuration
+    // Load configuration - prioritize NixOS format, fall back to legacy
     let config = if let Some(path) = &args.config {
-        CollectorConfig::load_from_file(path)?
+        // Try to load as NixOS config first
+        match NixosConfig::load_from_file(path) {
+            Ok(nixos_config) => {
+                info!("Loaded NixOS configuration format");
+                nixos_config.to_legacy_config()?
+            }
+            Err(_) => {
+                // Fall back to legacy format
+                info!("Falling back to legacy configuration format");
+                CollectorConfig::load_from_file(path)?
+            }
+        }
+    } else if let Some(annex_repo) = &args.annex_repo {
+        // Create minimal configuration from command line args
+        info!("Creating configuration from command line arguments");
+        let mut nixos_config = NixosConfig::default();
+        nixos_config.collector.annex_repo_path = annex_repo.clone();
+        nixos_config.collector.database_pool_size = args.pool_size;
+        
+        // Apply command line disables
+        if let Some(disable_list) = &args.disable {
+            let disabled_sources: Vec<&str> = disable_list.split(',').collect();
+            for source in disabled_sources {
+                match source.trim() {
+                    "filesystem" => nixos_config.event_sources.filesystem = false,
+                    "terminal" => nixos_config.event_sources.terminal = false,
+                    "window_manager" => nixos_config.event_sources.window_manager = false,
+                    "clipboard" => nixos_config.event_sources.clipboard = false,
+                    "system_events" => nixos_config.event_sources.system_events = false,
+                    "process_monitoring" => nixos_config.event_sources.process_monitoring = false,
+                    "network_monitoring" => nixos_config.event_sources.network_monitoring = false,
+                    "screen_capture" => nixos_config.event_sources.screen_capture = false,
+                    _ => warn!("Unknown event source to disable: {}", source),
+                }
+            }
+        }
+        
+        nixos_config.validate()?;
+        nixos_config.to_legacy_config()?
     } else {
-        CollectorConfig::load()?
+        anyhow::bail!(
+            "Configuration required: either --config <file> or --annex-repo <path> must be provided"
+        );
     };
 
     // If validating config only, do that and exit
