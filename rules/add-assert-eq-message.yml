@@ -1,6 +1,0 @@
-id: add-assert-eq-message
-language: rust
-rule:
-  pattern: assert_eq!($A, $B)
-fix: 'assert_eq!($A, $B, "Assertion failed: `left == right`\n  left: `{:?}`,
- right: `{:?}`", $A, $B)'

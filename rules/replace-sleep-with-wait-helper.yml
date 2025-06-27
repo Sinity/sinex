@@ -1,7 +1,0 @@
-id: replace-sleep-with-wait-helper
-language: rust
-rule:
-  kind: macro_invocation
-  has: { field: path, pattern: 'tokio::time::sleep' }
-  inside: { kind: function_item, has: { pattern: '#[sinex_test]' } }
-fix: 'ctx.wait_for_processing().await?'
