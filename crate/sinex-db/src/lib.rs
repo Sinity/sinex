@@ -1,43 +1,41 @@
 pub mod models;
 // Re-export RawEvent and RawEventBuilder from sinex-core for type unification
 pub use sinex_core::{RawEvent, RawEventBuilder};
+pub mod metrics;
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
 pub mod validation;
-pub mod metrics;
 
 // Re-export commonly used types and query functions
 pub use queries::{
-    QueueDepthMetric, refresh_routing_cache, run_batch_router, calculate_queue_depth_metrics,
-    get_event_by_id, insert_raw_event, get_recent_events, get_events_by_source,
-    get_events_by_type, get_events_in_time_range, claim_work_queue_items, 
-    complete_work_queue_item, fail_work_queue_item, add_to_work_queue,
-    get_next_work_item, complete_work_item, fail_work_item
+    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items, complete_work_item,
+    complete_work_queue_item, fail_work_item, fail_work_queue_item, get_event_by_id,
+    get_events_by_source, get_events_by_type, get_events_in_time_range, get_next_work_item,
+    get_recent_events, insert_raw_event, refresh_routing_cache, run_batch_router, QueueDepthMetric,
 };
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    DbError, DbResult, RetryConfig, 
-    with_transaction, with_retry_transaction,
-    exists, count,
-    ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error, is_retryable_db_error
+    count, db_error, exists, is_retryable_db_error, ulid_to_uuid, uuid_to_ulid,
+    with_retry_transaction, with_transaction, DbError, DbResult, RetryConfig, UlidArrayExt,
 };
 
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
-    pub use crate::models::{EventPayloadSchema, AgentManifest, WorkQueueItem, DlqEvent, QueueStatus, DlqErrorCategory};
-    pub use sinex_core::{RawEvent, RawEventBuilder};
+    pub use crate::models::{
+        AgentManifest, DlqErrorCategory, DlqEvent, EventPayloadSchema, QueueStatus, WorkQueueItem,
+    };
     pub use crate::queries::*;
     pub use crate::query_helpers::{
-        DbError, DbResult, RetryConfig,
-        with_transaction, with_retry_transaction,
-        ulid_to_uuid, uuid_to_ulid, UlidArrayExt, db_error
+        db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
+        DbResult, RetryConfig, UlidArrayExt,
     };
-    pub use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, OptionalTimestamp};
-    pub use sinex_ulid::Ulid;
-    pub use sqlx::{FromRow, Transaction, Postgres};
+    pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
     pub use anyhow::Result;
+    pub use sinex_core::{RawEvent, RawEventBuilder};
+    pub use sinex_ulid::Ulid;
+    pub use sqlx::{FromRow, Postgres, Transaction};
 }
 
 use anyhow::Result;
@@ -58,9 +56,9 @@ pub type JsonValue = serde_json::Value;
 /// Create a database connection pool with default settings
 pub async fn create_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(500)  // Massive pool size
+        .max_connections(500) // Massive pool size
         .min_connections(50)
-        .acquire_timeout(Duration::from_secs(120))  // Very long timeout
+        .acquire_timeout(Duration::from_secs(120)) // Very long timeout
         .idle_timeout(Duration::from_secs(1800))
         .connect(database_url)
         .await?;
@@ -72,11 +70,11 @@ pub async fn create_pool(database_url: &str) -> Result<DbPool> {
 /// Create a database connection pool optimized for testing with high concurrency
 pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(2000)  // Even more massive limit for concurrent tests
+        .max_connections(2000) // Even more massive limit for concurrent tests
         .min_connections(200)
-        .acquire_timeout(Duration::from_secs(600))  // 10 minute timeout
+        .acquire_timeout(Duration::from_secs(600)) // 10 minute timeout
         .idle_timeout(Duration::from_secs(1200))
-        .test_before_acquire(false)  // Skip connection testing for speed
+        .test_before_acquire(false) // Skip connection testing for speed
         .connect(database_url)
         .await?;
 
@@ -95,21 +93,19 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 /// Run database migrations
 pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
-    sqlx::migrate!("../../migrations")
-        .run(pool)
-        .await?;
-    
+    sqlx::migrate!("../../migrations").run(pool).await?;
+
     info!("Database migrations completed");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{WorkQueueItem, QueueStatus};
-    use sinex_core::RawEvent;
-    use sinex_ulid::Ulid;
+    use crate::models::{QueueStatus, WorkQueueItem};
     use chrono::Utc;
     use serde_json::json;
+    use sinex_core::RawEvent;
+    use sinex_ulid::Ulid;
 
     #[test]
     fn test_raw_event_creation() {
@@ -165,7 +161,10 @@ mod tests {
         assert_eq!(format!("{:?}", QueueStatus::Processing), "Processing");
         assert_eq!(format!("{:?}", QueueStatus::Succeeded), "Succeeded");
         assert_eq!(format!("{:?}", QueueStatus::Failed), "Failed");
-        assert_eq!(format!("{:?}", QueueStatus::FailedRetryable), "FailedRetryable");
+        assert_eq!(
+            format!("{:?}", QueueStatus::FailedRetryable),
+            "FailedRetryable"
+        );
 
         // Test equality
         assert_eq!(QueueStatus::Pending, QueueStatus::Pending);
@@ -179,11 +178,14 @@ mod tests {
         assert_eq!(QueueStatus::from("processing"), QueueStatus::Processing);
         assert_eq!(QueueStatus::from("succeeded"), QueueStatus::Succeeded);
         assert_eq!(QueueStatus::from("failed"), QueueStatus::Failed);
-        assert_eq!(QueueStatus::from("failed_retryable"), QueueStatus::FailedRetryable);
-        
+        assert_eq!(
+            QueueStatus::from("failed_retryable"),
+            QueueStatus::FailedRetryable
+        );
+
         // Test legacy mapping
         assert_eq!(QueueStatus::from("completed"), QueueStatus::Succeeded);
-        
+
         // Test unknown values default to Pending
         assert_eq!(QueueStatus::from("unknown"), QueueStatus::Pending);
         assert_eq!(QueueStatus::from(""), QueueStatus::Pending);
@@ -193,16 +195,16 @@ mod tests {
     #[test]
     fn test_queue_status_serde() {
         use serde_json;
-        
+
         // Test serialization
         let status = QueueStatus::Succeeded;
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"succeeded\"");
-        
+
         // Test deserialization
         let parsed: QueueStatus = serde_json::from_str("\"processing\"").unwrap();
         assert_eq!(parsed, QueueStatus::Processing);
-        
+
         // Test round-trip
         let original = QueueStatus::FailedRetryable;
         let json = serde_json::to_string(&original).unwrap();
@@ -216,17 +218,17 @@ mod tests {
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
         let ulid2 = Ulid::new();
-        
+
         // ULIDs should be unique
         assert_ne!(ulid1, ulid2);
-        
+
         // ULIDs should be time-ordered (with very high probability after delay)
         assert!(ulid1 <= ulid2); // Allow equality in case delay wasn't enough
-        
+
         // Test ULID string representation
         let ulid_str = ulid1.to_string();
         assert_eq!(ulid_str.len(), 26);
-        
+
         // Test ULID parsing
         let parsed_ulid = ulid_str.parse::<Ulid>().unwrap();
         assert_eq!(ulid1, parsed_ulid);
@@ -247,10 +249,10 @@ mod tests {
             payload_schema_id: None,
             payload: simple_payload.clone(),
         };
-        
+
         assert_eq!(event.payload["key"], "value");
         assert_eq!(event.payload["number"], 42);
-        
+
         // Test complex nested JSON
         let complex_payload = json!({
             "metadata": {
@@ -262,7 +264,7 @@ mod tests {
                 "enabled": true
             }
         });
-        
+
         let complex_event = RawEvent {
             id: Ulid::new(),
             source: "complex.test".to_string(),
@@ -274,7 +276,7 @@ mod tests {
             payload_schema_id: None,
             payload: complex_payload,
         };
-        
+
         assert_eq!(complex_event.payload["metadata"]["version"], "1.0");
         assert_eq!(complex_event.payload["data"]["items"][0], 1);
         assert_eq!(complex_event.payload["data"]["enabled"], true);
@@ -284,7 +286,7 @@ mod tests {
     fn test_timestamp_handling() {
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago
-        
+
         let event = RawEvent {
             id: Ulid::new(),
             source: "timestamp.test".to_string(),
@@ -296,10 +298,10 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
         };
-        
+
         // Test that ingestion timestamp is after original timestamp
         assert!(event.ts_ingest > event.ts_orig.unwrap());
-        
+
         // Test that timestamps are properly set
         assert_eq!(event.ts_ingest, now);
         assert_eq!(event.ts_orig.unwrap(), past);
@@ -322,14 +324,14 @@ mod tests {
             processed_at: None,
             failure_reason: None,
         };
-        
+
         // Simulate processing failure
         queue_item.attempts = 1;
         queue_item.status = "failed_retryable".to_string();
         queue_item.error_message_last = Some("Connection timeout".to_string());
         queue_item.last_attempt_ts = Some(Utc::now());
         queue_item.next_retry_ts = Some(Utc::now() + chrono::Duration::minutes(5));
-        
+
         assert_eq!(queue_item.attempts, 1);
         assert_eq!(queue_item.status, "failed_retryable");
         assert!(queue_item.error_message_last.is_some());
@@ -341,7 +343,7 @@ mod tests {
     async fn test_pool_creation() {
         // This would require a test database
         // For now, just ensure the function compiles and types are correct
-        
+
         // Test that the functions exist and have the right signatures
         // Cannot actually call them without a database, but we can test they compile
         assert!(true); // Placeholder assertion
@@ -351,7 +353,7 @@ mod tests {
     fn test_function_signatures() {
         // Just test that our functions exist and compile
         // We can't test the actual functionality without a database
-        
+
         // This ensures the functions are callable and have the right basic structure
         assert!(true); // Functions exist if this compiles
     }

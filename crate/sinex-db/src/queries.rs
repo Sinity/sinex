@@ -1,7 +1,7 @@
 use crate::models::{AgentManifest, DlqEvent, WorkQueueItem};
-use crate::RawEvent;  // Re-exported from sinex-core
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::validation::EventValidator;
+use crate::RawEvent; // Re-exported from sinex-core
 use crate::{DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
 use anyhow::Result;
 use chrono::Utc;
@@ -18,7 +18,18 @@ pub async fn insert_raw_event(
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
 ) -> Result<RawEvent> {
-    insert_raw_event_with_validator(pool, source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, None).await
+    insert_raw_event_with_validator(
+        pool,
+        source,
+        event_type,
+        host,
+        payload,
+        ts_orig,
+        ingestor_version,
+        payload_schema_id,
+        None,
+    )
+    .await
 }
 
 /// Insert a raw event with optional validation
@@ -47,8 +58,9 @@ pub async fn insert_raw_event_with_validator(
             payload_schema_id,
             payload: payload.clone(),
         };
-        
-        validator.validate(&temp_event)
+
+        validator
+            .validate(&temp_event)
             .map_err(|e| anyhow::anyhow!("Event validation failed: {}", e))?;
     }
     // Use query! for compile-time checking, then map to our ULID-based struct
@@ -103,11 +115,16 @@ pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<RawEv
         event.ts_orig,
         event.ingestor_version.as_deref(),
         event.payload_schema_id,
-    ).await
+    )
+    .await
 }
 
 /// Insert a RawEvent struct directly with validation
-pub async fn insert_event_with_validator(pool: DbPoolRef<'_>, event: &RawEvent, validator: Option<&EventValidator>) -> Result<RawEvent> {
+pub async fn insert_event_with_validator(
+    pool: DbPoolRef<'_>,
+    event: &RawEvent,
+    validator: Option<&EventValidator>,
+) -> Result<RawEvent> {
     insert_raw_event_with_validator(
         pool,
         &event.source,
@@ -118,7 +135,8 @@ pub async fn insert_event_with_validator(pool: DbPoolRef<'_>, event: &RawEvent, 
         event.ingestor_version.as_deref(),
         event.payload_schema_id,
         validator,
-    ).await
+    )
+    .await
 }
 
 /// Register or update an agent manifest
@@ -266,7 +284,6 @@ pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Re
     Ok(())
 }
 
-
 /// Mark a work queue item as failed and schedule retry
 pub async fn fail_work_queue_item(
     pool: DbPoolRef<'_>,
@@ -319,7 +336,6 @@ pub async fn fail_work_queue_item_permanently(
 
     Ok(())
 }
-
 
 /// Update agent heartbeat timestamp
 pub async fn update_agent_heartbeat(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
@@ -466,10 +482,7 @@ pub async fn get_retryable_dlq_events_for_agent(
 }
 
 /// Get retryable DLQ events that are ready for retry for all agents
-pub async fn get_retryable_dlq_events(
-    pool: DbPoolRef<'_>,
-    limit: i64,
-) -> Result<Vec<DlqEvent>> {
+pub async fn get_retryable_dlq_events(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<DlqEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -549,11 +562,7 @@ pub async fn update_dlq_retry_attempt(
 }
 
 /// Mark DLQ event as resolved
-pub async fn resolve_dlq_event(
-    pool: DbPoolRef<'_>,
-    dlq_id: Ulid,
-    resolved_by: &str,
-) -> Result<()> {
+pub async fn resolve_dlq_event(pool: DbPoolRef<'_>, dlq_id: Ulid, resolved_by: &str) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.dlq_events
@@ -623,7 +632,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(RawEvent {
         id: uuid_to_ulid(record.id),
         source: record.source,
@@ -659,7 +668,7 @@ pub async fn get_recent_events(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Ra
     )
     .fetch_all(pool)
     .await?;
-    
+
     let events = records
         .into_iter()
         .map(|record| RawEvent {
@@ -674,12 +683,16 @@ pub async fn get_recent_events(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Ra
             payload: record.payload,
         })
         .collect();
-    
+
     Ok(events)
 }
 
 /// Get events by source
-pub async fn get_events_by_source(pool: DbPoolRef<'_>, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_source(
+    pool: DbPoolRef<'_>,
+    source: &str,
+    limit: i64,
+) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -702,7 +715,7 @@ pub async fn get_events_by_source(pool: DbPoolRef<'_>, source: &str, limit: i64)
     )
     .fetch_all(pool)
     .await?;
-    
+
     let events = records
         .into_iter()
         .map(|record| RawEvent {
@@ -717,12 +730,16 @@ pub async fn get_events_by_source(pool: DbPoolRef<'_>, source: &str, limit: i64)
             payload: record.payload,
         })
         .collect();
-    
+
     Ok(events)
 }
 
 /// Get events by event type
-pub async fn get_events_by_type(pool: DbPoolRef<'_>, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_type(
+    pool: DbPoolRef<'_>,
+    event_type: &str,
+    limit: i64,
+) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -745,7 +762,7 @@ pub async fn get_events_by_type(pool: DbPoolRef<'_>, event_type: &str, limit: i6
     )
     .fetch_all(pool)
     .await?;
-    
+
     let events = records
         .into_iter()
         .map(|record| RawEvent {
@@ -760,15 +777,15 @@ pub async fn get_events_by_type(pool: DbPoolRef<'_>, event_type: &str, limit: i6
             payload: record.payload,
         })
         .collect();
-    
+
     Ok(events)
 }
 
 /// Get events within a time range
 pub async fn get_events_in_time_range(
-    pool: DbPoolRef<'_>, 
-    start_time: Timestamp, 
-    end_time: Timestamp
+    pool: DbPoolRef<'_>,
+    start_time: Timestamp,
+    end_time: Timestamp,
 ) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
@@ -791,7 +808,7 @@ pub async fn get_events_in_time_range(
     )
     .fetch_all(pool)
     .await?;
-    
+
     let events = records
         .into_iter()
         .map(|record| RawEvent {
@@ -806,7 +823,7 @@ pub async fn get_events_in_time_range(
             payload: record.payload,
         })
         .collect();
-    
+
     Ok(events)
 }
 
@@ -860,7 +877,6 @@ pub async fn add_to_work_queue(
         failure_reason: record.failure_reason,
     })
 }
-
 
 /// Get the next work queue item for processing
 pub async fn get_next_work_item(
@@ -922,7 +938,6 @@ pub async fn get_next_work_item(
     }
 }
 
-
 /// Complete a work queue item (mark as completed)
 pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
     sqlx::query!(
@@ -938,7 +953,6 @@ pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<(
 
     Ok(())
 }
-
 
 /// Fail a work queue item and optionally retry or move to DLQ
 pub async fn fail_work_item(
@@ -983,7 +997,7 @@ pub async fn fail_work_item(
     // If max attempts reached, move to DLQ but keep in work queue for metrics/TTL
     if record.status == "failed" {
         let event = get_event_by_id(pool, uuid_to_ulid(record.raw_event_id)).await?;
-        
+
         insert_dlq_event(
             pool,
             event.id,
@@ -994,12 +1008,12 @@ pub async fn fail_work_item(
             "retryable",
             event.payload,
             None,
-        ).await?;
+        )
+        .await?;
     }
 
     Ok(())
 }
-
 
 /// Get a work queue item by ID
 pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
@@ -1044,7 +1058,6 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
     })
 }
 
-
 /// Purge old completed work queue items based on TTL policy
 /// Removes items with status 'succeeded' or 'failed' that have processed_at older than 90 days
 pub async fn purge_old_work_queue_items(pool: DbPoolRef<'_>) -> Result<u64> {
@@ -1058,7 +1071,7 @@ pub async fn purge_old_work_queue_items(pool: DbPoolRef<'_>) -> Result<u64> {
     )
     .execute(pool)
     .await?;
-    
+
     Ok(result.rows_affected())
 }
 
@@ -1075,7 +1088,7 @@ pub async fn count_purgeable_work_queue_items(pool: DbPoolRef<'_>) -> Result<i64
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(result.count.unwrap_or(0))
 }
 
@@ -1154,7 +1167,8 @@ pub async fn create_test_agent(
         Some(description),
         None,
         None,
-    ).await
+    )
+    .await
 }
 
 /// Insert a work queue item for testing
@@ -1215,12 +1229,10 @@ pub async fn refresh_routing_cache(pool: DbPoolRef<'_>) -> Result<()> {
 
 /// Run the batch router function to process unrouted events
 pub async fn run_batch_router(pool: DbPoolRef<'_>) -> Result<i64> {
-    let result = sqlx::query!(
-        "SELECT sinex_router.batch_route_events() as count"
-    )
-    .fetch_one(pool)
-    .await?;
-    
+    let result = sqlx::query!("SELECT sinex_router.batch_route_events() as count")
+        .fetch_one(pool)
+        .await?;
+
     Ok(result.count.unwrap_or(0))
 }
 
@@ -1251,9 +1263,12 @@ pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<Qu
     )
     .fetch_all(pool)
     .await?;
-    
-    Ok(metrics.into_iter().map(|m| QueueDepthMetric {
-        agent_name: m.agent_name,
-        queue_depth: m.queue_depth.unwrap_or(0),
-    }).collect())
+
+    Ok(metrics
+        .into_iter()
+        .map(|m| QueueDepthMetric {
+            agent_name: m.agent_name,
+            queue_depth: m.queue_depth.unwrap_or(0),
+        })
+        .collect())
 }

@@ -37,10 +37,10 @@ enum SecurityPayload {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ExpectedBehavior {
-    Rejected,           // Should be rejected outright
-    Sanitized,          // Should be accepted but sanitized
-    AcceptedAsDat,     // Should be accepted as harmless data
-    ResourceLimited,    // Should hit resource limits
+    Rejected,        // Should be rejected outright
+    Sanitized,       // Should be accepted but sanitized
+    AcceptedAsDat,   // Should be accepted as harmless data
+    ResourceLimited, // Should hit resource limits
 }
 
 /// Comprehensive security attack test scenarios
@@ -58,7 +58,9 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "path_traversal_windows",
             category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..\\..\\..\\windows\\system32\\config\\sam".to_string()),
+            payload: SecurityPayload::String(
+                "..\\..\\..\\windows\\system32\\config\\sam".to_string(),
+            ),
             expected_behavior: ExpectedBehavior::Sanitized,
         },
         SecurityScenario {
@@ -98,7 +100,9 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "sql_injection_union_select",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("' UNION SELECT * FROM agent_manifests --".to_string()),
+            payload: SecurityPayload::String(
+                "' UNION SELECT * FROM agent_manifests --".to_string(),
+            ),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
         SecurityScenario {
@@ -110,7 +114,9 @@ fn security_scenarios() -> Vec<SecurityScenario> {
         SecurityScenario {
             name: "sql_injection_stacked_queries",
             category: SecurityCategory::SqlInjection,
-            payload: SecurityPayload::String("'; CREATE TABLE malicious (data TEXT); --".to_string()),
+            payload: SecurityPayload::String(
+                "'; CREATE TABLE malicious (data TEXT); --".to_string(),
+            ),
             expected_behavior: ExpectedBehavior::AcceptedAsDat,
         },
     ]);
@@ -328,25 +334,35 @@ async fn test_comprehensive_security_scenarios(ctx: TestContext) -> TestResult {
                         None,
                         Some("1.0.0"),
                         None,
-                    )
-                ).await;
+                    ),
+                )
+                .await;
 
-                let converted_result = event_result.map_err(|e| e).map(|inner| inner.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
-                results.record_string_test(&scenario, converted_result, pool).await?;
+                let converted_result = event_result.map_err(|e| e).map(|inner| {
+                    inner.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    })
+                });
+                results
+                    .record_string_test(&scenario, converted_result, pool)
+                    .await?;
 
                 // Test validation
                 let validation_result = validator.validate_with_rules(
                     "security",
                     "test.scenario",
-                    &json!({"input": s})
+                    &json!({"input": s}),
                 );
-                results.record_validation(&scenario, validation_result.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
+                results.record_validation(
+                    &scenario,
+                    validation_result.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    }),
+                );
             }
 
             SecurityPayload::Json(j) => {
@@ -362,14 +378,20 @@ async fn test_comprehensive_security_scenarios(ctx: TestContext) -> TestResult {
                         None,
                         Some("1.0.0"),
                         None,
-                    )
-                ).await;
+                    ),
+                )
+                .await;
 
-                let converted_result = event_result.map_err(|e| e).map(|inner| inner.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
-                results.record_json_test(&scenario, converted_result, pool).await?;
+                let converted_result = event_result.map_err(|e| e).map(|inner| {
+                    inner.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    })
+                });
+                results
+                    .record_json_test(&scenario, converted_result, pool)
+                    .await?;
             }
 
             SecurityPayload::Binary(_) => {
@@ -392,7 +414,7 @@ async fn test_path_traversal_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PathTraversal))
         .collect();
-    
+
     run_security_test_batch("Path Traversal", scenarios).await
 }
 
@@ -403,7 +425,7 @@ async fn test_sql_injection_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::SqlInjection))
         .collect();
-    
+
     run_security_test_batch("SQL Injection", scenarios).await
 }
 
@@ -414,7 +436,7 @@ async fn test_command_injection_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::CommandInjection))
         .collect();
-    
+
     run_security_test_batch("Command Injection", scenarios).await
 }
 
@@ -425,7 +447,7 @@ async fn test_xss_injection_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::XssInjection))
         .collect();
-    
+
     run_security_test_batch("XSS Injection", scenarios).await
 }
 
@@ -436,7 +458,7 @@ async fn test_json_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::JsonAttack))
         .collect();
-    
+
     run_security_test_batch("JSON Attacks", scenarios).await
 }
 
@@ -447,7 +469,7 @@ async fn test_unicode_exploits(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::UnicodeExploit))
         .collect();
-    
+
     run_security_test_batch("Unicode Exploits", scenarios).await
 }
 
@@ -458,7 +480,7 @@ async fn test_resource_exhaustion_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::ResourceExhaustion))
         .collect();
-    
+
     run_security_test_batch("Resource Exhaustion", scenarios).await
 }
 
@@ -469,7 +491,7 @@ async fn test_prototype_pollution_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::PrototypePollution))
         .collect();
-    
+
     run_security_test_batch("Prototype Pollution", scenarios).await
 }
 
@@ -480,12 +502,15 @@ async fn test_format_string_attacks(_ctx: TestContext) -> TestResult {
         .into_iter()
         .filter(|s| matches!(s.category, SecurityCategory::FormatString))
         .collect();
-    
+
     run_security_test_batch("Format String", scenarios).await
 }
 
 /// Helper function to run a batch of security tests
-async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecurityScenario>) -> TestResult {
+async fn run_security_test_batch(
+    category_name: &str,
+    scenarios: Vec<SecurityScenario>,
+) -> TestResult {
     if scenarios.is_empty() {
         println!("No {} scenarios to test", category_name);
         return Ok(());
@@ -517,25 +542,35 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
                         None,
                         Some("1.0.0"),
                         None,
-                    )
-                ).await;
+                    ),
+                )
+                .await;
 
-                let converted_result = event_result.map_err(|e| e).map(|inner| inner.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
-                results.record_string_test(&scenario, converted_result, pool).await?;
+                let converted_result = event_result.map_err(|e| e).map(|inner| {
+                    inner.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    })
+                });
+                results
+                    .record_string_test(&scenario, converted_result, pool)
+                    .await?;
 
                 // Test validation
                 let validation_result = validator.validate_with_rules(
                     "security",
                     "test.scenario",
-                    &json!({"input": s})
+                    &json!({"input": s}),
                 );
-                results.record_validation(&scenario, validation_result.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
+                results.record_validation(
+                    &scenario,
+                    validation_result.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    }),
+                );
             }
 
             SecurityPayload::Json(j) => {
@@ -551,14 +586,20 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
                         None,
                         Some("1.0.0"),
                         None,
-                    )
-                ).await;
+                    ),
+                )
+                .await;
 
-                let converted_result = event_result.map_err(|e| e).map(|inner| inner.map_err(|e| {
-                    let error_string = format!("{}", e);
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string)) as Box<dyn std::error::Error>
-                }));
-                results.record_json_test(&scenario, converted_result, pool).await?;
+                let converted_result = event_result.map_err(|e| e).map(|inner| {
+                    inner.map_err(|e| {
+                        let error_string = format!("{}", e);
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_string))
+                            as Box<dyn std::error::Error>
+                    })
+                });
+                results
+                    .record_json_test(&scenario, converted_result, pool)
+                    .await?;
             }
 
             SecurityPayload::Binary(_) => {
@@ -569,7 +610,7 @@ async fn run_security_test_batch(category_name: &str, scenarios: Vec<SecuritySce
 
     println!("\n{} Test Results:", category_name);
     results.print_category_summary();
-    
+
     // Only assert on violations for this category
     if !results.violations.is_empty() {
         println!("\nViolations detected in {} tests!", category_name);
@@ -616,13 +657,16 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Test
 
     for attack_path in &attack_paths {
         let attempted_path = watch_root.join(attack_path);
-        
+
         match attempted_path.canonicalize() {
             Ok(canonical_path) => {
                 if !canonical_path.starts_with(watch_root) {
                     traversal_violations += 1;
-                    println!("VIOLATION: Path '{}' escaped to '{}'", 
-                             attack_path, canonical_path.display());
+                    println!(
+                        "VIOLATION: Path '{}' escaped to '{}'",
+                        attack_path,
+                        canonical_path.display()
+                    );
                 }
             }
             Err(_) => {
@@ -634,7 +678,7 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Test
         // Test symlink attacks
         let symlink_name = format!("symlink_{}", attack_path.replace('/', "_"));
         let symlink_path = watch_root.join(&symlink_name);
-        
+
         #[cfg(unix)]
         if std::os::unix::fs::symlink(&sensitive_dir, &symlink_path).is_ok() {
             if let Ok(target) = symlink_path.canonicalize() {
@@ -647,8 +691,11 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Test
         }
     }
 
-    pretty_assertions::assert_eq!(traversal_violations, 0, 
-               "Path traversal attacks should be blocked");
+    pretty_assertions::assert_eq!(
+        traversal_violations,
+        0,
+        "Path traversal attacks should be blocked"
+    );
 
     Ok(())
 }
@@ -657,7 +704,7 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Test
 #[sinex_test]
 async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
     let mut collision_map = HashMap::new();
-    
+
     // Known hash collision strings
     let djb2_collisions = vec![
         ("hetairas", "mentioner"),
@@ -693,10 +740,14 @@ async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
     println!("  Deserialization time: {:?}", deserialization_time);
 
     // Both should complete quickly despite collisions
-    assert!(serialization_time < Duration::from_secs(1),
-            "Serialization too slow - potential DoS vulnerability");
-    assert!(deserialization_time < Duration::from_secs(1),
-            "Deserialization too slow - potential DoS vulnerability");
+    assert!(
+        serialization_time < Duration::from_secs(1),
+        "Serialization too slow - potential DoS vulnerability"
+    );
+    assert!(
+        deserialization_time < Duration::from_secs(1),
+        "Deserialization too slow - potential DoS vulnerability"
+    );
 
     Ok(())
 }
@@ -705,7 +756,10 @@ async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
     let tricky_json_strings = vec![
-        (r#"{"key": 1.0000000000000000000000000000000001}"#, "precision_loss"),
+        (
+            r#"{"key": 1.0000000000000000000000000000000001}"#,
+            "precision_loss",
+        ),
         (r#"{"key": 9007199254740993}"#, "beyond_js_safe_integer"),
         (r#"{"key": "\uD800"}"#, "unpaired_surrogate"),
         (r#"{"key": "\u0000"}"#, "null_character"),
@@ -719,15 +773,18 @@ async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
     for (json_str, description) in tricky_json_strings {
         match serde_json::from_str::<Value>(json_str) {
             Ok(val) => {
-                println!("  {} - Parsed: {}", description, 
-                        serde_json::to_string(&val).unwrap_or_default());
+                println!(
+                    "  {} - Parsed: {}",
+                    description,
+                    serde_json::to_string(&val).unwrap_or_default()
+                );
             }
             Err(e) => {
                 println!("  {} - Rejected: {}", description, e);
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -744,35 +801,35 @@ async fn test_configuration_injection(_ctx: TestContext) -> TestResult {
             r#"
             [event_sources.filesystem]
             watch_paths = ["/tmp; rm -rf /; echo"]
-            "#
+            "#,
         ),
         (
             "path_traversal",
             r#"
             [event_sources.filesystem]
             watch_paths = ["../../../etc/passwd"]
-            "#
+            "#,
         ),
         (
             "regex_dos",
             r#"
             [routing.rules]
             pattern = "(a+)+"
-            "#
+            "#,
         ),
         (
             "toml_bomb",
             r#"
             [a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z]
             value = "deep"
-            "#
+            "#,
         ),
         (
             "unicode_attack",
             r#"
             [event_sources]
             name = "test\u0000\u0001\u0002\ufeff"
-            "#
+            "#,
         ),
     ];
 
@@ -782,20 +839,20 @@ async fn test_configuration_injection(_ctx: TestContext) -> TestResult {
         let config_file = config_dir.join(format!("{}.toml", name));
         fs::write(&config_file, config)?;
 
-        match fs::read_to_string(&config_file)
-            .and_then(|content| {
-                toml::from_str::<toml::Value>(&content)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-            }) {
+        match fs::read_to_string(&config_file).and_then(|content| {
+            toml::from_str::<toml::Value>(&content)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        }) {
             Ok(parsed) => {
                 let config_str = format!("{:?}", parsed);
-                
-                if config_str.contains("/etc/passwd") ||
-                   config_str.contains("; rm -rf") ||
-                   config_str.contains("\u{0000}") {
+
+                if config_str.contains("/etc/passwd")
+                    || config_str.contains("; rm -rf")
+                    || config_str.contains("\u{0000}")
+                {
                     config_violations.push(format!("{}: dangerous content not sanitized", name));
                 }
-                
+
                 println!("Config '{}' parsed (needs validation)", name);
             }
             Err(e) => {
@@ -811,8 +868,10 @@ async fn test_configuration_injection(_ctx: TestContext) -> TestResult {
         }
     }
 
-    assert!(config_violations.is_empty(),
-            "Configuration injection vulnerabilities detected");
+    assert!(
+        config_violations.is_empty(),
+        "Configuration injection vulnerabilities detected"
+    );
 
     Ok(())
 }
@@ -841,11 +900,11 @@ fn create_wide_json(width: usize) -> Value {
 /// Helper to create exponentially expanding JSON
 fn create_exponential_json(levels: usize) -> Value {
     let mut json = json!(["base"]);
-    
+
     for _ in 1..levels {
         json = json!([json.clone(), json.clone()]);
     }
-    
+
     json
 }
 
@@ -874,7 +933,10 @@ impl SecurityTestResults {
     async fn record_string_test(
         &mut self,
         scenario: &SecurityScenario,
-        result: Result<Result<sinex_db::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
+        result: Result<
+            Result<sinex_db::RawEvent, Box<dyn std::error::Error>>,
+            tokio::time::error::Elapsed,
+        >,
         pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
@@ -943,7 +1005,10 @@ impl SecurityTestResults {
     async fn record_json_test(
         &mut self,
         scenario: &SecurityScenario,
-        result: Result<Result<sinex_db::RawEvent, Box<dyn std::error::Error>>, tokio::time::error::Elapsed>,
+        result: Result<
+            Result<sinex_db::RawEvent, Box<dyn std::error::Error>>,
+            tokio::time::error::Elapsed,
+        >,
         _pool: &DbPool,
     ) -> TestResult {
         self.total_tests += 1;
@@ -995,15 +1060,27 @@ impl SecurityTestResults {
     fn print_summary(&self) {
         println!("\n=== Security Test Summary ===");
         println!("Total tests run: {}", self.total_tests);
-        println!("Rejected: {} ({:.1}%)", self.rejected, 
-                 self.rejected as f64 / self.total_tests as f64 * 100.0);
-        println!("Sanitized: {} ({:.1}%)", self.sanitized,
-                 self.sanitized as f64 / self.total_tests as f64 * 100.0);
-        println!("Accepted as data: {} ({:.1}%)", self.accepted_as_data,
-                 self.accepted_as_data as f64 / self.total_tests as f64 * 100.0);
-        println!("Resource limited: {} ({:.1}%)", self.resource_limited,
-                 self.resource_limited as f64 / self.total_tests as f64 * 100.0);
-        
+        println!(
+            "Rejected: {} ({:.1}%)",
+            self.rejected,
+            self.rejected as f64 / self.total_tests as f64 * 100.0
+        );
+        println!(
+            "Sanitized: {} ({:.1}%)",
+            self.sanitized,
+            self.sanitized as f64 / self.total_tests as f64 * 100.0
+        );
+        println!(
+            "Accepted as data: {} ({:.1}%)",
+            self.accepted_as_data,
+            self.accepted_as_data as f64 / self.total_tests as f64 * 100.0
+        );
+        println!(
+            "Resource limited: {} ({:.1}%)",
+            self.resource_limited,
+            self.resource_limited as f64 / self.total_tests as f64 * 100.0
+        );
+
         if !self.violations.is_empty() {
             println!("\nSecurity Violations ({}):", self.violations.len());
             for violation in &self.violations {
@@ -1020,15 +1097,19 @@ impl SecurityTestResults {
         println!("  Sanitized: {}", self.sanitized);
         println!("  Accepted as data: {}", self.accepted_as_data);
         println!("  Resource limited: {}", self.resource_limited);
-        
+
         if self.total_tests > 0 {
-            let acceptance_rate = (self.accepted_as_data + self.sanitized) as f64 / self.total_tests as f64 * 100.0;
+            let acceptance_rate =
+                (self.accepted_as_data + self.sanitized) as f64 / self.total_tests as f64 * 100.0;
             println!("  Overall acceptance rate: {:.1}%", acceptance_rate);
         }
     }
 
     fn assert_security_requirements(&self) {
-        assert!(self.violations.is_empty(),
-                "Security test violations detected: {:?}", self.violations);
+        assert!(
+            self.violations.is_empty(),
+            "Security test violations detected: {:?}",
+            self.violations
+        );
     }
 }

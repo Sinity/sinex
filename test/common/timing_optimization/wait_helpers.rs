@@ -4,8 +4,8 @@
 //! flaky test behavior caused by arbitrary sleep statements. All functions
 //! use exponential backoff and proper timeout handling.
 
-use crate::common::prelude::*;
 use super::EventCounter;
+use crate::common::prelude::*;
 
 /// Replace `sleep(Duration::from_millis(10))` with proper synchronization
 pub async fn wait_for_database_ready(pool: &DbPool) -> anyhow::Result<()> {
@@ -13,12 +13,18 @@ pub async fn wait_for_database_ready(pool: &DbPool) -> anyhow::Result<()> {
 }
 
 /// Wait for database with custom timeout
-pub async fn wait_for_database_ready_with_timeout(pool: &DbPool, timeout_secs: u64) -> anyhow::Result<()> {
+pub async fn wait_for_database_ready_with_timeout(
+    pool: &DbPool,
+    timeout_secs: u64,
+) -> anyhow::Result<()> {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        match sqlx::query("SELECT 1 as health_check").fetch_one(pool).await {
+        match sqlx::query("SELECT 1 as health_check")
+            .fetch_one(pool)
+            .await
+        {
             Ok(_) => return Ok(()),
             Err(_) => {
                 // Use exponential backoff instead of yield_now
@@ -57,7 +63,11 @@ pub async fn wait_for_event_count(
         tokio::time::sleep(backoff).await;
     }
 
-    anyhow::bail!("Expected event count {} not reached within {} seconds", expected_count, timeout_secs)
+    anyhow::bail!(
+        "Expected event count {} not reached within {} seconds",
+        expected_count,
+        timeout_secs
+    )
 }
 
 /// Replace arbitrary waits with condition-based waits
@@ -87,7 +97,12 @@ pub async fn wait_for_worker_status(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    anyhow::bail!("Worker {} did not reach status {} within {} seconds", worker_name, expected_status, timeout_secs)
+    anyhow::bail!(
+        "Worker {} did not reach status {} within {} seconds",
+        worker_name,
+        expected_status,
+        timeout_secs
+    )
 }
 
 /// Wait for worker to process expected number of events
@@ -120,8 +135,10 @@ pub async fn wait_for_worker_processed_events(
     }
 
     anyhow::bail!(
-        "Worker {} processed events not reached {} within {} seconds", 
-        worker_name, expected_count, timeout_secs
+        "Worker {} processed events not reached {} within {} seconds",
+        worker_name,
+        expected_count,
+        timeout_secs
     )
 }
 
@@ -150,7 +167,11 @@ pub async fn wait_for_work_queue_count(
         tokio::time::sleep(backoff).await;
     }
 
-    anyhow::bail!("Work queue count {} not reached within {} seconds", expected_count, timeout_secs)
+    anyhow::bail!(
+        "Work queue count {} not reached within {} seconds",
+        expected_count,
+        timeout_secs
+    )
 }
 
 /// Wait for work queue items with specific status
@@ -183,8 +204,10 @@ pub async fn wait_for_work_queue_status_count(
     }
 
     anyhow::bail!(
-        "Work queue status {} count {} not reached within {} seconds", 
-        status, expected_count, timeout_secs
+        "Work queue status {} count {} not reached within {} seconds",
+        status,
+        expected_count,
+        timeout_secs
     )
 }
 
@@ -209,7 +232,10 @@ impl WorkerReadinessCoordinator {
     }
 
     /// Wait for all workers to be ready
-    pub async fn wait_for_all_ready(&self, timeout_duration: Duration) -> Result<usize, tokio::time::error::Elapsed> {
+    pub async fn wait_for_all_ready(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<usize, tokio::time::error::Elapsed> {
         self.counter.wait_for_target(timeout_duration).await
     }
 
@@ -219,7 +245,7 @@ impl WorkerReadinessCoordinator {
     }
 }
 
-/// Wait for work queue to have zero pending items 
+/// Wait for work queue to have zero pending items
 pub async fn wait_for_work_queue_empty(
     pool: &DbPool,
     agent_name: &str,
@@ -247,7 +273,11 @@ pub async fn wait_for_work_queue_empty(
         tokio::time::sleep(backoff).await;
     }
 
-    anyhow::bail!("Work queue for agent '{}' not empty within {} seconds", agent_name, timeout_secs)
+    anyhow::bail!(
+        "Work queue for agent '{}' not empty within {} seconds",
+        agent_name,
+        timeout_secs
+    )
 }
 
 /// Wait for worker to reach specific status in agent manifests
@@ -277,7 +307,12 @@ pub async fn wait_for_agent_status(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    anyhow::bail!("Agent {} did not reach status {} within {} seconds", agent_name, expected_status, timeout_secs)
+    anyhow::bail!(
+        "Agent {} did not reach status {} within {} seconds",
+        agent_name,
+        expected_status,
+        timeout_secs
+    )
 }
 
 /// Wait for filtered event count based on WHERE condition with parameters
@@ -294,16 +329,13 @@ pub async fn wait_for_filtered_event_count(
     while start.elapsed() < timeout_duration {
         let query = format!("SELECT COUNT(*) FROM raw.events WHERE {}", where_condition);
         let mut query_builder = sqlx::query_scalar::<_, i64>(&query);
-        
+
         // Bind parameters
         for param in params {
             query_builder = query_builder.bind(param);
         }
-        
-        let count = query_builder
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0i64);
+
+        let count = query_builder.fetch_one(pool).await.unwrap_or(0i64);
 
         if count >= expected_count {
             return Ok(count);
@@ -315,14 +347,15 @@ pub async fn wait_for_filtered_event_count(
         tokio::time::sleep(backoff).await;
     }
 
-    anyhow::bail!("Expected filtered event count {} not reached within {} seconds", expected_count, timeout_secs)
+    anyhow::bail!(
+        "Expected filtered event count {} not reached within {} seconds",
+        expected_count,
+        timeout_secs
+    )
 }
 
 /// Wait for a generic condition to be met
-pub async fn wait_for_condition<F, Fut>(
-    mut condition: F,
-    timeout_secs: u64,
-) -> anyhow::Result<()>
+pub async fn wait_for_condition<F, Fut>(mut condition: F, timeout_secs: u64) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
@@ -355,16 +388,18 @@ where
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
     let mut conditions = conditions;
-    wait_for_condition(move || {
-        async {
+    wait_for_condition(
+        move || async {
             for condition in &mut conditions {
                 if !condition().await? {
                     return Ok(false);
                 }
             }
             Ok(true)
-        }
-    }, timeout_secs).await
+        },
+        timeout_secs,
+    )
+    .await
 }
 
 /// Wait for a condition with timeout, returning whether condition was met

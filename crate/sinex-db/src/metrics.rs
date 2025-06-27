@@ -1,6 +1,6 @@
 // Queue metrics implementation for Prometheus exposition
-use anyhow::Result;
 use crate::DbPoolRef;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Queue depth metric per agent
@@ -56,20 +56,23 @@ pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<Qu
     )
     .fetch_all(pool)
     .await?;
-    
-    let metrics = records.into_iter()
+
+    let metrics = records
+        .into_iter()
         .map(|r| QueueDepthMetric {
             agent_name: r.agent_name,
             queue_depth: r.queue_depth.unwrap_or(0),
         })
         .collect();
-    
+
     Ok(metrics)
 }
 
 /// Calculate dequeue latency metrics per agent  
 /// Measures time from queue insertion to processing start
-pub async fn calculate_dequeue_latency_metrics(pool: DbPoolRef<'_>) -> Result<Vec<DequeueLatencyMetric>> {
+pub async fn calculate_dequeue_latency_metrics(
+    pool: DbPoolRef<'_>,
+) -> Result<Vec<DequeueLatencyMetric>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -88,8 +91,9 @@ pub async fn calculate_dequeue_latency_metrics(pool: DbPoolRef<'_>) -> Result<Ve
     )
     .fetch_all(pool)
     .await?;
-    
-    let metrics = records.into_iter()
+
+    let metrics = records
+        .into_iter()
         .map(|r| DequeueLatencyMetric {
             agent_name: r.agent_name,
             avg_dequeue_latency_ms: r.avg_latency_ms.max(0.0),
@@ -98,7 +102,7 @@ pub async fn calculate_dequeue_latency_metrics(pool: DbPoolRef<'_>) -> Result<Ve
             p95_dequeue_latency_ms: r.p95_latency_ms.max(0.0),
         })
         .collect();
-    
+
     Ok(metrics)
 }
 
@@ -120,8 +124,9 @@ pub async fn calculate_per_agent_lag_metrics(pool: DbPoolRef<'_>) -> Result<Vec<
     )
     .fetch_all(pool)
     .await?;
-    
-    let metrics = records.into_iter()
+
+    let metrics = records
+        .into_iter()
         .map(|r| AgentLagMetric {
             agent_name: r.agent_name,
             max_lag_seconds: r.max_lag_seconds.max(0.0),
@@ -129,7 +134,7 @@ pub async fn calculate_per_agent_lag_metrics(pool: DbPoolRef<'_>) -> Result<Vec<
             oldest_pending_seconds: r.oldest_pending_seconds.max(0.0),
         })
         .collect();
-    
+
     Ok(metrics)
 }
 
@@ -146,7 +151,7 @@ pub async fn calculate_overall_queue_stats(pool: DbPoolRef<'_>) -> Result<(i64, 
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok((
         stats.pending_count.unwrap_or(0),
         stats.processing_count.unwrap_or(0),
@@ -156,13 +161,14 @@ pub async fn calculate_overall_queue_stats(pool: DbPoolRef<'_>) -> Result<(i64, 
 
 /// Calculate all queue metrics
 pub async fn calculate_all_queue_metrics(pool: DbPoolRef<'_>) -> Result<QueueMetrics> {
-    let (queue_depth, dequeue_latency, agent_lag, (total_pending, total_processing, total_failed)) = tokio::try_join!(
-        calculate_queue_depth_metrics(pool),
-        calculate_dequeue_latency_metrics(pool),
-        calculate_per_agent_lag_metrics(pool),
-        calculate_overall_queue_stats(pool)
-    )?;
-    
+    let (queue_depth, dequeue_latency, agent_lag, (total_pending, total_processing, total_failed)) =
+        tokio::try_join!(
+            calculate_queue_depth_metrics(pool),
+            calculate_dequeue_latency_metrics(pool),
+            calculate_per_agent_lag_metrics(pool),
+            calculate_overall_queue_stats(pool)
+        )?;
+
     Ok(QueueMetrics {
         queue_depth,
         dequeue_latency,
@@ -176,7 +182,7 @@ pub async fn calculate_all_queue_metrics(pool: DbPoolRef<'_>) -> Result<QueueMet
 /// Generate Prometheus-formatted metrics string
 pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
     let mut output = String::new();
-    
+
     // Queue depth metrics
     output.push_str("# HELP sinex_queue_depth Number of pending items in work queue per agent\n");
     output.push_str("# TYPE sinex_queue_depth gauge\n");
@@ -186,22 +192,35 @@ pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
             metric.agent_name, metric.queue_depth
         ));
     }
-    
+
     // Overall queue stats
     output.push_str("# HELP sinex_total_pending_items Total number of pending work queue items\n");
     output.push_str("# TYPE sinex_total_pending_items gauge\n");
-    output.push_str(&format!("sinex_total_pending_items {}\n", metrics.total_pending_items));
-    
-    output.push_str("# HELP sinex_total_processing_items Total number of processing work queue items\n");
+    output.push_str(&format!(
+        "sinex_total_pending_items {}\n",
+        metrics.total_pending_items
+    ));
+
+    output.push_str(
+        "# HELP sinex_total_processing_items Total number of processing work queue items\n",
+    );
     output.push_str("# TYPE sinex_total_processing_items gauge\n");
-    output.push_str(&format!("sinex_total_processing_items {}\n", metrics.total_processing_items));
-    
+    output.push_str(&format!(
+        "sinex_total_processing_items {}\n",
+        metrics.total_processing_items
+    ));
+
     output.push_str("# HELP sinex_total_failed_items Total number of failed work queue items\n");
     output.push_str("# TYPE sinex_total_failed_items gauge\n");
-    output.push_str(&format!("sinex_total_failed_items {}\n", metrics.total_failed_items));
-    
+    output.push_str(&format!(
+        "sinex_total_failed_items {}\n",
+        metrics.total_failed_items
+    ));
+
     // Dequeue latency metrics
-    output.push_str("# HELP sinex_dequeue_latency_ms Average time from queue insertion to processing start\n");
+    output.push_str(
+        "# HELP sinex_dequeue_latency_ms Average time from queue insertion to processing start\n",
+    );
     output.push_str("# TYPE sinex_dequeue_latency_ms gauge\n");
     for metric in &metrics.dequeue_latency {
         output.push_str(&format!(
@@ -221,7 +240,7 @@ pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
             metric.agent_name, metric.p95_dequeue_latency_ms
         ));
     }
-    
+
     // Agent lag metrics
     output.push_str("# HELP sinex_agent_lag_seconds How far behind each agent is in processing\n");
     output.push_str("# TYPE sinex_agent_lag_seconds gauge\n");
@@ -239,7 +258,7 @@ pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
             metric.agent_name, metric.oldest_pending_seconds
         ));
     }
-    
+
     output
 }
 

@@ -1,13 +1,10 @@
 use crate::common::prelude::*;
+use crate::common::{event_sources, resources};
 use sinex_events::{
-    filesystem::FilesystemMonitor,
-    terminal::KittySocketListener,
-    asciinema::AsciinemaRecorder, 
-    clipboard::ClipboardMonitor,
-    scrollback::ScrollbackCapture,
+    asciinema::AsciinemaRecorder, clipboard::ClipboardMonitor, filesystem::FilesystemMonitor,
+    scrollback::ScrollbackCapture, terminal::KittySocketListener,
 };
 use std::fs;
-use crate::common::{resources, event_sources};
 
 #[sinex_test]
 async fn test_filesystem_watcher_initialization(_ctx: TestContext) -> TestResult {
@@ -15,11 +12,11 @@ async fn test_filesystem_watcher_initialization(_ctx: TestContext) -> TestResult
     let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
     let ctx = event_sources::test_context(config);
     let _watcher = FilesystemMonitor::initialize(ctx).await?;
-    
+
     // FilesystemMonitor doesn't have name() or version() methods
     // These are provided by the EventSource trait constants
     pretty_assertions::assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
-    
+
     Ok(())
 }
 
@@ -31,35 +28,33 @@ async fn test_filesystem_watcher_captures_events(_ctx: TestContext) -> TestResul
         "ignore_patterns": [],
         "debounce_ms": 50
     });
-    
+
     let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
-    
+
     let (tx, mut rx) = mpsc::channel(10);
-    
+
     // Start capturing in background
-    let capture_handle = tokio::spawn(async move {
-        watcher.stream_events(tx).await
-    });
-    
+    let capture_handle = tokio::spawn(async move { watcher.stream_events(tx).await });
+
     // Give watcher time to start
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     // Create a test file
     let test_file = temp_dir.path().join("test.txt");
     fs::write(&test_file, "Hello, world!")?;
-    
+
     // Wait for event
     let event = timeout(Duration::from_secs(1), rx.recv()).await?;
     assert!(event.is_some());
-    
+
     let event = event.unwrap();
     pretty_assertions::assert_eq!(event.source, "filesystem");
     assert!(event.event_type.contains("created") || event.event_type.contains("modify"));
-    
+
     // Verify payload contains expected fields
     assert!(event.payload.get("path").is_some());
-    
+
     capture_handle.abort();
     Ok(())
 }
@@ -72,43 +67,47 @@ async fn test_filesystem_watcher_ignores_patterns(_ctx: TestContext) -> TestResu
         "ignore_patterns": ["*.tmp", "test_*"],
         "debounce_ms": 50
     });
-    
+
     let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
-    
+
     let (tx, mut rx) = mpsc::channel(10);
-    
-    let capture_handle = tokio::spawn(async move {
-        watcher.stream_events(tx).await
-    });
-    
+
+    let capture_handle = tokio::spawn(async move { watcher.stream_events(tx).await });
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     // Create files that should be ignored
     fs::write(temp_dir.path().join("test.tmp"), "ignored")?;
     fs::write(temp_dir.path().join("test_file.txt"), "ignored")?;
-    
+
     // Create a file that should be captured
     fs::write(temp_dir.path().join("valid.txt"), "captured")?;
-    
+
     // Should only receive one event (for valid.txt)
     let event = timeout(Duration::from_millis(500), rx.recv()).await?;
     assert!(event.is_some());
-    
+
     let event = event.unwrap();
-    
+
     // Debug: Print the actual event payload to understand what we're getting
     eprintln!("DEBUG: Received event payload: {:?}", event.payload);
     if let Some(path) = event.payload.get("path") {
         eprintln!("DEBUG: Event path: {:?}", path.as_str());
     }
-    
-    assert!(event.payload.get("path").unwrap().as_str().unwrap().contains("valid.txt"));
-    
+
+    assert!(event
+        .payload
+        .get("path")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .contains("valid.txt"));
+
     // Should not receive more events (the ignored files)
     let no_event = timeout(Duration::from_millis(200), rx.recv()).await;
     assert!(no_event.is_err() || no_event.unwrap().is_none());
-    
+
     capture_handle.abort();
     Ok(())
 }
@@ -119,12 +118,12 @@ async fn test_kitty_socket_listener_initialization(_ctx: TestContext) -> TestRes
         "socket_path": "/tmp/test-kitty-socket",
         "polling_interval_secs": 2
     });
-    
+
     let ctx = event_sources::test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
-    
+
     pretty_assertions::assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
-    
+
     Ok(())
 }
 
@@ -140,12 +139,15 @@ async fn test_asciinema_recorder_initialization(_ctx: TestContext) -> TestResult
         "git_annex_repo": null,
         "auto_annex": false
     });
-    
+
     let ctx = event_sources::test_context(config);
     let _recorder = AsciinemaRecorder::initialize(ctx).await?;
-    
-    pretty_assertions::assert_eq!(AsciinemaRecorder::SOURCE_NAME, "ingestor.asciinema_recorder");
-    
+
+    pretty_assertions::assert_eq!(
+        AsciinemaRecorder::SOURCE_NAME,
+        "ingestor.asciinema_recorder"
+    );
+
     Ok(())
 }
 
@@ -163,54 +165,52 @@ async fn test_clipboard_monitor_initialization(_ctx: TestContext) -> TestResult 
         "max_content_size": 1048576,
         "annex_repo_path": null
     });
-    
+
     let ctx = event_sources::test_context(config);
     let _monitor = ClipboardMonitor::initialize(ctx).await?;
-    
+
     pretty_assertions::assert_eq!(ClipboardMonitor::SOURCE_NAME, "clipboard.monitor");
-    
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_filesystem_watcher_ignore_patterns_comprehensive(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
-    
+
     // Create a subdirectory to test path-based patterns
     let sub_dir = temp_dir.path().join("logs");
     fs::create_dir(&sub_dir)?;
-    
+
     let config = json!({
         "watch_patterns": [format!("{}/**/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": [
             "*.tmp",           // filename pattern
-            "test_*",          // filename pattern 
+            "test_*",          // filename pattern
             "logs/*.log",      // path-based pattern
             "**/debug/**"      // recursive path pattern
         ],
         "debounce_ms": 50
     });
-    
+
     let ctx = event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
-    
+
     let (tx, mut rx) = mpsc::channel(20);
-    
-    let capture_handle = tokio::spawn(async move {
-        watcher.stream_events(tx).await
-    });
-    
+
+    let capture_handle = tokio::spawn(async move { watcher.stream_events(tx).await });
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     // Files that should be ignored
-    fs::write(temp_dir.path().join("backup.tmp"), "ignored")?;           // *.tmp
-    fs::write(temp_dir.path().join("test_data.txt"), "ignored")?;        // test_*  
-    fs::write(sub_dir.join("error.log"), "ignored")?;                    // logs/*.log
-    
+    fs::write(temp_dir.path().join("backup.tmp"), "ignored")?; // *.tmp
+    fs::write(temp_dir.path().join("test_data.txt"), "ignored")?; // test_*
+    fs::write(sub_dir.join("error.log"), "ignored")?; // logs/*.log
+
     // Files that should be captured
     fs::write(temp_dir.path().join("valid.txt"), "captured")?;
     fs::write(sub_dir.join("config.json"), "captured")?;
-    
+
     // Collect events for a short period
     let mut events = Vec::new();
     for _ in 0..5 {
@@ -219,18 +219,23 @@ async fn test_filesystem_watcher_ignore_patterns_comprehensive(_ctx: TestContext
             _ => break,
         }
     }
-    
+
     // Should have received events for valid.txt and config.json only
-    assert!(events.len() >= 2, "Expected at least 2 events, got {}", events.len());
-    
+    assert!(
+        events.len() >= 2,
+        "Expected at least 2 events, got {}",
+        events.len()
+    );
+
     for event in &events {
         let path = event.payload.get("path").unwrap().as_str().unwrap();
         assert!(
             path.contains("valid.txt") || path.contains("config.json"),
-            "Unexpected event for path: {}", path
+            "Unexpected event for path: {}",
+            path
         );
     }
-    
+
     capture_handle.abort();
     Ok(())
 }
@@ -249,11 +254,14 @@ async fn test_scrollback_capture_initialization(_ctx: TestContext) -> TestResult
         "capture_on_command": false,
         "command_capture_delay_ms": 500
     });
-    
+
     let ctx = event_sources::test_context(config);
     let _capture = ScrollbackCapture::initialize(ctx).await?;
-    
-    pretty_assertions::assert_eq!(ScrollbackCapture::SOURCE_NAME, "ingestor.scrollback_capture");
-    
+
+    pretty_assertions::assert_eq!(
+        ScrollbackCapture::SOURCE_NAME,
+        "ingestor.scrollback_capture"
+    );
+
     Ok(())
 }

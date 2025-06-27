@@ -9,7 +9,7 @@
 //! # Usage
 //! ```rust
 //! use crate::common::test_context::TestContext;
-//! 
+//!
 //! #[sinex_test]
 //! async fn my_test(ctx: TestContext) -> TestResult {
 //!     let event = ctx.filesystem_event("/test/file");
@@ -19,14 +19,14 @@
 //! }
 //! ```
 
-use crate::common::prelude::*;
 use crate::common::database::TestPool;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
-    wait_for_event_count, wait_for_filtered_event_count, 
-    wait_for_work_queue_count, wait_for_condition_or_timeout
+    wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
+    wait_for_work_queue_count,
 };
-use sqlx::{Transaction, Postgres};
+use sqlx::{Postgres, Transaction};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -83,7 +83,7 @@ impl TestContext {
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> Result<Self> {
         let test_pool = TestPool::new().await?;
-        
+
         Ok(Self {
             db: DbConnection::TestPool(test_pool),
             config,
@@ -91,7 +91,7 @@ impl TestContext {
             created_events: Arc::new(Mutex::new(Vec::new())),
         })
     }
-    
+
     /// Create a test context using an existing pool
     pub async fn with_pool(pool: DbPool, config: TestConfig) -> Result<Self> {
         Ok(Self {
@@ -101,14 +101,17 @@ impl TestContext {
             created_events: Arc::new(Mutex::new(Vec::new())),
         })
     }
-    
+
     /// Create a test context with a transaction (used by #[sinex_test])
-    pub async fn with_transaction(_tx: &mut Transaction<'_, Postgres>, config: TestConfig) -> Result<Self> {
+    pub async fn with_transaction(
+        _tx: &mut Transaction<'_, Postgres>,
+        config: TestConfig,
+    ) -> Result<Self> {
         // This method is deprecated - use with_pool instead
         // The macro now passes the pool directly to avoid deadlocks
         panic!("TestContext::with_transaction is deprecated - use with_pool instead");
     }
-    
+
     /// Get the database pool
     pub fn pool(&self) -> &DbPool {
         match &self.db {
@@ -191,39 +194,33 @@ impl TestContext {
 
     /// Create a filesystem event
     pub fn filesystem_event(&self, path: &str) -> RawEvent {
-        EventBuilder::filesystem()
-            .path(path)
-            .created()
-            .build()
+        EventBuilder::filesystem().path(path).created().build()
     }
 
     /// Create a terminal event
     pub fn terminal_event(&self, command: &str) -> RawEvent {
-        EventBuilder::terminal()
-            .command(command)
-            .success()
-            .build()
+        EventBuilder::terminal().command(command).success().build()
     }
 
     /// Create a clipboard event
     pub fn clipboard_event(&self, content: &str) -> RawEvent {
-        EventBuilder::clipboard()
-            .text(content)
-            .build()
+        EventBuilder::clipboard().text(content).build()
     }
 
     /// Create a window manager event
     pub fn hyprland_event(&self, event_type: &str, data: Value) -> RawEvent {
         let builder = EventBuilder::hyprland();
-        
+
         // Map common event types to builder methods
         let builder = match event_type {
             "window.created" => builder.window_created(),
             "window.destroyed" => builder.window_destroyed(),
             "window.focused" => builder.window_focused(),
-            _ => builder.event_type(crate::common::event_builders::HyprlandEventType::Custom(event_type.to_string())),
+            _ => builder.event_type(crate::common::event_builders::HyprlandEventType::Custom(
+                event_type.to_string(),
+            )),
         };
-        
+
         builder.custom_data(data).build()
     }
 
@@ -235,7 +232,8 @@ impl TestContext {
             self.pool(),
             expected as i64,
             self.config.default_timeout.as_secs(),
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
 
@@ -247,7 +245,8 @@ impl TestContext {
             &[source],
             count as i64,
             self.config.default_timeout.as_secs(),
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
 
@@ -266,14 +265,14 @@ impl TestContext {
         // Smart wait that checks for activity
         let initial_count = self.event_count().await?;
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         // If events are still being created, wait a bit more
         let new_count = self.event_count().await?;
         if new_count > initial_count {
             // Use a more robust approach for closure capture
             let pool = self.pool().clone();
             let final_count = new_count;
-            
+
             self.wait_for_condition(move || {
                 let pool = pool.clone();
                 async move {
@@ -285,9 +284,10 @@ impl TestContext {
                         .unwrap_or(0);
                     Ok(count == final_count)
                 }
-            }).await?;
+            })
+            .await?;
         }
-        
+
         Ok(())
     }
 
@@ -297,7 +297,8 @@ impl TestContext {
             self.pool(),
             expected as i64,
             self.config.default_timeout.as_secs(),
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
 
@@ -312,18 +313,24 @@ impl TestContext {
         if self.config.verbose {
             println!("[{}] Starting: {}", self.test_name(), step_name);
         }
-        
+
         let start = Instant::now();
         let result = f().await;
-        
+
         if self.config.verbose {
             let duration = start.elapsed();
             match &result {
                 Ok(_) => println!("[{}] ✓ {} ({:?})", self.test_name(), step_name, duration),
-                Err(e) => println!("[{}] ✗ {} ({:?}): {}", self.test_name(), step_name, duration, e),
+                Err(e) => println!(
+                    "[{}] ✗ {} ({:?}): {}",
+                    self.test_name(),
+                    step_name,
+                    duration,
+                    e
+                ),
             }
         }
-        
+
         result
     }
 
@@ -344,18 +351,19 @@ impl TestContext {
             })
             .collect()
     }
-    
+
     /// Create events with custom time distribution
     pub fn create_time_distributed_batch(
-        &self, 
-        source: &str, 
+        &self,
+        source: &str,
         count: usize,
         start_time: chrono::DateTime<chrono::Utc>,
-        interval: Duration
+        interval: Duration,
     ) -> Vec<RawEvent> {
         (0..count)
             .map(|i| {
-                let timestamp = start_time + chrono::Duration::from_std(interval * i as u32).unwrap();
+                let timestamp =
+                    start_time + chrono::Duration::from_std(interval * i as u32).unwrap();
                 self.event_builder(source, "test.timed_batch")
                     .payload(json!({ "index": i, "sequence": i }))
                     .timestamp(timestamp)
@@ -363,7 +371,7 @@ impl TestContext {
             })
             .collect()
     }
-    
+
     /// Get performance metrics for this test context
     pub fn get_performance_metrics(&self) -> TestPerformanceMetrics {
         TestPerformanceMetrics {
@@ -389,9 +397,7 @@ impl TestPerformanceMetrics {
     pub fn print_summary(&self) {
         println!(
             "[{}] Test completed in {:?} (pool size: {})",
-            self.test_name,
-            self.elapsed_time,
-            self.pool_size
+            self.test_name, self.elapsed_time, self.pool_size
         );
     }
 }

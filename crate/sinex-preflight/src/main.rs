@@ -1,24 +1,24 @@
 /*!
  * Sinex Pre-Flight Verification System
- * 
+ *
  * Comprehensive system-level verification that must pass before any service deployment.
  * This implements the Pre-Flight Verification Model for zero-downtime, safe deployments.
  */
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
-mod verification;
+mod configuration;
 mod database;
 mod resources;
-mod configuration;
 mod services;
+mod verification;
 
 use verification::*;
 
@@ -28,15 +28,15 @@ use verification::*;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    
+
     /// Configuration file path
     #[arg(short, long)]
     config: Option<PathBuf>,
-    
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
-    
+
     /// Output format (json, text)
     #[arg(short, long, default_value = "text")]
     output: OutputFormat,
@@ -49,21 +49,21 @@ enum Commands {
         /// Timeout for verification (seconds)
         #[arg(short, long, default_value = "120")]
         timeout: u64,
-        
+
         /// Skip specific verification phases
         #[arg(short, long)]
         skip: Vec<VerificationPhase>,
     },
-    
+
     /// Run migration dry-run only
     MigrationDryRun,
-    
+
     /// Check database extensions only
     ExtensionCheck,
-    
+
     /// Verify resource capacity only
     ResourceCheck,
-    
+
     /// Generate verification report
     Report {
         /// Include detailed diagnostics
@@ -72,14 +72,14 @@ enum Commands {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 enum OutputFormat {
     Json,
     Text,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 enum VerificationPhase {
     Database,
@@ -137,7 +137,7 @@ struct SystemInfo {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     // Initialize logging
     let log_level = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
@@ -145,27 +145,19 @@ async fn main() -> Result<()> {
         .with_target(false)
         .json()
         .init();
-    
+
     info!("Sinex Pre-Flight Verification System starting");
-    
+
     let result = match cli.command {
         Commands::Verify { timeout, skip } => {
             run_complete_verification(timeout, skip, cli.output).await
         }
-        Commands::MigrationDryRun => {
-            run_migration_dry_run(cli.output).await
-        }
-        Commands::ExtensionCheck => {
-            run_extension_check(cli.output).await
-        }
-        Commands::ResourceCheck => {
-            run_resource_check(cli.output).await
-        }
-        Commands::Report { detailed } => {
-            generate_verification_report(detailed, cli.output).await
-        }
+        Commands::MigrationDryRun => run_migration_dry_run(cli.output).await,
+        Commands::ExtensionCheck => run_extension_check(cli.output).await,
+        Commands::ResourceCheck => run_resource_check(cli.output).await,
+        Commands::Report { detailed } => generate_verification_report(detailed, cli.output).await,
     };
-    
+
     match result {
         Ok(status) => {
             if matches!(status, VerificationStatus::Pass) {
@@ -190,7 +182,7 @@ async fn run_complete_verification(
 ) -> Result<VerificationStatus> {
     let start_time = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
-    
+
     let mut report = VerificationReport {
         overall_status: VerificationStatus::Running,
         verification_id: Uuid::new_v4(),
@@ -202,9 +194,12 @@ async fn run_complete_verification(
         warnings: Vec::new(),
         errors: Vec::new(),
     };
-    
-    info!("Starting comprehensive system verification (ID: {})", report.verification_id);
-    
+
+    info!(
+        "Starting comprehensive system verification (ID: {})",
+        report.verification_id
+    );
+
     // Define verification phases in dependency order
     let phases = vec![
         VerificationPhase::Database,
@@ -215,24 +210,26 @@ async fn run_complete_verification(
         VerificationPhase::Services,
         VerificationPhase::Integration,
     ];
-    
+
     let mut overall_status = VerificationStatus::Pass;
-    
+
     for phase in phases {
         if skip_phases.contains(&phase) {
             info!("Skipping verification phase: {:?}", phase);
             continue;
         }
-        
+
         if start_time.elapsed() > timeout {
-            report.errors.push("Verification timeout exceeded".to_string());
+            report
+                .errors
+                .push("Verification timeout exceeded".to_string());
             overall_status = VerificationStatus::Fail;
             break;
         }
-        
+
         let phase_start = Instant::now();
         info!("Running verification phase: {:?}", phase);
-        
+
         let phase_result = match run_verification_phase(&phase).await {
             Ok(result) => result,
             Err(e) => {
@@ -246,7 +243,7 @@ async fn run_complete_verification(
                 }
             }
         };
-        
+
         // Update overall status based on phase result
         match phase_result.status {
             VerificationStatus::Fail => overall_status = VerificationStatus::Fail,
@@ -255,58 +252,46 @@ async fn run_complete_verification(
             }
             _ => {}
         }
-        
+
         report.phases.insert(phase, phase_result);
-        
+
         // Fail fast on critical failures
         if matches!(overall_status, VerificationStatus::Fail) {
             error!("Critical verification failure, aborting remaining phases");
             break;
         }
     }
-    
+
     report.overall_status = overall_status.clone();
     report.completed_at = Some(chrono::Utc::now());
     report.duration_ms = Some(start_time.elapsed().as_millis() as u64);
-    
+
     // Output report
     output_report(&report, output_format).await?;
-    
+
     // Record verification in database for monitoring
     if let Err(e) = record_verification_result(&report).await {
         warn!("Failed to record verification result: {}", e);
     }
-    
+
     Ok(overall_status)
 }
 
 async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult> {
     let start = Instant::now();
-    
+
     let (status, details, messages) = match phase {
-        VerificationPhase::Database => {
-            database::verify_database_connectivity().await?
-        }
-        VerificationPhase::Extensions => {
-            database::verify_postgresql_extensions().await?
-        }
-        VerificationPhase::Migrations => {
-            database::verify_migration_readiness().await?
-        }
+        VerificationPhase::Database => database::verify_database_connectivity().await?,
+        VerificationPhase::Extensions => database::verify_postgresql_extensions().await?,
+        VerificationPhase::Migrations => database::verify_migration_readiness().await?,
         VerificationPhase::Configuration => {
             configuration::verify_configuration_generation().await?
         }
-        VerificationPhase::Resources => {
-            resources::verify_system_resources().await?
-        }
-        VerificationPhase::Services => {
-            services::verify_service_dependencies().await?
-        }
-        VerificationPhase::Integration => {
-            verification::verify_end_to_end_integration().await?
-        }
+        VerificationPhase::Resources => resources::verify_system_resources().await?,
+        VerificationPhase::Services => services::verify_service_dependencies().await?,
+        VerificationPhase::Integration => verification::verify_end_to_end_integration().await?,
     };
-    
+
     Ok(PhaseResult {
         status,
         duration_ms: start.elapsed().as_millis() as u64,
@@ -316,11 +301,11 @@ async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult
 }
 
 async fn collect_system_info() -> Result<SystemInfo> {
-    use sysinfo::{System, SystemExt, CpuExt};
-    
+    use sysinfo::{CpuExt, System, SystemExt};
+
     let mut sys = System::new_all();
     sys.refresh_all();
-    
+
     Ok(SystemInfo {
         hostname: gethostname::gethostname().to_string_lossy().to_string(),
         uptime_seconds: sys.uptime(),
@@ -333,7 +318,7 @@ async fn collect_system_info() -> Result<SystemInfo> {
 
 fn get_available_disk_space() -> Result<f64> {
     use nix::sys::statvfs::statvfs;
-    
+
     let stat = statvfs("/var/lib/sinex")?;
     let available_bytes = stat.blocks_available() * stat.block_size();
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
@@ -348,33 +333,42 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Res
             println!("\n=== SINEX PRE-FLIGHT VERIFICATION REPORT ===");
             println!("Verification ID: {}", report.verification_id);
             println!("Overall Status: {:?}", report.overall_status);
-            
+
             if let Some(duration) = report.duration_ms {
                 println!("Duration: {}ms", duration);
             }
-            
+
             println!("\nSystem Information:");
             println!("  Hostname: {}", report.system_info.hostname);
-            println!("  Available Memory: {:.2} GB", report.system_info.available_memory_gb);
-            println!("  Available Disk: {:.2} GB", report.system_info.available_disk_gb);
+            println!(
+                "  Available Memory: {:.2} GB",
+                report.system_info.available_memory_gb
+            );
+            println!(
+                "  Available Disk: {:.2} GB",
+                report.system_info.available_disk_gb
+            );
             println!("  CPU Count: {}", report.system_info.cpu_count);
             println!("  Load Average: {:.2}", report.system_info.load_average);
-            
+
             println!("\nVerification Phases:");
             for (phase, result) in &report.phases {
-                println!("  {:?}: {:?} ({}ms)", phase, result.status, result.duration_ms);
+                println!(
+                    "  {:?}: {:?} ({}ms)",
+                    phase, result.status, result.duration_ms
+                );
                 for message in &result.messages {
                     println!("    {}", message);
                 }
             }
-            
+
             if !report.warnings.is_empty() {
                 println!("\nWarnings:");
                 for warning in &report.warnings {
                     println!("  ⚠ {}", warning);
                 }
             }
-            
+
             if !report.errors.is_empty() {
                 println!("\nErrors:");
                 for error in &report.errors {
@@ -383,25 +377,26 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Res
             }
         }
     }
-    
+
     Ok(())
 }
 
 async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     // Record verification results in the component_heartbeats table for monitoring
-    let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL environment variable not set")?;
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let database_url =
+        std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
+
+    let pool = sqlx::PgPool::connect(&database_url)
+        .await
         .context("Failed to connect to database for verification recording")?;
-    
+
     let status_str = match report.overall_status {
         VerificationStatus::Pass => "PASS",
-        VerificationStatus::Fail => "FAIL", 
+        VerificationStatus::Fail => "FAIL",
         VerificationStatus::Warning => "WARNING",
         VerificationStatus::Running => "RUNNING",
     };
-    
+
     sqlx::query!(
         r#"
         INSERT INTO component_heartbeats (
@@ -425,22 +420,22 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     .execute(&pool)
     .await
     .context("Failed to record verification result")?;
-    
+
     Ok(())
 }
 
 async fn run_migration_dry_run(output_format: OutputFormat) -> Result<VerificationStatus> {
     info!("Running migration dry-run verification");
-    
+
     let (status, details, messages) = database::verify_migration_readiness().await?;
-    
+
     let report = serde_json::json!({
         "phase": "migration_dry_run",
         "status": status,
         "details": details,
         "messages": messages
     });
-    
+
     match output_format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Text => {
@@ -450,22 +445,22 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> Result<Verificati
             }
         }
     }
-    
+
     Ok(status)
 }
 
 async fn run_extension_check(output_format: OutputFormat) -> Result<VerificationStatus> {
     info!("Running PostgreSQL extension verification");
-    
+
     let (status, details, messages) = database::verify_postgresql_extensions().await?;
-    
+
     let report = serde_json::json!({
         "phase": "extension_check",
         "status": status,
         "details": details,
         "messages": messages
     });
-    
+
     match output_format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Text => {
@@ -475,22 +470,22 @@ async fn run_extension_check(output_format: OutputFormat) -> Result<Verification
             }
         }
     }
-    
+
     Ok(status)
 }
 
 async fn run_resource_check(output_format: OutputFormat) -> Result<VerificationStatus> {
     info!("Running system resource verification");
-    
+
     let (status, details, messages) = resources::verify_system_resources().await?;
-    
+
     let report = serde_json::json!({
-        "phase": "resource_check", 
+        "phase": "resource_check",
         "status": status,
         "details": details,
         "messages": messages
     });
-    
+
     match output_format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Text => {
@@ -500,21 +495,25 @@ async fn run_resource_check(output_format: OutputFormat) -> Result<VerificationS
             }
         }
     }
-    
+
     Ok(status)
 }
 
-async fn generate_verification_report(detailed: bool, output_format: OutputFormat) -> Result<VerificationStatus> {
+async fn generate_verification_report(
+    detailed: bool,
+    output_format: OutputFormat,
+) -> Result<VerificationStatus> {
     info!("Generating verification report");
-    
+
     // This would query the database for recent verification results
     // and generate a comprehensive report
-    let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL environment variable not set")?;
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let database_url =
+        std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
+
+    let pool = sqlx::PgPool::connect(&database_url)
+        .await
         .context("Failed to connect to database")?;
-    
+
     let recent_verifications = sqlx::query!(
         r#"
         SELECT 
@@ -531,7 +530,7 @@ async fn generate_verification_report(detailed: bool, output_format: OutputForma
     .fetch_all(&pool)
     .await
     .context("Failed to fetch verification history")?;
-    
+
     let report = if detailed {
         serde_json::json!({
             "recent_verifications": recent_verifications,
@@ -543,20 +542,19 @@ async fn generate_verification_report(detailed: bool, output_format: OutputForma
             "latest_status": recent_verifications.first().map(|v| &v.status)
         })
     };
-    
+
     match output_format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Text => {
             println!("Recent Verification History:");
             for verification in &recent_verifications {
-                println!("  {} - {} ({})", 
-                    verification.last_seen, 
-                    verification.status,
-                    verification.instance_id
+                println!(
+                    "  {} - {} ({})",
+                    verification.last_seen, verification.status, verification.instance_id
                 );
             }
         }
     }
-    
+
     Ok(VerificationStatus::Pass)
 }

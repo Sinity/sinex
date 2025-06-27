@@ -2,20 +2,19 @@ pub mod worker;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
+use prometheus::{
+    register_counter_vec, register_gauge_vec, register_histogram_vec, CounterVec, GaugeVec,
+    HistogramVec,
+};
 use sinex_db::models::WorkQueueItem;
 use sinex_db::{DbPool, DbPoolRef};
-use prometheus::{register_counter_vec, register_histogram_vec, register_gauge_vec, CounterVec, HistogramVec, GaugeVec};
-use once_cell::sync::Lazy;
 
 /// Trait for implementing agent-specific processing logic
 #[async_trait]
 pub trait EventProcessor: Send + Sync {
     /// Process a single event from the work queue
-    async fn process_event(
-        &self,
-        pool: DbPoolRef<'_>,
-        item: &WorkQueueItem,
-    ) -> Result<()>;
+    async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()>;
 
     /// Get the agent name this processor handles
     fn agent_name(&self) -> &str;
@@ -34,12 +33,12 @@ pub trait EventProcessor: Send + Sync {
 /// Calculate exponential backoff with jitter
 pub fn calculate_backoff_secs(attempts: i32) -> f64 {
     use rand::Rng;
-    
+
     let base_delay_secs = 60.0;
     let delay_secs = base_delay_secs * (2.0_f64.powi(attempts));
     let jitter_factor = rand::thread_rng().gen_range(0.8..=1.2);
     let final_delay_secs = (delay_secs * jitter_factor).max(1.0).min(24.0 * 3600.0);
-    
+
     final_delay_secs
 }
 
@@ -104,7 +103,7 @@ static QUEUE_DEPTH: Lazy<GaugeVec> = Lazy::new(|| {
 
 static DEQUEUE_LATENCY: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!(
-        "sinex_dequeue_latency_ms", 
+        "sinex_dequeue_latency_ms",
         "Dequeue latency in milliseconds",
         &["agent_name", "quantile"]
     )
@@ -153,32 +152,32 @@ impl WorkerMetrics {
 /// Start metrics server on specified port
 pub async fn start_metrics_server(port: u16) -> anyhow::Result<()> {
     use axum::{routing::get, Router};
-    
+
     let app = Router::new().route("/metrics", get(metrics_handler));
-    
+
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Metrics server listening on {}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }
 
 /// Update queue metrics from database
 pub async fn update_queue_metrics(pool: DbPoolRef<'_>) -> Result<()> {
-    use sinex_db::metrics::{calculate_all_queue_metrics};
-    
+    use sinex_db::metrics::calculate_all_queue_metrics;
+
     let metrics = calculate_all_queue_metrics(pool).await?;
-    
+
     // Update queue depth metrics
     for metric in &metrics.queue_depth {
         QUEUE_DEPTH
             .with_label_values(&[&metric.agent_name])
             .set(metric.queue_depth as f64);
     }
-    
-    // Update dequeue latency metrics  
+
+    // Update dequeue latency metrics
     for metric in &metrics.dequeue_latency {
         DEQUEUE_LATENCY
             .with_label_values(&[&metric.agent_name, "avg"])
@@ -193,7 +192,7 @@ pub async fn update_queue_metrics(pool: DbPoolRef<'_>) -> Result<()> {
             .with_label_values(&[&metric.agent_name, "0.95"])
             .set(metric.p95_dequeue_latency_ms);
     }
-    
+
     // Update agent lag metrics
     for metric in &metrics.agent_lag {
         AGENT_LAG
@@ -206,7 +205,7 @@ pub async fn update_queue_metrics(pool: DbPoolRef<'_>) -> Result<()> {
             .with_label_values(&[&metric.agent_name, "oldest_pending"])
             .set(metric.oldest_pending_seconds);
     }
-    
+
     // Update total queue stats
     TOTAL_QUEUE_ITEMS
         .with_label_values(&["pending"])
@@ -217,18 +216,22 @@ pub async fn update_queue_metrics(pool: DbPoolRef<'_>) -> Result<()> {
     TOTAL_QUEUE_ITEMS
         .with_label_values(&["failed"])
         .set(metrics.total_failed_items as f64);
-    
+
     Ok(())
 }
 
 /// Start enhanced metrics server with queue metrics
-pub async fn start_queue_metrics_server(pool: DbPool, port: u16, update_interval_secs: u64) -> Result<()> {
+pub async fn start_queue_metrics_server(
+    pool: DbPool,
+    port: u16,
+    update_interval_secs: u64,
+) -> Result<()> {
     use axum::{routing::get, Router};
     use std::sync::Arc;
     use tokio::time::{interval, Duration};
-    
+
     let pool = Arc::new(pool);
-    
+
     // Spawn background task to update queue metrics periodically
     let metrics_pool = pool.clone();
     tokio::spawn(async move {
@@ -240,30 +243,36 @@ pub async fn start_queue_metrics_server(pool: DbPool, port: u16, update_interval
             }
         }
     });
-    
+
     let app = Router::new()
         .route("/metrics", get(enhanced_metrics_handler))
         .with_state(pool);
-    
+
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("Enhanced metrics server with queue metrics listening on {}", addr);
-    
+    tracing::info!(
+        "Enhanced metrics server with queue metrics listening on {}",
+        addr
+    );
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }
 
 async fn enhanced_metrics_handler(
-    axum::extract::State(pool): axum::extract::State<std::sync::Arc<DbPool>>
+    axum::extract::State(pool): axum::extract::State<std::sync::Arc<DbPool>>,
 ) -> String {
     use prometheus::{Encoder, TextEncoder};
-    
+
     // Update queue metrics on-demand for fresh data
     if let Err(e) = update_queue_metrics(&pool).await {
-        tracing::warn!("Failed to update queue metrics for /metrics endpoint: {}", e);
+        tracing::warn!(
+            "Failed to update queue metrics for /metrics endpoint: {}",
+            e
+        );
     }
-    
+
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];
@@ -273,7 +282,7 @@ async fn enhanced_metrics_handler(
 
 async fn metrics_handler() -> String {
     use prometheus::{Encoder, TextEncoder};
-    
+
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];
@@ -284,8 +293,8 @@ async fn metrics_handler() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_db::models::WorkQueueItem;
     use async_trait::async_trait;
+    use sinex_db::models::WorkQueueItem;
 
     /// Mock event processor for testing
     struct MockEventProcessor {
@@ -324,11 +333,7 @@ mod tests {
 
     #[async_trait]
     impl EventProcessor for MockEventProcessor {
-        async fn process_event(
-            &self,
-            _pool: DbPoolRef<'_>,
-            _item: &WorkQueueItem,
-        ) -> Result<()> {
+        async fn process_event(&self, _pool: DbPoolRef<'_>, _item: &WorkQueueItem) -> Result<()> {
             if self.should_fail {
                 anyhow::bail!("Mock processor intentionally failed");
             }
@@ -357,14 +362,33 @@ mod tests {
         let backoff_3 = calculate_backoff_secs(3);
 
         // Should be roughly: 60, 120, 240, 480 seconds with jitter
-        assert!(backoff_0 >= 48.0 && backoff_0 <= 72.0, "backoff_0: {}", backoff_0); // 60 * (0.8 to 1.2)
-        assert!(backoff_1 >= 96.0 && backoff_1 <= 144.0, "backoff_1: {}", backoff_1); // 120 * (0.8 to 1.2)
-        assert!(backoff_2 >= 192.0 && backoff_2 <= 288.0, "backoff_2: {}", backoff_2); // 240 * (0.8 to 1.2)
-        assert!(backoff_3 >= 384.0 && backoff_3 <= 576.0, "backoff_3: {}", backoff_3); // 480 * (0.8 to 1.2)
+        assert!(
+            backoff_0 >= 48.0 && backoff_0 <= 72.0,
+            "backoff_0: {}",
+            backoff_0
+        ); // 60 * (0.8 to 1.2)
+        assert!(
+            backoff_1 >= 96.0 && backoff_1 <= 144.0,
+            "backoff_1: {}",
+            backoff_1
+        ); // 120 * (0.8 to 1.2)
+        assert!(
+            backoff_2 >= 192.0 && backoff_2 <= 288.0,
+            "backoff_2: {}",
+            backoff_2
+        ); // 240 * (0.8 to 1.2)
+        assert!(
+            backoff_3 >= 384.0 && backoff_3 <= 576.0,
+            "backoff_3: {}",
+            backoff_3
+        ); // 480 * (0.8 to 1.2)
 
         // Test that backoff is bounded at 24 hours
         let large_attempts = calculate_backoff_secs(20);
-        assert!(large_attempts <= 24.0 * 3600.0, "Should be capped at 24 hours");
+        assert!(
+            large_attempts <= 24.0 * 3600.0,
+            "Should be capped at 24 hours"
+        );
 
         // Test minimum bound
         let min_backoff = calculate_backoff_secs(-5);
@@ -376,11 +400,11 @@ mod tests {
         // Test that jitter produces different values
         let attempts = 2;
         let mut values = Vec::new();
-        
+
         for _ in 0..10 {
             values.push(calculate_backoff_secs(attempts));
         }
-        
+
         // Should not all be the same (extremely unlikely with jitter)
         let first_value = values[0];
         let all_same = values.iter().all(|&x| (x - first_value).abs() < 0.001);
@@ -390,7 +414,7 @@ mod tests {
     #[test]
     fn test_worker_metrics_creation() {
         let metrics = WorkerMetrics::new("test_agent");
-        
+
         // Test that metrics are properly initialized
         assert_eq!(metrics.items_claimed.get(), 0.0);
         assert_eq!(metrics.items_processed.get(), 0.0);
@@ -401,13 +425,13 @@ mod tests {
     #[test]
     fn test_worker_metrics_increment() {
         let metrics = WorkerMetrics::new("test_agent_2");
-        
+
         // Test metric increments
         metrics.items_claimed.inc();
         metrics.items_processed.inc();
         metrics.items_failed.inc();
         metrics.items_dlq.inc();
-        
+
         assert_eq!(metrics.items_claimed.get(), 1.0);
         assert_eq!(metrics.items_processed.get(), 1.0);
         assert_eq!(metrics.items_failed.get(), 1.0);
@@ -417,7 +441,7 @@ mod tests {
     #[test]
     fn test_event_processor_trait_defaults() {
         let processor = MockEventProcessor::new("default_test");
-        
+
         // Test default values
         assert_eq!(processor.batch_size(), 5);
         assert_eq!(processor.poll_interval_secs(), 2);
@@ -429,7 +453,7 @@ mod tests {
         let processor = MockEventProcessor::new("custom_test")
             .with_batch_size(20)
             .with_poll_interval(5);
-        
+
         assert_eq!(processor.batch_size(), 20);
         assert_eq!(processor.poll_interval_secs(), 5);
         assert_eq!(processor.agent_name(), "custom_test");
@@ -438,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_event_processor_success() {
         let processor = MockEventProcessor::new("success_test");
-        
+
         // Create a dummy WorkQueueItem for testing
         let _dummy_item = WorkQueueItem {
             queue_id: sinex_ulid::Ulid::new(),
@@ -466,16 +490,16 @@ mod tests {
     fn test_prometheus_metrics_registration() {
         // Test that metrics are properly registered and can be accessed
         let metrics = WorkerMetrics::new("prometheus_test");
-        
+
         // Increment some metrics
         metrics.items_claimed.inc_by(5.0);
         metrics.items_processed.inc_by(3.0);
-        
+
         // Record processing duration
         let timer = metrics.processing_duration.start_timer();
         std::thread::sleep(std::time::Duration::from_millis(1));
         timer.observe_duration();
-        
+
         // Verify the values
         assert_eq!(metrics.items_claimed.get(), 5.0);
         assert_eq!(metrics.items_processed.get(), 3.0);
@@ -485,18 +509,29 @@ mod tests {
     #[test]
     fn test_exponential_backoff_bounds() {
         // Test boundary conditions for exponential backoff
-        
+
         // Very large number of attempts should still be bounded
         for attempts in [100, 1000, 10000] {
             let backoff = calculate_backoff_secs(attempts);
-            assert!(backoff <= 24.0 * 3600.0 + 1.0, "Backoff should be bounded at ~24 hours for {} attempts", attempts);
-            assert!(backoff >= 1.0, "Backoff should be at least 1 second for {} attempts", attempts);
+            assert!(
+                backoff <= 24.0 * 3600.0 + 1.0,
+                "Backoff should be bounded at ~24 hours for {} attempts",
+                attempts
+            );
+            assert!(
+                backoff >= 1.0,
+                "Backoff should be at least 1 second for {} attempts",
+                attempts
+            );
         }
-        
+
         // Very small (negative) attempts should have minimum backoff
         for attempts in [-100, -10, -1] {
             let backoff = calculate_backoff_secs(attempts);
-            assert!(backoff >= 1.0, "Negative attempts should have minimum 1 second backoff");
+            assert!(
+                backoff >= 1.0,
+                "Negative attempts should have minimum 1 second backoff"
+            );
         }
     }
 
@@ -505,17 +540,27 @@ mod tests {
         // Test that backoff generally increases with more attempts
         for attempts in 0..10 {
             let current_backoff = calculate_backoff_secs(attempts);
-            
+
             // Due to jitter, we can't guarantee strict monotonic increase,
             // but the average should trend upward. We'll check the base value without jitter.
             let base_delay = 60.0 * (2.0_f64.powi(attempts));
             let expected_min = (base_delay * 0.8).max(1.0);
             let expected_max = (base_delay * 1.2).min(24.0 * 3600.0);
-            
-            assert!(current_backoff >= expected_min, 
-                "Backoff {} should be >= {} for attempts {}", current_backoff, expected_min, attempts);
-            assert!(current_backoff <= expected_max, 
-                "Backoff {} should be <= {} for attempts {}", current_backoff, expected_max, attempts);
+
+            assert!(
+                current_backoff >= expected_min,
+                "Backoff {} should be >= {} for attempts {}",
+                current_backoff,
+                expected_min,
+                attempts
+            );
+            assert!(
+                current_backoff <= expected_max,
+                "Backoff {} should be <= {} for attempts {}",
+                current_backoff,
+                expected_max,
+                attempts
+            );
         }
     }
 }

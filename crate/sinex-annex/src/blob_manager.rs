@@ -2,15 +2,15 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::Row;
 use sinex_db::{DbPool, Timestamp};
+use sinex_ulid::Ulid;
+use sqlx::Row;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Instant;
 use tracing::{debug, info};
-use sinex_ulid::Ulid;
 
-use crate::{GitAnnex, AnnexConfig, AnnexKey};
+use crate::{AnnexConfig, AnnexKey, GitAnnex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobMetadata {
@@ -38,7 +38,11 @@ impl BlobManager {
     }
 
     /// Ingest a file into the blob management system
-    pub async fn ingest_file(&self, file_path: &Path, original_filename: Option<&str>) -> Result<BlobMetadata> {
+    pub async fn ingest_file(
+        &self,
+        file_path: &Path,
+        original_filename: Option<&str>,
+    ) -> Result<BlobMetadata> {
         info!("Ingesting file: {:?}", file_path);
         let start = Instant::now();
 
@@ -48,21 +52,32 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            info!("File already exists in blob store with ID: {}", existing.blob_id);
-            
+            info!(
+                "File already exists in blob store with ID: {}",
+                existing.blob_id
+            );
+
             // Update original_filenames array if this is a new filename
             if let Some(filename) = original_filename {
-                self.add_original_filename(&existing.blob_id, filename).await?;
+                self.add_original_filename(&existing.blob_id, filename)
+                    .await?;
             }
-            
+
             // Emit deduplication metric
-            self.emit_operation_metric("ingest", "deduplicated", existing.size_bytes, start.elapsed().as_millis() as i64).await?;
-            
+            self.emit_operation_metric(
+                "ingest",
+                "deduplicated",
+                existing.size_bytes,
+                start.elapsed().as_millis() as i64,
+            )
+            .await?;
+
             return Ok(existing);
         }
 
         // Get file metadata
-        let file_metadata = tokio::fs::metadata(file_path).await
+        let file_metadata = tokio::fs::metadata(file_path)
+            .await
             .context("Failed to get file metadata")?;
         let size_bytes = file_metadata.len() as i64;
 
@@ -75,10 +90,12 @@ impl BlobManager {
 
         // Create blob record in database
         let blob_id = Ulid::new();
-        let filename = original_filename
-            .unwrap_or_else(|| file_path.file_name()
+        let filename = original_filename.unwrap_or_else(|| {
+            file_path
+                .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("unknown"));
+                .unwrap_or("unknown")
+        });
 
         let blob_metadata = BlobMetadata {
             blob_id,
@@ -94,9 +111,15 @@ impl BlobManager {
 
         self.insert_blob(&blob_metadata).await?;
         info!("Successfully ingested blob: {}", blob_id);
-        
+
         // Emit ingest success metric
-        self.emit_operation_metric("ingest", "success", size_bytes, start.elapsed().as_millis() as i64).await?;
+        self.emit_operation_metric(
+            "ingest",
+            "success",
+            size_bytes,
+            start.elapsed().as_millis() as i64,
+        )
+        .await?;
 
         Ok(blob_metadata)
     }
@@ -105,13 +128,19 @@ impl BlobManager {
     pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<PathBuf> {
         let start = Instant::now();
         let blob = self.get_blob_metadata(blob_id).await?;
-        
+
         // Ensure content is available locally
         self.annex.get_content(&blob.annex_key).await?;
-        
+
         // Emit retrieval metric
-        self.emit_operation_metric("retrieve", "success", blob.size_bytes, start.elapsed().as_millis() as i64).await?;
-        
+        self.emit_operation_metric(
+            "retrieve",
+            "success",
+            blob.size_bytes,
+            start.elapsed().as_millis() as i64,
+        )
+        .await?;
+
         // Find the symlink path in the repository
         self.find_symlink_path(&blob.annex_key).await
     }
@@ -120,21 +149,27 @@ impl BlobManager {
     pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
         let start = Instant::now();
         let blob = self.get_blob_metadata(blob_id).await?;
-        
+
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;
-        
+
         // Parse fsck output to determine if this specific blob is ok
         let is_verified = !fsck_output.contains("failed") && !fsck_output.contains("error");
-        
+
         // Update verification status in database
         let status = if is_verified { "verified" } else { "corrupted" };
         self.update_verification_status(blob_id, status).await?;
-        
+
         // Emit verification metric
         let result = if is_verified { "success" } else { "failure" };
-        self.emit_operation_metric("verify", result, blob.size_bytes, start.elapsed().as_millis() as i64).await?;
-        
+        self.emit_operation_metric(
+            "verify",
+            result,
+            blob.size_bytes,
+            start.elapsed().as_millis() as i64,
+        )
+        .await?;
+
         Ok(is_verified)
     }
 
@@ -145,7 +180,7 @@ impl BlobManager {
                     checksum_sha256, checksum_blake3, storage_backend, verification_status,
                     created_at, last_verified_at
              FROM core.blobs 
-             WHERE checksum_blake3 = $1 LIMIT 1"
+             WHERE checksum_blake3 = $1 LIMIT 1",
         )
         .bind(blake3_hash)
         .fetch_optional(&self.db_pool)
@@ -175,7 +210,7 @@ impl BlobManager {
             r#"INSERT INTO core.blobs 
                (id, annex_key, original_filename, size_bytes, mime_type, 
                 checksum_sha256, checksum_blake3, storage_backend, verification_status)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
         .bind(blob.blob_id.to_string())
         .bind(&blob.annex_key)
@@ -199,7 +234,7 @@ impl BlobManager {
             "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
                     checksum_sha256, checksum_blake3, storage_backend, verification_status
              FROM core.blobs 
-             WHERE id = $1"
+             WHERE id = $1",
         )
         .bind(blob_id.to_string())
         .fetch_one(&self.db_pool)
@@ -254,12 +289,15 @@ impl BlobManager {
         // This is a simplified implementation
         // In practice, you'd need to search the git-annex repository for the symlink
         // For now, assume the key maps to a predictable path structure
-        
-        let objects_path = self.annex.config.repo_path
+
+        let objects_path = self
+            .annex
+            .config
+            .repo_path
             .join(".git")
             .join("annex")
             .join("objects");
-            
+
         // Extract hash from key for path construction
         if let Ok(key) = AnnexKey::parse(annex_key) {
             // git-annex uses a hierarchical directory structure based on key hash
@@ -271,13 +309,14 @@ impl BlobManager {
                 return Ok(path);
             }
         }
-        
+
         anyhow::bail!("Could not construct path for annex key: {}", annex_key)
     }
 
     /// Simple MIME type detection
     fn detect_mime_type(file_path: &Path) -> Result<String> {
-        let extension = file_path.extension()
+        let extension = file_path
+            .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
 
@@ -295,9 +334,15 @@ impl BlobManager {
 
         Ok(mime_type.to_string())
     }
-    
+
     /// Emit operation metrics as events
-    async fn emit_operation_metric(&self, operation: &str, result: &str, size_bytes: i64, duration_ms: i64) -> Result<()> {
+    async fn emit_operation_metric(
+        &self,
+        operation: &str,
+        result: &str,
+        size_bytes: i64,
+        duration_ms: i64,
+    ) -> Result<()> {
         let event = json!({
             "id": Ulid::new().to_string(),
             "source": "blob_storage",
@@ -312,28 +357,40 @@ impl BlobManager {
                 "duration_ms": duration_ms,
             }
         });
-        
+
         // Insert metric event into raw.events
         sqlx::query(
             r#"
             INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "#,
         )
         .bind(event["id"].as_str().unwrap())
         .bind(event["source"].as_str().unwrap())
         .bind(event["event_type"].as_str().unwrap())
-        .bind(event["ts_ingest"].as_str().unwrap().parse::<Timestamp>().unwrap())
-        .bind(event["ts_orig"].as_str().unwrap().parse::<Timestamp>().unwrap())
+        .bind(
+            event["ts_ingest"]
+                .as_str()
+                .unwrap()
+                .parse::<Timestamp>()
+                .unwrap(),
+        )
+        .bind(
+            event["ts_orig"]
+                .as_str()
+                .unwrap()
+                .parse::<Timestamp>()
+                .unwrap(),
+        )
         .bind(event["host"].as_str().unwrap())
         .bind(&event["payload"])
         .execute(&self.db_pool)
         .await
         .context("Failed to emit blob operation metric")?;
-        
+
         Ok(())
     }
-    
+
     /// Emit storage statistics (called periodically by background task)
     pub async fn emit_storage_stats(&self) -> Result<()> {
         // Query aggregate statistics
@@ -344,15 +401,15 @@ impl BlobManager {
                 SUM(size_bytes) as total_size,
                 COUNT(CASE WHEN verification_status = 'failed' THEN 1 END) as failed_count
             FROM core.blobs
-            "#
+            "#,
         )
         .fetch_one(&self.db_pool)
         .await?;
-        
+
         let blob_count: i64 = stats.get("blob_count");
         let total_size: Option<i64> = stats.get("total_size");
         let failed_count: i64 = stats.get("failed_count");
-        
+
         let event = json!({
             "id": Ulid::new().to_string(),
             "source": "blob_storage",
@@ -367,25 +424,37 @@ impl BlobManager {
                 "storage_backend": "git-annex",
             }
         });
-        
+
         // Insert metric event
         sqlx::query(
             r#"
             INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "#,
         )
         .bind(event["id"].as_str().unwrap())
         .bind(event["source"].as_str().unwrap())
         .bind(event["event_type"].as_str().unwrap())
-        .bind(event["ts_ingest"].as_str().unwrap().parse::<Timestamp>().unwrap())
-        .bind(event["ts_orig"].as_str().unwrap().parse::<Timestamp>().unwrap())
+        .bind(
+            event["ts_ingest"]
+                .as_str()
+                .unwrap()
+                .parse::<Timestamp>()
+                .unwrap(),
+        )
+        .bind(
+            event["ts_orig"]
+                .as_str()
+                .unwrap()
+                .parse::<Timestamp>()
+                .unwrap(),
+        )
         .bind(event["host"].as_str().unwrap())
         .bind(&event["payload"])
         .execute(&self.db_pool)
         .await
         .context("Failed to emit blob storage statistics")?;
-        
+
         Ok(())
     }
 }
@@ -393,13 +462,13 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_mime_type_detection() {
         let path = Path::new("test.txt");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "text/plain");
-        
+
         let path = Path::new("image.jpg");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "image/jpeg");

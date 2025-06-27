@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sinex_core::{RawEvent, Timestamp, EventSender};
+use sinex_core::{EventSender, RawEvent, Timestamp};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -22,7 +22,7 @@ pub enum CollectorError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
-    
+
     #[error("Connection error to {service}: {message}")]
     Connection {
         service: String,
@@ -30,7 +30,7 @@ pub enum CollectorError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
-    
+
     #[error("Event processing error: {message}")]
     EventProcessing {
         message: String,
@@ -39,20 +39,20 @@ pub enum CollectorError {
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
-    
+
     #[error("Resource exhausted: {resource}")]
     ResourceExhausted {
         resource: String,
         limit: Option<String>,
     },
-    
+
     #[error("Validation error: {message}")]
     Validation {
         message: String,
         field: Option<String>,
         value: Option<String>,
     },
-    
+
     #[error("Temporary error (retry possible): {message}")]
     Temporary {
         message: String,
@@ -96,22 +96,22 @@ impl CollectorError {
             Self::Temporary { .. } => ErrorCategory::Retryable,
         }
     }
-    
+
     pub fn should_retry(&self) -> bool {
         matches!(self.category(), ErrorCategory::Retryable)
     }
-    
+
     pub fn is_critical(&self) -> bool {
         matches!(self.category(), ErrorCategory::System)
     }
-    
+
     pub fn to_agent_error(&self, agent_name: &str, event_id: Option<String>) -> AgentError {
         let severity = match self.category() {
             ErrorCategory::System => ErrorSeverity::Critical,
             ErrorCategory::Permanent => ErrorSeverity::Error,
             ErrorCategory::Retryable | ErrorCategory::User => ErrorSeverity::Warning,
         };
-        
+
         AgentError {
             agent_name: agent_name.to_string(),
             error_message: self.to_string(),
@@ -153,7 +153,7 @@ impl RetryPolicy {
             _ => None,
         }
     }
-    
+
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let delay = self.base_delay.as_millis() as f64 * self.exponential_base.powi(attempt as i32);
         Duration::from_millis((delay as u64).min(self.max_delay.as_millis() as u64))
@@ -177,27 +177,27 @@ impl CircuitBreaker {
             timeout,
         }
     }
-    
+
     pub fn record_success(&self) {
         self.failure_count.store(0, Ordering::Relaxed);
         if let Ok(mut guard) = self.last_failure.lock() {
             *guard = None;
         }
     }
-    
+
     pub fn record_failure(&self) {
         self.failure_count.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut guard) = self.last_failure.lock() {
             *guard = Some(Instant::now());
         }
     }
-    
+
     pub fn is_open(&self) -> bool {
         let count = self.failure_count.load(Ordering::Relaxed);
         if count < self.threshold {
             return false;
         }
-        
+
         if let Ok(guard) = self.last_failure.lock() {
             if let Some(last) = *guard {
                 if last.elapsed() > self.timeout {
@@ -207,7 +207,7 @@ impl CircuitBreaker {
                 }
             }
         }
-        
+
         true
     }
 }
@@ -223,13 +223,13 @@ pub struct DlqManager {
 impl DlqManager {
     pub fn new(agent_name: impl Into<String>) -> Result<Self> {
         let agent_name = agent_name.into();
-        
+
         // Allow overriding paths via environment variables for testing
-        let dlq_base = std::env::var("SINEX_DLQ_BASE")
-            .unwrap_or_else(|_| "/var/lib/sinex/dlq".to_string());
-        let log_base = std::env::var("SINEX_LOG_BASE")
-            .unwrap_or_else(|_| "/var/log/sinex".to_string());
-            
+        let dlq_base =
+            std::env::var("SINEX_DLQ_BASE").unwrap_or_else(|_| "/var/lib/sinex/dlq".to_string());
+        let log_base =
+            std::env::var("SINEX_LOG_BASE").unwrap_or_else(|_| "/var/log/sinex".to_string());
+
         let base_path = PathBuf::from(dlq_base).join(&agent_name);
         let critical_failures_log = PathBuf::from(log_base)
             .join(&agent_name)
@@ -242,24 +242,24 @@ impl DlqManager {
             event_tx: None,
         })
     }
-    
+
     pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.event_tx = Some(event_tx);
         self
     }
-    
+
     /// Ensure directories exist
     pub async fn initialize(&self) -> Result<()> {
         fs::create_dir_all(&self.base_path)
             .await
             .with_context(|| format!("Failed to create DLQ directory: {:?}", self.base_path))?;
-        
+
         if let Some(parent) = self.critical_failures_log.parent() {
             fs::create_dir_all(parent)
                 .await
                 .with_context(|| format!("Failed to create log directory: {:?}", parent))?;
         }
-        
+
         Ok(())
     }
 
@@ -289,9 +289,8 @@ impl DlqManager {
         let file_path = self.base_path.join(&filename);
 
         // Serialize and write to file
-        let json = serde_json::to_string_pretty(&entry)
-            .context("Failed to serialize DLQ entry")?;
-        
+        let json = serde_json::to_string_pretty(&entry).context("Failed to serialize DLQ entry")?;
+
         fs::write(&file_path, json)
             .await
             .with_context(|| format!("Failed to write DLQ file: {:?}", file_path))?;
@@ -311,7 +310,7 @@ impl DlqManager {
                 dlq_file_path: file_path.to_string_lossy().into_owned(),
                 failure_reason: entry.failure_reason,
             };
-            
+
             let notification = crate::agent::create_dlq_event(dlq_event);
             if let Err(e) = tx.send(notification).await {
                 warn!("Failed to send DLQ notification event: {}", e);
@@ -325,16 +324,17 @@ impl DlqManager {
     pub async fn log_critical_failure(&self, error: &str) -> Result<()> {
         let timestamp = Utc::now().to_rfc3339();
         let log_entry = format!("{} CRITICAL: {}\n", timestamp, error);
-        
+
         // Append to critical failures log
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.critical_failures_log)
             .await?;
-        
+
         use tokio::io::AsyncWriteExt;
-        file.write_all(log_entry.as_bytes()).await
+        file.write_all(log_entry.as_bytes())
+            .await
             .with_context(|| {
                 format!(
                     "Failed to write to critical failures log: {:?}",
@@ -351,7 +351,7 @@ impl DlqManager {
         let mut entries = fs::read_dir(&self.base_path)
             .await
             .context("Failed to read DLQ directory")?;
-        
+
         let mut count = 0;
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_type().await?.is_file() {
@@ -369,7 +369,7 @@ impl DlqManager {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            
+
             if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
                 match fs::read_to_string(&path).await {
                     Ok(content) => match serde_json::from_str::<DlqEntry>(&content) {
@@ -407,7 +407,7 @@ impl RetryExecutor {
             circuit_breaker,
         }
     }
-    
+
     /// Execute operation with retry logic
     pub async fn execute<F, Fut, T>(&self, mut operation: F) -> Result<T, CollectorError>
     where
@@ -420,9 +420,9 @@ impl RetryExecutor {
                 limit: Some("Circuit breaker is open".to_string()),
             });
         }
-        
+
         let mut last_error_msg = None;
-        
+
         for attempt in 0..self.policy.max_attempts {
             match operation().await {
                 Ok(result) => {
@@ -431,12 +431,12 @@ impl RetryExecutor {
                 }
                 Err(error) => {
                     last_error_msg = Some(error.to_string());
-                    
+
                     if !error.should_retry() || attempt == self.policy.max_attempts - 1 {
                         self.circuit_breaker.record_failure();
                         return Err(error);
                     }
-                    
+
                     let delay = self.policy.delay_for_attempt(attempt);
                     warn!(
                         "Operation failed (attempt {}/{}), retrying in {:?}: {}",
@@ -445,12 +445,12 @@ impl RetryExecutor {
                         delay,
                         error
                     );
-                    
+
                     tokio::time::sleep(delay).await;
                 }
             }
         }
-        
+
         self.circuit_breaker.record_failure();
         Err(CollectorError::EventProcessing {
             message: last_error_msg.unwrap_or_else(|| "Unknown error".to_string()),
@@ -471,32 +471,32 @@ impl RecoveryManager {
     pub fn new(agent_name: impl Into<String>) -> Result<Self> {
         let agent_name = agent_name.into();
         let dlq = DlqManager::new(&agent_name)?;
-        
+
         let policy = RetryPolicy {
             max_attempts: 3,
             base_delay: Duration::from_millis(100),
             max_delay: Duration::from_secs(30),
             exponential_base: 2.0,
         };
-        
+
         let circuit_breaker = Arc::new(CircuitBreaker::new(5, Duration::from_secs(60)));
         let retry_executor = RetryExecutor::new(policy, circuit_breaker);
-        
+
         Ok(Self {
             dlq,
             retry_executor,
         })
     }
-    
+
     pub fn with_event_sender(mut self, event_tx: EventSender) -> Self {
         self.dlq = self.dlq.with_event_sender(event_tx);
         self
     }
-    
+
     pub async fn initialize(&self) -> Result<()> {
         self.dlq.initialize().await
     }
-    
+
     /// Handle event processing with automatic retry and DLQ fallback
     pub async fn handle_event_processing<F, Fut>(
         &self,
@@ -508,7 +508,7 @@ impl RecoveryManager {
         Fut: std::future::Future<Output = Result<(), CollectorError>> + Send,
     {
         let event_clone = event.clone();
-        
+
         match self.retry_executor.execute(operation).await {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -523,12 +523,12 @@ impl RecoveryManager {
                         error!("Cannot even log critical failure: {}", log_error);
                     }
                 }
-                
+
                 Err(error)
             }
         }
     }
-    
+
     pub async fn get_dlq_size(&self) -> Result<u64> {
         self.dlq.get_dlq_size().await
     }

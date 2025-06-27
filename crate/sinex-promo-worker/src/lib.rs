@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sinex_db::{models::AgentManifest, RawEvent, DbPoolRef};
+use sinex_db::{models::AgentManifest, DbPoolRef, RawEvent};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -25,12 +25,12 @@ impl WorkRouter {
     /// Create a new router from agent manifests
     pub fn from_manifests(manifests: Vec<AgentManifest>) -> Self {
         let mut subscriptions: HashMap<String, Vec<EventSubscription>> = HashMap::new();
-        
+
         for manifest in manifests {
             if manifest.status != "running" {
                 continue;
             }
-            
+
             if let Some(subs) = manifest.subscribes_to_event_types {
                 // Parse subscription JSON like:
                 // { "desktop.hyprland.plugin": ["window_focused", "workspace_activated"] }
@@ -41,14 +41,14 @@ impl WorkRouter {
                                 .iter()
                                 .filter_map(|v| v.as_str().map(String::from))
                                 .collect();
-                            
+
                             if !event_types.is_empty() {
                                 let sub = EventSubscription {
                                     agent_name: manifest.agent_name.clone(),
                                     source: source.clone(),
                                     event_types,
                                 };
-                                
+
                                 subscriptions
                                     .entry(source.clone())
                                     .or_insert_with(Vec::new)
@@ -59,14 +59,14 @@ impl WorkRouter {
                 }
             }
         }
-        
+
         Self { subscriptions }
     }
-    
+
     /// Determine which agents should process a given event
     pub fn route_event(&self, event: &RawEvent) -> Vec<String> {
         let mut target_agents = Vec::new();
-        
+
         if let Some(subs) = self.subscriptions.get(&event.source) {
             for sub in subs {
                 if sub.event_types.contains(&event.event_type) {
@@ -74,18 +74,20 @@ impl WorkRouter {
                 }
             }
         }
-        
+
         // Also check for wildcard subscriptions (source "*")
         if let Some(wildcard_subs) = self.subscriptions.get("*") {
             for sub in wildcard_subs {
-                if sub.event_types.contains(&event.event_type) || sub.event_types.contains(&"*".to_string()) {
+                if sub.event_types.contains(&event.event_type)
+                    || sub.event_types.contains(&"*".to_string())
+                {
                     if !target_agents.contains(&sub.agent_name) {
                         target_agents.push(sub.agent_name.clone());
                     }
                 }
             }
         }
-        
+
         target_agents
     }
 }
@@ -97,10 +99,10 @@ pub async fn create_work_entries(
     router: &WorkRouter,
 ) -> Result<usize> {
     let mut total_created = 0;
-    
+
     for event in events {
         let target_agents = router.route_event(&event);
-        
+
         if target_agents.is_empty() {
             debug!(
                 event_id = %event.id,
@@ -110,7 +112,7 @@ pub async fn create_work_entries(
             );
             continue;
         }
-        
+
         for agent_name in target_agents {
             match insert_work_queue_entry(pool, event.id, &agent_name).await {
                 Ok(inserted) => {
@@ -134,11 +136,11 @@ pub async fn create_work_entries(
             }
         }
     }
-    
+
     if total_created > 0 {
         info!(count = total_created, "Created work queue entries");
     }
-    
+
     Ok(total_created)
 }
 
@@ -160,7 +162,7 @@ async fn insert_work_queue_entry(
     )
     .fetch_optional(pool)
     .await?;
-    
+
     Ok(result.is_some())
 }
 
@@ -191,7 +193,7 @@ pub async fn get_active_manifests(pool: DbPoolRef<'_>) -> Result<Vec<AgentManife
     )
     .fetch_all(pool)
     .await?;
-    
+
     let manifests = records
         .into_iter()
         .map(|r| AgentManifest {
@@ -213,7 +215,7 @@ pub async fn get_active_manifests(pool: DbPoolRef<'_>) -> Result<Vec<AgentManife
             updated_at: r.updated_at,
         })
         .collect();
-    
+
     Ok(manifests)
 }
 
@@ -221,36 +223,34 @@ pub async fn get_active_manifests(pool: DbPoolRef<'_>) -> Result<Vec<AgentManife
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_promotion_router_basic() {
-        let manifests = vec![
-            AgentManifest {
-                agent_name: "test-agent".to_string(),
-                status: "running".to_string(),
-                subscribes_to_event_types: Some(json!({
-                    "test.source": ["event1", "event2"],
-                    "other.source": ["event3"]
-                })),
-                // Other fields omitted for brevity
-                description: None,
-                version: "1.0.0".to_string(),
-                agent_type: "promoter".to_string(),
-                config_template_json: None,
-                produces_event_types: None,
-                required_capabilities: None,
-                llm_dependencies: None,
-                repo_url: None,
-                last_heartbeat_ts: None,
-                last_error_ts: None,
-                last_error_summary: None,
-                registered_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-        ];
-        
+        let manifests = vec![AgentManifest {
+            agent_name: "test-agent".to_string(),
+            status: "running".to_string(),
+            subscribes_to_event_types: Some(json!({
+                "test.source": ["event1", "event2"],
+                "other.source": ["event3"]
+            })),
+            // Other fields omitted for brevity
+            description: None,
+            version: "1.0.0".to_string(),
+            agent_type: "promoter".to_string(),
+            config_template_json: None,
+            produces_event_types: None,
+            required_capabilities: None,
+            llm_dependencies: None,
+            repo_url: None,
+            last_heartbeat_ts: None,
+            last_error_ts: None,
+            last_error_summary: None,
+            registered_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+
         let router = WorkRouter::from_manifests(manifests);
-        
+
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -262,38 +262,36 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
         };
-        
+
         let agents = router.route_event(&event);
         assert_eq!(agents, vec!["test-agent"]);
     }
-    
+
     #[test]
     fn test_promotion_router_wildcard() {
-        let manifests = vec![
-            AgentManifest {
-                agent_name: "wildcard-agent".to_string(),
-                status: "running".to_string(),
-                subscribes_to_event_types: Some(json!({
-                    "*": ["*"]
-                })),
-                description: None,
-                version: "1.0.0".to_string(),
-                agent_type: "promoter".to_string(),
-                config_template_json: None,
-                produces_event_types: None,
-                required_capabilities: None,
-                llm_dependencies: None,
-                repo_url: None,
-                last_heartbeat_ts: None,
-                last_error_ts: None,
-                last_error_summary: None,
-                registered_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-        ];
-        
+        let manifests = vec![AgentManifest {
+            agent_name: "wildcard-agent".to_string(),
+            status: "running".to_string(),
+            subscribes_to_event_types: Some(json!({
+                "*": ["*"]
+            })),
+            description: None,
+            version: "1.0.0".to_string(),
+            agent_type: "promoter".to_string(),
+            config_template_json: None,
+            produces_event_types: None,
+            required_capabilities: None,
+            llm_dependencies: None,
+            repo_url: None,
+            last_heartbeat_ts: None,
+            last_error_ts: None,
+            last_error_summary: None,
+            registered_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+
         let router = WorkRouter::from_manifests(manifests);
-        
+
         let event = RawEvent {
             id: Ulid::new(),
             source: "any.source".to_string(),
@@ -305,38 +303,36 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
         };
-        
+
         let agents = router.route_event(&event);
         assert_eq!(agents, vec!["wildcard-agent"]);
     }
-    
+
     #[test]
     fn test_promotion_router_no_match() {
-        let manifests = vec![
-            AgentManifest {
-                agent_name: "test-agent".to_string(),
-                status: "running".to_string(),
-                subscribes_to_event_types: Some(json!({
-                    "test.source": ["event1"]
-                })),
-                description: None,
-                version: "1.0.0".to_string(),
-                agent_type: "promoter".to_string(),
-                config_template_json: None,
-                produces_event_types: None,
-                required_capabilities: None,
-                llm_dependencies: None,
-                repo_url: None,
-                last_heartbeat_ts: None,
-                last_error_ts: None,
-                last_error_summary: None,
-                registered_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-        ];
-        
+        let manifests = vec![AgentManifest {
+            agent_name: "test-agent".to_string(),
+            status: "running".to_string(),
+            subscribes_to_event_types: Some(json!({
+                "test.source": ["event1"]
+            })),
+            description: None,
+            version: "1.0.0".to_string(),
+            agent_type: "promoter".to_string(),
+            config_template_json: None,
+            produces_event_types: None,
+            required_capabilities: None,
+            llm_dependencies: None,
+            repo_url: None,
+            last_heartbeat_ts: None,
+            last_error_ts: None,
+            last_error_summary: None,
+            registered_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+
         let router = WorkRouter::from_manifests(manifests);
-        
+
         let event = RawEvent {
             id: Ulid::new(),
             source: "other.source".to_string(),
@@ -348,38 +344,36 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
         };
-        
+
         let agents = router.route_event(&event);
         assert!(agents.is_empty());
     }
-    
+
     #[test]
     fn test_promotion_router_ignores_inactive() {
-        let manifests = vec![
-            AgentManifest {
-                agent_name: "stopped-agent".to_string(),
-                status: "stopped".to_string(),
-                subscribes_to_event_types: Some(json!({
-                    "test.source": ["event1"]
-                })),
-                description: None,
-                version: "1.0.0".to_string(),
-                agent_type: "promoter".to_string(),
-                config_template_json: None,
-                produces_event_types: None,
-                required_capabilities: None,
-                llm_dependencies: None,
-                repo_url: None,
-                last_heartbeat_ts: None,
-                last_error_ts: None,
-                last_error_summary: None,
-                registered_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            },
-        ];
-        
+        let manifests = vec![AgentManifest {
+            agent_name: "stopped-agent".to_string(),
+            status: "stopped".to_string(),
+            subscribes_to_event_types: Some(json!({
+                "test.source": ["event1"]
+            })),
+            description: None,
+            version: "1.0.0".to_string(),
+            agent_type: "promoter".to_string(),
+            config_template_json: None,
+            produces_event_types: None,
+            required_capabilities: None,
+            llm_dependencies: None,
+            repo_url: None,
+            last_heartbeat_ts: None,
+            last_error_ts: None,
+            last_error_summary: None,
+            registered_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+
         let router = WorkRouter::from_manifests(manifests);
-        
+
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -391,7 +385,7 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
         };
-        
+
         let agents = router.route_event(&event);
         assert!(agents.is_empty());
     }

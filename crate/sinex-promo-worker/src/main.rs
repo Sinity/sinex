@@ -2,14 +2,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use sinex_db::{
-    models::WorkQueueItem,
-    queries::{upsert_agent_manifest},
-    DbPool, DbPoolRef, JsonValue,
+    models::WorkQueueItem, queries::upsert_agent_manifest, DbPool, DbPoolRef, JsonValue,
 };
-use sinex_promo_worker::{create_work_entries, get_active_manifests, EventScanner, WorkRouter, ScannerConfig};
+use sinex_promo_worker::{
+    create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter,
+};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::{signal, task, time::sleep};
 use tracing::{error, info, warn};
@@ -45,18 +45,18 @@ struct Args {
     /// Log level
     #[arg(long, env = "RUST_LOG", default_value = "info")]
     log_level: String,
-    
+
     /// Run as promotion scanner instead of worker
     #[arg(long, default_value = "false")]
     scanner_mode: bool,
-    
+
     /// Scanner batch size
     #[arg(long, env = "SCANNER_BATCH_SIZE", default_value = "1000")]
     scanner_batch_size: usize,
 }
 
 /// Example processor that logs events
-/// 
+///
 /// This is a reference implementation showing how to build a processor.
 /// In production, you would:
 /// 1. Parse the event payload according to its schema
@@ -74,8 +74,7 @@ struct ExampleProcessor {
 impl EventProcessor for ExampleProcessor {
     async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()> {
         // Use consolidated query function
-        let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id)
-            .await?;
+        let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id).await?;
 
         info!(
             agent = %self.agent_name,
@@ -97,7 +96,7 @@ impl EventProcessor for ExampleProcessor {
         // 2. Transform/enrich the data
         // 3. Insert into domain-specific tables
         // 4. Generate derived events if needed
-        
+
         // Track processed events
         self.events_processed.fetch_add(1, Ordering::Relaxed);
 
@@ -119,7 +118,7 @@ impl EventProcessor for ExampleProcessor {
 
 async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
-    
+
     // Register the agent
     upsert_agent_manifest(
         pool,
@@ -141,11 +140,10 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     // Extract log level before args is moved
     let log_level = args.log_level.clone();
 
@@ -163,7 +161,7 @@ async fn main() -> Result<()> {
     // Create database pool
     let database_url = args.database_url.clone();
     let pool = sinex_db::create_pool(&database_url).await?;
-    
+
     // Run in scanner mode or worker mode
     if args.scanner_mode || args.agent_name.is_none() {
         run_scanner_mode(pool, args).await
@@ -178,11 +176,11 @@ async fn main() -> Result<()> {
 /// Run as a scanner that creates work queue entries
 async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
     info!("Running in scanner mode");
-    
+
     // Set up graceful shutdown
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
-    
+
     // Create scanner with configuration
     let config = ScannerConfig {
         batch_size: args.scanner_batch_size,
@@ -190,14 +188,14 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
         process_historical: false,
     };
     let mut scanner = EventScanner::new(config);
-    
+
     // Start heartbeat emission task
     let heartbeat_pool = pool.clone();
     let heartbeat_shutdown = shutdown.clone();
     let heartbeat_handle = task::spawn(async move {
         use sinex_core::HeartbeatEmitter;
         let emitter = HeartbeatEmitter::new(heartbeat_pool, "promo-worker-scanner".to_string(), 45);
-        
+
         // Run heartbeat until shutdown
         tokio::select! {
             _ = emitter.run() => {
@@ -213,23 +211,23 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
         }
     });
     info!("Started heartbeat emission for promo-worker-scanner");
-    
+
     // Start metrics server
     let metrics_handle = task::spawn(async move {
         if let Err(e) = start_metrics_server(args.metrics_port).await {
             error!(error = %e, "Metrics server failed");
         }
     });
-    
+
     // Notify systemd that we're ready
     match sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
         Ok(_) => info!("Notified systemd: ready"),
         Err(e) => info!("Running without systemd integration: {}", e),
     }
-    
+
     // Set up signal handlers
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    
+
     // Main scanner loop
     let mut shutdown_requested = false;
     loop {
@@ -264,7 +262,7 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
                     Err(e) => {
                         error!(error = %e, "Scanner error, retrying in 5s");
                         let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Scanner error, retrying".into())]);
-                        
+
                         tokio::select! {
                             _ = sleep(Duration::from_secs(5)) => {},
                             _ = signal::ctrl_c() => {
@@ -280,31 +278,31 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
                 }
             }
         }
-        
+
         if shutdown_requested {
             break;
         }
     }
-    
+
     // Notify systemd we're stopping
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
-    
+
     // Signal shutdown to all tasks
     shutdown_clone.store(true, Ordering::Relaxed);
-    
+
     // Wait for tasks to complete
     info!("Waiting for tasks to complete...");
-    
+
     // Wait for heartbeat task
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), heartbeat_handle).await {
         Ok(Ok(_)) => info!("Heartbeat task completed"),
         Ok(Err(e)) => warn!("Heartbeat task failed: {}", e),
         Err(_) => warn!("Heartbeat task timed out"),
     }
-    
+
     // Abort metrics server
     metrics_handle.abort();
-    
+
     info!("Scanner shutdown complete");
     Ok(())
 }
@@ -314,17 +312,17 @@ async fn scan_and_promote(pool: DbPoolRef<'_>, scanner: &mut EventScanner) -> Re
     // Get active agent manifests
     let manifests = get_active_manifests(pool).await?;
     let router = WorkRouter::from_manifests(manifests);
-    
+
     // Scan for new events
     let events = scanner.scan_new_events(pool).await?;
-    
+
     if events.is_empty() {
         return Ok(0);
     }
-    
+
     // Create work entries
     let count = create_work_entries(pool, events, &router).await?;
-    
+
     Ok(count)
 }
 
@@ -340,16 +338,16 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
         // In a real implementation, you'd track events per minute
         self.events_processed.load(Ordering::Relaxed) as u32
     }
-    
+
     fn get_errors_last_hour(&self) -> u32 {
         // No error tracking yet
         0
     }
-    
+
     fn get_last_error_message(&self) -> Option<String> {
         None
     }
-    
+
     fn get_custom_metrics(&self) -> JsonValue {
         serde_json::json!({
             "total_events_processed": self.events_processed.load(Ordering::Relaxed),
@@ -383,12 +381,12 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
     let heartbeat_handle = task::spawn(async move {
         use sinex_core::HeartbeatEmitter;
         let emitter = HeartbeatEmitter::with_metrics_provider(
-            heartbeat_pool, 
-            heartbeat_agent_name, 
-            45, 
-            metrics
+            heartbeat_pool,
+            heartbeat_agent_name,
+            45,
+            metrics,
         );
-        
+
         // Run heartbeat until shutdown
         tokio::select! {
             _ = emitter.run() => {
@@ -428,7 +426,7 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
             std::process::id()
         )
     });
-    
+
     let worker = Worker::new(pool, processor, worker_id);
 
     // Notify systemd that we're ready
@@ -444,7 +442,10 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
     let worker_handle = task::spawn(async move {
         if let Err(e) = worker.run().await {
             error!(error = %e, "Worker failed");
-            let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Worker failed".into())]);
+            let _ = sd_notify::notify(
+                true,
+                &[sd_notify::NotifyState::Status("Worker failed".into())],
+            );
         }
     });
 
@@ -460,16 +461,16 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
 
     // Notify systemd we're stopping
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
-    
+
     // Signal shutdown to all tasks
     shutdown_clone.store(true, Ordering::Relaxed);
 
     // Cancel worker task
     worker_handle.abort();
-    
+
     // Wait for tasks to complete
     info!("Waiting for tasks to complete...");
-    
+
     // Wait for heartbeat task
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), heartbeat_handle).await {
         Ok(Ok(_)) => info!("Heartbeat task completed"),

@@ -5,14 +5,14 @@
 //! example-based tests.
 
 // Core property tests
-pub mod raw_event_property_tests;
-pub mod ulid_concurrent_property_tests;
 pub mod event_registry_property_tests;
 pub mod json_schema_property_tests;
+pub mod raw_event_property_tests;
+pub mod ulid_concurrent_property_tests;
 // pub mod ulid_ordering_property_tests;  // Temporarily disabled
-pub mod work_queue_property_tests;
+pub mod property_tests;
 pub mod ulid_properties;
-pub mod property_tests; // Moved from root level
+pub mod work_queue_property_tests; // Moved from root level
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;
@@ -25,7 +25,7 @@ pub mod strategies {
 
     /// Strategy for generating valid ULID timestamps
     pub fn valid_timestamps() -> impl Strategy<Value = DateTime<Utc>> {
-        (0u64..2_000_000_000u64)  // Valid Unix timestamp range
+        (0u64..2_000_000_000u64) // Valid Unix timestamp range
             .prop_map(|ts| DateTime::from_timestamp(ts as i64, 0).unwrap_or(Utc::now()))
     }
 

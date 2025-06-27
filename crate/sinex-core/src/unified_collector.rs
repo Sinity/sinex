@@ -1,10 +1,10 @@
+use crate::{EventSender, Result};
 use async_trait::async_trait;
-use schemars::JsonSchema;
 use schemars::schema::RootSchema;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::{Result, EventSender};
 
 // ===== Event output configuration (from event_output.rs) =====
 
@@ -24,7 +24,7 @@ impl EventOutput {
             debug_file: None,
         }
     }
-    
+
     pub fn dry_run() -> Self {
         Self {
             write_to_db: false,
@@ -32,7 +32,7 @@ impl EventOutput {
             debug_file: None,
         }
     }
-    
+
     pub fn with_debug_file(mut self, path: PathBuf) -> Self {
         self.debug_file = Some(path);
         self
@@ -45,14 +45,14 @@ impl EventOutput {
 pub trait EventType: Send + Sync + 'static {
     /// The payload type for this event
     type Payload: Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static;
-    
+
     /// The source implementation(s) that produce this event
     /// Can be a single source or tuple of sources
     type SourceImpl: EventSourceProvider;
-    
+
     /// Canonical event name (e.g., "file.created")
     const EVENT_NAME: &'static str;
-    
+
     /// Source name - derived from SourceImpl
     const SOURCE_NAME: &'static str = <Self::SourceImpl as EventSourceProvider>::SOURCE_NAME;
 }
@@ -62,19 +62,19 @@ pub trait EventType: Send + Sync + 'static {
 pub trait EventSource: Send + Sync + 'static {
     /// Configuration type for this source
     type Config: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static;
-    
+
     /// Canonical source name
     const SOURCE_NAME: &'static str;
-    
+
     /// Initialize the source with context containing config and shared resources
     async fn initialize(ctx: crate::EventSourceContext) -> Result<Self>
     where
         Self: Sized;
-    
+
     /// Stream ALL events this source can detect
     /// The registry will filter based on enabled events
     async fn stream_events(&mut self, tx: EventSender) -> Result<()>;
-    
+
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {
         Ok(())
@@ -106,10 +106,10 @@ impl<A: EventSource, B: EventSource, C: EventSource> EventSourceProvider for (A,
 pub struct EventRegistry {
     /// All event types in the system
     pub event_types: &'static [&'static str],
-    
+
     /// Mapping from event type to source name
     pub event_to_source: &'static [(&'static str, &'static str)],
-    
+
     /// Schema generators for each event type
     pub schema_generators: HashMap<&'static str, fn() -> RootSchema>,
 }
@@ -122,7 +122,7 @@ impl EventRegistry {
             .find(|(e, _)| *e == event_type)
             .map(|(_, s)| *s)
     }
-    
+
     /// Get all events for a source
     pub fn events_for_source(&self, source: &str) -> Vec<&'static str> {
         self.event_to_source
@@ -131,23 +131,20 @@ impl EventRegistry {
             .map(|(e, _)| *e)
             .collect()
     }
-    
+
     /// Get schema for an event type
     pub fn schema_for_event(&self, event_type: &str) -> Option<RootSchema> {
         self.schema_generators.get(event_type).map(|f| f())
     }
-    
+
     /// Check if an event type exists
     pub fn has_event(&self, event_type: &str) -> bool {
         self.event_types.contains(&event_type)
     }
-    
+
     /// Get all unique source names
     pub fn all_sources(&self) -> Vec<&'static str> {
-        let mut sources: Vec<_> = self.event_to_source
-            .iter()
-            .map(|(_, s)| *s)
-            .collect();
+        let mut sources: Vec<_> = self.event_to_source.iter().map(|(_, s)| *s).collect();
         sources.sort();
         sources.dedup();
         sources
@@ -160,7 +157,7 @@ pub fn create_registry() -> EventRegistry {
     EventRegistry {
         event_types: &[
             "file.created",
-            "file.modified", 
+            "file.modified",
             "file.deleted",
             "command.executed",
             "shell.command.executed_atuin",
@@ -215,10 +212,22 @@ pub fn create_registry() -> EventRegistry {
             ("command.executed", "terminal.kitty"),
             ("shell.command.executed_atuin", "ingestor.atuin_db_reader"),
             ("shell.history.command", "ingestor.shell_history_reader"),
-            ("terminal.asciinema.session_started", "ingestor.asciinema_recorder"),
-            ("terminal.asciinema.session_ended", "ingestor.asciinema_recorder"),
-            ("terminal.scrollback.captured", "ingestor.scrollback_capture"),
-            ("terminal.command_output.captured", "ingestor.scrollback_capture"),
+            (
+                "terminal.asciinema.session_started",
+                "ingestor.asciinema_recorder",
+            ),
+            (
+                "terminal.asciinema.session_ended",
+                "ingestor.asciinema_recorder",
+            ),
+            (
+                "terminal.scrollback.captured",
+                "ingestor.scrollback_capture",
+            ),
+            (
+                "terminal.command_output.captured",
+                "ingestor.scrollback_capture",
+            ),
             // All window manager events
             ("window.focused", "window_manager.hyprland"),
             ("window.opened", "window_manager.hyprland"),
@@ -236,10 +245,22 @@ pub fn create_registry() -> EventRegistry {
             // Shell history
             ("shell.history.command", "ingestor.shell_history_reader"),
             // Terminal recording
-            ("terminal.asciinema.session_started", "ingestor.asciinema_recorder"),
-            ("terminal.asciinema.session_ended", "ingestor.asciinema_recorder"),
-            ("terminal.scrollback.captured", "ingestor.scrollback_capture"),
-            ("terminal.command_output.captured", "ingestor.scrollback_capture"),
+            (
+                "terminal.asciinema.session_started",
+                "ingestor.asciinema_recorder",
+            ),
+            (
+                "terminal.asciinema.session_ended",
+                "ingestor.asciinema_recorder",
+            ),
+            (
+                "terminal.scrollback.captured",
+                "ingestor.scrollback_capture",
+            ),
+            (
+                "terminal.command_output.captured",
+                "ingestor.scrollback_capture",
+            ),
             // D-Bus events
             ("dbus.signal", "dbus.monitor"),
             ("dbus.method_call", "dbus.monitor"),
@@ -262,7 +283,7 @@ pub fn create_registry() -> EventRegistry {
         ],
         schema_generators: {
             let mut generators: HashMap<&'static str, fn() -> RootSchema> = HashMap::new();
-            
+
             fn file_created_schema() -> RootSchema {
                 use schemars::schema::*;
                 RootSchema {
@@ -272,17 +293,25 @@ pub fn create_registry() -> EventRegistry {
                         object: Some(Box::new(ObjectValidation {
                             properties: {
                                 let mut props = std::collections::BTreeMap::new();
-                                props.insert("path".to_string(), Schema::Object(SchemaObject {
-                                    instance_type: Some(InstanceType::String.into()),
-                                    ..Default::default()
-                                }));
-                                props.insert("size".to_string(), Schema::Object(SchemaObject {
-                                    instance_type: Some(InstanceType::Integer.into()),
-                                    ..Default::default()
-                                }));
+                                props.insert(
+                                    "path".to_string(),
+                                    Schema::Object(SchemaObject {
+                                        instance_type: Some(InstanceType::String.into()),
+                                        ..Default::default()
+                                    }),
+                                );
+                                props.insert(
+                                    "size".to_string(),
+                                    Schema::Object(SchemaObject {
+                                        instance_type: Some(InstanceType::Integer.into()),
+                                        ..Default::default()
+                                    }),
+                                );
                                 props
                             },
-                            required: vec!["path".to_string(), "size".to_string()].into_iter().collect(),
+                            required: vec!["path".to_string(), "size".to_string()]
+                                .into_iter()
+                                .collect(),
                             ..Default::default()
                         })),
                         ..Default::default()
@@ -290,11 +319,11 @@ pub fn create_registry() -> EventRegistry {
                     definitions: Default::default(),
                 }
             }
-            
+
             fn file_modified_schema() -> RootSchema {
                 file_created_schema() // Same schema as file.created
             }
-            
+
             fn file_deleted_schema() -> RootSchema {
                 use schemars::schema::*;
                 RootSchema {
@@ -304,10 +333,13 @@ pub fn create_registry() -> EventRegistry {
                         object: Some(Box::new(ObjectValidation {
                             properties: {
                                 let mut props = std::collections::BTreeMap::new();
-                                props.insert("path".to_string(), Schema::Object(SchemaObject {
-                                    instance_type: Some(InstanceType::String.into()),
-                                    ..Default::default()
-                                }));
+                                props.insert(
+                                    "path".to_string(),
+                                    Schema::Object(SchemaObject {
+                                        instance_type: Some(InstanceType::String.into()),
+                                        ..Default::default()
+                                    }),
+                                );
                                 props
                             },
                             required: vec!["path".to_string()].into_iter().collect(),
@@ -318,7 +350,7 @@ pub fn create_registry() -> EventRegistry {
                     definitions: Default::default(),
                 }
             }
-            
+
             fn command_executed_schema() -> RootSchema {
                 use schemars::schema::*;
                 RootSchema {
@@ -328,14 +360,20 @@ pub fn create_registry() -> EventRegistry {
                         object: Some(Box::new(ObjectValidation {
                             properties: {
                                 let mut props = std::collections::BTreeMap::new();
-                                props.insert("command".to_string(), Schema::Object(SchemaObject {
-                                    instance_type: Some(InstanceType::String.into()),
-                                    ..Default::default()
-                                }));
-                                props.insert("exit_code".to_string(), Schema::Object(SchemaObject {
-                                    instance_type: Some(InstanceType::Integer.into()),
-                                    ..Default::default()
-                                }));
+                                props.insert(
+                                    "command".to_string(),
+                                    Schema::Object(SchemaObject {
+                                        instance_type: Some(InstanceType::String.into()),
+                                        ..Default::default()
+                                    }),
+                                );
+                                props.insert(
+                                    "exit_code".to_string(),
+                                    Schema::Object(SchemaObject {
+                                        instance_type: Some(InstanceType::Integer.into()),
+                                        ..Default::default()
+                                    }),
+                                );
                                 props
                             },
                             required: vec!["command".to_string()].into_iter().collect(),
@@ -346,13 +384,13 @@ pub fn create_registry() -> EventRegistry {
                     definitions: Default::default(),
                 }
             }
-            
+
             generators.insert("file.created", file_created_schema);
             generators.insert("file.modified", file_modified_schema);
             generators.insert("file.deleted", file_deleted_schema);
             generators.insert("command.executed", command_executed_schema);
-            
+
             generators
-        }
+        },
     }
 }

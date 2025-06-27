@@ -1,12 +1,12 @@
 //! Coverage assurance utilities to ensure test streamlining doesn't reduce scope
-//! 
+//!
 //! This module provides comprehensive test coverage tracking to ensure that
 //! test migrations and streamlining efforts don't inadvertently reduce the
 //! scope of testing. It tracks various dimensions of test coverage including
 //! event types, validation rules, error conditions, and concurrency scenarios.
 
 use crate::common::prelude::*;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Global test coverage tracker
@@ -21,25 +21,25 @@ fn get_coverage_tracker() -> &'static Arc<Mutex<CoverageTracker>> {
 pub struct CoverageTracker {
     /// Track which event types have been tested
     tested_event_types: HashSet<(String, String)>, // (source, event_type)
-    
+
     /// Track which validation rules have been exercised
     validation_rules_tested: HashSet<String>,
-    
+
     /// Track which error conditions have been tested
     error_conditions_tested: HashSet<String>,
-    
+
     /// Track which concurrent scenarios have been tested
     concurrency_scenarios: HashSet<String>,
-    
+
     /// Track database operations tested
     db_operations: HashSet<String>,
-    
+
     /// Track edge cases covered
     edge_cases: HashMap<String, Vec<String>>,
-    
+
     /// Track performance scenarios
     performance_scenarios: HashSet<String>,
-    
+
     /// Track integration points tested
     integration_points: HashSet<String>,
 }
@@ -48,40 +48,45 @@ impl CoverageTracker {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn record_event_type_tested(source: &str, event_type: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
-        tracker.tested_event_types.insert((source.to_string(), event_type.to_string()));
+        tracker
+            .tested_event_types
+            .insert((source.to_string(), event_type.to_string()));
     }
-    
+
     pub fn record_validation_rule(rule: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.validation_rules_tested.insert(rule.to_string());
     }
-    
+
     pub fn record_error_condition(condition: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
-        tracker.error_conditions_tested.insert(condition.to_string());
+        tracker
+            .error_conditions_tested
+            .insert(condition.to_string());
     }
-    
+
     pub fn record_concurrency_scenario(scenario: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.concurrency_scenarios.insert(scenario.to_string());
     }
-    
+
     pub fn record_edge_case(category: &str, case: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
-        tracker.edge_cases
+        tracker
+            .edge_cases
             .entry(category.to_string())
             .or_insert_with(Vec::new)
             .push(case.to_string());
     }
-    
+
     pub fn record_db_operation(operation: &str) {
         let mut tracker = get_coverage_tracker().lock().unwrap();
         tracker.db_operations.insert(operation.to_string());
     }
-    
+
     pub fn get_coverage_report() -> CoverageReport {
         let tracker = get_coverage_tracker().lock().unwrap();
         CoverageReport {
@@ -98,10 +103,10 @@ impl CoverageTracker {
                 error_conditions: tracker.error_conditions_tested.clone(),
                 concurrency_scenarios: tracker.concurrency_scenarios.clone(),
                 edge_cases: tracker.edge_cases.clone(),
-            }
+            },
         }
     }
-    
+
     pub fn reset() {
         let mut tracker = get_coverage_tracker().lock().unwrap();
         *tracker = CoverageTracker::new();
@@ -149,63 +154,63 @@ impl CoverageAssertion {
             expected_minimums: CoverageMinimums::default(),
         }
     }
-    
+
     pub fn expect_event_types(mut self, min: usize) -> Self {
         self.expected_minimums.event_types = min;
         self
     }
-    
+
     pub fn expect_validation_rules(mut self, min: usize) -> Self {
         self.expected_minimums.validation_rules = min;
         self
     }
-    
+
     pub fn expect_error_conditions(mut self, min: usize) -> Self {
         self.expected_minimums.error_conditions = min;
         self
     }
-    
+
     pub fn expect_concurrency_scenarios(mut self, min: usize) -> Self {
         self.expected_minimums.concurrency_scenarios = min;
         self
     }
-    
+
     pub fn expect_edge_cases(mut self, min: usize) -> Self {
         self.expected_minimums.edge_cases = min;
         self
     }
-    
+
     pub fn assert_coverage_maintained(&self) {
         let report = CoverageTracker::get_coverage_report();
-        
+
         assert!(
             report.event_types_count >= self.expected_minimums.event_types,
             "Event type coverage decreased: {} < {} expected",
             report.event_types_count,
             self.expected_minimums.event_types
         );
-        
+
         assert!(
             report.validation_rules_count >= self.expected_minimums.validation_rules,
             "Validation rule coverage decreased: {} < {} expected",
             report.validation_rules_count,
             self.expected_minimums.validation_rules
         );
-        
+
         assert!(
             report.error_conditions_count >= self.expected_minimums.error_conditions,
             "Error condition coverage decreased: {} < {} expected",
             report.error_conditions_count,
             self.expected_minimums.error_conditions
         );
-        
+
         assert!(
             report.concurrency_scenarios_count >= self.expected_minimums.concurrency_scenarios,
             "Concurrency scenario coverage decreased: {} < {} expected",
             report.concurrency_scenarios_count,
             self.expected_minimums.concurrency_scenarios
         );
-        
+
         assert!(
             report.total_edge_cases >= self.expected_minimums.edge_cases,
             "Edge case coverage decreased: {} < {} expected",
@@ -219,21 +224,24 @@ impl CoverageAssertion {
 #[macro_export]
 macro_rules! track_test_coverage {
     (event_type: $source:expr, $event_type:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_event_type_tested($source, $event_type);
+        $crate::common::coverage_assurance::CoverageTracker::record_event_type_tested(
+            $source,
+            $event_type,
+        );
     };
-    
+
     (validation_rule: $rule:expr) => {
         $crate::common::coverage_assurance::CoverageTracker::record_validation_rule($rule);
     };
-    
+
     (error_condition: $condition:expr) => {
         $crate::common::coverage_assurance::CoverageTracker::record_error_condition($condition);
     };
-    
+
     (concurrency: $scenario:expr) => {
         $crate::common::coverage_assurance::CoverageTracker::record_concurrency_scenario($scenario);
     };
-    
+
     (edge_case: $category:expr, $case:expr) => {
         $crate::common::coverage_assurance::CoverageTracker::record_edge_case($category, $case);
     };
@@ -259,8 +267,16 @@ impl CoverageComparison {
         ComparisonResult {
             test_count_change: after.test_count as i32 - before.test_count as i32,
             line_count_change: after.line_count as i32 - before.line_count as i32,
-            scenarios_added: after.scenarios_covered.difference(&before.scenarios_covered).cloned().collect(),
-            scenarios_removed: before.scenarios_covered.difference(&after.scenarios_covered).cloned().collect(),
+            scenarios_added: after
+                .scenarios_covered
+                .difference(&before.scenarios_covered)
+                .cloned()
+                .collect(),
+            scenarios_removed: before
+                .scenarios_covered
+                .difference(&after.scenarios_covered)
+                .cloned()
+                .collect(),
             assertion_density_before: before.assertions_made as f64 / before.line_count as f64,
             assertion_density_after: after.assertions_made as f64 / after.line_count as f64,
         }
@@ -280,29 +296,33 @@ impl ComparisonResult {
     pub fn print_summary(&self) {
         println!("=== Test Coverage Comparison ===");
         println!("Test count change: {:+}", self.test_count_change);
-        
+
         let reduction_pct = if self.line_count_change < 0 {
             (self.line_count_change.abs() as f64 / 100.0) * 100.0
         } else {
             0.0
         };
-        println!("Line count change: {:+} ({:.1}% reduction)", 
-                 self.line_count_change, reduction_pct);
-        
+        println!(
+            "Line count change: {:+} ({:.1}% reduction)",
+            self.line_count_change, reduction_pct
+        );
+
         let density_change_pct = if self.assertion_density_before != 0.0 {
-            ((self.assertion_density_after - self.assertion_density_before) / self.assertion_density_before * 100.0)
+            ((self.assertion_density_after - self.assertion_density_before)
+                / self.assertion_density_before
+                * 100.0)
         } else {
             0.0
         };
-        println!("Assertion density: {:.2} → {:.2} ({:+.1}%)",
-                 self.assertion_density_before,
-                 self.assertion_density_after,
-                 density_change_pct);
-        
+        println!(
+            "Assertion density: {:.2} → {:.2} ({:+.1}%)",
+            self.assertion_density_before, self.assertion_density_after, density_change_pct
+        );
+
         if !self.scenarios_removed.is_empty() {
             println!("⚠️  Scenarios removed: {:?}", self.scenarios_removed);
         }
-        
+
         if !self.scenarios_added.is_empty() {
             println!("✅ Scenarios added: {:?}", self.scenarios_added);
         }
@@ -320,21 +340,24 @@ impl PropertyCoverage {
             properties_tested: HashMap::new(),
         }
     }
-    
+
     pub fn record_property(&mut self, property: &str, cases: usize) {
-        *self.properties_tested.entry(property.to_string()).or_insert(0) += cases;
+        *self
+            .properties_tested
+            .entry(property.to_string())
+            .or_insert(0) += cases;
     }
-    
+
     /// Get all tested properties
     pub fn get_tested_properties(&self) -> &HashMap<String, usize> {
         &self.properties_tested
     }
-    
+
     /// Get total test cases across all properties
     pub fn get_total_cases(&self) -> usize {
         self.properties_tested.values().sum()
     }
-    
+
     pub fn ensure_minimum_cases(&self, property: &str, min_cases: usize) -> bool {
         self.properties_tested.get(property).copied().unwrap_or(0) >= min_cases
     }

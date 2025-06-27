@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod collector;
 pub mod config;
+pub mod config_presets;
 pub mod metrics;
 pub mod observability;
 pub mod recovery;
@@ -24,7 +25,7 @@ use tracing::{debug, error, info};
 #[derive(Debug, Clone)]
 pub struct OutputConfig {
     pub to_database: bool,
-    pub to_stdout: bool, 
+    pub to_stdout: bool,
     pub to_file: Option<String>,
     pub dry_run: bool,
 }
@@ -60,8 +61,10 @@ pub async fn output_event(
     file_handle: &mut Option<File>,
 ) -> Result<()> {
     if output_config.dry_run {
-        info!("DRY RUN - Event: {} {} {}", 
-              event.source, event.event_type, event.id);
+        info!(
+            "DRY RUN - Event: {} {} {}",
+            event.source, event.event_type, event.id
+        );
         return Ok(());
     }
 
@@ -76,7 +79,7 @@ pub async fn output_event(
         if file_handle.is_none() {
             *file_handle = Some(File::create(file_path).await?);
         }
-        
+
         if let Some(file) = file_handle {
             let json = serde_json::to_string(&event)?;
             file.write_all(json.as_bytes()).await?;
@@ -95,7 +98,7 @@ pub async fn output_event(
                     return Err(e.into());
                 }
             }
-            
+
             // Insert into database
             match sinex_db::queries::insert_event_with_validator(pool, event, None).await {
                 Ok(_) => {
@@ -163,7 +166,7 @@ mod tests {
 
         let mut file_handle = None;
         let result = output_event(&event, &output_config, None, None, &mut file_handle).await;
-        
+
         assert!(result.is_ok());
         assert!(file_handle.is_none()); // No file should be created in dry run
     }
@@ -228,7 +231,7 @@ mod tests {
         let mut content = String::new();
         let mut file = File::open(&file_path).await.unwrap();
         file.read_to_string(&mut content).await.unwrap();
-        
+
         let written_event: RawEvent = serde_json::from_str(content.trim()).unwrap();
         assert_eq!(written_event.source, "test_source");
         assert_eq!(written_event.event_type, "test_event");
@@ -257,11 +260,18 @@ mod tests {
 
         // Create a mock validator that always fails
         let validator = EventValidator::new();
-        
+
         let mut file_handle = None;
         // Without a real database pool, this should handle the missing pool gracefully
-        let result = output_event(&event, &output_config, None, Some(&validator), &mut file_handle).await;
-        
+        let result = output_event(
+            &event,
+            &output_config,
+            None,
+            Some(&validator),
+            &mut file_handle,
+        )
+        .await;
+
         // Should succeed because there's no database pool to validate against
         assert!(result.is_ok());
     }

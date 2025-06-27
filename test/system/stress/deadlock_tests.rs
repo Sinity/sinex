@@ -10,7 +10,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -24,22 +24,24 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
     let deadlock_work_items = 20;
-    
+
     for i in 0..deadlock_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload) 
+            "INSERT INTO raw.events (id, source, event_type, payload)
              VALUES ($1::uuid::ulid, $2, $3, $4)",
             event_id.to_uuid(),
             "stress.deadlock_scenario",
             "deadlock_item",
             json!({"deadlock_item": i})
-        ).execute(&pool).await?;
+        )
+        .execute(&pool)
+        .await?;
 
         let queue_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.work_queue 
-             (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
+            "INSERT INTO sinex_schemas.work_queue
+             (queue_id, raw_event_id, target_agent_name, max_attempts, status)
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
@@ -78,14 +80,14 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     let deadlock_detector = tokio::spawn(async move {
         let mut detected_scenarios = Vec::new();
         let mut interval = interval(Duration::from_millis(500));
-        
+
         for check in 0..20 {
             interval.tick().await;
 
             let stuck_processing: Vec<(String, String)> = sqlx::query!(
-                "SELECT queue_id::text, processing_worker_id FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 
-                   AND status = 'processing' 
+                "SELECT queue_id::text, processing_worker_id FROM sinex_schemas.work_queue
+                 WHERE target_agent_name = $1
+                   AND status = 'processing'
                    AND last_attempt_ts < NOW() - INTERVAL '3 seconds'",
                 detection_agent
             )
@@ -93,17 +95,15 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|r| {
-                match (r.queue_id, r.processing_worker_id) {
-                    (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
-                    _ => None,
-                }
+            .filter_map(|r| match (r.queue_id, r.processing_worker_id) {
+                (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
+                _ => None,
             })
             .collect();
 
             let active_workers: HashSet<String> = sqlx::query_scalar!(
-                "SELECT DISTINCT processing_worker_id FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 
+                "SELECT DISTINCT processing_worker_id FROM sinex_schemas.work_queue
+                 WHERE target_agent_name = $1
                    AND status = 'processing'
                    AND processing_worker_id IS NOT NULL",
                 detection_agent
@@ -120,32 +120,40 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                 &detection_pool,
                 "pending",
                 0, // Accept any count
-                1  // Quick timeout for detection loop
-            ).await.unwrap_or(0);
+                1, // Quick timeout for detection loop
+            )
+            .await
+            .unwrap_or(0);
 
             // Use timing utility for processing work queue count
             let total_processing = wait_for_work_queue_status_count(
                 &detection_pool,
                 "processing",
                 0, // Accept any count
-                1  // Quick timeout for detection loop
-            ).await.unwrap_or(0);
+                1, // Quick timeout for detection loop
+            )
+            .await
+            .unwrap_or(0);
 
             if !stuck_processing.is_empty() {
                 detected_scenarios.push(format!(
                     "Check {}: {} stuck items, {} active workers, {} pending, {} processing",
-                    check, stuck_processing.len(), active_workers.len(), total_pending, total_processing
+                    check,
+                    stuck_processing.len(),
+                    active_workers.len(),
+                    total_pending,
+                    total_processing
                 ));
 
                 detection_metrics.deadlock_recovery_attempt();
 
                 let recovered_count = sqlx::query!(
-                    "UPDATE sinex_schemas.work_queue 
+                    "UPDATE sinex_schemas.work_queue
                      SET status = 'failed_retryable',
                          processing_worker_id = NULL,
                          next_retry_ts = NOW() + INTERVAL '100 milliseconds'
-                     WHERE target_agent_name = $1 
-                       AND status = 'processing' 
+                     WHERE target_agent_name = $1
+                       AND status = 'processing'
                        AND last_attempt_ts < NOW() - INTERVAL '3 seconds'
                      RETURNING queue_id::text",
                     detection_agent
@@ -155,8 +163,11 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                 .unwrap_or_default();
 
                 if !recovered_count.is_empty() {
-                    println!("Deadlock detector recovered {} items on check {}", 
-                            recovered_count.len(), check);
+                    println!(
+                        "Deadlock detector recovered {} items on check {}",
+                        recovered_count.len(),
+                        check
+                    );
                 }
             }
         }
@@ -165,22 +176,24 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     });
 
     start_barrier.wait().await;
-    
+
     let worker_results = join_all(worker_handles).await;
     let deadlock_scenarios = deadlock_detector.await?;
 
     let mut successful_workers = 0;
     let mut total_deadlocks = 0u64;
-    
+
     for (i, result) in worker_results.into_iter().enumerate() {
         match result? {
             Ok(worker_result) => {
                 successful_workers += 1;
                 total_deadlocks += worker_result.deadlocks_detected;
-                
+
                 if worker_result.deadlocks_detected > 0 {
-                    println!("Deadlock worker {} experienced {} deadlocks", 
-                            i, worker_result.deadlocks_detected);
+                    println!(
+                        "Deadlock worker {} experienced {} deadlocks",
+                        i, worker_result.deadlocks_detected
+                    );
                 }
             }
             Err(e) => {
@@ -191,7 +204,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
@@ -200,7 +213,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
 
     let final_abandoned: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
@@ -222,17 +235,26 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         println!("  Scenario: {}", scenario);
     }
 
-    assert!(successful_workers > 0, "At least some workers should complete despite deadlock scenarios");
-    
+    assert!(
+        successful_workers > 0,
+        "At least some workers should complete despite deadlock scenarios"
+    );
+
     let total_resolution = final_succeeded + final_abandoned;
-    assert!(total_resolution > 0, "System should make progress despite deadlock scenarios");
+    assert!(
+        total_resolution > 0,
+        "System should make progress despite deadlock scenarios"
+    );
 
     if !deadlock_scenarios.is_empty() {
         println!("  ✓ Deadlock scenarios detected and resolved by recovery system");
     }
 
     if total_deadlocks > 0 {
-        println!("  ✓ Workers detected and handled {} deadlock situations", total_deadlocks);
+        println!(
+            "  ✓ Workers detected and handled {} deadlock situations",
+            total_deadlocks
+        );
     }
 
     StressTestUtils::cleanup_test_data(&pool, &agent_name, "stress.deadlock_scenario").await?;
@@ -320,7 +342,10 @@ impl DeadlockStressWorker {
             Ok(Ok(Some(work_item))) => {
                 self.metrics.work_claimed();
 
-                match self.process_with_potential_deadlock(&work_item.queue_id).await {
+                match self
+                    .process_with_potential_deadlock(&work_item.queue_id)
+                    .await
+                {
                     Ok(true) => {
                         cycle_result.items_processed += 1;
                         self.metrics.work_completed();
@@ -352,15 +377,15 @@ impl DeadlockStressWorker {
 
     async fn claim_work_aggressively(&self) -> Result<Option<WorkItem>> {
         let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'processing', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'processing',
                  attempts = attempts + 1,
                  last_attempt_ts = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = (
-                 SELECT queue_id 
-                 FROM sinex_schemas.work_queue 
-                 WHERE status = 'pending' 
+                 SELECT queue_id
+                 FROM sinex_schemas.work_queue
+                 WHERE status = 'pending'
                    AND target_agent_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                  ORDER BY created_at
@@ -381,8 +406,12 @@ impl DeadlockStressWorker {
                 }
 
                 Ok(Some(WorkItem {
-                    queue_id: item.queue_id.ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                    event_id: item.raw_event_id.ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
+                    queue_id: item
+                        .queue_id
+                        .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
+                    event_id: item
+                        .raw_event_id
+                        .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
                     target_agent: self.agent_name.clone(),
                     created_at: chrono::Utc::now(),
                 }))
@@ -398,7 +427,7 @@ impl DeadlockStressWorker {
 
         if rand::random::<f64>() < 0.1 {
             sqlx::query!(
-                "UPDATE sinex_schemas.work_queue 
+                "UPDATE sinex_schemas.work_queue
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '1 second'
@@ -412,8 +441,8 @@ impl DeadlockStressWorker {
         }
 
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'succeeded', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'succeeded',
                  processed_at = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = $1::uuid::ulid",

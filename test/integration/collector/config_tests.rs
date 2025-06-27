@@ -6,28 +6,35 @@ use sinex_collector::config::{CollectorConfig, ValidationReport};
 #[sinex_test]
 async fn test_config_validation(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
-    
+
     // Default config should be valid
     let result = config.validate();
-    assert!(result.is_ok(), "Default config should be valid: {:?}", result);
-    
+    assert!(
+        result.is_ok(),
+        "Default config should be valid: {:?}",
+        result
+    );
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_config_validation_report(ctx: TestContext) -> TestResult {
     let config = CollectorConfig::default();
-    
+
     let report = config.get_validation_report();
-    
+
     if !report.valid {
         println!("Validation errors: {:?}", report.errors);
         println!("Validation warnings: {:?}", report.warnings);
     }
-    
+
     assert!(report.valid, "Default config should have valid report");
-    assert!(report.errors.is_empty(), "Default config should have no errors");
-    
+    assert!(
+        report.errors.is_empty(),
+        "Default config should have no errors"
+    );
+
     Ok(())
 }
 
@@ -35,13 +42,16 @@ async fn test_config_validation_report(ctx: TestContext) -> TestResult {
 async fn test_invalid_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("invalid_event".to_string());
-    
+
     let result = config.validate();
-    assert!(result.is_err(), "Config with invalid event type should fail validation");
-    
+    assert!(
+        result.is_err(),
+        "Config with invalid event type should fail validation"
+    );
+
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Event type must have at least category.subcategory format"));
-    
+
     Ok(())
 }
 
@@ -49,10 +59,13 @@ async fn test_invalid_event_type_validation(ctx: TestContext) -> TestResult {
 async fn test_malformed_event_type_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
     config.enabled_events.push("1invalid.event".to_string()); // Starts with number
-    
+
     let result = config.validate();
-    assert!(result.is_err(), "Config with malformed event type should fail validation");
-    
+    assert!(
+        result.is_err(),
+        "Config with malformed event type should fail validation"
+    );
+
     Ok(())
 }
 
@@ -66,38 +79,50 @@ enabled_events = ["shell.command.executed_atuin"]
 db_path = "relative/path"  # Should be absolute
 polling_interval_secs = -1  # Should be positive
 "#;
-    
+
     let result = toml::from_str::<CollectorConfig>(invalid_config_toml);
     if let Ok(config) = result {
         let validation_result = config.validate();
-        assert!(validation_result.is_err(), "Config with invalid event config should fail validation");
-        
+        assert!(
+            validation_result.is_err(),
+            "Config with invalid event config should fail validation"
+        );
+
         let error_msg = validation_result.unwrap_err().to_string();
-        assert!(error_msg.contains("db_path must be an absolute path") || error_msg.contains("polling_interval_secs must be greater than 0"));
+        assert!(
+            error_msg.contains("db_path must be an absolute path")
+                || error_msg.contains("polling_interval_secs must be greater than 0")
+        );
     } else {
         // If TOML parsing itself fails, that's also a validation failure
         assert!(true, "Invalid TOML should fail parsing");
     }
-    
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_cross_validation(ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig::default();
-    
+
     // Clear existing configurations and enable an event that requires configuration but don't provide it
     config.flat_config.clear();
     config.event.clear();
     config.enabled_events.clear();
-    config.enabled_events.push("shell.command.executed_atuin".to_string());
-    
+    config
+        .enabled_events
+        .push("shell.command.executed_atuin".to_string());
+
     let result = config.cross_validate();
-    assert!(result.is_err(), "Cross-validation should fail when required config is missing: {:?}", result);
-    
+    assert!(
+        result.is_err(),
+        "Cross-validation should fail when required config is missing: {:?}",
+        result
+    );
+
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("missing required 'db_path' configuration"));
-    
+
     Ok(())
 }
 
@@ -111,34 +136,39 @@ enabled_events = ["shell.command.executed_atuin"]
 db_path = "/home/user/.local/share/atuin/history.db"
 polling_interval_secs = 5
 "#;
-    
-    let config: CollectorConfig = toml::from_str(valid_config_toml).expect("Valid TOML should parse");
+
+    let config: CollectorConfig =
+        toml::from_str(valid_config_toml).expect("Valid TOML should parse");
     let result = config.validate();
-    assert!(result.is_ok(), "Valid event config should pass validation: {:?}", result);
-    
+    assert!(
+        result.is_ok(),
+        "Valid event config should pass validation: {:?}",
+        result
+    );
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_validation_report_accumulation(ctx: TestContext) -> TestResult {
     let mut report = ValidationReport::new();
-    
+
     assert!(report.valid);
     assert!(report.is_empty());
-    
+
     report.add_warning("Test warning".to_string());
     assert!(report.valid); // Warnings don't affect validity
     assert!(!report.is_empty());
-    
+
     report.add_error("Test error".to_string());
     assert!(!report.valid); // Errors affect validity
-    
+
     report.add_recommendation("Test recommendation".to_string());
-    
+
     pretty_assertions::assert_eq!(report.errors.len(), 1);
     pretty_assertions::assert_eq!(report.warnings.len(), 1);
     pretty_assertions::assert_eq!(report.recommendations.len(), 1);
-    
+
     Ok(())
 }
 
@@ -147,17 +177,17 @@ async fn test_validation_report_merge(ctx: TestContext) -> TestResult {
     let mut report1 = ValidationReport::new();
     report1.add_error("Error 1".to_string());
     report1.add_warning("Warning 1".to_string());
-    
+
     let mut report2 = ValidationReport::new();
     report2.add_error("Error 2".to_string());
     report2.add_recommendation("Recommendation 1".to_string());
-    
+
     report1.merge(report2);
-    
+
     assert!(!report1.valid);
     pretty_assertions::assert_eq!(report1.errors.len(), 2);
     pretty_assertions::assert_eq!(report1.warnings.len(), 1);
     pretty_assertions::assert_eq!(report1.recommendations.len(), 1);
-    
+
     Ok(())
 }

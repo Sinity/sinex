@@ -1,12 +1,15 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use async_trait::async_trait;
 use tracing::{error, info};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, ChannelSenderExt, JsonValue, Timestamp};
 use sinex_core::RawEvent;
+use sinex_core::{
+    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue, Result,
+    Timestamp,
+};
 
 // ============================================================================
 // Event Payloads
@@ -69,7 +72,7 @@ pub struct MediaPlaybackPayload {
     pub album: Option<String>,
     pub album_artist: Option<Vec<String>>,
     pub track_number: Option<i32>,
-    pub length: Option<i64>, // microseconds
+    pub length: Option<i64>,   // microseconds
     pub position: Option<i64>, // microseconds
     pub volume: Option<f64>,
     pub loop_status: Option<String>, // None, Track, Playlist
@@ -95,7 +98,7 @@ pub struct PowerEventPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HardwareEventPayload {
     pub device_type: String, // usb, disk, battery, bluetooth, etc
-    pub event_type: String, // added, removed, changed
+    pub event_type: String,  // added, removed, changed
     pub device_path: String,
     pub device_name: Option<String>,
     pub vendor: Option<String>,
@@ -327,22 +330,23 @@ pub struct DbusMonitor {
 #[async_trait]
 impl EventSource for DbusMonitor {
     type Config = DbusConfig;
-    
+
     const SOURCE_NAME: &'static str = "dbus.monitor";
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
-        
+        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
         info!("Initializing D-Bus monitor");
         Ok(Self { config })
     }
-    
+
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting D-Bus monitoring");
-        
+
         let config = self.config.clone();
-        
+
         // Monitor session bus
         if config.monitor_session {
             let tx_session = tx.clone();
@@ -353,7 +357,7 @@ impl EventSource for DbusMonitor {
                 }
             });
         }
-        
+
         // Monitor system bus
         if config.monitor_system {
             let tx_system = tx.clone();
@@ -364,7 +368,7 @@ impl EventSource for DbusMonitor {
                 }
             });
         }
-        
+
         // Keep the main task alive
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
@@ -373,43 +377,45 @@ impl EventSource for DbusMonitor {
 }
 
 async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Result<()> {
-    use dbus::message::MatchRule;
     use dbus::channel::MatchingReceiver;
+    use dbus::message::MatchRule;
     use dbus_tokio::connection;
-    
+
     info!("Connecting to {} bus", bus_type);
-    
+
     let (resource, conn) = if bus_type == "session" {
-        connection::new_session_sync()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to connect to session bus: {}", e)))?
+        connection::new_session_sync().map_err(|e| {
+            sinex_core::CoreError::Other(format!("Failed to connect to session bus: {}", e))
+        })?
     } else {
-        connection::new_system_sync()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to connect to system bus: {}", e)))?
+        connection::new_system_sync().map_err(|e| {
+            sinex_core::CoreError::Other(format!("Failed to connect to system bus: {}", e))
+        })?
     };
-    
+
     // Spawn the connection resource
     let bus_type_owned = bus_type.to_string();
     tokio::spawn(async move {
         let err = resource.await;
         error!("D-Bus {} connection lost: {:?}", bus_type_owned, err);
     });
-    
+
     // Add match rules for all message types we want to capture
     let signal_rule = MatchRule::new().with_type(dbus::message::MessageType::Signal);
-    conn.add_match(signal_rule)
-        .await
-        .map_err(|e| sinex_core::CoreError::Other(format!("Failed to add signal match rule: {}", e)))?;
-    
+    conn.add_match(signal_rule).await.map_err(|e| {
+        sinex_core::CoreError::Other(format!("Failed to add signal match rule: {}", e))
+    })?;
+
     let method_rule = MatchRule::new().with_type(dbus::message::MessageType::MethodCall);
-    conn.add_match(method_rule)
-        .await
-        .map_err(|e| sinex_core::CoreError::Other(format!("Failed to add method call match rule: {}", e)))?;
-    
+    conn.add_match(method_rule).await.map_err(|e| {
+        sinex_core::CoreError::Other(format!("Failed to add method call match rule: {}", e))
+    })?;
+
     // Clone values we need for the async context
     let bus_type = bus_type.to_string();
     let tx_clone = tx.clone();
     let config_clone = config.clone();
-    
+
     // Start receiving messages
     conn.start_receive(
         MatchRule::new(),
@@ -422,12 +428,12 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
             let sender = msg.sender().map(|s| s.to_string());
             let destination = msg.destination().map(|d| d.to_string());
             let args_json = message_args_to_json(&msg);
-            
+
             // Clone for the async block
             let bus_type = bus_type.clone();
             let tx = tx_clone.clone();
             let config = config_clone.clone();
-            
+
             // Process message in a separate task
             tokio::spawn(async move {
                 if let Err(e) = process_extracted_message(
@@ -441,15 +447,17 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
                     args_json,
                     tx,
                     &config,
-                ).await {
+                )
+                .await
+                {
                     error!("Error processing message: {}", e);
                 }
             });
-            
+
             true
         }),
     );
-    
+
     // Keep the connection alive
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
@@ -469,26 +477,37 @@ async fn process_extracted_message(
     config: &DbusConfig,
 ) -> Result<()> {
     use dbus::message::MessageType;
-    
+
     let interface = interface.unwrap_or_default();
     let path = path.unwrap_or_default();
     let member = member.unwrap_or_default();
-    
+
     // Check filters
     if !config.include_interfaces.is_empty() {
-        if !config.include_interfaces.iter().any(|i| interface.starts_with(i)) {
+        if !config
+            .include_interfaces
+            .iter()
+            .any(|i| interface.starts_with(i))
+        {
             return Ok(());
         }
     }
-    
-    if config.exclude_interfaces.iter().any(|i| interface.starts_with(i)) {
+
+    if config
+        .exclude_interfaces
+        .iter()
+        .any(|i| interface.starts_with(i))
+    {
         return Ok(());
     }
-    
+
     match msg_type {
         MessageType::Signal => {
             // Extract specialized events based on interface
-            if config.extract_notifications && interface == "org.freedesktop.Notifications" && member == "Notify" {
+            if config.extract_notifications
+                && interface == "org.freedesktop.Notifications"
+                && member == "Notify"
+            {
                 let payload = NotificationPayload {
                     app_name: "Unknown".to_string(),
                     summary: args.to_string(),
@@ -499,17 +518,23 @@ async fn process_extracted_message(
                     hints: HashMap::new(),
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(
                     SystemNotification::EVENT_NAME,
-                    serde_json::to_value(payload)?
+                    serde_json::to_value(payload)?,
                 );
                 tx.send_or_log(event, "dbus_notification").await?;
             }
-            
-            if config.extract_media && interface.starts_with("org.mpris.MediaPlayer2") && member == "PropertiesChanged" {
-                let player = sender.as_deref().and_then(|s| s.split('.').last()).unwrap_or("unknown");
-                
+
+            if config.extract_media
+                && interface.starts_with("org.mpris.MediaPlayer2")
+                && member == "PropertiesChanged"
+            {
+                let player = sender
+                    .as_deref()
+                    .and_then(|s| s.split('.').last())
+                    .unwrap_or("unknown");
+
                 let payload = MediaPlaybackPayload {
                     player: player.to_string(),
                     player_instance: sender.clone().unwrap_or_default(),
@@ -533,15 +558,19 @@ async fn process_extracted_message(
                     art_url: None,
                     timestamp: Utc::now(),
                 };
-                
-                let event = create_event(MediaPlaybackChanged::EVENT_NAME, serde_json::to_value(payload)?);
+
+                let event = create_event(
+                    MediaPlaybackChanged::EVENT_NAME,
+                    serde_json::to_value(payload)?,
+                );
                 tx.send_or_log(event, "dbus_media_playback").await?;
             }
-            
-            if config.extract_power && (
-                (interface == "org.freedesktop.login1.Manager" && matches!(member.as_str(), "PrepareForSleep" | "PrepareForShutdown")) ||
-                (interface == "org.freedesktop.UPower" && member == "DeviceChanged")
-            ) {
+
+            if config.extract_power
+                && ((interface == "org.freedesktop.login1.Manager"
+                    && matches!(member.as_str(), "PrepareForSleep" | "PrepareForShutdown"))
+                    || (interface == "org.freedesktop.UPower" && member == "DeviceChanged"))
+            {
                 let payload = PowerEventPayload {
                     event_type: member.clone(),
                     details: serde_json::json!({
@@ -551,17 +580,21 @@ async fn process_extracted_message(
                     }),
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(PowerEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_power_event").await?;
             }
-            
-            if config.extract_hardware && (
-                interface.starts_with("org.freedesktop.UDisks2") ||
-                interface == "org.freedesktop.UPower.Device"
-            ) {
-                let device_type = if interface.contains("UDisks2") { "storage" } else { "power" };
-                
+
+            if config.extract_hardware
+                && (interface.starts_with("org.freedesktop.UDisks2")
+                    || interface == "org.freedesktop.UPower.Device")
+            {
+                let device_type = if interface.contains("UDisks2") {
+                    "storage"
+                } else {
+                    "power"
+                };
+
                 let payload = HardwareEventPayload {
                     device_type: device_type.to_string(),
                     event_type: member.clone(),
@@ -573,27 +606,27 @@ async fn process_extracted_message(
                     properties: HashMap::new(),
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(HardwareEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_hardware_event").await?;
             }
-            
-            if config.extract_session && (
-                interface == "org.freedesktop.login1.Session" ||
-                interface == "org.gnome.SessionManager" ||
-                interface == "org.freedesktop.ScreenSaver"
-            ) {
+
+            if config.extract_session
+                && (interface == "org.freedesktop.login1.Session"
+                    || interface == "org.gnome.SessionManager"
+                    || interface == "org.freedesktop.ScreenSaver")
+            {
                 let payload = SessionEventPayload {
                     event_type: member.clone(),
                     session_id: None,
                     idle_time_ms: None,
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(SessionEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_session_event").await?;
             }
-            
+
             if config.extract_bluetooth && interface.starts_with("org.bluez") {
                 let payload = BluetoothEventPayload {
                     event_type: member.clone(),
@@ -606,11 +639,12 @@ async fn process_extracted_message(
                     trusted: false,
                     timestamp: Utc::now(),
                 };
-                
-                let event = create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
+
+                let event =
+                    create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_bluetooth_event").await?;
             }
-            
+
             if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
                 let payload = NetworkEventPayload {
                     event_type: member.clone(),
@@ -621,31 +655,32 @@ async fn process_extracted_message(
                     state: "unknown".to_string(),
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(NetworkEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_network_event").await?;
             }
-            
-            if config.extract_screensaver && (
-                interface == "org.freedesktop.ScreenSaver" ||
-                interface == "org.gnome.ScreenSaver"
-            ) {
+
+            if config.extract_screensaver
+                && (interface == "org.freedesktop.ScreenSaver"
+                    || interface == "org.gnome.ScreenSaver")
+            {
                 let active = member == "ActiveChanged";
-                
+
                 let payload = ScreenSaverEventPayload {
                     active,
                     locked: false,
                     idle_time_ms: None,
                     timestamp: Utc::now(),
                 };
-                
-                let event = create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
+
+                let event =
+                    create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_screensaver_event").await?;
             }
-            
+
             if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
                 let mounted = member == "Mount";
-                
+
                 let payload = MountEventPayload {
                     event_type: if mounted { "mounted" } else { "unmounted" }.to_string(),
                     device: path.clone(),
@@ -656,11 +691,11 @@ async fn process_extracted_message(
                     size_bytes: None,
                     timestamp: Utc::now(),
                 };
-                
+
                 let event = create_event(MountEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_mount_event").await?;
             }
-            
+
             // Always emit generic signal events (capture everything)
             let payload = DbusSignalPayload {
                 bus: bus_type.to_string(),
@@ -671,13 +706,16 @@ async fn process_extracted_message(
                 args,
                 timestamp: Utc::now(),
             };
-            
+
             let event = create_event(DbusSignal::EVENT_NAME, serde_json::to_value(payload)?);
             tx.send_or_log(event, "dbus_generic_signal").await?;
         }
         MessageType::MethodCall => {
             // Extract PolicyKit events
-            if config.extract_policykit && interface == "org.freedesktop.PolicyKit1.Authority" && member == "CheckAuthorization" {
+            if config.extract_policykit
+                && interface == "org.freedesktop.PolicyKit1.Authority"
+                && member == "CheckAuthorization"
+            {
                 let payload = PolicyKitEventPayload {
                     action_id: "unknown".to_string(),
                     subject_pid: 0,
@@ -688,11 +726,12 @@ async fn process_extracted_message(
                     challenge_occurred: false,
                     timestamp: Utc::now(),
                 };
-                
-                let event = create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
+
+                let event =
+                    create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "dbus_policykit_event").await?;
             }
-            
+
             // Always log method calls (capture everything)
             let payload = DbusMethodCallPayload {
                 bus: bus_type.to_string(),
@@ -704,13 +743,13 @@ async fn process_extracted_message(
                 args,
                 timestamp: Utc::now(),
             };
-            
+
             let event = create_event(DbusMethodCall::EVENT_NAME, serde_json::to_value(payload)?);
             tx.send_or_log(event, "dbus_generic_method_call").await?;
         }
         _ => {} // Ignore other message types
     }
-    
+
     Ok(())
 }
 
@@ -731,10 +770,10 @@ fn extract_notification_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 hints: HashMap::new(),
                 timestamp: Utc::now(),
             };
-            
+
             let event = create_event(
                 SystemNotification::EVENT_NAME,
-                serde_json::to_value(payload)?
+                serde_json::to_value(payload)?,
             );
             return Ok(Some(event));
         }
@@ -750,7 +789,7 @@ fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
             // This is simplified - real implementation would parse the properties
             let sender = msg.sender().map(|s| s.to_string()).unwrap_or_default();
             let player = sender.split('.').last().unwrap_or("unknown");
-            
+
             let payload = MediaPlaybackPayload {
                 player: player.to_string(),
                 player_instance: sender.clone(),
@@ -774,10 +813,10 @@ fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 art_url: None,
                 timestamp: Utc::now(),
             };
-            
+
             let event = create_event(
                 MediaPlaybackChanged::EVENT_NAME,
-                serde_json::to_value(payload)?
+                serde_json::to_value(payload)?,
             );
             return Ok(Some(event));
         }
@@ -794,18 +833,15 @@ fn extract_power_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
             "PowerProfileChanged" => Some("profile_changed"),
             _ => None,
         };
-        
+
         if let Some(event_type) = event_type {
             let payload = PowerEventPayload {
                 event_type: event_type.to_string(),
                 details: message_args_to_json(msg),
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                PowerEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(PowerEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -817,7 +853,7 @@ fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
             let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-            
+
             let (device_type, event_type) = if interface.contains("UDisks2") {
                 ("disk", "changed")
             } else if interface.contains("UPower") {
@@ -825,7 +861,7 @@ fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option
             } else {
                 ("unknown", "changed")
             };
-            
+
             let payload = HardwareEventPayload {
                 device_type: device_type.to_string(),
                 event_type: event_type.to_string(),
@@ -837,11 +873,8 @@ fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option
                 properties: HashMap::new(),
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                HardwareEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(HardwareEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -858,7 +891,7 @@ fn extract_session_event(msg: &dbus::Message, interface: &str) -> Result<Option<
             (_, "ActiveChanged") => Some("active"),
             _ => None,
         };
-        
+
         if let Some(event_type) = event_type {
             let payload = SessionEventPayload {
                 event_type: event_type.to_string(),
@@ -866,11 +899,8 @@ fn extract_session_event(msg: &dbus::Message, interface: &str) -> Result<Option<
                 idle_time_ms: None,
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                SessionEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(SessionEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -883,7 +913,7 @@ fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
             let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
             let device_address = path.split('/').last().unwrap_or("unknown");
-            
+
             let payload = BluetoothEventPayload {
                 event_type: "changed".to_string(),
                 device_address: device_address.to_string(),
@@ -895,11 +925,8 @@ fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 trusted: false,
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                BluetoothEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -917,7 +944,7 @@ fn extract_network_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
             "ActiveConnectionRemoved" => Some("disconnected"),
             _ => None,
         };
-        
+
         if let Some(event_type) = event_type {
             let payload = NetworkEventPayload {
                 event_type: event_type.to_string(),
@@ -928,11 +955,8 @@ fn extract_network_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 state: "unknown".to_string(),
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                NetworkEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(NetworkEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -949,11 +973,8 @@ fn extract_screensaver_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 idle_time_ms: None,
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                ScreenSaverEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -968,10 +989,10 @@ fn extract_mount_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
             "Unmount" => Some("unmounted"),
             _ => None,
         };
-        
+
         if let Some(event_type) = event_type {
             let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-            
+
             let payload = MountEventPayload {
                 event_type: event_type.to_string(),
                 device: path,
@@ -982,11 +1003,8 @@ fn extract_mount_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 size_bytes: None,
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                MountEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(MountEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
@@ -1007,17 +1025,13 @@ fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 challenge_occurred: false,
                 timestamp: Utc::now(),
             };
-            
-            let event = create_event(
-                PolicyKitEvent::EVENT_NAME,
-                serde_json::to_value(payload)?
-            );
+
+            let event = create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
             return Ok(Some(event));
         }
     }
     Ok(None)
 }
-
 
 fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
     // For now, just return debug representation

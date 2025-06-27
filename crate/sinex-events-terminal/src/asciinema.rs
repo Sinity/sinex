@@ -1,16 +1,19 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use async_trait::async_trait;
 use tokio::time;
 use tracing::{error, info, warn};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
-use sinex_core::{EventSender, EventType, EventSource, EventSourceContext, Result, JsonValue, Timestamp, ChannelSenderExt};
 use sinex_core::RawEvent;
+use sinex_core::{
+    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue, Result,
+    Timestamp,
+};
 
 // ============================================================================
 // Event Payloads
@@ -128,44 +131,49 @@ pub struct AsciinemaRecorder {
 #[async_trait]
 impl EventSource for AsciinemaRecorder {
     type Config = AsciinemaConfig;
-    
+
     const SOURCE_NAME: &'static str = "ingestor.asciinema_recorder";
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
-        
+        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
         info!("Initializing asciinema recorder");
-        
+
         // Ensure recordings directory exists
         if !config.recordings_dir.exists() {
-            tokio::fs::create_dir_all(&config.recordings_dir).await
-                .map_err(|e| sinex_core::CoreError::Other(
-                    format!("Failed to create recordings directory: {}", e)
-                ))?;
+            tokio::fs::create_dir_all(&config.recordings_dir)
+                .await
+                .map_err(|e| {
+                    sinex_core::CoreError::Other(format!(
+                        "Failed to create recordings directory: {}",
+                        e
+                    ))
+                })?;
         }
-        
+
         Ok(Self {
             config,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
             processed_files: Arc::new(Mutex::new(Vec::new())),
         })
     }
-    
+
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!("Starting asciinema recording monitor");
-        
+
         if self.config.auto_start_recording {
             // Start recording in new terminals automatically
             self.setup_auto_recording().await?;
         }
-        
+
         // Monitor for recording files
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
-        
+
         loop {
             interval.tick().await;
-            
+
             // Scan for new/updated recording files
             if let Err(e) = self.scan_recordings(&tx).await {
                 error!("Error scanning recordings: {}", e);
@@ -181,19 +189,19 @@ impl AsciinemaRecorder {
         warn!("Auto-recording setup not yet implemented - requires shell configuration");
         Ok(())
     }
-    
+
     async fn scan_recordings(&self, tx: &EventSender) -> Result<()> {
-        
         let pattern = self.config.recordings_dir.join(&self.config.file_pattern);
         let pattern_str = pattern.to_string_lossy();
-        
+
         // Find all recording files
-        let paths = glob::glob(&pattern_str)
-            .map_err(|e| sinex_core::CoreError::configuration("Invalid glob pattern")
+        let paths = glob::glob(&pattern_str).map_err(|e| {
+            sinex_core::CoreError::configuration("Invalid glob pattern")
                 .with_context("pattern", pattern_str.clone())
                 .with_source(e)
-                .build())?;
-        
+                .build()
+        })?;
+
         for entry in paths {
             match entry {
                 Ok(path) => {
@@ -204,22 +212,23 @@ impl AsciinemaRecorder {
                 Err(e) => warn!("Error reading recording path: {}", e),
             }
         }
-        
+
         // Clean up completed sessions
         self.cleanup_completed_sessions().await?;
-        
+
         Ok(())
     }
-    
+
     async fn process_recording_file(&self, path: &PathBuf, tx: &EventSender) -> Result<()> {
-        let metadata = tokio::fs::metadata(path).await
-            .map_err(|e| sinex_core::CoreError::io_error(path)
+        let metadata = tokio::fs::metadata(path).await.map_err(|e| {
+            sinex_core::CoreError::io_error(path)
                 .with_operation("get_metadata")
                 .with_source(e)
-                .build())?;
-        
+                .build()
+        })?;
+
         let file_size = metadata.len();
-        
+
         // Check if this is a new file
         let is_new = {
             let mut sessions = self.active_sessions.lock().unwrap();
@@ -229,22 +238,25 @@ impl AsciinemaRecorder {
                 if processed.contains(path) {
                     return Ok(());
                 }
-                
+
                 // New active recording
                 let session_id = sinex_ulid::Ulid::new().to_string();
-                sessions.insert(path.clone(), RecordingSession {
-                    id: session_id.clone(),
-                    file_path: path.clone(),
-                    start_time: Utc::now(),
-                    last_size: 0,
-                    header: None,
-                });
+                sessions.insert(
+                    path.clone(),
+                    RecordingSession {
+                        id: session_id.clone(),
+                        file_path: path.clone(),
+                        start_time: Utc::now(),
+                        last_size: 0,
+                        header: None,
+                    },
+                );
                 true
             } else {
                 false
             }
         };
-        
+
         if is_new {
             // Read header and emit session started event
             if let Ok(header) = self.read_asciinema_header(path).await {
@@ -257,7 +269,7 @@ impl AsciinemaRecorder {
                         return Ok(());
                     }
                 };
-                
+
                 let payload = AsciinemaSessionStartedPayload {
                     session_id,
                     command: header.command.unwrap_or_else(|| "unknown".to_string()),
@@ -270,10 +282,10 @@ impl AsciinemaRecorder {
                     },
                     recording_file: path.clone(),
                 };
-                
+
                 let event = create_event(
                     AsciinemaSessionStarted::EVENT_NAME,
-                    serde_json::to_value(payload)?
+                    serde_json::to_value(payload)?,
                 );
                 tx.send_or_log(event, "asciinema_session_started").await?;
             }
@@ -292,14 +304,14 @@ impl AsciinemaRecorder {
                     (false, None)
                 }
             };
-            
+
             if should_check_complete {
                 if let Some((session_id, start_time)) = session_info {
                     // Check if the file has a valid ending
                     if self.is_recording_complete(path).await? {
                         // Emit session ended event
                         let duration = Utc::now().signed_duration_since(start_time);
-                        
+
                         let mut payload = AsciinemaSessionEndedPayload {
                             session_id: session_id.clone(),
                             exit_code: 0, // Would need to parse from recording
@@ -309,7 +321,7 @@ impl AsciinemaRecorder {
                             git_annex_path: None,
                             git_annex_key: None,
                         };
-                        
+
                         // Add to git-annex if configured
                         if self.config.auto_annex {
                             if let Some(ref annex_repo) = self.config.git_annex_repo {
@@ -324,105 +336,118 @@ impl AsciinemaRecorder {
                                 }
                             }
                         }
-                        
+
                         let event = create_event(
                             AsciinemaSessionEnded::EVENT_NAME,
-                            serde_json::to_value(payload)?
+                            serde_json::to_value(payload)?,
                         );
                         tx.send_or_log(event, "asciinema_session_ended").await?;
-                        
+
                         // Mark as processed
                         let mut processed = self.processed_files.lock().unwrap();
                         processed.push(path.clone());
-                        
+
                         // Remove from active sessions
                         self.active_sessions.lock().unwrap().remove(path);
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     async fn read_asciinema_header(&self, path: &PathBuf) -> Result<AsciinemaHeader> {
         use tokio::io::{AsyncBufReadExt, BufReader};
-        
-        let file = tokio::fs::File::open(path).await
-            .map_err(|e| sinex_core::CoreError::io_error(path)
+
+        let file = tokio::fs::File::open(path).await.map_err(|e| {
+            sinex_core::CoreError::io_error(path)
                 .with_operation("open_file")
                 .with_source(e)
-                .build())?;
-        
+                .build()
+        })?;
+
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
-        
+
         // First line should be the header
         if let Ok(Some(line)) = lines.next_line().await {
-            serde_json::from_str(&line)
-                .map_err(|e| sinex_core::CoreError::serialization("Failed to parse asciinema header")
+            serde_json::from_str(&line).map_err(|e| {
+                sinex_core::CoreError::serialization("Failed to parse asciinema header")
                     .with_context("file_path", path.display())
                     .with_source(e)
-                    .build())
+                    .build()
+            })
         } else {
             Err(sinex_core::CoreError::Other("No header found".to_string()))
         }
     }
-    
+
     async fn is_recording_complete(&self, path: &PathBuf) -> Result<bool> {
         // Simple heuristic: check if file hasn't been modified for a while
         // A more sophisticated approach would parse the file to check for proper ending
         let metadata = tokio::fs::metadata(path).await?;
-        
+
         if let Ok(modified) = metadata.modified() {
             let elapsed = std::time::SystemTime::now()
                 .duration_since(modified)
                 .unwrap_or(Duration::from_secs(0));
-            
+
             // If file hasn't been modified for 10 seconds, consider it complete
             Ok(elapsed > Duration::from_secs(10))
         } else {
             Ok(false)
         }
     }
-    
+
     async fn cleanup_completed_sessions(&self) -> Result<()> {
         // Clean up old processed files from memory
         let mut processed = self.processed_files.lock().unwrap();
-        
+
         // Keep only last 1000 processed files
         if processed.len() > 1000 {
             let len = processed.len();
             processed.drain(0..len.saturating_sub(1000));
         }
-        
+
         Ok(())
     }
-    
-    async fn add_to_git_annex(&self, annex_repo: &PathBuf, recording_path: &PathBuf, session_id: &str) -> Result<(PathBuf, Option<String>)> {
+
+    async fn add_to_git_annex(
+        &self,
+        annex_repo: &PathBuf,
+        recording_path: &PathBuf,
+        session_id: &str,
+    ) -> Result<(PathBuf, Option<String>)> {
         use tokio::process::Command;
-        
+
         // Create subdirectory for asciinema recordings
         let asciinema_dir = annex_repo.join("asciinema");
-        tokio::fs::create_dir_all(&asciinema_dir).await
-            .map_err(|e| sinex_core::CoreError::io_error(&asciinema_dir)
-                .with_operation("create_directory")
-                .with_source(e)
-                .build())?;
-        
+        tokio::fs::create_dir_all(&asciinema_dir)
+            .await
+            .map_err(|e| {
+                sinex_core::CoreError::io_error(&asciinema_dir)
+                    .with_operation("create_directory")
+                    .with_source(e)
+                    .build()
+            })?;
+
         // Generate filename with timestamp and session ID
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!("recording_{}_{}.cast", timestamp, session_id);
         let dest_path = asciinema_dir.join(&filename);
-        
+
         // Copy file to git-annex repository
-        tokio::fs::copy(recording_path, &dest_path).await
-            .map_err(|e| sinex_core::CoreError::io_error(recording_path)
-                .with_operation("copy_file")
-                .with_context("destination", dest_path.display())
-                .with_source(e)
-                .build())?;
-        
+        tokio::fs::copy(recording_path, &dest_path)
+            .await
+            .map_err(|e| {
+                sinex_core::CoreError::io_error(recording_path)
+                    .with_operation("copy_file")
+                    .with_context("destination", dest_path.display())
+                    .with_source(e)
+                    .build()
+            })?;
+
         // Add to git-annex
         let output = Command::new("git")
             .arg("annex")
@@ -431,18 +456,21 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::processing_failed()
-                .with_operation("git_annex_add")
-                .with_context("file", filename.clone())
-                .with_source(e)
-                .build())?;
-        
+            .map_err(|e| {
+                sinex_core::CoreError::processing_failed()
+                    .with_operation("git_annex_add")
+                    .with_context("file", filename.clone())
+                    .with_source(e)
+                    .build()
+            })?;
+
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(
-                format!("git-annex add failed: {}", String::from_utf8_lossy(&output.stderr))
-            ));
+            return Err(sinex_core::CoreError::Other(format!(
+                "git-annex add failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-        
+
         // Commit the addition
         let output = Command::new("git")
             .arg("commit")
@@ -451,16 +479,21 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::processing_failed()
-                .with_operation("git_commit")
-                .with_context("file", filename.clone())
-                .with_source(e)
-                .build())?;
-        
+            .map_err(|e| {
+                sinex_core::CoreError::processing_failed()
+                    .with_operation("git_commit")
+                    .with_context("file", filename.clone())
+                    .with_source(e)
+                    .build()
+            })?;
+
         if !output.status.success() {
-            warn!("git commit failed (might be nothing to commit): {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "git commit failed (might be nothing to commit): {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
-        
+
         // Get the git-annex key for the file
         let output = Command::new("git")
             .arg("annex")
@@ -470,20 +503,29 @@ impl AsciinemaRecorder {
             .current_dir(&asciinema_dir)
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::processing_failed()
-                .with_operation("git_annex_get_key")
-                .with_context("file", filename.clone())
-                .with_source(e)
-                .build())?;
-        
+            .map_err(|e| {
+                sinex_core::CoreError::processing_failed()
+                    .with_operation("git_annex_get_key")
+                    .with_context("file", filename.clone())
+                    .with_source(e)
+                    .build()
+            })?;
+
         let annex_key = if output.status.success() {
             let key = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if key.is_empty() { None } else { Some(key) }
+            if key.is_empty() {
+                None
+            } else {
+                Some(key)
+            }
         } else {
             None
         };
-        
-        info!("Added asciinema recording to git-annex: {} (key: {:?})", filename, annex_key);
+
+        info!(
+            "Added asciinema recording to git-annex: {} (key: {:?})",
+            filename, annex_key
+        );
         Ok((dest_path, annex_key))
     }
 }

@@ -24,7 +24,7 @@ where
             .with_context("expected", format!("{:?}", right))
             .with_context("actual", format!("{:?}", left))
             .build();
-        
+
         return Err(Box::new(error));
     }
     Ok(())
@@ -37,7 +37,7 @@ pub fn assert_with_context(condition: bool, message: &str, context: &str) -> Tes
             .with_context("context", context)
             .with_operation("assert_with_context")
             .build();
-        
+
         return Err(Box::new(error));
     }
     Ok(())
@@ -59,7 +59,7 @@ pub async fn assert_event_inserted_with_context(
                 .with_context("event_type", &event.event_type)
                 .with_source(e)
                 .build();
-            
+
             Err(Box::new(error))
         }
     }
@@ -81,7 +81,7 @@ where
                 .with_operation(operation_name)
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .build();
-            
+
             Err(Box::new(error))
         }
     }
@@ -98,7 +98,7 @@ where
             .with_context("errors_count", errors.len())
             .with_context("errors", errors.join("; "))
             .build();
-        
+
         return Err(Box::new(error));
     }
     Ok(())
@@ -116,22 +116,22 @@ where
         let error = CoreError::validation("Expected validation to fail but it passed")
             .with_context("expected_error", expected_error_substring)
             .build();
-        
+
         return Err(Box::new(error));
     }
-    
+
     let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
     let combined_errors = errors.join("; ");
-    
+
     if !combined_errors.contains(expected_error_substring) {
         let error = CoreError::validation("Validation failed but with unexpected error")
             .with_context("expected_substring", expected_error_substring)
             .with_context("actual_errors", combined_errors)
             .build();
-        
+
         return Err(Box::new(error));
     }
-    
+
     Ok(())
 }
 
@@ -149,7 +149,7 @@ where
             .with_context("channel_context", context)
             .with_source(e)
             .build();
-        
+
         Box::new(error) as Box<dyn std::error::Error>
     })
 }
@@ -165,15 +165,15 @@ where
     T: Send,
 {
     let result = sender.send_timeout(value, timeout).await;
-    
+
     match (result.is_err(), should_timeout) {
-        (true, true) => Ok(()), // Expected timeout
+        (true, true) => Ok(()),   // Expected timeout
         (false, false) => Ok(()), // Expected success
         (false, true) => {
             let error = CoreError::validation("Expected channel send to timeout but it succeeded")
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .build();
-            
+
             Err(Box::new(error))
         }
         (true, false) => {
@@ -181,7 +181,7 @@ where
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .with_source(result.unwrap_err())
                 .build();
-            
+
             Err(Box::new(error))
         }
     }
@@ -198,7 +198,7 @@ pub fn assert_config_valid(
             .with_context("config_name", config_name)
             .with_source(e)
             .build();
-        
+
         Box::new(error) as Box<dyn std::error::Error>
     })
 }
@@ -216,7 +216,7 @@ where
             .with_context("field_path", field_path)
             .with_source(e)
             .build();
-        
+
         Box::new(error) as Box<dyn std::error::Error>
     })
 }
@@ -235,7 +235,7 @@ where
             .with_context("assertion_description", description)
             .with_source(e)
             .build();
-        
+
         Box::new(error) as Box<dyn std::error::Error>
     })
 }
@@ -253,7 +253,7 @@ impl TestAssertionBatch {
             context: context.to_string(),
         }
     }
-    
+
     /// Add an assertion that should pass
     pub fn assert_that<F>(&mut self, check: F, description: &str) -> &mut Self
     where
@@ -264,19 +264,24 @@ impl TestAssertionBatch {
         }
         self
     }
-    
+
     /// Add a validation chain to the batch
-    pub fn assert_validation<T>(&mut self, chain: ValidationChain<T>, description: &str) -> &mut Self
+    pub fn assert_validation<T>(
+        &mut self,
+        chain: ValidationChain<T>,
+        description: &str,
+    ) -> &mut Self
     where
         T: Debug,
     {
         if !chain.is_valid() {
             let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
-            self.errors.push(format!("{}: {}", description, errors.join("; ")));
+            self.errors
+                .push(format!("{}: {}", description, errors.join("; ")));
         }
         self
     }
-    
+
     /// Execute all assertions and return combined result
     pub fn execute(self) -> TestResult {
         if self.errors.is_empty() {
@@ -287,7 +292,7 @@ impl TestAssertionBatch {
                 .with_context("failure_count", self.errors.len())
                 .with_context("failures", self.errors.join(" | "))
                 .build();
-            
+
             Err(Box::new(error))
         }
     }
@@ -296,7 +301,7 @@ impl TestAssertionBatch {
 /// Assert events are equivalent using enhanced comparison
 pub fn assert_events_equivalent(left: &RawEvent, right: &RawEvent) -> TestResult {
     let mut batch = TestAssertionBatch::new("event_equivalence");
-    
+
     batch
         .assert_that(
             || assert_eq_with_context(&left.source, &right.source, "event source"),
@@ -314,68 +319,73 @@ pub fn assert_events_equivalent(left: &RawEvent, right: &RawEvent) -> TestResult
             || assert_eq_with_context(&left.host, &right.host, "event host"),
             "host comparison",
         );
-    
+
     batch.execute()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_validation_chain_assertions() {
         // Test passing validation
         let chain = ValidationChain::validate("valid_value".to_string(), "test_field")
             .not_empty()
             .min_length(5);
-        
+
         assert!(assert_validation_passes(chain).is_ok());
-        
+
         // Test failing validation
-        let chain = ValidationChain::validate("".to_string(), "test_field")
-            .not_empty();
-        
+        let chain = ValidationChain::validate("".to_string(), "test_field").not_empty();
+
         assert!(assert_validation_fails(chain, "cannot be empty").is_ok());
     }
-    
+
     #[test]
     fn test_assertion_batch() {
         let mut batch = TestAssertionBatch::new("test_batch");
-        
-        batch
-            .assert_that(|| Ok(()), "should pass")
-            .assert_that(|| assert_with_context(false, "test failure", "test context"), "should fail");
-        
+
+        batch.assert_that(|| Ok(()), "should pass").assert_that(
+            || assert_with_context(false, "test failure", "test context"),
+            "should fail",
+        );
+
         let result = batch.execute();
         assert!(result.is_err());
-        
+
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("Multiple assertions failed"));
         assert!(error_msg.contains("should fail"));
     }
-    
+
     #[tokio::test]
     async fn test_channel_assertions() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
-        
+
         // Test successful send
-        assert!(assert_channel_send_success(&tx, "test".to_string(), "test context").await.is_ok());
-        
+        assert!(
+            assert_channel_send_success(&tx, "test".to_string(), "test context")
+                .await
+                .is_ok()
+        );
+
         // Verify message was received
         let received = rx.recv().await.unwrap();
         assert_eq!(received, "test");
-        
+
         // Test timeout behavior
         let (tx2, _rx2) = tokio::sync::mpsc::channel::<String>(0); // Zero capacity for immediate full
-        
+
         // This should timeout quickly since channel is full
         let result = assert_channel_send_timeout(
-            &tx2, 
-            "test".to_string(), 
-            Duration::from_millis(10), 
-            true // expect timeout
-        ).await;
-        
+            &tx2,
+            "test".to_string(),
+            Duration::from_millis(10),
+            true, // expect timeout
+        )
+        .await;
+
         assert!(result.is_ok());
     }
 }

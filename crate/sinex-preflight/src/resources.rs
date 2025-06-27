@@ -1,6 +1,6 @@
 /*!
  * Resource verification module for Sinex Pre-Flight system
- * 
+ *
  * Verifies system resource availability including:
  * - Available memory and disk space
  * - CPU capacity and load
@@ -8,11 +8,11 @@
  * - Filesystem permissions
  */
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::VerificationStatus;
 
@@ -22,9 +22,9 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
     let mut details = HashMap::new();
     let mut has_warnings = false;
     let mut has_failures = false;
-    
+
     info!("Verifying system resource availability");
-    
+
     // Memory verification
     match verify_memory_availability(&mut messages).await {
         Ok(memory_info) => {
@@ -35,7 +35,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_failures = true;
         }
     }
-    
+
     // Disk space verification
     match verify_disk_space(&mut messages).await {
         Ok(disk_info) => {
@@ -46,12 +46,12 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_failures = true;
         }
     }
-    
+
     // CPU load verification
     match verify_cpu_capacity(&mut messages).await {
         Ok(cpu_info) => {
             details.insert("cpu", cpu_info);
-            
+
             // Check if system is under high load
             if let Some(load) = cpu_info.get("load_average_1min").and_then(|v| v.as_f64()) {
                 if load > 8.0 {
@@ -65,7 +65,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_failures = true;
         }
     }
-    
+
     // Filesystem permissions verification
     match verify_filesystem_permissions(&mut messages).await {
         Ok(fs_info) => {
@@ -76,7 +76,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_failures = true;
         }
     }
-    
+
     // Network connectivity verification
     match verify_network_connectivity(&mut messages).await {
         Ok(network_info) => {
@@ -87,7 +87,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_warnings = true;
         }
     }
-    
+
     // Process limits verification
     match verify_process_limits(&mut messages).await {
         Ok(limits_info) => {
@@ -98,7 +98,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
             has_warnings = true;
         }
     }
-    
+
     let status = if has_failures {
         VerificationStatus::Fail
     } else if has_warnings {
@@ -106,36 +106,44 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
     } else {
         VerificationStatus::Pass
     };
-    
+
     info!("Resource verification completed with status: {:?}", status);
     Ok((status, json!(details), messages))
 }
 
 async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value> {
     use sysinfo::{System, SystemExt};
-    
+
     let mut sys = System::new_all();
     sys.refresh_memory();
-    
+
     let total_memory_gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
     let available_memory_gb = sys.available_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
     let used_memory_gb = sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
     let memory_usage_percent = (used_memory_gb / total_memory_gb) * 100.0;
-    
+
     // Sinex requirements: minimum 2GB available, warning if <4GB
     let min_required_gb = 2.0;
     let recommended_gb = 4.0;
-    
+
     if available_memory_gb < min_required_gb {
-        bail!("Insufficient memory: {:.2}GB available, {:.2}GB required", 
-              available_memory_gb, min_required_gb);
+        bail!(
+            "Insufficient memory: {:.2}GB available, {:.2}GB required",
+            available_memory_gb,
+            min_required_gb
+        );
     } else if available_memory_gb < recommended_gb {
-        messages.push(format!("⚠ Low memory: {:.2}GB available, {:.2}GB recommended", 
-                             available_memory_gb, recommended_gb));
+        messages.push(format!(
+            "⚠ Low memory: {:.2}GB available, {:.2}GB recommended",
+            available_memory_gb, recommended_gb
+        ));
     } else {
-        messages.push(format!("✓ Memory sufficient: {:.2}GB available", available_memory_gb));
+        messages.push(format!(
+            "✓ Memory sufficient: {:.2}GB available",
+            available_memory_gb
+        ));
     }
-    
+
     Ok(json!({
         "total_gb": total_memory_gb,
         "available_gb": available_memory_gb,
@@ -149,57 +157,69 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value>
 async fn verify_disk_space(messages: &mut Vec<String>) -> Result<Value> {
     let paths_to_check = vec![
         ("/var/lib/sinex", "Sinex data directory", 10.0), // 10GB minimum
-        ("/tmp", "Temporary directory", 5.0),              // 5GB minimum
-        ("/var/log", "Log directory", 2.0),                // 2GB minimum
+        ("/tmp", "Temporary directory", 5.0),             // 5GB minimum
+        ("/var/log", "Log directory", 2.0),               // 2GB minimum
     ];
-    
+
     let mut disk_info = HashMap::new();
     let mut total_required = 0.0;
     let mut has_issues = false;
-    
+
     for (path, description, min_gb) in paths_to_check {
         total_required += min_gb;
-        
+
         match get_disk_space(path) {
             Ok((total_gb, available_gb)) => {
                 let usage_percent = ((total_gb - available_gb) / total_gb) * 100.0;
-                
-                disk_info.insert(path.to_string(), json!({
-                    "description": description,
-                    "total_gb": total_gb,
-                    "available_gb": available_gb,
-                    "usage_percent": usage_percent,
-                    "min_required_gb": min_gb,
-                    "meets_requirements": available_gb >= min_gb
-                }));
-                
+
+                disk_info.insert(
+                    path.to_string(),
+                    json!({
+                        "description": description,
+                        "total_gb": total_gb,
+                        "available_gb": available_gb,
+                        "usage_percent": usage_percent,
+                        "min_required_gb": min_gb,
+                        "meets_requirements": available_gb >= min_gb
+                    }),
+                );
+
                 if available_gb < min_gb {
-                    messages.push(format!("✗ {}: {:.2}GB available, {:.2}GB required", 
-                                         description, available_gb, min_gb));
+                    messages.push(format!(
+                        "✗ {}: {:.2}GB available, {:.2}GB required",
+                        description, available_gb, min_gb
+                    ));
                     has_issues = true;
                 } else if available_gb < min_gb * 2.0 {
-                    messages.push(format!("⚠ {}: {:.2}GB available (low)", 
-                                         description, available_gb));
+                    messages.push(format!(
+                        "⚠ {}: {:.2}GB available (low)",
+                        description, available_gb
+                    ));
                 } else {
-                    messages.push(format!("✓ {}: {:.2}GB available", 
-                                         description, available_gb));
+                    messages.push(format!(
+                        "✓ {}: {:.2}GB available",
+                        description, available_gb
+                    ));
                 }
             }
             Err(e) => {
                 messages.push(format!("⚠ Could not check disk space for {}: {}", path, e));
-                disk_info.insert(path.to_string(), json!({
-                    "description": description,
-                    "error": e.to_string(),
-                    "meets_requirements": false
-                }));
+                disk_info.insert(
+                    path.to_string(),
+                    json!({
+                        "description": description,
+                        "error": e.to_string(),
+                        "meets_requirements": false
+                    }),
+                );
             }
         }
     }
-    
+
     if has_issues {
         bail!("Insufficient disk space on one or more required paths");
     }
-    
+
     Ok(json!({
         "paths": disk_info,
         "total_required_gb": total_required
@@ -208,49 +228,55 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> Result<Value> {
 
 fn get_disk_space(path: &str) -> Result<(f64, f64)> {
     use nix::sys::statvfs::statvfs;
-    
-    let stat = statvfs(path)
-        .with_context(|| format!("Failed to get disk stats for {}", path))?;
-    
+
+    let stat = statvfs(path).with_context(|| format!("Failed to get disk stats for {}", path))?;
+
     let block_size = stat.block_size();
     let total_blocks = stat.blocks();
     let available_blocks = stat.blocks_available();
-    
+
     let total_bytes = total_blocks * block_size;
     let available_bytes = available_blocks * block_size;
-    
+
     let total_gb = total_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
     let available_gb = available_bytes as f64 / 1024.0 / 1024.0 / 1024.0;
-    
+
     Ok((total_gb, available_gb))
 }
 
 async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
-    use sysinfo::{System, SystemExt, CpuExt};
-    
+    use sysinfo::{CpuExt, System, SystemExt};
+
     let mut sys = System::new_all();
     sys.refresh_cpu();
-    
+
     let cpu_count = sys.cpus().len();
     let load_avg = sys.load_average();
-    
+
     // Basic CPU requirements for Sinex
     let min_cpu_count = 2;
     let max_recommended_load = cpu_count as f64 * 0.8; // 80% of CPU capacity
-    
+
     if cpu_count < min_cpu_count {
-        bail!("Insufficient CPU cores: {} available, {} required", 
-              cpu_count, min_cpu_count);
+        bail!(
+            "Insufficient CPU cores: {} available, {} required",
+            cpu_count,
+            min_cpu_count
+        );
     }
-    
+
     if load_avg.one > max_recommended_load {
-        messages.push(format!("⚠ High CPU load: {:.2}, recommended max: {:.2}", 
-                             load_avg.one, max_recommended_load));
+        messages.push(format!(
+            "⚠ High CPU load: {:.2}, recommended max: {:.2}",
+            load_avg.one, max_recommended_load
+        ));
     } else {
-        messages.push(format!("✓ CPU capacity sufficient: {} cores, load: {:.2}", 
-                             cpu_count, load_avg.one));
+        messages.push(format!(
+            "✓ CPU capacity sufficient: {} cores, load: {:.2}",
+            cpu_count, load_avg.one
+        ));
     }
-    
+
     Ok(json!({
         "cpu_count": cpu_count,
         "load_average_1min": load_avg.one,
@@ -263,20 +289,16 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
 }
 
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Value> {
-    let directories_to_check = vec![
-        "/var/lib/sinex",
-        "/var/log/sinex", 
-        "/tmp",
-    ];
-    
+    let directories_to_check = vec!["/var/lib/sinex", "/var/log/sinex", "/tmp"];
+
     let mut permissions_info = HashMap::new();
     let mut has_issues = false;
-    
+
     for dir_path in directories_to_check {
         match check_directory_permissions(dir_path).await {
             Ok(perms) => {
                 permissions_info.insert(dir_path.to_string(), perms);
-                
+
                 if perms["writable"].as_bool().unwrap_or(false) {
                     messages.push(format!("✓ Directory {} is writable", dir_path));
                 } else {
@@ -285,19 +307,25 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Val
                 }
             }
             Err(e) => {
-                messages.push(format!("⚠ Could not check permissions for {}: {}", dir_path, e));
-                permissions_info.insert(dir_path.to_string(), json!({
-                    "error": e.to_string(),
-                    "writable": false
-                }));
+                messages.push(format!(
+                    "⚠ Could not check permissions for {}: {}",
+                    dir_path, e
+                ));
+                permissions_info.insert(
+                    dir_path.to_string(),
+                    json!({
+                        "error": e.to_string(),
+                        "writable": false
+                    }),
+                );
             }
         }
     }
-    
+
     if has_issues {
         bail!("Insufficient filesystem permissions for required directories");
     }
-    
+
     Ok(json!({
         "directories": permissions_info
     }))
@@ -305,42 +333,40 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Val
 
 async fn check_directory_permissions(dir_path: &str) -> Result<Value> {
     let path = Path::new(dir_path);
-    
+
     // Create directory if it doesn't exist
     if !path.exists() {
         std::fs::create_dir_all(path)
             .with_context(|| format!("Failed to create directory {}", dir_path))?;
     }
-    
+
     // Test write permissions by creating a temporary file
     let test_file = path.join(".sinex_preflight_test");
-    
+
     match std::fs::write(&test_file, "test") {
         Ok(_) => {
             // Clean up test file
             std::fs::remove_file(&test_file).ok();
-            
+
             Ok(json!({
                 "exists": true,
                 "writable": true,
                 "readable": true
             }))
         }
-        Err(e) => {
-            Ok(json!({
-                "exists": path.exists(),
-                "writable": false,
-                "readable": path.metadata().is_ok(),
-                "error": e.to_string()
-            }))
-        }
+        Err(e) => Ok(json!({
+            "exists": path.exists(),
+            "writable": false,
+            "readable": path.metadata().is_ok(),
+            "error": e.to_string()
+        })),
     }
 }
 
 async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value> {
     // Basic network connectivity tests
     let mut network_info = HashMap::new();
-    
+
     // Check if we can resolve DNS
     match test_dns_resolution().await {
         Ok(_) => {
@@ -352,7 +378,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value
             network_info.insert("dns_resolution", json!(false));
         }
     }
-    
+
     // Check localhost connectivity (for PostgreSQL)
     match test_localhost_connectivity().await {
         Ok(_) => {
@@ -364,30 +390,32 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value
             network_info.insert("localhost_connectivity", json!(false));
         }
     }
-    
+
     Ok(json!(network_info))
 }
 
 async fn test_dns_resolution() -> Result<()> {
     use std::net::ToSocketAddrs;
-    
+
     // Try to resolve a well-known hostname
-    "google.com:80".to_socket_addrs()
+    "google.com:80"
+        .to_socket_addrs()
         .context("Failed to resolve DNS")?
         .next()
         .context("No DNS resolution results")?;
-    
+
     Ok(())
 }
 
 async fn test_localhost_connectivity() -> Result<()> {
-    use std::net::{TcpStream, SocketAddr};
+    use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
-    
+
     // Test localhost connectivity by attempting to connect to a common port
-    let addr: SocketAddr = "127.0.0.1:22".parse()
+    let addr: SocketAddr = "127.0.0.1:22"
+        .parse()
         .context("Failed to parse localhost address")?;
-    
+
     // Try to connect with a short timeout
     match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
         Ok(_) => Ok(()),
@@ -395,7 +423,8 @@ async fn test_localhost_connectivity() -> Result<()> {
             // SSH not running is normal, just test that localhost is reachable
             // Try a different approach - just verify localhost resolves
             use std::net::ToSocketAddrs;
-            "localhost:80".to_socket_addrs()
+            "localhost:80"
+                .to_socket_addrs()
                 .context("Localhost name resolution failed")?;
             Ok(())
         }
@@ -404,7 +433,7 @@ async fn test_localhost_connectivity() -> Result<()> {
 
 async fn verify_process_limits(messages: &mut Vec<String>) -> Result<Value> {
     let mut limits_info = HashMap::new();
-    
+
     // Check file descriptor limits
     match check_file_descriptor_limits() {
         Ok(fd_info) => {
@@ -415,7 +444,7 @@ async fn verify_process_limits(messages: &mut Vec<String>) -> Result<Value> {
             messages.push(format!("⚠ Could not check file descriptor limits: {}", e));
         }
     }
-    
+
     // Check process limits
     match check_process_limits_info() {
         Ok(proc_info) => {
@@ -426,19 +455,19 @@ async fn verify_process_limits(messages: &mut Vec<String>) -> Result<Value> {
             messages.push(format!("⚠ Could not check process limits: {}", e));
         }
     }
-    
+
     Ok(json!(limits_info))
 }
 
 fn check_file_descriptor_limits() -> Result<Value> {
     use nix::sys::resource::{getrlimit, Resource};
-    
-    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE)
-        .context("Failed to get file descriptor limits")?;
-    
+
+    let (soft, hard) =
+        getrlimit(Resource::RLIMIT_NOFILE).context("Failed to get file descriptor limits")?;
+
     let min_recommended = 1024;
     let meets_requirements = soft.unwrap_or(0) >= min_recommended;
-    
+
     Ok(json!({
         "soft_limit": soft,
         "hard_limit": hard,
@@ -449,10 +478,9 @@ fn check_file_descriptor_limits() -> Result<Value> {
 
 fn check_process_limits_info() -> Result<Value> {
     use nix::sys::resource::{getrlimit, Resource};
-    
-    let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC)
-        .context("Failed to get process limits")?;
-    
+
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC).context("Failed to get process limits")?;
+
     Ok(json!({
         "max_processes_soft": soft,
         "max_processes_hard": hard

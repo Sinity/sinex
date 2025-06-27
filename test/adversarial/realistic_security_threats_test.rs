@@ -20,26 +20,26 @@ async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestRes
     // Test various path traversal attack patterns
     let attack_paths = vec![
         "../sensitive/secret.txt",
-        "..\\sensitive\\secret.txt",  // Windows-style
+        "..\\sensitive\\secret.txt", // Windows-style
         "../../sensitive/secret.txt",
         "legitimate/../../sensitive/secret.txt",
         "legitimate/../../../sensitive/secret.txt",
         "./../../sensitive/secret.txt",
         "legitimate/../sensitive/../sensitive/secret.txt",
-        "%2e%2e%2fsensitive%2fsecret.txt",  // URL encoded
-        "..%252fsensitive%252fsecret.txt",  // Double encoded
-        "..%c0%afsensitive%c0%afsecret.txt",  // Unicode bypass attempt
+        "%2e%2e%2fsensitive%2fsecret.txt",   // URL encoded
+        "..%252fsensitive%252fsecret.txt",   // Double encoded
+        "..%c0%afsensitive%c0%afsecret.txt", // Unicode bypass attempt
     ];
 
     let mut traversal_attempts = Vec::new();
-    
+
     for attack_path in &attack_paths {
         // Simulate filesystem event source trying to resolve path
         let attempted_path = watch_root.join(attack_path);
-        
+
         // Path normalization should prevent traversal
         let canonical_result = attempted_path.canonicalize();
-        
+
         match canonical_result {
             Ok(canonical_path) => {
                 // Check if canonical path escapes the watch root
@@ -54,12 +54,16 @@ async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestRes
             }
             Err(_) => {
                 // Path doesn't exist - this is acceptable (attack failed)
-                println!("Path traversal blocked: {} (path doesn't exist)", attack_path);
+                println!(
+                    "Path traversal blocked: {} (path doesn't exist)",
+                    attack_path
+                );
             }
         }
 
         // Test symbolic link attack
-        let symlink_attack = watch_root.join(format!("symlink_attack_{}", traversal_attempts.len()));
+        let symlink_attack =
+            watch_root.join(format!("symlink_attack_{}", traversal_attempts.len()));
         if std::os::unix::fs::symlink(&sensitive_dir, &symlink_attack).is_ok() {
             if let Ok(symlink_canonical) = symlink_attack.canonicalize() {
                 if !symlink_canonical.starts_with(watch_root) {
@@ -82,9 +86,11 @@ async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestRes
     }
 
     // Security requirement: NO path traversals should succeed
-    assert!(traversal_attempts.is_empty(), 
-           "Path traversal attacks succeeded:\n{}", 
-           traversal_attempts.join("\n"));
+    assert!(
+        traversal_attempts.is_empty(),
+        "Path traversal attacks succeeded:\n{}",
+        traversal_attempts.join("\n")
+    );
 
     println!("  ✓ All path traversal attacks blocked");
 
@@ -99,7 +105,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
     // Create test agent
     let agent_name = format!("sql_injection_test_{}", Ulid::new());
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
          VALUES ($1, $2, $3)",
         agent_name,
         "1.0.0",
@@ -115,24 +121,24 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
         "' OR '1'='1' --",
         "' UNION SELECT * FROM sinex_schemas.agent_manifests --",
         "'; INSERT INTO raw.events (id, source, event_type, host, payload) VALUES ('malicious', 'attack', 'injection', 'hacker', '{}'); --",
-        
-        // Boolean-based blind injection
+
+
         "' AND (SELECT COUNT(*) FROM sinex_schemas.agent_manifests) > 0 --",
         "' OR (SELECT SUBSTRING(agent_name,1,1) FROM sinex_schemas.agent_manifests LIMIT 1)='a' --",
-        
-        // Time-based blind injection
+
+
         "'; WAITFOR DELAY '00:00:05' --",
         "' OR pg_sleep(5) --",
-        
-        // Stacked queries
+
+
         "'; CREATE TABLE malicious_table (data TEXT); --",
         "'; UPDATE sinex_schemas.agent_manifests SET description='HACKED' WHERE agent_name='test'; --",
-        
-        // Encoded injection attempts
+
+
         "%27%20OR%20%271%27%3D%271%27%20--",  // URL encoded
         "&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --",  // HTML entity encoded
-        
-        // Advanced injection techniques
+
+
         "' OR ASCII(SUBSTRING((SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1),1,1))>64 --",
         "' AND (SELECT COUNT(*) FROM information_schema.tables WHERE table_name='agent_manifests')>0 --",
     ];
@@ -154,7 +160,8 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
             None,
             Some("1.0.0"),
             None,
-        ).await;
+        )
+        .await;
 
         match event_result {
             Ok(event) => {
@@ -174,12 +181,11 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
                 }
 
                 // Verify database integrity wasn't compromised
-                let agent_count: i64 = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM sinex_schemas.agent_manifests"
-                )
-                .fetch_one(pool)
-                .await?
-                .unwrap_or(0);
+                let agent_count: i64 =
+                    sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+                        .fetch_one(pool)
+                        .await?
+                        .unwrap_or(0);
 
                 if agent_count != 1 {
                     successful_injections.push(format!(
@@ -198,10 +204,10 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 
         // Test 2: Agent name injection in work queue operations
         let malicious_agent_name = format!("test{}", injection_payload);
-        
+
         // Try to create agent with malicious name
         let agent_creation = sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
+            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
              VALUES ($1, $2, $3)",
             malicious_agent_name,
             "1.0.0",
@@ -214,9 +220,12 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
             Ok(_) => {
                 // Agent was created - check if name was sanitized
                 let stored_agents: Vec<String> = sqlx::query_scalar!(
-                    "SELECT agent_name FROM sinex_schemas.agent_manifests 
+                    "SELECT agent_name FROM sinex_schemas.agent_manifests
                      WHERE agent_name LIKE $1",
-                    format!("test%{}", injection_payload.chars().take(10).collect::<String>())
+                    format!(
+                        "test%{}",
+                        injection_payload.chars().take(10).collect::<String>()
+                    )
                 )
                 .fetch_all(pool)
                 .await
@@ -245,7 +254,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 
         // Test 3: Search/filter injection
         let search_result = sqlx::query!(
-            "SELECT agent_name FROM sinex_schemas.agent_manifests 
+            "SELECT agent_name FROM sinex_schemas.agent_manifests
              WHERE description LIKE $1 LIMIT 10",
             format!("%{}%", injection_payload)
         )
@@ -268,17 +277,23 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
     }
 
     // Security requirement: NO SQL injections should succeed
-    assert!(successful_injections.is_empty(),
-           "SQL injection attacks succeeded:\n{}",
-           successful_injections.join("\n"));
+    assert!(
+        successful_injections.is_empty(),
+        "SQL injection attacks succeeded:\n{}",
+        successful_injections.join("\n")
+    );
 
     println!("  ✓ All SQL injection attacks blocked");
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE '%DROP%' OR source LIKE '%UNION%' OR source LIKE '%OR%'")
         .execute(pool).await.ok();
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-        .execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -289,10 +304,10 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     let agent_name = format!("exhaustion_test_{}", Ulid::new());
-    
+
     // Create test agent
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
          VALUES ($1, $2, $3)",
         agent_name,
         "1.0.0",
@@ -329,20 +344,22 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
             None,
             Some("1.0.0"),
             None,
-        )
-    ).await;
+        ),
+    )
+    .await;
 
     let memory_attack_duration = memory_attack_start.elapsed();
 
     match memory_attack_result {
         Ok(Ok(_)) => {
-            println!("Large payload accepted in {:?} - checking for performance impact", memory_attack_duration);
-            
+            println!(
+                "Large payload accepted in {:?} - checking for performance impact",
+                memory_attack_duration
+            );
+
             // Check if system is still responsive
             let health_check_start = std::time::Instant::now();
-            let health_result = sqlx::query_scalar!("SELECT 1")
-                .fetch_one(pool)
-                .await;
+            let health_result = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await;
             let health_check_duration = health_check_start.elapsed();
 
             if health_check_duration > Duration::from_secs(1) {
@@ -351,7 +368,10 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
                 println!("  ✓ System remained responsive after large payload");
             }
 
-            assert!(health_result.is_ok(), "System should remain functional after large payload");
+            assert!(
+                health_result.is_ok(),
+                "System should remain functional after large payload"
+            );
         }
         Ok(Err(e)) => {
             println!("  ✓ Large payload rejected: {}", e);
@@ -367,10 +387,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let max_connection_attempts = 100;
 
     for i in 0..max_connection_attempts {
-        match timeout(
-            Duration::from_millis(100),
-            pool.acquire()
-        ).await {
+        match timeout(Duration::from_millis(100), pool.acquire()).await {
             Ok(Ok(conn)) => {
                 attack_connections.push(conn);
             }
@@ -395,19 +412,28 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     // Test if system can still function with remaining capacity
     let remaining_capacity_test = timeout(
         Duration::from_secs(3),
-        sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-            .fetch_one(pool)
-    ).await;
+        sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests").fetch_one(pool),
+    )
+    .await;
 
     match remaining_capacity_test {
         Ok(Ok(_)) => {
-            println!("  ✓ System functional despite {} held connections", connections_acquired);
+            println!(
+                "  ✓ System functional despite {} held connections",
+                connections_acquired
+            );
         }
         Ok(Err(e)) => {
-            println!("  WARNING: System degraded with {} connections: {}", connections_acquired, e);
+            println!(
+                "  WARNING: System degraded with {} connections: {}",
+                connections_acquired, e
+            );
         }
         Err(_) => {
-            println!("  WARNING: System timeout with {} connections", connections_acquired);
+            println!(
+                "  WARNING: System timeout with {} connections",
+                connections_acquired
+            );
         }
     }
 
@@ -419,27 +445,31 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let complexity_attacks = vec![
         // Cartesian product attack
         "SELECT COUNT(*) FROM sinex_schemas.agent_manifests a1, sinex_schemas.agent_manifests a2, sinex_schemas.agent_manifests a3",
-        
-        // Expensive regex operations
+
+
         "SELECT COUNT(*) FROM raw.events WHERE source ~ '.*a.*b.*c.*d.*e.*f.*g.*h.*i.*j.*'",
-        
-        // Large sort operation
+
+
         "SELECT * FROM raw.events ORDER BY payload::text, source, event_type, host LIMIT 1000000",
-        
-        // Recursive query attack (if supported)
+
+
         "WITH RECURSIVE attack(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM attack WHERE n < 100000) SELECT COUNT(*) FROM attack",
     ];
 
     let mut blocked_complex_queries = 0;
-    
+
     for (i, complex_query) in complexity_attacks.iter().enumerate() {
-        println!("Testing complex query {}: {}", i + 1, &complex_query[..100.min(complex_query.len())]);
-        
+        println!(
+            "Testing complex query {}: {}",
+            i + 1,
+            &complex_query[..100.min(complex_query.len())]
+        );
+
         let complexity_result = timeout(
             Duration::from_secs(3),
-            sqlx::query(complex_query)
-                .execute(pool)
-        ).await;
+            sqlx::query(complex_query).execute(pool),
+        )
+        .await;
 
         match complexity_result {
             Ok(Ok(_)) => {
@@ -458,23 +488,40 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
 
     println!("\nResource Exhaustion Attack Test Results:");
     println!("  Memory attack duration: {:?}", memory_attack_duration);
-    println!("  Connection attack duration: {:?}", connection_attack_duration);
+    println!(
+        "  Connection attack duration: {:?}",
+        connection_attack_duration
+    );
     println!("  Connections acquired: {}", connections_acquired);
-    println!("  Complex queries blocked: {}/{}", blocked_complex_queries, complexity_attacks.len());
+    println!(
+        "  Complex queries blocked: {}/{}",
+        blocked_complex_queries,
+        complexity_attacks.len()
+    );
 
     // System should have some protection mechanisms
-    assert!(connections_acquired < max_connection_attempts, 
-           "Connection pool should have limits");
-    assert!(memory_attack_duration < Duration::from_secs(3),
-           "Large payload handling should not hang system");
+    assert!(
+        connections_acquired < max_connection_attempts,
+        "Connection pool should have limits"
+    );
+    assert!(
+        memory_attack_duration < Duration::from_secs(3),
+        "Large payload handling should not hang system"
+    );
 
     println!("  ✓ Resource exhaustion protections active");
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'memory.exhaustion'")
-        .execute(pool).await.ok();
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-        .execute(pool).await?;
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -495,31 +542,26 @@ async fn test_configuration_injection_protection(_ctx: TestContext) -> TestResul
         [event_sources.filesystem]
         watch_paths = ["/tmp; rm -rf /; echo"]
         "#,
-        
         // Path traversal in configuration
         r#"
         [event_sources.filesystem]
         watch_paths = ["../../../etc/passwd"]
         "#,
-        
         // Malicious regex injection
         r#"
         [routing.rules]
         pattern = "(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)*(.+)*"
         "#,
-        
         // TOML bomb (deeply nested structure)
         r#"
         [a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z]
         value = "deep"
         "#,
-        
         // Unicode/encoding attacks
         r#"
         [event_sources]
         name = "test\u0000\u0001\u0002\ufeff"
         "#,
-        
         // Large string attack
         r#"
         [event_sources.test]
@@ -531,41 +573,39 @@ async fn test_configuration_injection_protection(_ctx: TestContext) -> TestResul
 
     for (i, malicious_config) in malicious_configs.iter().enumerate() {
         let config_file = config_dir.join(format!("malicious_{}.toml", i));
-        
+
         // Try to write malicious config
         match fs::write(&config_file, malicious_config) {
             Ok(_) => {
                 // Try to parse as TOML
-                let parse_result = fs::read_to_string(&config_file)
-                    .and_then(|content| {
-                        toml::from_str::<toml::Value>(&content)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                    });
+                let parse_result = fs::read_to_string(&config_file).and_then(|content| {
+                    toml::from_str::<toml::Value>(&content)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                });
 
                 match parse_result {
                     Ok(parsed_config) => {
                         // Check for dangerous values
                         let config_str = format!("{:?}", parsed_config);
-                        
+
                         if config_str.contains("/etc/passwd") {
-                            config_violations.push(format!(
-                                "Config {}: Path traversal not sanitized", i
-                            ));
+                            config_violations
+                                .push(format!("Config {}: Path traversal not sanitized", i));
                         }
-                        
+
                         if config_str.contains("; rm -rf") {
-                            config_violations.push(format!(
-                                "Config {}: Command injection not sanitized", i
-                            ));
+                            config_violations
+                                .push(format!("Config {}: Command injection not sanitized", i));
                         }
-                        
+
                         if config_str.len() > 10_000_000 {
                             config_violations.push(format!(
-                                "Config {}: Large config not rejected ({}MB)", 
-                                i, config_str.len() / 1_000_000
+                                "Config {}: Large config not rejected ({}MB)",
+                                i,
+                                config_str.len() / 1_000_000
                             ));
                         }
-                        
+
                         println!("  Config {} parsed successfully (may need validation)", i);
                     }
                     Err(e) => {
@@ -610,14 +650,12 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
             "html_content": "<img src=x onerror=alert('xss')>",
             "javascript": "javascript:alert('xss')"
         }),
-        
         // JSON injection/pollution
         json!({
             "__proto__": {"admin": true},
             "constructor": {"prototype": {"admin": true}},
             "prototype": {"admin": true}
         }),
-        
         // Binary/encoding attacks
         json!({
             "binary_data": "\x00\x01\x02\x03\x04\x05",
@@ -625,7 +663,6 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
             "overlong_utf8": "invalid_utf8_sequence",
             "null_bytes": "test\x00data"
         }),
-        
         // Large object attack
         json!({
             "large_array": (0..10000).collect::<Vec<i32>>(),
@@ -642,7 +679,6 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
                 }
             }
         }),
-        
         // Format string attacks
         json!({
             "format_string": "%s%s%s%s%s%s%s%s%s%s",
@@ -666,12 +702,13 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
             None,
             Some("1.0.0"),
             None,
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(event) => {
                 successful_events += 1;
-                
+
                 // Retrieve stored payload and check for sanitization
                 let stored_payload: serde_json::Value = sqlx::query_scalar!(
                     "SELECT payload FROM raw.events WHERE id = $1::uuid::ulid",
@@ -681,34 +718,30 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
                 .await?;
 
                 let stored_str = stored_payload.to_string();
-                
+
                 // Check if dangerous content was sanitized
                 if stored_str.contains("<script>") {
-                    payload_violations.push(format!(
-                        "Payload {}: Script tags not sanitized", i
-                    ));
+                    payload_violations.push(format!("Payload {}: Script tags not sanitized", i));
                 }
-                
+
                 if stored_str.contains("__proto__") {
-                    payload_violations.push(format!(
-                        "Payload {}: Prototype pollution not prevented", i
-                    ));
+                    payload_violations
+                        .push(format!("Payload {}: Prototype pollution not prevented", i));
                 }
-                
+
                 if stored_str.contains("\x00") {
-                    payload_violations.push(format!(
-                        "Payload {}: Null bytes not sanitized", i
-                    ));
+                    payload_violations.push(format!("Payload {}: Null bytes not sanitized", i));
                 }
-                
+
                 // Check for excessive size
                 if stored_str.len() > 1_000_000 {
                     payload_violations.push(format!(
-                        "Payload {}: Large payload not limited ({}KB)", 
-                        i, stored_str.len() / 1000
+                        "Payload {}: Large payload not limited ({}KB)",
+                        i,
+                        stored_str.len() / 1000
                     ));
                 }
-                
+
                 println!("  Payload {} stored successfully", i);
             }
             Err(e) => {
@@ -735,7 +768,9 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'security.payload_test'")
-        .execute(pool).await.ok();
+        .execute(pool)
+        .await
+        .ok();
 
     Ok(())
 }

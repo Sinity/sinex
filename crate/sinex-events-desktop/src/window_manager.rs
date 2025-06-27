@@ -1,21 +1,23 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_core::{EventSender, Timestamp, JsonValue, ChannelSenderExt};
+use sinex_core::{ChannelSenderExt, EventSender, JsonValue, Timestamp};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, Result, event_type_constants, sources, RawEvent};
+use sinex_core::{
+    event_type_constants, sources, EventSource, EventSourceContext, EventType, RawEvent, Result,
+};
 
 // ============================================================================
 // Event Payloads
@@ -75,7 +77,7 @@ pub struct StateSnapshotPayload {
 }
 
 // ============================================================================
-// Event Types  
+// Event Types
 // ============================================================================
 
 pub struct WindowFocused;
@@ -219,17 +221,21 @@ pub type HyprlandListener = HyprlandIPCMonitor;
 #[async_trait]
 impl EventSource for HyprlandIPCMonitor {
     type Config = HyprlandConfig;
-    
+
     const SOURCE_NAME: &'static str = sources::WINDOW_MANAGER_HYPRLAND;
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
-        
+        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
         // Get Hyprland instance signature
-        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE")
-            .map_err(|_| sinex_core::CoreError::Other("HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string()))?;
-        
+        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
+            sinex_core::CoreError::Other(
+                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
+            )
+        })?;
+
         // Build socket path
         let xdg_runtime = env::var("XDG_RUNTIME_DIR")
             .map_err(|_| sinex_core::CoreError::Other("XDG_RUNTIME_DIR not set".to_string()))?;
@@ -244,7 +250,7 @@ impl EventSource for HyprlandIPCMonitor {
             workspace_tracking = ?config.workspace_tracking,
             "Initializing Hyprland listener"
         );
-        
+
         Ok(Self {
             config,
             socket_path,
@@ -252,7 +258,7 @@ impl EventSource for HyprlandIPCMonitor {
             focus_history: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
-    
+
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             socket_path = ?self.socket_path,
@@ -316,11 +322,17 @@ impl HyprlandIPCMonitor {
 
                 // Map event types to our constants
                 let event_type = match event_name {
-                    "activewindow" | "activewindowv2" => event_type_constants::window_manager::WINDOW_FOCUSED,
+                    "activewindow" | "activewindowv2" => {
+                        event_type_constants::window_manager::WINDOW_FOCUSED
+                    }
                     "openwindow" => event_type_constants::window_manager::WINDOW_OPENED,
                     "closewindow" => event_type_constants::window_manager::WINDOW_CLOSED,
-                    "movewindow" | "movewindowv2" => event_type_constants::window_manager::WINDOW_MOVED,
-                    "workspace" | "workspacev2" => event_type_constants::window_manager::WORKSPACE_CHANGED,
+                    "movewindow" | "movewindowv2" => {
+                        event_type_constants::window_manager::WINDOW_MOVED
+                    }
+                    "workspace" | "workspacev2" => {
+                        event_type_constants::window_manager::WORKSPACE_CHANGED
+                    }
                     "focusedmon" => event_type_constants::window_manager::MONITOR_FOCUSED,
                     _ => event_name, // Pass through unknown events
                 };
@@ -339,7 +351,9 @@ impl HyprlandIPCMonitor {
                 };
 
                 // Send event
-                event_tx.send_or_log(raw_event, "window_manager_event").await?;
+                event_tx
+                    .send_or_log(raw_event, "window_manager_event")
+                    .await?;
 
                 // Update focus history if applicable
                 if event_name == "activewindow" || event_name == "activewindowv2" {
@@ -472,7 +486,7 @@ impl HyprlandIPCMonitor {
     /// Get data from hyprctl with caching
     async fn get_hyprctl_data(&self, command: &str, filter: Option<&str>) -> Result<Value> {
         let cache_key = format!("{}:{}", command, filter.unwrap_or(""));
-        
+
         // Check cache
         {
             let cache = self.hyprctl_cache.lock().unwrap();
@@ -488,22 +502,31 @@ impl HyprlandIPCMonitor {
             .arg(command)
             .arg("-j")
             .output()
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to execute hyprctl: {}", e)))?;
+            .map_err(|e| {
+                sinex_core::CoreError::Other(format!("Failed to execute hyprctl: {}", e))
+            })?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!("hyprctl failed: {}", String::from_utf8_lossy(&output.stderr))));
+            return Err(sinex_core::CoreError::Other(format!(
+                "hyprctl failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
-        let data: Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to parse hyprctl output: {}", e)))?;
+        let data: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+            sinex_core::CoreError::Other(format!("Failed to parse hyprctl output: {}", e))
+        })?;
 
         // Update cache
         {
             let mut cache = self.hyprctl_cache.lock().unwrap();
-            cache.insert(cache_key, CacheEntry {
-                data: data.clone(),
-                timestamp: Instant::now(),
-            });
+            cache.insert(
+                cache_key,
+                CacheEntry {
+                    data: data.clone(),
+                    timestamp: Instant::now(),
+                },
+            );
         }
 
         Ok(data)
@@ -539,21 +562,18 @@ impl HyprlandIPCMonitor {
         }
     }
 
-
     /// Spawn cache cleanup task
     fn spawn_cache_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         let cache = Arc::clone(&self.hyprctl_cache);
-        
+
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let mut cache_guard = cache.lock().unwrap();
-                cache_guard.retain(|_, entry| {
-                    entry.timestamp.elapsed() < Duration::from_secs(30)
-                });
+                cache_guard.retain(|_, entry| entry.timestamp.elapsed() < Duration::from_secs(30));
             }
         })
     }
@@ -562,13 +582,14 @@ impl HyprlandIPCMonitor {
 #[async_trait]
 impl EventSource for HyprlandStateSnapshotter {
     type Config = SnapshotterConfig;
-    
+
     const SOURCE_NAME: &'static str = "window_manager.hyprland_snapshotter";
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
-        
+        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
         info!(
             interval_secs = config.interval_secs,
             "Initializing Hyprland state snapshotter"
@@ -577,7 +598,7 @@ impl EventSource for HyprlandStateSnapshotter {
             interval_secs: config.interval_secs,
         })
     }
-    
+
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         if self.interval_secs == 0 {
             info!("State snapshots disabled (interval_secs = 0)");
@@ -586,17 +607,17 @@ impl EventSource for HyprlandStateSnapshotter {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        
+
         info!(
             interval_secs = self.interval_secs,
             "Starting Hyprland state snapshotter"
         );
-        
+
         let mut interval = time::interval(Duration::from_secs(self.interval_secs));
-        
+
         loop {
             interval.tick().await;
-            
+
             // Create state snapshot
             let snapshot = match Self::create_state_snapshot().await {
                 Ok(data) => data,

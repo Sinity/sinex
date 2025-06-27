@@ -378,6 +378,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
 name = "chrono"
 version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1008,6 +1014,16 @@ checksum = "0176e0459c2e4a1fe232f984bca6890e681076abb9934f6cea7c326f3fc47818"
 dependencies = [
  "libc",
  "windows-targets 0.48.5",
+]
+
+[[package]]
+name = "gethostname"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3655aa6818d65bc620d6911f05aa7b6aeb596291e1e9f79e52df85583d1e30"
+dependencies = [
+ "rustix 0.38.44",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -1725,6 +1741,18 @@ dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -2811,7 +2839,7 @@ dependencies = [
  "criterion",
  "fastrand",
  "futures",
- "gethostname",
+ "gethostname 0.4.3",
  "jsonschema",
  "lazy_static",
  "pretty_assertions",
@@ -2826,7 +2854,10 @@ dependencies = [
  "sinex-collector",
  "sinex-core",
  "sinex-db",
- "sinex-events",
+ "sinex-events-desktop",
+ "sinex-events-fs",
+ "sinex-events-system",
+ "sinex-events-terminal",
  "sinex-test-macros",
  "sinex-ulid",
  "sinex-worker",
@@ -2847,7 +2878,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "chrono",
- "gethostname",
+ "gethostname 0.4.3",
  "serde",
  "serde_json",
  "sinex-core",
@@ -2871,7 +2902,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs 5.0.1",
- "gethostname",
+ "gethostname 0.4.3",
  "hyper 1.6.0",
  "jsonschema",
  "notify",
@@ -2882,11 +2913,14 @@ dependencies = [
  "serde_json",
  "sinex-core",
  "sinex-db",
- "sinex-events",
+ "sinex-events-desktop",
+ "sinex-events-fs",
+ "sinex-events-system",
+ "sinex-events-terminal",
  "sinex-ulid",
  "sqlx",
  "sys-info",
- "sysinfo",
+ "sysinfo 0.30.13",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -2906,7 +2940,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dirs 5.0.1",
- "gethostname",
+ "gethostname 0.4.3",
  "jsonschema",
  "regex",
  "schemars",
@@ -2930,7 +2964,7 @@ version = "0.4.2"
 dependencies = [
  "anyhow",
  "chrono",
- "gethostname",
+ "gethostname 0.4.3",
  "jsonschema",
  "once_cell",
  "serde",
@@ -2946,26 +2980,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-events"
+name = "sinex-events-desktop"
 version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
  "chrono",
- "dbus",
- "dbus-tokio",
- "futures-util",
- "gethostname",
- "glob",
- "notify",
- "notify-debouncer-full",
- "regex",
- "rusqlite",
+ "gethostname 0.4.3",
  "schemars",
  "serde",
  "serde_json",
- "shellexpand",
  "sinex-annex",
  "sinex-core",
  "sinex-db",
@@ -2974,6 +2999,76 @@ dependencies = [
  "tokio",
  "tracing",
  "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-events-fs"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "gethostname 0.4.3",
+ "glob",
+ "notify",
+ "notify-debouncer-full",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-events-system"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dbus",
+ "dbus-tokio",
+ "futures-util",
+ "gethostname 0.4.3",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-events-terminal"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "gethostname 0.4.3",
+ "glob",
+ "notify",
+ "regex",
+ "rusqlite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "sqlx",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2998,6 +3093,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-preflight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "gethostname 0.5.0",
+ "nix",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "sqlx",
+ "sysinfo 0.31.4",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-promo-worker"
 version = "0.4.2"
 dependencies = [
@@ -3005,7 +3125,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "gethostname",
+ "gethostname 0.4.3",
  "rand 0.8.5",
  "sd-notify",
  "serde",
@@ -3427,7 +3547,21 @@ dependencies = [
  "ntapi",
  "once_cell",
  "rayon",
- "windows",
+ "windows 0.52.0",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.31.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "355dbe4f8799b304b05e1b0f05fc59b2a18d36645cf169607da45bde2f69a1be"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+ "memchr",
+ "ntapi",
+ "rayon",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -4235,6 +4369,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
+dependencies = [
+ "windows-core 0.57.0",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4245,15 +4389,38 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
+version = "0.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
+dependencies = [
+ "windows-implement 0.57.0",
+ "windows-interface 0.57.0",
+ "windows-result 0.1.2",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-core"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
 dependencies = [
- "windows-implement",
- "windows-interface",
+ "windows-implement 0.60.0",
+ "windows-interface 0.59.1",
  "windows-link",
- "windows-result",
+ "windows-result 0.3.4",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-implement"
+version = "0.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -4261,6 +4428,17 @@ name = "windows-implement"
 version = "0.60.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a47fddd13af08290e67f4acabf4b459f647552718f683a7b415d290ac744a836"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
+name = "windows-interface"
+version = "0.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4283,6 +4461,15 @@ name = "windows-link"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76840935b766e1b0a05c0066835fb9ec80071d4c09a16f6bd5f7e655e3c14c38"
+
+[[package]]
+name = "windows-result"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e383302e8ec8515204254685643de10811af0ed97ea37210dc26fb0032647f8"
+dependencies = [
+ "windows-targets 0.52.6",
+]
 
 [[package]]
 name = "windows-result"

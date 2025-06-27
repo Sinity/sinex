@@ -1,16 +1,19 @@
+use async_trait::async_trait;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{EventSender, JsonValue, Timestamp};
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use async_trait::async_trait;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
-use sinex_core::{EventType, EventSource, EventSourceContext, EventSourceBase, Result, event_type_constants, sources, ChannelSenderExt};
+use sinex_core::{
+    event_type_constants, sources, ChannelSenderExt, EventSource, EventSourceBase,
+    EventSourceContext, EventType, Result,
+};
 
 // ============================================================================
 // Event Payloads
@@ -78,32 +81,32 @@ impl EventSourceBase for KittySocketListener {}
 #[async_trait]
 impl EventSource for KittySocketListener {
     type Config = KittyConfig;
-    
+
     const SOURCE_NAME: &'static str = sources::TERMINAL_KITTY;
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
-        
+
         info!(
             socket_path = ?config.socket_path,
             "Initializing Kitty socket listener"
         );
         Self::new(config).await
     }
-    
+
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         info!(
             socket_path = ?self.config.socket_path,
             polling_interval = self.config.polling_interval_secs,
             "Starting Kitty terminal event source"
         );
-        
+
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
-        
+
         loop {
             interval.tick().await;
-            
+
             if let Err(e) = self.poll_kitty_commands(&tx).await {
                 error!("Error polling Kitty commands: {}", e);
                 // Continue polling despite errors
@@ -114,16 +117,16 @@ impl EventSource for KittySocketListener {
 
 impl KittySocketListener {
     async fn new(config: KittyConfig) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             config,
             last_command_times: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    
+
     async fn poll_kitty_commands(&self, tx: &EventSender) -> Result<()> {
         // Find Kitty sockets
         let sockets = Self::find_kitty_sockets(&self.config.socket_path)?;
-        
+
         if sockets.is_empty() {
             debug!("No Kitty sockets found");
             return Ok(());
@@ -138,17 +141,20 @@ impl KittySocketListener {
                     continue;
                 }
             };
-            
+
             // Track active window IDs for cleanup
             let active_window_ids: Vec<u32> = windows.iter().map(|w| w.id).collect();
-            
+
             for window in windows {
                 // Get command history for this window
                 if let Ok(commands) = Self::get_window_commands(&socket, window.id) {
                     let now = Utc::now();
                     let last_time = {
                         let times = self.last_command_times.lock().unwrap();
-                        times.get(&window.id).cloned().unwrap_or(now - chrono::Duration::hours(1))
+                        times
+                            .get(&window.id)
+                            .cloned()
+                            .unwrap_or(now - chrono::Duration::hours(1))
                     };
 
                     for cmd in &commands {
@@ -159,14 +165,14 @@ impl KittySocketListener {
                                 exit_code = cmd.exit_code,
                                 "New command detected"
                             );
-                            
+
                             let event = self.create_event(
                                 event_type_constants::terminal::COMMAND_EXECUTED,
-                                serde_json::to_value(cmd)?
+                                serde_json::to_value(cmd)?,
                             );
 
                             tx.send_or_log(event, "terminal_command_executed").await?;
-                            
+
                             info!(
                                 window_id = window.id,
                                 command = %cmd.command_string,
@@ -182,12 +188,12 @@ impl KittySocketListener {
                     }
                 }
             }
-            
+
             // Clean up entries for closed windows
             {
                 let mut times = self.last_command_times.lock().unwrap();
                 times.retain(|id, _| active_window_ids.contains(id));
-                
+
                 if times.len() > 100 {
                     warn!("Tracking {} windows - possible memory leak?", times.len());
                 }
@@ -199,14 +205,16 @@ impl KittySocketListener {
 
     fn find_kitty_sockets(pattern: &str) -> Result<Vec<String>> {
         use glob::glob;
-        
+
         debug!("Searching for Kitty sockets with pattern: {}", pattern);
         let mut sockets = Vec::new();
-        
-        for entry in glob(pattern).map_err(|e| sinex_core::CoreError::configuration("Invalid glob pattern")
-            .with_context("pattern", pattern)
-            .with_source(e)
-            .build())? {
+
+        for entry in glob(pattern).map_err(|e| {
+            sinex_core::CoreError::configuration("Invalid glob pattern")
+                .with_context("pattern", pattern)
+                .with_source(e)
+                .build()
+        })? {
             match entry {
                 Ok(path) => {
                     // Verify it's a socket
@@ -231,14 +239,14 @@ impl KittySocketListener {
                 Err(e) => warn!("Error reading socket path: {}", e),
             }
         }
-        
+
         info!("Found {} Kitty socket(s)", sockets.len());
         Ok(sockets)
     }
 
     fn get_kitty_windows(socket: &str) -> Result<Vec<KittyWindow>> {
         use std::process::Command;
-        
+
         debug!("Getting window list from socket: {}", socket);
         let output = Command::new("kitty")
             .arg("@")
@@ -246,10 +254,12 @@ impl KittySocketListener {
             .arg(format!("unix:{}", socket))
             .arg("ls")
             .output()
-            .map_err(|e| sinex_core::CoreError::processing_failed()
-                .with_operation("kitty_list_windows")
-                .with_source(e)
-                .build())?;
+            .map_err(|e| {
+                sinex_core::CoreError::processing_failed()
+                    .with_operation("kitty_list_windows")
+                    .with_source(e)
+                    .build()
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -260,14 +270,15 @@ impl KittySocketListener {
         }
 
         // Parse JSON output
-        let data: JsonValue = serde_json::from_slice(&output.stdout)
-            .map_err(|e| sinex_core::CoreError::serialization("Failed to parse Kitty ls output")
+        let data: JsonValue = serde_json::from_slice(&output.stdout).map_err(|e| {
+            sinex_core::CoreError::serialization("Failed to parse Kitty ls output")
                 .with_operation("parse_json")
                 .with_source(e)
-                .build())?;
-        
+                .build()
+        })?;
+
         let mut windows = Vec::new();
-        
+
         if let Some(os_windows) = data.as_array() {
             for os_window in os_windows {
                 if let Some(tabs) = os_window["tabs"].as_array() {
@@ -303,9 +314,9 @@ impl KittySocketListener {
         // 1. Shell integration markers
         // 2. Terminal scrollback parsing
         // 3. Integration with shell history files
-        
+
         warn!("Command history extraction from Kitty is limited - consider shell integration");
-        
+
         Ok(Vec::new())
     }
 }
@@ -319,16 +330,19 @@ pub struct BashHistoryWatcher {
 #[async_trait]
 impl EventSource for BashHistoryWatcher {
     type Config = PathBuf; // Just the history file path
-    
+
     const SOURCE_NAME: &'static str = "terminal.bash_history";
-    
+
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config)
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
-        
-        Ok(Self { history_file: config })
+        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
+        Ok(Self {
+            history_file: config,
+        })
     }
-    
+
     async fn stream_events(&mut self, _tx: EventSender) -> Result<()> {
         // Watch bash history file for changes
         Ok(())

@@ -1,0 +1,80 @@
+# Sinex Unified Configuration
+# This single file replaces all previous configuration examples
+# Rich defaults: 90% of users need only 2-3 lines of configuration
+
+# =============================================================================
+# PRESETS: Choose your use case (this configures everything automatically)
+# =============================================================================
+
+# Personal desktop capturing everything important
+preset = "personal-desktop"
+
+# Alternative presets (uncomment to use):
+# preset = "developer-focused"     # Emphasizes code, git, terminal, editor activity
+# preset = "researcher"           # Documents, PDFs, browser, note-taking focused  
+# preset = "server-monitoring"    # System events, logs, resource monitoring only
+# preset = "minimal"              # Essential events only for battery/privacy
+# preset = "comprehensive"        # Everything enabled, maximum detail level
+
+# =============================================================================
+# CUSTOMIZATION: Override preset defaults only when needed
+# =============================================================================
+
+# Observability level (rich defaults: metrics + dashboards + alerts enabled)
+observability = "standard"  # "minimal" | "standard" | "comprehensive"
+
+# Privacy controls (opt-out approach - most things enabled by default)
+[privacy]
+disable = []  # ["clipboard", "window-titles", "command-history", "screenshots"]
+# hash_sensitive = true          # Hash sensitive content instead of storing plaintext
+# retention_days = 90            # Auto-delete events older than this
+
+# Storage configuration (auto-configured for most users)
+[storage]
+# database_pool = "auto"         # "small" | "auto" | "large" | number
+# annex_repo = "auto"           # Auto-discovers or creates git-annex repo
+# compression = "auto"          # "none" | "fast" | "auto" | "max"
+
+# Event source frequency (only override if defaults don't work)
+[frequency]
+# global = "normal"             # "battery" | "normal" | "responsive" | "realtime"
+# filesystem = "normal"         # Override for specific sources
+# terminal = "responsive"       
+# clipboard = "normal"
+
+# Custom paths (in addition to auto-discovered ones)
+[paths]
+# watch = ["/media/projects", "~/extra-docs"]   # Additional filesystem monitoring
+# ignore = ["**/very-noisy-dir/**"]             # Extra ignore patterns
+
+# Advanced features (disabled by default, enable when needed)
+[advanced]
+# enable_screen_capture = false    # Periodic screenshots with OCR
+# enable_audio_monitoring = false  # Microphone/speaker activity detection  
+# enable_network_monitoring = false # Network connections and DNS queries
+# enable_process_monitoring = false # All process launches (requires root)
+
+# =============================================================================
+# MIGRATION: Legacy configuration compatibility (remove when ready)
+# =============================================================================
+
+# Uncomment to use old-style detailed configuration instead of presets
+# legacy_config = true
+
+# When legacy_config = true, the old detailed configuration below is used
+# (This entire section can be deleted once satisfied with preset approach)
+
+[legacy.enabled_events]
+# events = [
+#     "file.created", "file.modified", "file.deleted",
+#     "command.executed", "shell.command.executed_atuin",
+#     "window.focused", "window.opened", "window.closed",
+#     "dbus.signal", "system.notification"
+# ]
+
+[legacy.event.files]
+# watch_patterns = ["~/Documents/**/*", "~/Code/**/*"]
+# ignore_patterns = ["**/.git/**", "**/target/**", "**/node_modules/**"]
+# debounce_ms = 100
+
+# ... (rest of legacy config as needed)
