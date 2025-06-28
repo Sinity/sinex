@@ -134,7 +134,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
     // Verify events are actually in database
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE source = 'buffering_test'")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?;
 
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
@@ -593,7 +593,7 @@ async fn test_concurrent_worker_failures(pool: &DbPool) -> Result<bool> {
 
     // System should remain stable (no panics or deadlocks)
     let health_check = sqlx::query("SELECT COUNT(*) FROM sinex_schemas.work_queue")
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await;
     assert!(
         health_check.is_ok(),

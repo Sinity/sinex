@@ -76,7 +76,7 @@ pub mod utils {
                         "SELECT EXISTS(SELECT 1 FROM sinex_schemas.agent_manifests WHERE agent_name = $1)",
                         name
                     )
-                    .fetch_one(pool)
+                    .fetch_one(&pool)
                     .await?
                     .unwrap_or(false);
                     Ok(exists)

@@ -107,7 +107,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
         .bind("concurrent_type")
         .bind("v1.0")
         .bind(json!({"version": 1}))
-        .execute(mut *tx1)
+        .execute(&mut *tx1)
         .await;
 
     if result1.is_ok() {
@@ -123,7 +123,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
                 .bind("concurrent_type")
                 .bind("v1.0")
                 .bind(json!({"version": 2}))
-                .execute(mut *tx2)
+                .execute(&mut *tx2)
                 .await;
 
             if result2.is_err() {

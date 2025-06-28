@@ -36,7 +36,7 @@ async fn test_event_scenarios_with_builder(ctx: TestContext) -> TestResult {
         .with_terminal_event("ls -la", true)
         .with_terminal_event("", false)
         .with_validation(|event| event.payload["size"].as_u64().is_some())
-        .execute(pool)
+        .execute(&pool)
         .await
         .unwrap();
     Ok(())
@@ -53,7 +53,7 @@ async fn test_worker_scenario(ctx: TestContext) -> TestResult {
         .with_events(20)
         .with_workers(3)
         .with_failures(vec![5, 10]) // Events 5 and 10 will fail
-        .execute(pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -91,7 +91,7 @@ async fn test_complex_pipeline_with_dsl(ctx: TestContext) -> TestResult {
             println!("Running custom verification");
             Ok(())
         })
-        .execute(pool)
+        .execute(&pool)
         .await
         .unwrap();
     Ok(())

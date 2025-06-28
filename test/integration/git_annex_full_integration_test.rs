@@ -558,7 +558,7 @@ async fn test_worker_system_annex_integration(
     // System should remain healthy
     let health_check =
         sqlx::query("SELECT COUNT(*) FROM raw.events WHERE source = 'concurrent_processor'")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await;
     assert!(
         health_check.is_ok(),
@@ -761,7 +761,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Er
     );
 
     // System should continue working normally
-    let health_check = sqlx::query("SELECT 1").fetch_one(pool).await;
+    let health_check = sqlx::query("SELECT 1").fetch_one(&pool).await;
     assert!(
         health_check.is_ok(),
         "System should remain healthy without git-annex"
@@ -816,7 +816,7 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
     let error_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE payload->>'storage_type' = 'failed_annex'",
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     pretty_assertions::assert_eq!(error_count, 4, "All failure scenarios should be recorded");
@@ -920,7 +920,7 @@ async fn test_annex_recovery_scenarios(pool: &DbPool) -> Result<(), anyhow::Erro
             let migration_count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM raw.events WHERE event_type = 'file.migrated'",
             )
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?;
 
             pretty_assertions::assert_eq!(

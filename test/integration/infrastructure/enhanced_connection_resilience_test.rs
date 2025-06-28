@@ -777,7 +777,7 @@ async fn test_connection_pool_memory_pressure_resilience(ctx: TestContext) -> Te
                 let result = sqlx::query(
                     "SELECT repeat('x', 1000) as large_text, generate_series(1, 100) as num",
                 )
-                .fetch_all(pool)
+                .fetch_all(&pool)
                 .await;
 
                 match result {

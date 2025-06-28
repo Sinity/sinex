@@ -98,7 +98,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
                     );
 
                     // Hold connection
-                    let query_result = sqlx::query!("SELECT pg_sleep(5)").execute(mut *conn).await;
+                    let query_result = sqlx::query!("SELECT pg_sleep(5)").execute(&mut *conn).await;
 
                     match query_result {
                         Ok(_) => format!("Worker {} completed", worker_id),

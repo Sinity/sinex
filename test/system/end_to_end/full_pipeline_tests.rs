@@ -77,7 +77,7 @@ impl EventProcessor for PipelineTestProcessor {
             "#,
             item.raw_event_id.to_uuid()
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?;
 
         // Simulate processing
@@ -113,7 +113,7 @@ impl EventProcessor for PipelineTestProcessor {
         .bind(derived_event.ts_ingest)
         .bind(&derived_event.payload)
         .bind(event.host)
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         self.events_processed.fetch_add(1, Ordering::SeqCst);
@@ -162,7 +162,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
             .bind(event.ts_ingest)
             .bind(&event.payload)
             .bind("test-host")
-            .execute(pool_clone)
+            .execute(&pool_clone)
             .await
             .unwrap();
 
@@ -175,7 +175,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
                 .bind(Ulid::new().to_uuid())
                 .bind(event.id.to_uuid())
                 .bind("pipeline_test_worker")
-                .execute(pool_clone)
+                .execute(&pool_clone)
                 .await
                 .unwrap();
         }
@@ -276,7 +276,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
     pretty_assertions::assert_eq!(derived_event_count, events_to_generate as i64);
 
     let remaining_queue: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sinex_schemas.work_queue")
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?;
 
     pretty_assertions::assert_eq!(remaining_queue, 0);
@@ -510,7 +510,7 @@ async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
     let remaining: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = 'error_test_worker'"
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?;
 
     // Should have no good events left (3 were processed)
@@ -520,7 +520,7 @@ async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
     let dlq: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sinex_schemas.dlq_events WHERE agent_name = 'error_test_worker'",
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     // Should have some bad events in DLQ after max retries

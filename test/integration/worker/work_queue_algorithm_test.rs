@@ -205,7 +205,7 @@ impl SelectForUpdateWorker {
                      WHERE queue_id = $1::uuid::ulid",
                     queue_id_ulid.to_uuid()
                 )
-                .execute(self.pool)
+                .execute(&self.pool)
                 .await;
 
                 let processing_time = process_start.elapsed();
@@ -821,16 +821,16 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
         "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.ordering_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(())
@@ -938,7 +938,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                        AND attempts < max_attempts",
                     queue_id.to_uuid()
                 )
-                .fetch_optional(&pool)
+                .fetch_optional(pool)
                 .await?;
 
                 assert!(
@@ -964,7 +964,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                        AND attempts < max_attempts",
                     queue_id.to_uuid()
                 )
-                .fetch_optional(&pool)
+                .fetch_optional(pool)
                 .await?;
 
                 assert!(
@@ -1020,7 +1020,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
          RETURNING queue_id::text",
         agent_name
     )
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await?;
 
     assert!(

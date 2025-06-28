@@ -369,7 +369,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
                 Utc::now(),
                 Utc::now()
             )
-            .execute(pool_clone)
+            .execute(&pool_clone)
             .await;
 
             match result {

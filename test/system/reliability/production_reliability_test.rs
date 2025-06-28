@@ -373,7 +373,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
                 // Perform a quick operation
                 sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                    .fetch_one(mut *conn)
+                    .fetch_one(&mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
             })
