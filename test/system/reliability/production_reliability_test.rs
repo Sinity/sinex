@@ -15,7 +15,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         "1.0.0",
         "Graceful degradation test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -188,14 +188,14 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'degradation.test'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -565,7 +565,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'resource.monitoring'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 
@@ -815,7 +815,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM raw.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .ok();
 

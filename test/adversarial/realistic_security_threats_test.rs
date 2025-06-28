@@ -111,7 +111,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
         "1.0.0",
         "SQL injection security test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // SQL injection attack patterns targeting common query parameters
@@ -213,7 +213,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
             "1.0.0",
             "Injection test agent"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         match agent_creation {
@@ -243,7 +243,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
                     "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                     malicious_agent_name
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await
                 .ok();
             }
@@ -287,12 +287,12 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE '%DROP%' OR source LIKE '%UNION%' OR source LIKE '%OR%'")
-        .execute(&pool).await.ok();
+        .execute(pool).await.ok();
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -313,7 +313,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
         "1.0.0",
         "Resource exhaustion test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Test 1: Memory exhaustion via large payloads
@@ -467,7 +467,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
 
         let complexity_result = timeout(
             Duration::from_secs(3),
-            sqlx::query(complex_query).execute(&pool),
+            sqlx::query(complex_query).execute(pool),
         )
         .await;
 
@@ -513,14 +513,14 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'memory.exhaustion'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -768,7 +768,7 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'security.payload_test'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 

@@ -157,7 +157,7 @@ async fn test_event_source_validation(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE event_type = 'validation_test'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 
@@ -344,7 +344,7 @@ async fn test_json_payload_validation(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'payload.validation'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 
@@ -433,7 +433,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> TestResult {
             "1.0.0",
             "Malformed name test"
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         match agent_creation {
@@ -445,7 +445,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> TestResult {
                     "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                     malformed_name
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await
                 .ok();
             }
@@ -469,7 +469,7 @@ async fn test_malformed_input_handling(ctx: TestContext) -> TestResult {
         "1.0.0",
         "Valid test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Test malformed event creation
@@ -549,10 +549,10 @@ async fn test_malformed_input_handling(ctx: TestContext) -> TestResult {
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         valid_agent
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source IN ('', 'test')")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 
@@ -687,7 +687,7 @@ async fn test_input_boundary_conditions(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE event_type IN ('boundary_test', 'payload_test')")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 

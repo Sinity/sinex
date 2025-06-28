@@ -948,7 +948,7 @@ impl SecurityTestResults {
                     "SELECT source FROM raw.events WHERE id = $1::uuid::ulid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
                 if let SecurityPayload::String(original) = &scenario.payload {

@@ -271,7 +271,7 @@ async fn test_dead_worker_holding_locks(ctx: TestContext) -> TestResult {
         "#,
         work_event.id.to_uuid()
     )
-    .execute(&pool)
+    .execute(pool)
     .await;
 
     match recovery_result {

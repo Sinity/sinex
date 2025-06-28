@@ -45,7 +45,7 @@ pub async fn setup_test_worker(
             raw_event_id.to_uuid(),
             format!("{}_item_{}", worker_name, i)
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         queue_ids.push(queue_id);
@@ -94,7 +94,7 @@ pub async fn create_test_work_item(
         target_agent,
         status
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(queue_id)
@@ -191,7 +191,7 @@ impl WorkQueueStats {
 /// Cleanup all work queue items
 pub async fn cleanup_work_queue(pool: &DbPool) -> Result<(), anyhow::Error> {
     sqlx::query!("DELETE FROM sinex_schemas.work_queue")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -258,7 +258,7 @@ pub async fn simulate_worker_processing(
                 "#,
                 row.queue_id
             )
-            .execute(&pool)
+            .execute(pool)
             .await?;
 
             processed += 1;

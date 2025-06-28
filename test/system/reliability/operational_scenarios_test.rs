@@ -452,7 +452,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     sqlx::query!(
         "DELETE FROM raw.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .ok();
 

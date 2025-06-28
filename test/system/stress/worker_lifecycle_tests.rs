@@ -207,7 +207,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -225,7 +225,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             "race_item",
             json!({"race_item": i})
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         let queue_id = Ulid::new();
@@ -237,7 +237,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             event_id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 

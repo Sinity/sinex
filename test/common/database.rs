@@ -118,15 +118,15 @@ impl DerefMut for TestPool {
 async fn cleanup_test_data(pool: &DbPool) -> Result<()> {
     // Clean up in reverse dependency order to respect foreign key constraints
     sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source = 'test'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())

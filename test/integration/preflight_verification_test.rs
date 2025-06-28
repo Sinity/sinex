@@ -184,7 +184,7 @@ async fn test_database_integration_scenarios(ctx: TestContext) -> TestResult {
 
     // Test 1: Verify we can detect existing tables
     sqlx::query!("CREATE TABLE IF NOT EXISTS test_verification_table (id UUID PRIMARY KEY, data TEXT)")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     let result = run_preflight_verification(&["verify", "--timeout", "30"]).await?;
@@ -192,7 +192,7 @@ async fn test_database_integration_scenarios(ctx: TestContext) -> TestResult {
 
     // Test 2: Clean up
     sqlx::query!("DROP TABLE IF EXISTS test_verification_table")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())

@@ -669,7 +669,7 @@ async fn test_database_error_handling(pool: &DbPool) -> Result<bool> {
     // Test that database errors are handled appropriately
 
     // Test 1: Query with invalid syntax should return error, not panic
-    let invalid_query = sqlx::query("INVALID SQL SYNTAX").execute(&pool).await;
+    let invalid_query = sqlx::query("INVALID SQL SYNTAX").execute(pool).await;
     assert!(invalid_query.is_err(), "Invalid SQL should return error");
 
     // Test 2: System should continue working after database error

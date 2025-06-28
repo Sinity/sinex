@@ -91,7 +91,7 @@ async fn test_connection_pool_recovery_after_database_restart(ctx: TestContext) 
 
     // Simulate brief network issue by using invalid query
     // In real scenario, we'd restart the database
-    let bad_result = sqlx::query("INVALID SQL SYNTAX").execute(&pool).await;
+    let bad_result = sqlx::query("INVALID SQL SYNTAX").execute(pool).await;
     assert!(bad_result.is_err());
 
     // Pool should recover and work again

@@ -47,7 +47,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
                     event.id.to_uuid(),
                     extra_data
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await;
 
                 match update_result {
