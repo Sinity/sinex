@@ -56,7 +56,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                     event_id.to_uuid(),
                     worker_id.to_string(),
                     Utc::now().to_rfc3339()
-                ).execute(&pool_clone).await;
+                ).execute(pool_clone).await;
 
                 let claim_duration = claim_start.elapsed();
 
@@ -69,7 +69,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                             let verify_result = sqlx::query!(
                                 "SELECT payload->>'claimed_by' as claimer FROM raw.events WHERE id::uuid = $1::uuid",
                                 event_id.to_uuid()
-                            ).fetch_one(&pool_clone).await;
+                            ).fetch_one(pool_clone).await;
 
                             if let Ok(record) = verify_result {
                                 if record.claimer != Some(worker_id.to_string()) {
@@ -165,7 +165,7 @@ async fn test_dead_worker_holding_locks(ctx: TestContext) -> TestResult {
                 "#,
             )
             .bind(event_id.to_uuid())
-            .fetch_one(&mut *tx)
+            .fetch_one(mut *tx)
             .await;
 
             if claim_result.is_ok() {
@@ -215,7 +215,7 @@ async fn test_dead_worker_holding_locks(ctx: TestContext) -> TestResult {
                     "#,
                     event_id.to_uuid(),
                     format!("healthy_{}", worker_id)
-                ).execute(&pool_clone)
+                ).execute(pool_clone)
             ).await;
 
             let elapsed = start.elapsed();
@@ -348,7 +348,7 @@ async fn test_mass_worker_wakeup_thundering_herd(ctx: TestContext) -> TestResult
                         record.id,
                         worker_id.to_string()
                     )
-                    .execute(&pool_clone)
+                    .execute(pool_clone)
                     .await;
 
                     match claim_result {

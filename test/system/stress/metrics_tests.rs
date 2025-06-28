@@ -211,7 +211,7 @@ impl StressTestWorker {
                  WHERE queue_id = $1::uuid::ulid",
                 queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
             )
-            .execute(&self.pool)
+            .execute(self.pool)
             .await?;
 
             return Ok(false);
@@ -226,7 +226,7 @@ impl StressTestWorker {
             queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
             self.worker_id
         )
-        .execute(&self.pool)
+        .execute(self.pool)
         .await?;
 
         Ok(true)
@@ -293,7 +293,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 "stress_item",
                 json!({"stress_item": i, "batch": "extreme"})
             )
-            .execute(&create_pool)
+            .execute(create_pool)
             .await
             .expect("Event creation failed");
 
@@ -306,7 +306,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 event_id.to_uuid(),
                 create_agent
             )
-            .execute(&create_pool)
+            .execute(create_pool)
             .await
             .expect("Work item creation failed");
 
@@ -352,7 +352,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                    AND last_attempt_ts < NOW() - INTERVAL '10 seconds'",
                 monitor_agent
             )
-            .fetch_one(&monitor_pool)
+            .fetch_one(monitor_pool)
             .await
             .unwrap_or(Some(0))
             .unwrap_or(0);
@@ -372,7 +372,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                      RETURNING queue_id::text",
                     monitor_agent
                 )
-                .fetch_all(&monitor_pool)
+                .fetch_all(monitor_pool)
                 .await
                 .unwrap_or_default();
 
@@ -397,7 +397,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                         "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
                         monitor_agent
                     )
-                    .fetch_one(&monitor_pool)
+                    .fetch_one(monitor_pool)
                     .await
                     .unwrap_or(Some(0))
                     .unwrap_or(0)
@@ -419,7 +419,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                         "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'processing'",
                         monitor_agent
                     )
-                    .fetch_one(&monitor_pool)
+                    .fetch_one(monitor_pool)
                     .await
                     .unwrap_or(Some(0))
                     .unwrap_or(0)

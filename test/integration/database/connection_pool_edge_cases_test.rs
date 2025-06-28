@@ -114,7 +114,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResul
             // Each task does a quick query
             let result: i32 = sqlx::query_scalar("SELECT $1::int")
                 .bind(i)
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
             Ok::<_, sqlx::Error>(result)
@@ -144,7 +144,7 @@ async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
 
     // Get connection ID
     let conn_id_1: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
 
     // Wait for max lifetime to expire
@@ -152,7 +152,7 @@ async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
 
     // Get new connection - should have different ID
     let conn_id_2: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?;
 
     // Connection should have been recycled
@@ -175,7 +175,7 @@ async fn test_connection_pool_idle_timeout(ctx: TestContext) -> TestResult {
     for _ in 0..5 {
         let pool = pool.clone();
         handles.push(tokio::spawn(async move {
-            sqlx::query("SELECT 1").execute(&pool).await
+            sqlx::query("SELECT 1").execute(pool).await
         }));
     }
     join_all(handles).await;
@@ -184,7 +184,7 @@ async fn test_connection_pool_idle_timeout(ctx: TestContext) -> TestResult {
     // Just verify pool still works after idle timeout
     ctx.wait_for_work_queue(0).await?;
 
-    let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&pool).await?;
+    let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await?;
     pretty_assertions::assert_eq!(result, 1);
 
     Ok(())
@@ -222,7 +222,7 @@ async fn test_connection_pool_transaction_isolation(ctx: TestContext) -> TestRes
 
         // This should fail - table doesn't exist in this connection
         let result = sqlx::query("SELECT * FROM pool_test")
-            .fetch_all(&pool2)
+            .fetch_all(pool2)
             .await;
 
         assert!(result.is_err());

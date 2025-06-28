@@ -37,7 +37,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                 "#,
             event_id.to_uuid()
         )
-        .execute(&pool1)
+        .execute(pool1)
         .await;
 
         if let Ok(result) = result {
@@ -60,7 +60,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                 "#,
             event_id.to_uuid()
         )
-        .execute(&pool2)
+        .execute(pool2)
         .await;
 
         if let Ok(result) = result {
@@ -232,7 +232,7 @@ async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> TestResult {
                 "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
                 id.to_uuid()
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await
             .expect("Database query failed");
 
@@ -252,7 +252,7 @@ async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> TestResult {
                 id.to_uuid(),
                 payload
             )
-            .execute(&pool)
+            .execute(pool)
             .await
             .expect("Database update failed");
         });

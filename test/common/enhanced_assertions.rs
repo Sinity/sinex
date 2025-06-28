@@ -4,6 +4,7 @@
 //! and other new abstractions to provide richer test failures and better debugging experience.
 
 use crate::common::prelude::*;
+use sinex_core::ErrorContext;
 use std::fmt::Debug;
 use std::future::Future;
 
@@ -77,7 +78,7 @@ where
     match tokio::time::timeout(timeout, operation).await {
         Ok(result) => result,
         Err(_) => {
-            let error = CoreError::other("Operation timed out")
+            let error = ErrorContext::new(CoreError::Other("Operation timed out".to_string()))
                 .with_operation(operation_name)
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .build();
@@ -145,7 +146,7 @@ where
     T: Send,
 {
     sender.send_or_log(value, context).await.map_err(|e| {
-        let error = CoreError::other("Channel send failed")
+        let error = ErrorContext::new(CoreError::Other("Channel send failed".to_string()))
             .with_context("channel_context", context)
             .with_source(e)
             .build();

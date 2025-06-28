@@ -278,7 +278,7 @@ impl TestContext {
                 async move {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
-                        .fetch_one(&pool)
+                        .fetch_one(pool)
                         .await
                         .map(|c| c.unwrap_or(0))
                         .unwrap_or(0);

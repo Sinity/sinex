@@ -116,7 +116,7 @@ pub mod validation {
     use super::*;
 
     /// Test database configuration validation
-    pub fn validate_database_config() -> impl Fn(&ConfigValue) -> Result<()> {
+    pub fn validate_database_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
         ConfigValidator::new()
             .require("database.url")
             .validate_custom(|config| {
@@ -141,7 +141,7 @@ pub mod validation {
     }
 
     /// Test collector configuration validation
-    pub fn validate_collector_config() -> impl Fn(&ConfigValue) -> Result<()> {
+    pub fn validate_collector_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
         ConfigValidator::new()
             .validate_range("collector.buffer_size", 1..=10000)
             .validate_range("collector.batch_size", 1..=1000)
@@ -156,7 +156,7 @@ pub mod validation {
     }
 
     /// Test observability configuration validation
-    pub fn validate_observability_config() -> impl Fn(&ConfigValue) -> Result<()> {
+    pub fn validate_observability_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
         ConfigValidator::new()
             .validate_range("observability.metrics_port", 1024..=65535)
             .validate_regex(
@@ -174,7 +174,7 @@ pub mod validation {
     }
 
     /// Comprehensive configuration validator combining all aspects
-    pub fn validate_complete_config() -> impl Fn(&ConfigValue) -> Result<()> {
+    pub fn validate_complete_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
         move |config: &ConfigValue| {
             // Use MultiValidator pattern to accumulate all errors
             let mut multi_validator = MultiValidator::new();

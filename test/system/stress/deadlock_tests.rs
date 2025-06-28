@@ -18,7 +18,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -35,7 +35,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             "deadlock_item",
             json!({"deadlock_item": i})
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         let queue_id = Ulid::new();
@@ -47,7 +47,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             event_id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 
@@ -91,7 +91,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                    AND last_attempt_ts < NOW() - INTERVAL '3 seconds'",
                 detection_agent
             )
-            .fetch_all(&detection_pool)
+            .fetch_all(detection_pool)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -108,7 +108,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                    AND processing_worker_id IS NOT NULL",
                 detection_agent
             )
-            .fetch_all(&detection_pool)
+            .fetch_all(detection_pool)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -158,7 +158,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                      RETURNING queue_id::text",
                     detection_agent
                 )
-                .fetch_all(&detection_pool)
+                .fetch_all(detection_pool)
                 .await
                 .unwrap_or_default();
 
@@ -208,7 +208,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -217,7 +217,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
          WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -434,7 +434,7 @@ impl DeadlockStressWorker {
                  WHERE queue_id = $1::uuid::ulid",
                 queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
             )
-            .execute(&self.pool)
+            .execute(self.pool)
             .await?;
 
             return Ok(false);
@@ -449,7 +449,7 @@ impl DeadlockStressWorker {
             queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
             self.worker_id
         )
-        .execute(&self.pool)
+        .execute(self.pool)
         .await?;
 
         Ok(true)

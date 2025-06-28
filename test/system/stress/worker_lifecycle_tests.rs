@@ -154,7 +154,7 @@ impl RaceConditionWorker {
                  WHERE queue_id = $1::uuid::ulid",
                 Ulid::from_str(queue_id)?.to_uuid()
             )
-            .execute(&self.pool)
+            .execute(self.pool)
             .await?;
 
             return Ok(false);
@@ -169,7 +169,7 @@ impl RaceConditionWorker {
             Ulid::from_str(queue_id)?.to_uuid(),
             Ulid::from_str(&self.worker_id)?.to_uuid()
         )
-        .execute(&self.pool)
+        .execute(self.pool)
         .await?;
 
         Ok(true)
@@ -207,7 +207,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -257,7 +257,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
-            .fetch_one(&detection_pool)
+            .fetch_one(detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -267,7 +267,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'processing'",
                 detection_agent
             )
-            .fetch_one(&detection_pool)
+            .fetch_one(detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -280,7 +280,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
-            .fetch_one(&detection_pool)
+            .fetch_one(detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -296,7 +296,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  ) conflicts",
                 detection_agent
             )
-            .fetch_one(&detection_pool)
+            .fetch_one(detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);

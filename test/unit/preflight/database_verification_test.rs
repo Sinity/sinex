@@ -219,7 +219,7 @@ async fn test_database_concurrent_operations(ctx: TestContext) -> TestResult {
                 "test.concurrent",
                 serde_json::json!({"operation": i})
             )
-            .execute(&pool_clone)
+            .execute(pool_clone)
             .await;
 
             (test_id, result)
@@ -341,7 +341,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     // Test that we can execute queries on all connections
     for (i, conn) in connections.iter_mut().enumerate() {
         let result = sqlx::query!("SELECT $1 as test_value", i as i32)
-            .fetch_one(&mut **conn)
+            .fetch_one(mut **conn)
             .await?;
 
         assert_eq!(result.test_value, Some(i as i32));

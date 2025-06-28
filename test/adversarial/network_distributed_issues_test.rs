@@ -126,7 +126,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
                     event_id.to_uuid(),
                     attempt.to_string(),
                     worker_id.to_string()
-                ).execute(&pool_clone).await;
+                ).execute(pool_clone).await;
 
                 match operation_result {
                     Ok(_) => {

@@ -205,7 +205,7 @@ impl SelectForUpdateWorker {
                      WHERE queue_id = $1::uuid::ulid",
                     queue_id_ulid.to_uuid()
                 )
-                .execute(&self.pool)
+                .execute(self.pool)
                 .await;
 
                 let processing_time = process_start.elapsed();
@@ -254,7 +254,7 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
         "1.0.0",
         "Algorithm fairness test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Create worker IDs
@@ -292,7 +292,7 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
                 event.id.to_uuid(),
                 create_agent
             )
-            .execute(&create_pool)
+            .execute(create_pool)
             .await
             .expect("Work item creation failed");
 
@@ -457,16 +457,16 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
         "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.fairness_test'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -488,7 +488,7 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
         "1.0.0",
         "Contention test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let worker_ids: Vec<String> = (0..high_contention_worker_count)
@@ -520,7 +520,7 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
             event.id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         metrics.record_work_item_created();
@@ -578,7 +578,7 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
          WHERE target_agent_name = $1 AND status = 'pending'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -624,16 +624,16 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
         "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.contention_test'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -653,7 +653,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
         "1.0.0",
         "Ordering test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Create work items with known ordering
@@ -684,7 +684,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
             event.id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         expected_order.push(queue_id);
@@ -777,7 +777,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
             event.id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 
@@ -821,16 +821,16 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
         "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.ordering_test'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -850,7 +850,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
         "1.0.0",
         "Retry mechanism test agent"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Create work items with different max_attempts
@@ -885,7 +885,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
             agent_name,
             max_attempts
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         queue_ids.push((queue_id, *max_attempts));
@@ -910,7 +910,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                 queue_id.to_uuid(),
                 attempt as i32
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?;
 
             pretty_assertions::assert_eq!(
@@ -927,7 +927,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                      WHERE queue_id = $1::uuid::ulid",
                     queue_id.to_uuid()
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await?;
 
                 // Verify item is available for retry
@@ -953,7 +953,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                      WHERE queue_id = $1::uuid::ulid",
                     queue_id.to_uuid()
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await?;
 
                 // Verify item is no longer available
@@ -998,7 +998,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
         event.id.to_uuid(),
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Try to claim with SELECT FOR UPDATE SKIP LOCKED
@@ -1038,16 +1038,16 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
         "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.retry_test'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())

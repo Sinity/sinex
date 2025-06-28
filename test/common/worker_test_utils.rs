@@ -325,7 +325,7 @@ pub mod lifecycle {
                 self.worker_id.to_uuid(),
                 queue_id.to_uuid()
             )
-            .execute(&self.pool)
+            .execute(self.pool)
             .await?;
 
             let success = result.rows_affected() > 0;
@@ -351,7 +351,7 @@ pub mod lifecycle {
                 self.worker_id.to_uuid(),
                 queue_id.to_uuid()
             )
-            .execute(&self.pool)
+            .execute(self.pool)
             .await?;
 
             Ok(result.rows_affected() > 0)

@@ -97,7 +97,7 @@ pub mod utils {
                     let collector_registered = sqlx::query_scalar!(
                         "SELECT EXISTS(SELECT 1 FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'collector%')"
                     )
-                    .fetch_one(&pool)
+                    .fetch_one(pool)
                     .await?
                     .unwrap_or(false);
                     Ok(collector_registered)

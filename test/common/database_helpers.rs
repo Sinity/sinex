@@ -331,7 +331,7 @@ macro_rules! test_with_transaction_agent {
                 "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, status)
                  VALUES ($1, $2, $3, $4)",
                 $agent_name, "1.0.0", "Test agent", "running"
-            ).execute(&mut $tx_name).await?;
+            ).execute(mut $tx_name).await?;
 
             $test_body
             // Transaction automatically rolls back, cleaning up agent

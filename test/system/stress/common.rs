@@ -167,7 +167,7 @@ impl StressTestUtils {
             agent_name,
             format!("Stress test agent for {}", source_prefix)
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         Ok(pool.clone())

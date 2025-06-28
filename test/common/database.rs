@@ -157,7 +157,7 @@ impl TestPoolExt for TestPool {
 
     async fn event_count(&self) -> Result<i64> {
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
-            .fetch_one(&self.inner)
+            .fetch_one(self.inner)
             .await?;
         Ok(count.unwrap_or(0))
     }
@@ -173,7 +173,7 @@ impl TestPool {
     pub async fn event_count_by_source(&self, source: &str) -> Result<i64> {
         let count =
             sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events WHERE source = $1", source)
-                .fetch_one(&self.inner)
+                .fetch_one(self.inner)
                 .await?;
         Ok(count.unwrap_or(0))
     }
@@ -181,7 +181,7 @@ impl TestPool {
     /// Check if database is accessible
     pub async fn check_health(&self) -> Result<bool> {
         match sqlx::query!("SELECT 1 as test")
-            .fetch_one(&self.inner)
+            .fetch_one(self.inner)
             .await
         {
             Ok(_) => Ok(true),

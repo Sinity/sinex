@@ -88,7 +88,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
             "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb WHERE id::uuid = $1::uuid",
             event_id.to_uuid()
         )
-        .execute(&pool1)
+        .execute(pool1)
         .await
     });
 
@@ -99,7 +99,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
             "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb WHERE id::uuid = $1::uuid",
             event_id.to_uuid()
         )
-        .execute(&pool2)
+        .execute(pool2)
         .await
     });
 
@@ -117,7 +117,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
         "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .unwrap();
 

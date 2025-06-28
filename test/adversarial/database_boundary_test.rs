@@ -98,7 +98,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
                     );
 
                     // Hold connection
-                    let query_result = sqlx::query!("SELECT pg_sleep(5)").execute(&mut *conn).await;
+                    let query_result = sqlx::query!("SELECT pg_sleep(5)").execute(mut *conn).await;
 
                     match query_result {
                         Ok(_) => format!("Worker {} completed", worker_id),
@@ -447,7 +447,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
                     ORDER BY minute
                     "#
                 )
-                .fetch_all(&*pool)
+                .fetch_all(*pool)
                 .await;
 
                 match result {

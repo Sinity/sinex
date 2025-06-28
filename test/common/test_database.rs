@@ -119,7 +119,7 @@ impl TestDatabase {
     /// Check if the database is healthy
     pub async fn check_health(&self) -> Result<bool> {
         match sqlx::query!("SELECT 1 as health_check")
-            .fetch_one(&self.pool)
+            .fetch_one(self.pool)
             .await
         {
             Ok(_) => Ok(true),
@@ -137,7 +137,7 @@ impl TestDatabase {
                 (SELECT COUNT(*) FROM sinex_schemas.work_queue) as work_queue_count
             "#
         )
-        .fetch_one(&self.pool)
+        .fetch_one(self.pool)
         .await?;
 
         Ok(DatabaseStats {

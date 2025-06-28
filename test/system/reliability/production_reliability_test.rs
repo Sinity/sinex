@@ -15,7 +15,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         "1.0.0",
         "Graceful degradation test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -67,7 +67,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn health_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
@@ -77,7 +77,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _agent_check =
             sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())
@@ -188,14 +188,14 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'degradation.test'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
         agent_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -373,7 +373,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
                 // Perform a quick operation
                 sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                    .fetch_one(&mut *conn)
+                    .fetch_one(mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
             })
@@ -470,20 +470,20 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         let health_result = timeout(Duration::from_secs(2), async {
             // Comprehensive health check
             let db_health = sqlx::query_scalar!("SELECT 1")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
             let table_count = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM information_schema.tables
                      WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
             let recent_events = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
 
@@ -565,7 +565,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'resource.monitoring'")
-        .execute(&pool)
+        .execute(pool)
         .await
         .ok();
 
@@ -752,7 +752,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
         let query_start = Instant::now();
 
         let query_result =
-            timeout(Duration::from_secs(2), sqlx::query(query).fetch_all(&pool)).await;
+            timeout(Duration::from_secs(2), sqlx::query(query).fetch_all(pool)).await;
 
         let query_duration = query_start.elapsed();
 
@@ -815,7 +815,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM raw.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .ok();
 

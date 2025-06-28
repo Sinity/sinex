@@ -4,6 +4,7 @@
 //! channel extension traits, backpressure management, and monitoring capabilities.
 
 use crate::common::prelude::*;
+use sinex_core::ErrorContext;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -65,13 +66,13 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                CoreError::Other("Failed to receive from channel")
+                ErrorContext::new(CoreError::Other("Failed to receive from channel".to_string()))
                     .with_context("test_name", test_name)
                     .with_source(e)
                     .build()
             })?
             .ok_or_else(|| {
-                CoreError::other("Channel closed unexpectedly")
+                ErrorContext::new(CoreError::Other("Channel closed unexpectedly".to_string()))
                     .with_context("test_name", test_name)
                     .build()
             })?;
@@ -410,7 +411,7 @@ pub mod performance {
         // Wait for all senders to complete
         for handle in handles {
             handle.await.map_err(|e| {
-                CoreError::other("Concurrent sender task failed")
+                ErrorContext::new(CoreError::Other("Concurrent sender task failed".to_string()))
                     .with_source(e)
                     .build()
             })?;

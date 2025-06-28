@@ -36,7 +36,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(*pool)
         .await?
         .unwrap_or(0);
 
@@ -44,7 +44,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(*pool)
         .await?
         .unwrap_or(0);
 
@@ -85,7 +85,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "1.0.0",
             "Pre-existing agent for startup test"
         )
-        .execute(&*pool)
+        .execute(*pool)
         .await?;
 
         // Insert some events
@@ -109,7 +109,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         // Verify data integrity after restart - use timing utilities for better reliability
         let agent_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+                .fetch_one(*pool)
                 .await?
                 .unwrap_or(0);
 
@@ -160,7 +160,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
                 vec![0u8; 32], // Invalid checksum
                 0
             )
-            .execute(&*pool)
+            .execute(*pool)
             .await
             .ok(); // Ignore errors if table doesn't exist
 
@@ -300,7 +300,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
         // Check database integrity
         let db_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(&verification_pool)
+            .fetch_one(verification_pool)
             .await?;
 
         Ok::<(i64, i32), anyhow::Error>((committed_events, db_check.unwrap_or(0)))
@@ -390,7 +390,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let pool = ctx.pool();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events = wait_for_filtered_event_count(
@@ -452,7 +452,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     sqlx::query!(
         "DELETE FROM raw.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .ok();
 
@@ -789,7 +789,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT schema_name FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(*pool)
         .await?
         .into_iter()
         .filter_map(|s| s)
@@ -799,7 +799,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT table_name FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(*pool)
         .await?
         .into_iter()
         .filter_map(|t| t)
@@ -808,7 +808,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let extensions: Vec<String> = sqlx::query_scalar!(
             "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(*pool)
         .await
         .unwrap_or_default();
 
@@ -861,12 +861,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(*pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&*pool)
+            .fetch_one(*pool)
             .await?
             .unwrap_or(0);
 
@@ -905,7 +905,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "1.0.0",
             "Agent for testing data preservation"
         )
-        .execute(&*pool)
+        .execute(*pool)
         .await?;
 
         // Insert test events
@@ -927,7 +927,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Record initial state - use timing utilities for consistency
         let initial_agent_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+                .fetch_one(*pool)
                 .await?
                 .unwrap_or(0);
 
@@ -953,7 +953,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Verify data preservation - use timing utilities for reliability
         let final_agent_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+                .fetch_one(*pool)
                 .await?
                 .unwrap_or(0);
 
@@ -1051,7 +1051,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let invalid_migration_result = sqlx::query!(
             "CREATE TABLE raw.events (id UUID PRIMARY KEY)" // This should fail - table exists
         )
-        .execute(&*pool)
+        .execute(*pool)
         .await;
 
         // Migration should fail gracefully

@@ -193,7 +193,7 @@ async fn test_performance_under_load(ctx: TestContext) -> TestResult {
                     "performance.test",
                     serde_json::json!({"iteration": j, "worker": i})
                 )
-                .execute(&pool_clone)
+                .execute(pool_clone)
                 .await;
 
                 tokio::time::sleep(Duration::from_millis(10)).await;

@@ -113,7 +113,7 @@ proptest! {
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY id"
             )
-            .fetch_all(&*pool)
+            .fetch_all(*pool)
             .await
             .expect("Query failed");
 
@@ -127,7 +127,7 @@ proptest! {
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY ts_ingest"
             )
-            .fetch_all(&*pool)
+            .fetch_all(*pool)
             .await
             .expect("Query failed");
 
@@ -136,7 +136,7 @@ proptest! {
 
             // Cleanup
             sqlx::query("DELETE FROM raw.events WHERE source = 'property.ulid_ordering'")
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Cleanup failed");
 
@@ -219,7 +219,7 @@ proptest! {
             )
             .bind(&source_name)
             .bind(cutoff_ulid.to_string())
-            .fetch_one(&*pool)
+            .fetch_one(*pool)
             .await
             .expect("Query failed");
 
@@ -229,7 +229,7 @@ proptest! {
             )
             .bind(&source_name)
             .bind(cutoff_ulid.to_string())
-            .fetch_one(&*pool)
+            .fetch_one(*pool)
             .await
             .expect("Query failed");
 
@@ -256,7 +256,7 @@ proptest! {
                 "SELECT COUNT(*) FROM raw.events WHERE source = $1"
             )
             .bind(&source_name)
-            .fetch_one(&*pool)
+            .fetch_one(*pool)
             .await
             .expect("Query failed");
 
@@ -268,7 +268,7 @@ proptest! {
             // Cleanup
             sqlx::query("DELETE FROM raw.events WHERE source = $1")
                 .bind(&source_name)
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Cleanup failed");
 
@@ -392,7 +392,7 @@ proptest! {
             .bind(&agent_name)
             .bind("1.0.0")
             .bind("Property test agent")
-            .execute(&*pool)
+            .execute(*pool)
             .await
             .expect("Agent creation failed");
 
@@ -428,7 +428,7 @@ proptest! {
                 .bind(queue_ulid.to_string())
                 .bind(event_ulid.to_string())
                 .bind(&agent_name)
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Queue insert failed");
 
@@ -444,7 +444,7 @@ proptest! {
                      WHERE q.queue_id = $1::ulid"
                 )
                 .bind(queue_ulids[i].to_string())
-                .fetch_one(&*pool)
+                .fetch_one(*pool)
                 .await
                 .expect("FK query failed");
 
@@ -460,7 +460,7 @@ proptest! {
                      WHERE q.raw_event_id = $1::ulid"
                 )
                 .bind(event_ulids[i].to_string())
-                .fetch_one(&*pool)
+                .fetch_one(*pool)
                 .await
                 .expect("Reverse FK query failed");
 
@@ -475,7 +475,7 @@ proptest! {
                  JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id
                  WHERE e.source = 'property.fk_test'"
             )
-            .fetch_one(&*pool)
+            .fetch_one(*pool)
             .await
             .expect("Join count query failed");
 
@@ -485,18 +485,18 @@ proptest! {
             // Cleanup
             sqlx::query("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1")
                 .bind(&agent_name)
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Queue cleanup failed");
 
             sqlx::query("DELETE FROM raw.events WHERE source = 'property.fk_test'")
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Event cleanup failed");
 
             sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
                 .bind(&agent_name)
-                .execute(&*pool)
+                .execute(*pool)
                 .await
                 .expect("Agent cleanup failed");
 

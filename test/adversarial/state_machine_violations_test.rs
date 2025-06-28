@@ -370,7 +370,7 @@ async fn test_worker_state_machine_corruption(ctx: TestContext) -> TestResult {
                 "#,
                 event_id.to_uuid(),
                 worker_id.to_string()
-            ).execute(&pool_clone).await;
+            ).execute(pool_clone).await;
 
             if claim_result.is_ok() && claim_result.unwrap().rows_affected() > 0 {
                 claims.fetch_add(1, Ordering::SeqCst);
@@ -390,7 +390,7 @@ async fn test_worker_state_machine_corruption(ctx: TestContext) -> TestResult {
                     "#,
                     event_id.to_uuid(),
                     worker_id.to_string()
-                ).execute(&pool_clone).await;
+                ).execute(pool_clone).await;
 
                 match complete_result {
                     Ok(result) => {
