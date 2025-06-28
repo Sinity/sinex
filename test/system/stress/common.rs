@@ -167,7 +167,7 @@ impl StressTestUtils {
             agent_name,
             format!("Stress test agent for {}", source_prefix)
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(pool.clone())
@@ -183,19 +183,19 @@ impl StressTestUtils {
             "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
             agent_name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         sqlx::query!(
             "DELETE FROM raw.events WHERE source LIKE $1",
             format!("{}%", source_prefix)
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         sqlx::query!(
             "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
             agent_name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(())
@@ -226,7 +226,7 @@ impl StressTestUtils {
                 event_type,
                 payload
             )
-            .execute(pool)
+            .execute(&pool)
             .await?;
 
             event_ids.push(event_id.to_string());

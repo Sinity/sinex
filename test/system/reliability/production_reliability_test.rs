@@ -67,7 +67,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn health_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
@@ -77,7 +77,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _agent_check =
             sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())
@@ -470,20 +470,20 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         let health_result = timeout(Duration::from_secs(2), async {
             // Comprehensive health check
             let db_health = sqlx::query_scalar!("SELECT 1")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await?
                 .unwrap_or(0);
             let table_count = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM information_schema.tables
                      WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?
             .unwrap_or(0);
             let recent_events = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
             )
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?
             .unwrap_or(0);
 

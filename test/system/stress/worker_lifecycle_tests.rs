@@ -122,7 +122,7 @@ impl RaceConditionWorker {
             self.agent_name,
             self.worker_id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&&self.pool)
         .await;
 
         match claimed_item {
@@ -154,7 +154,7 @@ impl RaceConditionWorker {
                  WHERE queue_id = $1::uuid::ulid",
                 Ulid::from_str(queue_id)?.to_uuid()
             )
-            .execute(self.pool)
+            .execute(&self.pool)
             .await?;
 
             return Ok(false);
@@ -169,7 +169,7 @@ impl RaceConditionWorker {
             Ulid::from_str(queue_id)?.to_uuid(),
             Ulid::from_str(&self.worker_id)?.to_uuid()
         )
-        .execute(self.pool)
+        .execute(&self.pool)
         .await?;
 
         Ok(true)

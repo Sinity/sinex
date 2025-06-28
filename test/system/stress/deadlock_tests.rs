@@ -396,7 +396,7 @@ impl DeadlockStressWorker {
             self.agent_name,
             self.worker_id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&&self.pool)
         .await;
 
         match claimed_item {
@@ -434,7 +434,7 @@ impl DeadlockStressWorker {
                  WHERE queue_id = $1::uuid::ulid",
                 queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
             )
-            .execute(self.pool)
+            .execute(&self.pool)
             .await?;
 
             return Ok(false);
@@ -449,7 +449,7 @@ impl DeadlockStressWorker {
             queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
             self.worker_id
         )
-        .execute(self.pool)
+        .execute(&self.pool)
         .await?;
 
         Ok(true)

@@ -152,7 +152,7 @@ impl ResilientDbWorker {
 
         let result = timeout(
             Duration::from_millis(500),
-            sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(self.pool),
+            sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&self.pool),
         )
         .await;
 
@@ -174,7 +174,7 @@ impl ResilientDbWorker {
             "CREATE TEMP TABLE IF NOT EXISTS worker_test_{} (id SERIAL, data TEXT, created_at TIMESTAMP DEFAULT NOW())",
             self.worker_id
         ))
-        .execute(self.pool)
+        .execute(&self.pool)
         .await;
 
         if setup_result.is_err() {
@@ -188,7 +188,7 @@ impl ResilientDbWorker {
             self.worker_id
         ))
         .bind(format!("Worker {} iteration {}", self.worker_id, iteration))
-        .execute(self.pool)
+        .execute(&self.pool)
         .await;
 
         if let Err(e) = write_result {
@@ -202,7 +202,7 @@ impl ResilientDbWorker {
             self.worker_id
         ))
         .bind((iteration as i64).saturating_sub(10))
-        .fetch_one(self.pool)
+        .fetch_one(&self.pool)
         .await;
 
         self.metrics.remove_active_connection();
@@ -216,7 +216,7 @@ impl ResilientDbWorker {
     async fn run_transaction_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
-        let mut tx = match self.pool.begin().await {
+        let mut tx = match &self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
                 self.metrics.remove_active_connection();
@@ -282,7 +282,7 @@ impl ResilientDbWorker {
         let _active = self.metrics.add_active_connection();
 
         // Generate a series to stream
-        let mut stream = sqlx::query("SELECT generate_series(1, 100) as num").fetch(&self.pool);
+        let mut stream = sqlx::query("SELECT generate_series(1, 100) as num").fetch(&&self.pool);
 
         let mut count = 0;
         while let Some(row_result) = stream.next().await {
@@ -311,7 +311,7 @@ impl ResilientDbWorker {
         let result = sqlx::query_scalar::<_, i32>("SELECT $1::int + $2::int")
             .bind(iteration as i32)
             .bind(42)
-            .fetch_one(self.pool)
+            .fetch_one(&self.pool)
             .await;
 
         self.metrics.remove_active_connection();
