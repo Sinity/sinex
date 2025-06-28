@@ -2,8 +2,8 @@ pub mod agent;
 pub mod collector;
 pub mod config;
 pub mod config_presets;
-pub mod nixos_config;
 pub mod metrics;
+pub mod nixos_config;
 pub mod observability;
 pub mod recovery;
 

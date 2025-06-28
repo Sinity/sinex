@@ -49,10 +49,7 @@ impl WorkRouter {
                                     event_types,
                                 };
 
-                                subscriptions
-                                    .entry(source.clone())
-                                    .or_insert_with(Vec::new)
-                                    .push(sub);
+                                subscriptions.entry(source.clone()).or_default().push(sub);
                             }
                         }
                     }
@@ -78,12 +75,11 @@ impl WorkRouter {
         // Also check for wildcard subscriptions (source "*")
         if let Some(wildcard_subs) = self.subscriptions.get("*") {
             for sub in wildcard_subs {
-                if sub.event_types.contains(&event.event_type)
-                    || sub.event_types.contains(&"*".to_string())
+                if (sub.event_types.contains(&event.event_type)
+                    || sub.event_types.contains(&"*".to_string()))
+                    && !target_agents.contains(&sub.agent_name)
                 {
-                    if !target_agents.contains(&sub.agent_name) {
-                        target_agents.push(sub.agent_name.clone());
-                    }
+                    target_agents.push(sub.agent_name.clone());
                 }
             }
         }

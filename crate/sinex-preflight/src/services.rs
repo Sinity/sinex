@@ -341,7 +341,7 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
 
 async fn check_systemd_service(service_name: &str) -> Result<Value> {
     let status_output = Command::new("systemctl")
-        .args(&[
+        .args([
             "show",
             service_name,
             "--property=ActiveState,SubState,LoadState",

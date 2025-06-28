@@ -77,11 +77,11 @@ pub struct PrivacyConfig {
     /// Event sources to disable
     #[serde(default)]
     pub disable: Vec<String>,
-    
+
     /// Hash sensitive content instead of storing plaintext
     #[serde(default = "default_true")]
     pub hash_sensitive: bool,
-    
+
     /// Auto-delete events older than this (days)
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
@@ -92,11 +92,11 @@ pub struct StorageConfig {
     /// Database connection pool size
     #[serde(default = "default_pool_size")]
     pub database_pool: PoolSize,
-    
+
     /// Git-annex repository location
     #[serde(default = "default_annex_repo")]
     pub annex_repo: String,
-    
+
     /// Compression level
     #[serde(default = "default_compression")]
     pub compression: CompressionLevel,
@@ -131,17 +131,17 @@ pub struct FrequencyConfig {
     /// Global frequency setting
     #[serde(default = "default_frequency")]
     pub global: FrequencyLevel,
-    
+
     /// Per-source frequency overrides
     #[serde(default)]
     pub filesystem: Option<FrequencyLevel>,
-    
+
     #[serde(default)]
     pub terminal: Option<FrequencyLevel>,
-    
+
     #[serde(default)]
     pub clipboard: Option<FrequencyLevel>,
-    
+
     #[serde(default)]
     pub dbus: Option<FrequencyLevel>,
 }
@@ -149,51 +149,51 @@ pub struct FrequencyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrequencyLevel {
     #[serde(rename = "battery")]
-    Battery,     // Battery-friendly: 30s+ intervals
+    Battery, // Battery-friendly: 30s+ intervals
     #[serde(rename = "normal")]
-    Normal,      // Balanced: 5-10s intervals
+    Normal, // Balanced: 5-10s intervals
     #[serde(rename = "responsive")]
-    Responsive,  // Responsive: 1-3s intervals
+    Responsive, // Responsive: 1-3s intervals
     #[serde(rename = "realtime")]
-    Realtime,    // Sub-second for critical events
+    Realtime, // Sub-second for critical events
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PathsConfig {
     /// Additional filesystem paths to monitor
     #[serde(default)]
     pub watch: Vec<String>,
-    
+
     /// Extra ignore patterns
     #[serde(default)]
     pub ignore: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdvancedConfig {
     /// Enable screen capture with OCR
     #[serde(default)]
     pub enable_screen_capture: bool,
-    
+
     /// Enable audio monitoring
     #[serde(default)]
     pub enable_audio_monitoring: bool,
-    
+
     /// Enable network monitoring (requires root)
     #[serde(default)]
     pub enable_network_monitoring: bool,
-    
+
     /// Enable process monitoring (requires root)
     #[serde(default)]
     pub enable_process_monitoring: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LegacyConfig {
     /// Legacy enabled events list
     #[serde(default)]
     pub enabled_events: Vec<String>,
-    
+
     /// Legacy event configuration
     #[serde(default)]
     pub event: HashMap<String, ConfigValue>,
@@ -280,35 +280,6 @@ impl Default for FrequencyConfig {
     }
 }
 
-impl Default for PathsConfig {
-    fn default() -> Self {
-        Self {
-            watch: vec![],
-            ignore: vec![],
-        }
-    }
-}
-
-impl Default for AdvancedConfig {
-    fn default() -> Self {
-        Self {
-            enable_screen_capture: false,
-            enable_audio_monitoring: false,
-            enable_network_monitoring: false,
-            enable_process_monitoring: false,
-        }
-    }
-}
-
-impl Default for LegacyConfig {
-    fn default() -> Self {
-        Self {
-            enabled_events: vec![],
-            event: HashMap::new(),
-        }
-    }
-}
-
 impl SimplifiedConfig {
     /// Convert preset to detailed configuration
     pub fn to_detailed_config(&self) -> Result<super::CollectorConfig> {
@@ -328,16 +299,16 @@ impl SimplifiedConfig {
 
         // Configure based on preset
         self.apply_preset_configuration(&mut event_config, &mut flat_config)?;
-        
+
         // Apply frequency overrides
         self.apply_frequency_configuration(&mut event_config, &mut flat_config)?;
-        
+
         // Apply path customizations
         self.apply_path_configuration(&mut event_config, &mut flat_config)?;
-        
+
         // Apply privacy settings
         self.apply_privacy_configuration(&mut event_config, &mut flat_config)?;
-        
+
         // Apply advanced features
         self.apply_advanced_configuration(&mut event_config, &mut flat_config)?;
 
@@ -352,57 +323,108 @@ impl SimplifiedConfig {
     fn get_preset_events(&self) -> Vec<String> {
         match self.preset {
             ConfigPreset::PersonalDesktop => vec![
-                "file.created", "file.modified", "file.deleted",
-                "command.executed", "shell.command.executed_atuin",
-                "window.focused", "window.opened", "window.closed", "workspace.changed",
-                "dbus.signal", "system.notification", "media.playback.changed",
-                "clipboard.content.changed", "terminal.scrollback.captured",
+                "file.created",
+                "file.modified",
+                "file.deleted",
+                "command.executed",
+                "shell.command.executed_atuin",
+                "window.focused",
+                "window.opened",
+                "window.closed",
+                "workspace.changed",
+                "dbus.signal",
+                "system.notification",
+                "media.playback.changed",
+                "clipboard.content.changed",
+                "terminal.scrollback.captured",
             ],
             ConfigPreset::DeveloperFocused => vec![
-                "file.created", "file.modified", "file.deleted",
-                "command.executed", "shell.command.executed_atuin", "shell.history.command",
-                "terminal.asciinema.session_started", "terminal.scrollback.captured",
-                "window.focused", "dbus.signal",
+                "file.created",
+                "file.modified",
+                "file.deleted",
+                "command.executed",
+                "shell.command.executed_atuin",
+                "shell.history.command",
+                "terminal.asciinema.session_started",
+                "terminal.scrollback.captured",
+                "window.focused",
+                "dbus.signal",
                 // TODO: Add git events, IDE events when implemented
             ],
             ConfigPreset::Researcher => vec![
-                "file.created", "file.modified", "file.deleted",
-                "window.focused", "window.opened", "window.closed",
-                "dbus.signal", "system.notification",
+                "file.created",
+                "file.modified",
+                "file.deleted",
+                "window.focused",
+                "window.opened",
+                "window.closed",
+                "dbus.signal",
+                "system.notification",
                 "clipboard.content.changed",
                 // TODO: Add browser events, PDF events when implemented
             ],
             ConfigPreset::ServerMonitoring => vec![
-                "dbus.signal", "system.power.event", "hardware.device.event",
-                "network.connection.event", "storage.mount.event",
+                "dbus.signal",
+                "system.power.event",
+                "hardware.device.event",
+                "network.connection.event",
+                "storage.mount.event",
                 "session.state.changed",
             ],
             ConfigPreset::Minimal => vec![
-                "file.created", "file.modified", "file.deleted",
-                "command.executed", "window.focused",
+                "file.created",
+                "file.modified",
+                "file.deleted",
+                "command.executed",
+                "window.focused",
             ],
             ConfigPreset::Comprehensive => {
                 // Enable everything available
                 vec![
-                    "file.created", "file.modified", "file.deleted",
-                    "command.executed", "shell.command.executed_atuin", "shell.history.command",
-                    "terminal.asciinema.session_started", "terminal.asciinema.session_ended",
-                    "terminal.scrollback.captured", "terminal.command_output.captured",
-                    "window.focused", "window.opened", "window.closed", "workspace.changed",
-                    "dbus.signal", "dbus.method_call", "system.notification",
-                    "media.playback.changed", "system.power.event", "hardware.device.event",
-                    "session.state.changed", "bluetooth.device.event", "network.connection.event",
-                    "screen.saver.event", "storage.mount.event", "security.policykit.authorization",
-                    "clipboard.content.changed", "state.snapshot",
+                    "file.created",
+                    "file.modified",
+                    "file.deleted",
+                    "command.executed",
+                    "shell.command.executed_atuin",
+                    "shell.history.command",
+                    "terminal.asciinema.session_started",
+                    "terminal.asciinema.session_ended",
+                    "terminal.scrollback.captured",
+                    "terminal.command_output.captured",
+                    "window.focused",
+                    "window.opened",
+                    "window.closed",
+                    "workspace.changed",
+                    "dbus.signal",
+                    "dbus.method_call",
+                    "system.notification",
+                    "media.playback.changed",
+                    "system.power.event",
+                    "hardware.device.event",
+                    "session.state.changed",
+                    "bluetooth.device.event",
+                    "network.connection.event",
+                    "screen.saver.event",
+                    "storage.mount.event",
+                    "security.policykit.authorization",
+                    "clipboard.content.changed",
+                    "state.snapshot",
                 ]
             }
-        }.into_iter().map(String::from).collect()
+        }
+        .into_iter()
+        .map(String::from)
+        .collect()
     }
 
-    fn apply_preset_configuration(&self, _event_config: &mut HashMap<String, ConfigValue>, flat_config: &mut HashMap<String, ConfigValue>) -> Result<()> {
+    fn apply_preset_configuration(
+        &self,
+        _event_config: &mut HashMap<String, ConfigValue>,
+        flat_config: &mut HashMap<String, ConfigValue>,
+    ) -> Result<()> {
         // Auto-discover common development paths
         let watch_paths = self.auto_discover_watch_paths();
-        
+
         // Configure filesystem monitoring
         let mut files_config = toml::map::Map::new();
         files_config.insert(
@@ -411,18 +433,33 @@ impl SimplifiedConfig {
         );
         files_config.insert(
             "ignore_patterns".to_string(),
-            ConfigValue::Array(self.get_smart_ignore_patterns().into_iter().map(ConfigValue::String).collect()),
+            ConfigValue::Array(
+                self.get_smart_ignore_patterns()
+                    .into_iter()
+                    .map(ConfigValue::String)
+                    .collect(),
+            ),
         );
         files_config.insert(
             "debounce_ms".to_string(),
-            ConfigValue::Integer(self.frequency_to_debounce_ms(self.frequency.filesystem.as_ref().unwrap_or(&self.frequency.global))),
+            ConfigValue::Integer(
+                self.frequency_to_debounce_ms(
+                    self.frequency
+                        .filesystem
+                        .as_ref()
+                        .unwrap_or(&self.frequency.global),
+                ),
+            ),
         );
-        
+
         flat_config.insert("event.files".to_string(), ConfigValue::Table(files_config));
 
         // Auto-configure Atuin if available
         if let Ok(atuin_config) = self.auto_discover_atuin_config() {
-            flat_config.insert("event.shell_command_executed_atuin".to_string(), atuin_config);
+            flat_config.insert(
+                "event.shell_command_executed_atuin".to_string(),
+                atuin_config,
+            );
         }
 
         // Auto-configure terminal sources
@@ -439,14 +476,20 @@ impl SimplifiedConfig {
                 dbus_config.insert("monitor_system".to_string(), ConfigValue::Boolean(true));
             }
             ConfigPreset::Minimal => {
-                dbus_config.insert("extract_notifications".to_string(), ConfigValue::Boolean(true));
+                dbus_config.insert(
+                    "extract_notifications".to_string(),
+                    ConfigValue::Boolean(true),
+                );
                 dbus_config.insert("extract_media".to_string(), ConfigValue::Boolean(false));
                 dbus_config.insert("extract_power".to_string(), ConfigValue::Boolean(false));
             }
             _ => {
                 dbus_config.insert("monitor_session".to_string(), ConfigValue::Boolean(true));
                 dbus_config.insert("monitor_system".to_string(), ConfigValue::Boolean(true));
-                dbus_config.insert("extract_notifications".to_string(), ConfigValue::Boolean(true));
+                dbus_config.insert(
+                    "extract_notifications".to_string(),
+                    ConfigValue::Boolean(true),
+                );
                 dbus_config.insert("extract_media".to_string(), ConfigValue::Boolean(true));
                 dbus_config.insert("extract_power".to_string(), ConfigValue::Boolean(true));
             }
@@ -456,10 +499,16 @@ impl SimplifiedConfig {
         Ok(())
     }
 
-    fn apply_frequency_configuration(&self, _event_config: &mut HashMap<String, ConfigValue>, flat_config: &mut HashMap<String, ConfigValue>) -> Result<()> {
+    fn apply_frequency_configuration(
+        &self,
+        _event_config: &mut HashMap<String, ConfigValue>,
+        flat_config: &mut HashMap<String, ConfigValue>,
+    ) -> Result<()> {
         // Apply frequency overrides to existing configurations
         if let Some(fs_freq) = &self.frequency.filesystem {
-            if let Some(ConfigValue::Table(ref mut files_config)) = flat_config.get_mut("event.files") {
+            if let Some(ConfigValue::Table(ref mut files_config)) =
+                flat_config.get_mut("event.files")
+            {
                 files_config.insert(
                     "debounce_ms".to_string(),
                     ConfigValue::Integer(self.frequency_to_debounce_ms(fs_freq)),
@@ -473,17 +522,28 @@ impl SimplifiedConfig {
                 "poll_interval_ms".to_string(),
                 ConfigValue::Integer(self.frequency_to_poll_ms(clipboard_freq)),
             );
-            flat_config.insert("event.clipboard".to_string(), ConfigValue::Table(clipboard_config));
+            flat_config.insert(
+                "event.clipboard".to_string(),
+                ConfigValue::Table(clipboard_config),
+            );
         }
 
         Ok(())
     }
 
-    fn apply_path_configuration(&self, _event_config: &mut HashMap<String, ConfigValue>, flat_config: &mut HashMap<String, ConfigValue>) -> Result<()> {
+    fn apply_path_configuration(
+        &self,
+        _event_config: &mut HashMap<String, ConfigValue>,
+        flat_config: &mut HashMap<String, ConfigValue>,
+    ) -> Result<()> {
         // Add custom watch paths
         if !self.paths.watch.is_empty() {
-            if let Some(ConfigValue::Table(ref mut files_config)) = flat_config.get_mut("event.files") {
-                if let Some(ConfigValue::Array(ref mut patterns)) = files_config.get_mut("watch_patterns") {
+            if let Some(ConfigValue::Table(ref mut files_config)) =
+                flat_config.get_mut("event.files")
+            {
+                if let Some(ConfigValue::Array(ref mut patterns)) =
+                    files_config.get_mut("watch_patterns")
+                {
                     for path in &self.paths.watch {
                         patterns.push(ConfigValue::String(format!("{}/**/*", path)));
                     }
@@ -493,8 +553,12 @@ impl SimplifiedConfig {
 
         // Add custom ignore patterns
         if !self.paths.ignore.is_empty() {
-            if let Some(ConfigValue::Table(ref mut files_config)) = flat_config.get_mut("event.files") {
-                if let Some(ConfigValue::Array(ref mut patterns)) = files_config.get_mut("ignore_patterns") {
+            if let Some(ConfigValue::Table(ref mut files_config)) =
+                flat_config.get_mut("event.files")
+            {
+                if let Some(ConfigValue::Array(ref mut patterns)) =
+                    files_config.get_mut("ignore_patterns")
+                {
                     for ignore in &self.paths.ignore {
                         patterns.push(ConfigValue::String(ignore.clone()));
                     }
@@ -505,14 +569,25 @@ impl SimplifiedConfig {
         Ok(())
     }
 
-    fn apply_privacy_configuration(&self, _event_config: &mut HashMap<String, ConfigValue>, _flat_config: &mut HashMap<String, ConfigValue>) -> Result<()> {
+    fn apply_privacy_configuration(
+        &self,
+        _event_config: &mut HashMap<String, ConfigValue>,
+        _flat_config: &mut HashMap<String, ConfigValue>,
+    ) -> Result<()> {
         // Privacy settings are handled at the event filtering level
         // This would integrate with the event filtering system
-        info!("Applied privacy configuration: disabled sources: {:?}", self.privacy.disable);
+        info!(
+            "Applied privacy configuration: disabled sources: {:?}",
+            self.privacy.disable
+        );
         Ok(())
     }
 
-    fn apply_advanced_configuration(&self, _event_config: &mut HashMap<String, ConfigValue>, _flat_config: &mut HashMap<String, ConfigValue>) -> Result<()> {
+    fn apply_advanced_configuration(
+        &self,
+        _event_config: &mut HashMap<String, ConfigValue>,
+        _flat_config: &mut HashMap<String, ConfigValue>,
+    ) -> Result<()> {
         // Advanced features would add their configurations when enabled
         if self.advanced.enable_screen_capture {
             info!("Screen capture enabled - would add screenshot configuration");
@@ -544,10 +619,7 @@ impl SimplifiedConfig {
                 paths.push("/etc/**/*".to_string()); // System config files
             }
             ConfigPreset::ServerMonitoring => {
-                paths.extend([
-                    "/var/log/**/*".to_string(),
-                    "/etc/**/*".to_string(),
-                ]);
+                paths.extend(["/var/log/**/*".to_string(), "/etc/**/*".to_string()]);
             }
             _ => {}
         }
@@ -564,14 +636,17 @@ impl SimplifiedConfig {
         ];
 
         // Add development-specific ignores
-        if matches!(self.preset, ConfigPreset::DeveloperFocused | ConfigPreset::PersonalDesktop) {
+        if matches!(
+            self.preset,
+            ConfigPreset::DeveloperFocused | ConfigPreset::PersonalDesktop
+        ) {
             patterns.extend([
-                "**/target/**".to_string(),      // Rust
+                "**/target/**".to_string(),       // Rust
                 "**/node_modules/**".to_string(), // Node.js
-                "**/build/**".to_string(),       // General build dirs
-                "**/dist/**".to_string(),        // Distribution dirs
-                "**/.cache/**".to_string(),      // Cache dirs
-                "**/tmp/**".to_string(),         // Temporary dirs
+                "**/build/**".to_string(),        // General build dirs
+                "**/dist/**".to_string(),         // Distribution dirs
+                "**/.cache/**".to_string(),       // Cache dirs
+                "**/tmp/**".to_string(),          // Temporary dirs
             ]);
         }
 
@@ -657,10 +732,10 @@ impl SimplifiedConfig {
 
     fn frequency_to_debounce_ms(&self, freq: &FrequencyLevel) -> i64 {
         match freq {
-            FrequencyLevel::Battery => 1000,    // 1 second
-            FrequencyLevel::Normal => 100,      // 100ms
-            FrequencyLevel::Responsive => 50,   // 50ms
-            FrequencyLevel::Realtime => 10,     // 10ms
+            FrequencyLevel::Battery => 1000,  // 1 second
+            FrequencyLevel::Normal => 100,    // 100ms
+            FrequencyLevel::Responsive => 50, // 50ms
+            FrequencyLevel::Realtime => 10,   // 10ms
         }
     }
 
@@ -675,10 +750,10 @@ impl SimplifiedConfig {
 
     fn frequency_to_poll_secs(&self, freq: &FrequencyLevel) -> i64 {
         match freq {
-            FrequencyLevel::Battery => 60,  // 1 minute
-            FrequencyLevel::Normal => 10,   // 10 seconds
+            FrequencyLevel::Battery => 60,   // 1 minute
+            FrequencyLevel::Normal => 10,    // 10 seconds
             FrequencyLevel::Responsive => 3, // 3 seconds
-            FrequencyLevel::Realtime => 1,  // 1 second
+            FrequencyLevel::Realtime => 1,   // 1 second
         }
     }
 }
@@ -695,14 +770,21 @@ mod tests {
         };
 
         let detailed = config.to_detailed_config().unwrap();
-        assert!(detailed.enabled_events.contains(&"file.created".to_string()));
-        assert!(detailed.enabled_events.contains(&"command.executed".to_string()));
+        assert!(detailed
+            .enabled_events
+            .contains(&"file.created".to_string()));
+        assert!(detailed
+            .enabled_events
+            .contains(&"command.executed".to_string()));
     }
 
     #[test]
     fn test_frequency_conversion() {
         let config = SimplifiedConfig::default();
-        assert_eq!(config.frequency_to_debounce_ms(&FrequencyLevel::Normal), 100);
+        assert_eq!(
+            config.frequency_to_debounce_ms(&FrequencyLevel::Normal),
+            100
+        );
         assert_eq!(config.frequency_to_poll_secs(&FrequencyLevel::Battery), 60);
     }
 

@@ -6,23 +6,21 @@ use sinex_core::{
 };
 use sinex_db::validation::EventValidator;
 use sinex_db::DbPool;
+use sinex_events_desktop::{
+    clipboard::{ClipboardConfig, ClipboardMonitor},
+    window_manager::{HyprlandConfig, HyprlandIPCMonitor},
+};
+use sinex_events_fs::filesystem::{FilesystemConfig, FilesystemMonitor};
+use sinex_events_system::{
+    dbus::{DbusConfig, DbusMonitor},
+    journal::{JournalConfig, JournalMonitor},
+};
 use sinex_events_terminal::{
     asciinema::{AsciinemaConfig, AsciinemaRecorder},
     atuin::{AtuinConfig, AtuinDbReader},
     scrollback::{ScrollbackCapture, ScrollbackConfig},
     shell_history::{ShellHistoryConfig, ShellHistoryReader},
     terminal::{KittyConfig, KittySocketListener},
-};
-use sinex_events_desktop::{
-    clipboard::{ClipboardConfig, ClipboardMonitor},
-    window_manager::{HyprlandConfig, HyprlandIPCMonitor},
-};
-use sinex_events_system::{
-    dbus::{DbusConfig, DbusMonitor},
-    journal::{JournalConfig, JournalMonitor},
-};
-use sinex_events_fs::{
-    filesystem::{FilesystemConfig, FilesystemMonitor},
 };
 use std::collections::HashSet;
 use tokio::sync::mpsc;

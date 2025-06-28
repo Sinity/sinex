@@ -282,7 +282,7 @@ impl AtuinDbReader {
 
     async fn poll_atuin_history(&mut self, tx: &EventSender) -> Result<()> {
         let db_path = self.config.db_path.clone();
-        let last_timestamp = self.last_processed_timestamp.clone();
+        let last_timestamp = self.last_processed_timestamp;
         let batch_size = self.config.batch_size;
 
         // Use spawn_blocking to run database operations
@@ -389,7 +389,7 @@ impl AtuinDbReader {
             sinex_core::CoreError::Other(format!("Failed to execute database query: {}", e))
         })??;
 
-        let mut max_timestamp = self.last_processed_timestamp.clone();
+        let mut max_timestamp = self.last_processed_timestamp;
         let mut count = 0;
 
         for entry in entries {

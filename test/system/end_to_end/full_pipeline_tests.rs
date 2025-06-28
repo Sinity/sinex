@@ -168,16 +168,16 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
 
             // Insert into work queue
             sqlx::query(
-                    "INSERT INTO sinex_schemas.work_queue
+                "INSERT INTO sinex_schemas.work_queue
                      (queue_id, raw_event_id, target_agent_name, attempts, max_attempts, created_at)
-                     VALUES ($1, $2, $3, 0, 3, NOW())"
-                )
-                .bind(Ulid::new().to_uuid())
-                .bind(event.id.to_uuid())
-                .bind("pipeline_test_worker")
-                .execute(&pool_clone)
-                .await
-                .unwrap();
+                     VALUES ($1, $2, $3, 0, 3, NOW())",
+            )
+            .bind(Ulid::new().to_uuid())
+            .bind(event.id.to_uuid())
+            .bind("pipeline_test_worker")
+            .execute(&pool_clone)
+            .await
+            .unwrap();
         }
     });
 

@@ -66,10 +66,12 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                ErrorContext::new(CoreError::Other("Failed to receive from channel".to_string()))
-                    .with_context("test_name", test_name)
-                    .with_source(e)
-                    .build()
+                ErrorContext::new(CoreError::Other(
+                    "Failed to receive from channel".to_string(),
+                ))
+                .with_context("test_name", test_name)
+                .with_source(e)
+                .build()
             })?
             .ok_or_else(|| {
                 ErrorContext::new(CoreError::Other("Channel closed unexpectedly".to_string()))
@@ -411,9 +413,11 @@ pub mod performance {
         // Wait for all senders to complete
         for handle in handles {
             handle.await.map_err(|e| {
-                ErrorContext::new(CoreError::Other("Concurrent sender task failed".to_string()))
-                    .with_source(e)
-                    .build()
+                ErrorContext::new(CoreError::Other(
+                    "Concurrent sender task failed".to_string(),
+                ))
+                .with_source(e)
+                .build()
             })?;
         }
 

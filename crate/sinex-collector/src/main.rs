@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector, nixos_config::NixosConfig};
+use sinex_collector::{nixos_config::NixosConfig, CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_db::{create_pool, validation::EventValidator};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
         let mut nixos_config = NixosConfig::default();
         nixos_config.collector.annex_repo_path = annex_repo.clone();
         nixos_config.collector.database_pool_size = args.pool_size;
-        
+
         // Apply command line disables
         if let Some(disable_list) = &args.disable {
             let disabled_sources: Vec<&str> = disable_list.split(',').collect();
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         nixos_config.validate()?;
         nixos_config.to_legacy_config()?
     } else {
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
                 error!("Collector failed: {}", e);
 
                 // Notify systemd of failure
-                let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Failed".into())]);
+                let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Failed")]);
 
                 // Signal shutdown to other tasks
                 shutdown.store(true, Ordering::Relaxed);

@@ -394,7 +394,7 @@ impl HyprlandIPCMonitor {
             "activewindow" => {
                 let parts: Vec<&str> = event_data.splitn(2, ',').collect();
                 json!({
-                    "window_class": parts.get(0).unwrap_or(&"").to_string(),
+                    "window_class": parts.first().unwrap_or(&"").to_string(),
                     "window_title": parts.get(1).unwrap_or(&"").to_string(),
                     "focused_at": Utc::now(),
                 })
@@ -408,7 +408,7 @@ impl HyprlandIPCMonitor {
             "openwindow" => {
                 let parts: Vec<&str> = event_data.splitn(4, ',').collect();
                 json!({
-                    "window_address": parts.get(0).unwrap_or(&"").to_string(),
+                    "window_address": parts.first().unwrap_or(&"").to_string(),
                     "workspace_id": parts.get(1).unwrap_or(&"").to_string(),
                     "window_class": parts.get(2).unwrap_or(&"").to_string(),
                     "window_title": parts.get(3).unwrap_or(&"").to_string(),
@@ -431,7 +431,7 @@ impl HyprlandIPCMonitor {
             "workspacev2" | "createworkspacev2" | "destroyworkspacev2" => {
                 let parts: Vec<&str> = event_data.splitn(2, ',').collect();
                 json!({
-                    "workspace_id": parts.get(0).unwrap_or(&"").to_string(),
+                    "workspace_id": parts.first().unwrap_or(&"").to_string(),
                     "workspace_name": parts.get(1).unwrap_or(&"").to_string(),
                     "changed_at": Utc::now(),
                 })
@@ -439,7 +439,7 @@ impl HyprlandIPCMonitor {
             "focusedmon" => {
                 let parts: Vec<&str> = event_data.splitn(2, ',').collect();
                 json!({
-                    "monitor_name": parts.get(0).unwrap_or(&"").to_string(),
+                    "monitor_name": parts.first().unwrap_or(&"").to_string(),
                     "workspace_id": parts.get(1).unwrap_or(&"").to_string(),
                     "focused_at": Utc::now(),
                 })

@@ -261,7 +261,7 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
                     }
                     Err(e) => {
                         error!(error = %e, "Scanner error, retrying in 5s");
-                        let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Scanner error, retrying".into())]);
+                        let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Scanner error, retrying")]);
 
                         tokio::select! {
                             _ = sleep(Duration::from_secs(5)) => {},
@@ -442,10 +442,7 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
     let worker_handle = task::spawn(async move {
         if let Err(e) = worker.run().await {
             error!(error = %e, "Worker failed");
-            let _ = sd_notify::notify(
-                true,
-                &[sd_notify::NotifyState::Status("Worker failed".into())],
-            );
+            let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Status("Worker failed")]);
         }
     });
 

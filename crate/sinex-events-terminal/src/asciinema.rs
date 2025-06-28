@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time;
@@ -415,8 +415,8 @@ impl AsciinemaRecorder {
 
     async fn add_to_git_annex(
         &self,
-        annex_repo: &PathBuf,
-        recording_path: &PathBuf,
+        annex_repo: &Path,
+        recording_path: &Path,
         session_id: &str,
     ) -> Result<(PathBuf, Option<String>)> {
         use tokio::process::Command;

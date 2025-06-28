@@ -37,9 +37,7 @@ pub fn calculate_backoff_secs(attempts: i32) -> f64 {
     let base_delay_secs = 60.0;
     let delay_secs = base_delay_secs * (2.0_f64.powi(attempts));
     let jitter_factor = rand::thread_rng().gen_range(0.8..=1.2);
-    let final_delay_secs = (delay_secs * jitter_factor).max(1.0).min(24.0 * 3600.0);
-
-    final_delay_secs
+    (delay_secs * jitter_factor).clamp(1.0, 24.0 * 3600.0)
 }
 
 // ===== Metrics (from metrics.rs) =====

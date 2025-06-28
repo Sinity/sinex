@@ -4,7 +4,6 @@ use sinex_db::create_pool;
 use sinex_worker::start_queue_metrics_server;
 use std::env;
 use tracing::{info, Level};
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {

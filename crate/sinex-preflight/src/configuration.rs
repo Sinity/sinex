@@ -172,11 +172,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> Result<Valu
     for (var_name, description) in optional_vars {
         match std::env::var(var_name) {
             Ok(value) => {
-                let display_value = if var_name.contains("PATH") {
-                    value.clone()
-                } else {
-                    value.clone()
-                };
+                let display_value = value.clone();
 
                 env_vars.insert(
                     var_name.to_string(),
@@ -614,9 +610,9 @@ fn validate_toml_content(content: &str) -> Result<Value> {
 }
 
 fn expand_path(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
-            Path::new(&home).join(&path[2..])
+            Path::new(&home).join(stripped)
         } else {
             PathBuf::from(path)
         }

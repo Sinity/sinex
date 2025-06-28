@@ -57,7 +57,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
                     has_warnings = true;
                 }
             }
-            
+
             details.insert("cpu", cpu_info);
         }
         Err(e) => {

@@ -41,6 +41,12 @@ pub struct MetricsRingBuffer {
 
 impl MetricsRingBuffer {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for MetricsRingBuffer {
+    fn default() -> Self {
         Self {
             buffer: VecDeque::with_capacity(300),
             max_size: 300,
@@ -48,7 +54,9 @@ impl MetricsRingBuffer {
             emit_interval: Duration::from_secs(30),
         }
     }
+}
 
+impl MetricsRingBuffer {
     /// Add a new second of metrics
     pub fn push(&mut self, metrics: SecondMetrics) {
         // Remove oldest if at capacity
@@ -118,6 +126,12 @@ struct AdaptiveState {
 
 impl CollectorMetrics {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for CollectorMetrics {
+    fn default() -> Self {
         Self {
             system: Arc::new(RwLock::new(System::new_all())),
             start_time: Instant::now(),
@@ -132,7 +146,9 @@ impl CollectorMetrics {
             })),
         }
     }
+}
 
+impl CollectorMetrics {
     /// Start the metrics collection loop
     pub async fn start(self: Arc<Self>, event_tx: EventSender, db_pool: Option<DbPool>) {
         info!("Starting high-resolution metrics collection");

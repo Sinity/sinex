@@ -360,10 +360,10 @@ async fn test_extension_functionality(
         .context("Failed to verify TimescaleDB extension")?;
 
     // Test JSON schema validation (if available)
-    if let Ok(_) =
-        sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
-            .fetch_one(&mut **tx)
-            .await
+    if sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
+        .fetch_one(&mut **tx)
+        .await
+        .is_ok()
     {
         messages.push("✓ JSON schema validation tested".to_string());
     }

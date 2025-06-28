@@ -444,7 +444,6 @@ impl Default for MultiValidator {
     }
 }
 
-
 // Helper function to calculate JSON depth
 fn calculate_json_depth(value: &Value) -> usize {
     match value {

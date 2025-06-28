@@ -43,15 +43,13 @@ impl CollectorConfig {
             Some(PathBuf::from("/etc/sinex/collector.toml")),
         ];
 
-        for path_opt in paths {
-            if let Some(path) = path_opt {
-                if path.exists() {
-                    let config = Self::load_from_file(&path)?;
-                    if validate {
-                        config.validate()?;
-                    }
-                    return Ok(config);
+        for path in paths.into_iter().flatten() {
+            if path.exists() {
+                let config = Self::load_from_file(&path)?;
+                if validate {
+                    config.validate()?;
                 }
+                return Ok(config);
             }
         }
 
@@ -415,6 +413,12 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for ValidationReport {
+    fn default() -> Self {
         Self {
             valid: true,
             errors: Vec::new(),
@@ -422,7 +426,9 @@ impl ValidationReport {
             recommendations: Vec::new(),
         }
     }
+}
 
+impl ValidationReport {
     pub fn add_error(&mut self, error: String) {
         self.errors.push(error);
         self.valid = false;

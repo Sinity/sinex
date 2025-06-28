@@ -258,7 +258,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     .fetch_one(pool)
     .await
     .context("Failed to insert test event")?;
-    
+
     let inserted_id = uuid_to_ulid(insert_result.id);
 
     // READ: Query the test event
@@ -298,10 +298,13 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // DELETE: Remove the test event
-    let delete_result = sqlx::query!("DELETE FROM raw.events WHERE id = $1::uuid::ulid", ulid_to_uuid(inserted_id))
-        .execute(pool)
-        .await
-        .context("Failed to delete test event")?;
+    let delete_result = sqlx::query!(
+        "DELETE FROM raw.events WHERE id = $1::uuid::ulid",
+        ulid_to_uuid(inserted_id)
+    )
+    .execute(pool)
+    .await
+    .context("Failed to delete test event")?;
 
     if delete_result.rows_affected() != 1 {
         bail!(
@@ -312,10 +315,13 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 
     // Verify deletion
     let id_as_uuid = ulid_to_uuid(inserted_id);
-    let verify_result = sqlx::query!("SELECT id::uuid as \"id!\" FROM raw.events WHERE id::uuid = $1", id_as_uuid)
-        .fetch_optional(pool)
-        .await
-        .context("Failed to verify deletion")?;
+    let verify_result = sqlx::query!(
+        "SELECT id::uuid as \"id!\" FROM raw.events WHERE id::uuid = $1",
+        id_as_uuid
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to verify deletion")?;
 
     if verify_result.is_some() {
         bail!("Test event still exists after deletion");
@@ -468,7 +474,7 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
         }
     }
 
-    // Cleanup test events using source and event_type filter 
+    // Cleanup test events using source and event_type filter
     sqlx::query!(
         "DELETE FROM raw.events WHERE source = $1 AND event_type = $2",
         "sinex-preflight-concurrent-test",

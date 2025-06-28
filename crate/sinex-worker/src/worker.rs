@@ -20,7 +20,7 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(pool: DbPool, processor: Arc<dyn EventProcessor>, worker_id: String) -> Self {
-        let metrics = crate::WorkerMetrics::new(&processor.agent_name());
+        let metrics = crate::WorkerMetrics::new(processor.agent_name());
         Self {
             pool,
             processor,
@@ -88,8 +88,7 @@ impl Worker {
             match self.processor.process_event(&self.pool, &item).await {
                 Ok(()) => {
                     // Successfully processed
-                    if let Err(e) = complete_work_queue_item(&self.pool, item.queue_id.into()).await
-                    {
+                    if let Err(e) = complete_work_queue_item(&self.pool, item.queue_id).await {
                         error!(
                             worker_id = %self.worker_id,
                             queue_id = %item.queue_id,
@@ -191,7 +190,7 @@ impl Worker {
 
                         if let Err(e) = fail_work_queue_item(
                             &self.pool,
-                            item.queue_id.into(),
+                            item.queue_id,
                             &format!("{:?}", e),
                             next_retry,
                         )

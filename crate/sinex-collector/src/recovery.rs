@@ -370,7 +370,7 @@ impl DlqManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 match fs::read_to_string(&path).await {
                     Ok(content) => match serde_json::from_str::<DlqEntry>(&content) {
                         Ok(dlq_entry) => results.push((path, dlq_entry)),

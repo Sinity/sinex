@@ -494,8 +494,7 @@ impl ClipboardMonitor {
                     .lines()
                     .filter_map(|line| {
                         line.strip_prefix("file://")
-                            .map(|p| urlencoding::decode(p).ok())
-                            .flatten()
+                            .and_then(|p| urlencoding::decode(p).ok())
                             .map(|p| p.to_string())
                     })
                     .collect(),

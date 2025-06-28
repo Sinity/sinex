@@ -22,7 +22,6 @@ mod resources;
 mod services;
 mod verification;
 
-
 #[derive(Parser)]
 #[command(name = "sinex-preflight")]
 #[command(about = "Sinex Pre-Flight Verification System")]
@@ -548,8 +547,10 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 println!(
                     "  {} - {} ({})",
-                    verification.timestamp.map_or("N/A".to_string(), |t| t.to_string()), 
-                    verification.status, 
+                    verification
+                        .timestamp
+                        .map_or("N/A".to_string(), |t| t.to_string()),
+                    verification.status,
                     verification.id
                 );
             }

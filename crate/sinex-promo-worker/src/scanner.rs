@@ -27,21 +27,12 @@ impl Default for ScannerConfig {
 }
 
 /// Tracks scanning progress across runs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScannerState {
     /// Last processed event ID for each source
     pub last_event_ids: HashMap<String, Ulid>,
     /// Timestamp of last scan
     pub last_scan_ts: OptionalTimestamp,
-}
-
-impl Default for ScannerState {
-    fn default() -> Self {
-        Self {
-            last_event_ids: HashMap::new(),
-            last_scan_ts: None,
-        }
-    }
 }
 
 /// Scans for new events to promote

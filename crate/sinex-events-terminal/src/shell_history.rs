@@ -5,7 +5,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
@@ -338,7 +338,7 @@ impl ShellHistoryReader {
         &self,
         line: &str,
         shell_type: &str,
-        file_path: &PathBuf,
+        file_path: &Path,
         line_number: usize,
     ) -> Option<(RawEvent, ShellHistoryCommandPayload)> {
         let line = line.trim();

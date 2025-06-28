@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use tracing::info;
 
 /// Direct configuration structure that matches NixOS module options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NixosConfig {
     #[serde(default)]
     pub collector: CollectorSettings,
-    
+
     #[serde(default)]
     pub event_sources: EventSourceSettings,
-    
+
     #[serde(default)]
     pub storage: StorageSettings,
 }
@@ -21,11 +21,11 @@ pub struct NixosConfig {
 pub struct CollectorSettings {
     /// Required: Git-annex repository path
     pub annex_repo_path: String,
-    
+
     /// Database connection pool size
     #[serde(default = "default_pool_size")]
     pub database_pool_size: u32,
-    
+
     /// Threshold for storing content in git-annex
     #[serde(default = "default_blob_threshold")]
     pub blob_threshold: String,
@@ -35,25 +35,25 @@ pub struct CollectorSettings {
 pub struct EventSourceSettings {
     #[serde(default = "default_true")]
     pub filesystem: bool,
-    
+
     #[serde(default = "default_true")]
     pub terminal: bool,
-    
+
     #[serde(default = "default_true")]
     pub window_manager: bool,
-    
+
     #[serde(default = "default_true")]
     pub clipboard: bool,
-    
+
     #[serde(default = "default_true")]
     pub system_events: bool,
-    
+
     #[serde(default)]
     pub process_monitoring: bool,
-    
+
     #[serde(default)]
     pub network_monitoring: bool,
-    
+
     #[serde(default)]
     pub screen_capture: bool,
 }
@@ -62,7 +62,7 @@ pub struct EventSourceSettings {
 pub struct StorageSettings {
     #[serde(default = "default_compression")]
     pub compression_level: String,
-    
+
     /// Data retention (null = infinite)
     pub data_retention: Option<String>,
 }
@@ -101,16 +101,6 @@ impl Default for StorageSettings {
     }
 }
 
-impl Default for NixosConfig {
-    fn default() -> Self {
-        Self {
-            collector: CollectorSettings::default(),
-            event_sources: EventSourceSettings::default(),
-            storage: StorageSettings::default(),
-        }
-    }
-}
-
 // Default value functions
 fn default_true() -> bool {
     true
@@ -133,12 +123,12 @@ impl NixosConfig {
     pub fn load_from_file(path: &PathBuf) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        
+
         let config: Self = toml::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
-        
+
         config.validate()?;
-        
+
         info!("Loaded configuration from {}", path.display());
         Ok(config)
     }
@@ -153,23 +143,36 @@ impl NixosConfig {
         // Validate git-annex repository exists
         let annex_path = PathBuf::from(&self.collector.annex_repo_path);
         if !annex_path.exists() {
-            anyhow::bail!("Git-annex repository does not exist: {}", annex_path.display());
+            anyhow::bail!(
+                "Git-annex repository does not exist: {}",
+                annex_path.display()
+            );
         }
 
         // Validate it's actually a git-annex repository
         let git_annex_dir = annex_path.join(".git").join("annex");
         if !git_annex_dir.exists() {
-            anyhow::bail!("Directory is not a git-annex repository: {}", annex_path.display());
+            anyhow::bail!(
+                "Directory is not a git-annex repository: {}",
+                annex_path.display()
+            );
         }
 
         // Validate blob threshold format
-        self.parse_blob_threshold()
-            .with_context(|| format!("Invalid blob_threshold format: {}", self.collector.blob_threshold))?;
+        self.parse_blob_threshold().with_context(|| {
+            format!(
+                "Invalid blob_threshold format: {}",
+                self.collector.blob_threshold
+            )
+        })?;
 
         // Validate compression level
         match self.storage.compression_level.as_str() {
             "fast" | "balanced" | "max" => {}
-            _ => anyhow::bail!("Invalid compression_level: {} (must be fast, balanced, or max)", self.storage.compression_level),
+            _ => anyhow::bail!(
+                "Invalid compression_level: {} (must be fast, balanced, or max)",
+                self.storage.compression_level
+            ),
         }
 
         // Validate data retention format if specified
@@ -190,29 +193,37 @@ impl NixosConfig {
 
         // Build enabled events list based on source settings
         if self.event_sources.filesystem {
-            enabled_events.extend([
-                "file.created",
-                "file.modified", 
-                "file.deleted",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                ["file.created", "file.modified", "file.deleted"]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.terminal {
-            enabled_events.extend([
-                "command.executed",
-                "shell.command.executed_atuin",
-                "shell.history.command",
-                "terminal.scrollback.captured",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                [
+                    "command.executed",
+                    "shell.command.executed_atuin",
+                    "shell.history.command",
+                    "terminal.scrollback.captured",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.window_manager {
-            enabled_events.extend([
-                "window.focused",
-                "window.opened",
-                "window.closed",
-                "workspace.changed",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                [
+                    "window.focused",
+                    "window.opened",
+                    "window.closed",
+                    "workspace.changed",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.clipboard {
@@ -220,35 +231,42 @@ impl NixosConfig {
         }
 
         if self.event_sources.system_events {
-            enabled_events.extend([
-                "dbus.signal",
-                "system.notification",
-                "media.playback.changed",
-                "system.power.event",
-                "hardware.device.event",
-                "journal.entry",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                [
+                    "dbus.signal",
+                    "system.notification",
+                    "media.playback.changed",
+                    "system.power.event",
+                    "hardware.device.event",
+                    "journal.entry",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.process_monitoring {
-            enabled_events.extend([
-                "process.started",
-                "process.ended",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                ["process.started", "process.ended"]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.network_monitoring {
-            enabled_events.extend([
-                "network.connection.opened",
-                "network.connection.closed",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                ["network.connection.opened", "network.connection.closed"]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.screen_capture {
-            enabled_events.extend([
-                "screen.captured",
-                "screen.ocr.completed",
-            ].iter().map(|s| s.to_string()));
+            enabled_events.extend(
+                ["screen.captured", "screen.ocr.completed"]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
         }
 
         // Configure event sources with smart defaults
@@ -280,15 +298,21 @@ impl NixosConfig {
         })
     }
 
-    fn add_filesystem_config(&self, flat_config: &mut HashMap<String, sinex_core::ConfigValue>) -> Result<()> {
+    fn add_filesystem_config(
+        &self,
+        flat_config: &mut HashMap<String, sinex_core::ConfigValue>,
+    ) -> Result<()> {
         let mut files_config = toml::map::Map::new();
-        
+
         // Auto-discover watch paths
         let watch_paths = self.auto_discover_watch_paths();
         files_config.insert(
             "watch_patterns".to_string(),
             sinex_core::ConfigValue::Array(
-                watch_paths.into_iter().map(sinex_core::ConfigValue::String).collect()
+                watch_paths
+                    .into_iter()
+                    .map(sinex_core::ConfigValue::String)
+                    .collect(),
             ),
         );
 
@@ -296,22 +320,40 @@ impl NixosConfig {
         files_config.insert(
             "ignore_patterns".to_string(),
             sinex_core::ConfigValue::Array(
-                self.get_ignore_patterns().into_iter().map(sinex_core::ConfigValue::String).collect()
+                self.get_ignore_patterns()
+                    .into_iter()
+                    .map(sinex_core::ConfigValue::String)
+                    .collect(),
             ),
         );
 
         // Optimal debounce settings
-        files_config.insert("debounce_ms".to_string(), sinex_core::ConfigValue::Integer(100));
-        files_config.insert("max_depth".to_string(), sinex_core::ConfigValue::Integer(10));
+        files_config.insert(
+            "debounce_ms".to_string(),
+            sinex_core::ConfigValue::Integer(100),
+        );
+        files_config.insert(
+            "max_depth".to_string(),
+            sinex_core::ConfigValue::Integer(10),
+        );
 
-        flat_config.insert("event.files".to_string(), sinex_core::ConfigValue::Table(files_config));
+        flat_config.insert(
+            "event.files".to_string(),
+            sinex_core::ConfigValue::Table(files_config),
+        );
         Ok(())
     }
 
-    fn add_terminal_config(&self, flat_config: &mut HashMap<String, sinex_core::ConfigValue>) -> Result<()> {
+    fn add_terminal_config(
+        &self,
+        flat_config: &mut HashMap<String, sinex_core::ConfigValue>,
+    ) -> Result<()> {
         // Auto-discover Atuin database
         if let Ok(atuin_config) = self.auto_discover_atuin_config() {
-            flat_config.insert("event.shell_command_executed_atuin".to_string(), atuin_config);
+            flat_config.insert(
+                "event.shell_command_executed_atuin".to_string(),
+                atuin_config,
+            );
         }
 
         // Auto-discover Kitty socket
@@ -329,14 +371,26 @@ impl NixosConfig {
                 sinex_core::ConfigValue::String("~/.bash_history".to_string()),
             ]),
         );
-        shell_config.insert("polling_interval_secs".to_string(), sinex_core::ConfigValue::Integer(10));
-        shell_config.insert("use_file_watch".to_string(), sinex_core::ConfigValue::Boolean(true));
-        
-        flat_config.insert("event.shell_history_command".to_string(), sinex_core::ConfigValue::Table(shell_config));
+        shell_config.insert(
+            "polling_interval_secs".to_string(),
+            sinex_core::ConfigValue::Integer(10),
+        );
+        shell_config.insert(
+            "use_file_watch".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+
+        flat_config.insert(
+            "event.shell_history_command".to_string(),
+            sinex_core::ConfigValue::Table(shell_config),
+        );
         Ok(())
     }
 
-    fn add_window_manager_config(&self, flat_config: &mut HashMap<String, sinex_core::ConfigValue>) -> Result<()> {
+    fn add_window_manager_config(
+        &self,
+        flat_config: &mut HashMap<String, sinex_core::ConfigValue>,
+    ) -> Result<()> {
         let mut windows_config = toml::map::Map::new();
         windows_config.insert(
             "monitored_events".to_string(),
@@ -349,41 +403,104 @@ impl NixosConfig {
             ]),
         );
 
-        flat_config.insert("event.windows".to_string(), sinex_core::ConfigValue::Table(windows_config));
+        flat_config.insert(
+            "event.windows".to_string(),
+            sinex_core::ConfigValue::Table(windows_config),
+        );
 
         // State snapshot configuration
         let mut snapshot_config = toml::map::Map::new();
-        snapshot_config.insert("interval_secs".to_string(), sinex_core::ConfigValue::Integer(300)); // 5 minutes
-        snapshot_config.insert("include_monitors".to_string(), sinex_core::ConfigValue::Boolean(true));
-        snapshot_config.insert("include_workspaces".to_string(), sinex_core::ConfigValue::Boolean(true));
-        snapshot_config.insert("include_clients".to_string(), sinex_core::ConfigValue::Boolean(true));
+        snapshot_config.insert(
+            "interval_secs".to_string(),
+            sinex_core::ConfigValue::Integer(300),
+        ); // 5 minutes
+        snapshot_config.insert(
+            "include_monitors".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        snapshot_config.insert(
+            "include_workspaces".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        snapshot_config.insert(
+            "include_clients".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
 
-        flat_config.insert("event.state_snapshot".to_string(), sinex_core::ConfigValue::Table(snapshot_config));
+        flat_config.insert(
+            "event.state_snapshot".to_string(),
+            sinex_core::ConfigValue::Table(snapshot_config),
+        );
         Ok(())
     }
 
-    fn add_clipboard_config(&self, flat_config: &mut HashMap<String, sinex_core::ConfigValue>) -> Result<()> {
+    fn add_clipboard_config(
+        &self,
+        flat_config: &mut HashMap<String, sinex_core::ConfigValue>,
+    ) -> Result<()> {
         let mut clipboard_config = toml::map::Map::new();
-        clipboard_config.insert("poll_interval_ms".to_string(), sinex_core::ConfigValue::Integer(500));
-        clipboard_config.insert("max_content_size".to_string(), sinex_core::ConfigValue::String(self.collector.blob_threshold.clone()));
-        clipboard_config.insert("enable_deduplication".to_string(), sinex_core::ConfigValue::Boolean(true));
+        clipboard_config.insert(
+            "poll_interval_ms".to_string(),
+            sinex_core::ConfigValue::Integer(500),
+        );
+        clipboard_config.insert(
+            "max_content_size".to_string(),
+            sinex_core::ConfigValue::String(self.collector.blob_threshold.clone()),
+        );
+        clipboard_config.insert(
+            "enable_deduplication".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
 
-        flat_config.insert("event.clipboard".to_string(), sinex_core::ConfigValue::Table(clipboard_config));
+        flat_config.insert(
+            "event.clipboard".to_string(),
+            sinex_core::ConfigValue::Table(clipboard_config),
+        );
         Ok(())
     }
 
-    fn add_system_events_config(&self, flat_config: &mut HashMap<String, sinex_core::ConfigValue>) -> Result<()> {
+    fn add_system_events_config(
+        &self,
+        flat_config: &mut HashMap<String, sinex_core::ConfigValue>,
+    ) -> Result<()> {
         let mut dbus_config = toml::map::Map::new();
-        dbus_config.insert("monitor_session".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("monitor_system".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_notifications".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_media".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_power".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_hardware".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_bluetooth".to_string(), sinex_core::ConfigValue::Boolean(true));
-        dbus_config.insert("extract_network".to_string(), sinex_core::ConfigValue::Boolean(true));
+        dbus_config.insert(
+            "monitor_session".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "monitor_system".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_notifications".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_media".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_power".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_hardware".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_bluetooth".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
+        dbus_config.insert(
+            "extract_network".to_string(),
+            sinex_core::ConfigValue::Boolean(true),
+        );
 
-        flat_config.insert("event.dbus".to_string(), sinex_core::ConfigValue::Table(dbus_config));
+        flat_config.insert(
+            "event.dbus".to_string(),
+            sinex_core::ConfigValue::Table(dbus_config),
+        );
         Ok(())
     }
 
@@ -404,9 +521,7 @@ impl NixosConfig {
         }
 
         // Add common system paths
-        paths.extend([
-            "/etc/**/*".to_string(),
-        ]);
+        paths.extend(["/etc/**/*".to_string()]);
 
         paths
     }
@@ -414,17 +529,17 @@ impl NixosConfig {
     fn get_ignore_patterns(&self) -> Vec<String> {
         vec![
             "**/.git/**".to_string(),
-            "**/.*".to_string(),                // Hidden files
+            "**/.*".to_string(), // Hidden files
             "**/__pycache__/**".to_string(),
             "**/*.pyc".to_string(),
-            "**/target/**".to_string(),         // Rust
-            "**/node_modules/**".to_string(),   // Node.js
-            "**/build/**".to_string(),          // General build
-            "**/dist/**".to_string(),           // Distribution
-            "**/.cache/**".to_string(),         // Cache
-            "**/tmp/**".to_string(),            // Temporary
-            "**/result/**".to_string(),         // Nix
-            "**/result-*/**".to_string(),       // Nix build outputs
+            "**/target/**".to_string(),       // Rust
+            "**/node_modules/**".to_string(), // Node.js
+            "**/build/**".to_string(),        // General build
+            "**/dist/**".to_string(),         // Distribution
+            "**/.cache/**".to_string(),       // Cache
+            "**/tmp/**".to_string(),          // Temporary
+            "**/result/**".to_string(),       // Nix
+            "**/result-*/**".to_string(),     // Nix build outputs
         ]
     }
 
@@ -443,10 +558,22 @@ impl NixosConfig {
             .unwrap_or_else(|| format!("{}/.local/share/atuin/history.db", home));
 
         let mut config = toml::map::Map::new();
-        config.insert("db_path".to_string(), sinex_core::ConfigValue::String(db_path));
-        config.insert("polling_interval_secs".to_string(), sinex_core::ConfigValue::Integer(10));
-        config.insert("batch_size".to_string(), sinex_core::ConfigValue::Integer(100));
-        config.insert("use_file_watch".to_string(), sinex_core::ConfigValue::Boolean(false));
+        config.insert(
+            "db_path".to_string(),
+            sinex_core::ConfigValue::String(db_path),
+        );
+        config.insert(
+            "polling_interval_secs".to_string(),
+            sinex_core::ConfigValue::Integer(10),
+        );
+        config.insert(
+            "batch_size".to_string(),
+            sinex_core::ConfigValue::Integer(100),
+        );
+        config.insert(
+            "use_file_watch".to_string(),
+            sinex_core::ConfigValue::Boolean(false),
+        );
 
         Ok(sinex_core::ConfigValue::Table(config))
     }
@@ -465,7 +592,10 @@ impl NixosConfig {
             .unwrap_or_else(|| "/tmp/kitty".to_string());
 
         let mut config = toml::map::Map::new();
-        config.insert("socket_path".to_string(), sinex_core::ConfigValue::String(socket_path));
+        config.insert(
+            "socket_path".to_string(),
+            sinex_core::ConfigValue::String(socket_path),
+        );
         config.insert(
             "capture_env_vars".to_string(),
             sinex_core::ConfigValue::Array(vec![
@@ -476,7 +606,10 @@ impl NixosConfig {
                 sinex_core::ConfigValue::String("SHELL".to_string()),
             ]),
         );
-        config.insert("max_command_length".to_string(), sinex_core::ConfigValue::Integer(4096));
+        config.insert(
+            "max_command_length".to_string(),
+            sinex_core::ConfigValue::Integer(4096),
+        );
 
         Ok(sinex_core::ConfigValue::Table(config))
     }
@@ -484,31 +617,47 @@ impl NixosConfig {
     fn parse_blob_threshold(&self) -> Result<u64> {
         let threshold = &self.collector.blob_threshold;
         if let Some(size_str) = threshold.strip_suffix("MB") {
-            let size: u64 = size_str.parse().context("Invalid number in blob threshold")?;
+            let size: u64 = size_str
+                .parse()
+                .context("Invalid number in blob threshold")?;
             Ok(size * 1024 * 1024)
         } else if let Some(size_str) = threshold.strip_suffix("KB") {
-            let size: u64 = size_str.parse().context("Invalid number in blob threshold")?;
+            let size: u64 = size_str
+                .parse()
+                .context("Invalid number in blob threshold")?;
             Ok(size * 1024)
         } else if let Some(size_str) = threshold.strip_suffix("GB") {
-            let size: u64 = size_str.parse().context("Invalid number in blob threshold")?;
+            let size: u64 = size_str
+                .parse()
+                .context("Invalid number in blob threshold")?;
             Ok(size * 1024 * 1024 * 1024)
         } else {
-            threshold.parse().context("Invalid blob threshold format (expected number with MB/KB/GB suffix)")
+            threshold
+                .parse()
+                .context("Invalid blob threshold format (expected number with MB/KB/GB suffix)")
         }
     }
 
     fn parse_retention_period(&self, retention: &str) -> Result<chrono::Duration> {
         if let Some(days_str) = retention.strip_suffix("d") {
-            let days: i64 = days_str.parse().context("Invalid number in retention period")?;
+            let days: i64 = days_str
+                .parse()
+                .context("Invalid number in retention period")?;
             Ok(chrono::Duration::days(days))
         } else if let Some(weeks_str) = retention.strip_suffix("w") {
-            let weeks: i64 = weeks_str.parse().context("Invalid number in retention period")?;
+            let weeks: i64 = weeks_str
+                .parse()
+                .context("Invalid number in retention period")?;
             Ok(chrono::Duration::weeks(weeks))
         } else if let Some(months_str) = retention.strip_suffix("m") {
-            let months: i64 = months_str.parse().context("Invalid number in retention period")?;
+            let months: i64 = months_str
+                .parse()
+                .context("Invalid number in retention period")?;
             Ok(chrono::Duration::days(months * 30)) // Approximate
         } else if let Some(years_str) = retention.strip_suffix("y") {
-            let years: i64 = years_str.parse().context("Invalid number in retention period")?;
+            let years: i64 = years_str
+                .parse()
+                .context("Invalid number in retention period")?;
             Ok(chrono::Duration::days(years * 365)) // Approximate
         } else {
             anyhow::bail!("Invalid retention period format (expected number with d/w/m/y suffix)")

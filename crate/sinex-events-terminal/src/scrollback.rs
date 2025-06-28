@@ -262,7 +262,7 @@ impl ScrollbackCapture {
 
                 // Save to file if configured
                 if self.config.save_to_files {
-                    self.save_scrollback_to_file(&window, &scrollback).await?;
+                    self.save_scrollback_to_file(window, &scrollback).await?;
                 }
             }
 
@@ -523,7 +523,7 @@ impl ScrollbackCapture {
 
                 // Save to file if configured
                 if self.config.save_to_files {
-                    self.save_scrollback_to_file(&window, &scrollback).await?;
+                    self.save_scrollback_to_file(window, &scrollback).await?;
                 }
             }
         }
@@ -593,7 +593,11 @@ async fn monitor_command_events(
                     timestamp: Utc::now(),
                 };
 
-                if let Err(_) = tx.send_or_log(event, "scrollback_command_event").await {
+                if tx
+                    .send_or_log(event, "scrollback_command_event")
+                    .await
+                    .is_err()
+                {
                     break; // Channel closed
                 }
             }

@@ -464,6 +464,7 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_extracted_message(
     bus_type: &str,
     msg_type: dbus::message::MessageType,
@@ -483,14 +484,13 @@ async fn process_extracted_message(
     let member = member.unwrap_or_default();
 
     // Check filters
-    if !config.include_interfaces.is_empty() {
-        if !config
+    if !config.include_interfaces.is_empty()
+        && !config
             .include_interfaces
             .iter()
             .any(|i| interface.starts_with(i))
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     if config
@@ -532,7 +532,7 @@ async fn process_extracted_message(
             {
                 let player = sender
                     .as_deref()
-                    .and_then(|s| s.split('.').last())
+                    .and_then(|s| s.split('.').next_back())
                     .unwrap_or("unknown");
 
                 let payload = MediaPlaybackPayload {
@@ -788,7 +788,7 @@ fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
             // Extract media player state changes
             // This is simplified - real implementation would parse the properties
             let sender = msg.sender().map(|s| s.to_string()).unwrap_or_default();
-            let player = sender.split('.').last().unwrap_or("unknown");
+            let player = sender.split('.').next_back().unwrap_or("unknown");
 
             let payload = MediaPlaybackPayload {
                 player: player.to_string(),
@@ -912,7 +912,7 @@ fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
     if let Some(member) = msg.member() {
         if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
             let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-            let device_address = path.split('/').last().unwrap_or("unknown");
+            let device_address = path.split('/').next_back().unwrap_or("unknown");
 
             let payload = BluetoothEventPayload {
                 event_type: "changed".to_string(),
