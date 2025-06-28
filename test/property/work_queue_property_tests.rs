@@ -219,7 +219,7 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
                 agent_name
             )
-            .fetch_one(*pool)
+            .fetch_one(pool.pool())
             .await
             .expect("Operation failed");
 
@@ -227,7 +227,7 @@ proptest! {
                 "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'succeeded'",
                 agent_name
             )
-            .fetch_one(*pool)
+            .fetch_one(pool.pool())
             .await
             .expect("Operation failed");
 
@@ -244,12 +244,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(*pool).await;
+            ).execute(pool.pool()).await;
 
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(*pool).await;
+            ).execute(pool.pool()).await;
 
             Ok(())
         })?
@@ -338,12 +338,12 @@ proptest! {
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
                 agent_name
-            ).execute(*pool).await;
+            ).execute(pool.pool()).await;
 
             let _ = sqlx::query!(
                 "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
                 agent_name
-            ).execute(*pool).await;
+            ).execute(pool.pool()).await;
 
             Ok(())
         })?

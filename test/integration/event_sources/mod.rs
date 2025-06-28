@@ -96,19 +96,7 @@ pub mod utils {
         let timeout_duration = Duration::from_secs(timeout_secs);
 
         loop {
-            let events = sqlx::query_as!(
-                RawEvent,
-                r#"
-                SELECT id::uuid as "id: Ulid", source, event_type, ts_ingest, ts_orig,
-                       host, ingestor_version, payload_schema_id::uuid as "payload_schema_id: Option<Ulid>", payload
-                FROM raw.events
-                WHERE source = $1
-                ORDER BY ts_ingest DESC
-                "#,
-                source_name
-            )
-            .fetch_all(pool)
-            .await?;
+            let events = sinex_db::queries::get_events_by_source(pool, source_name, 100).await?;
 
             if events.len() >= min_events {
                 return Ok(events);

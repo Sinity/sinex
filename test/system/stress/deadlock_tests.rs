@@ -91,7 +91,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                    AND last_attempt_ts < NOW() - INTERVAL '3 seconds'",
                 detection_agent
             )
-            .fetch_all(detection_pool)
+            .fetch_all(&detection_pool)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -108,7 +108,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                    AND processing_worker_id IS NOT NULL",
                 detection_agent
             )
-            .fetch_all(detection_pool)
+            .fetch_all(&detection_pool)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -158,7 +158,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                      RETURNING queue_id::text",
                     detection_agent
                 )
-                .fetch_all(detection_pool)
+                .fetch_all(&detection_pool)
                 .await
                 .unwrap_or_default();
 
@@ -396,7 +396,7 @@ impl DeadlockStressWorker {
             self.agent_name,
             self.worker_id
         )
-        .fetch_optional(&&self.pool)
+        .fetch_optional(&self.pool)
         .await;
 
         match claimed_item {

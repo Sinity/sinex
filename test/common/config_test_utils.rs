@@ -177,7 +177,7 @@ pub mod validation {
     pub fn validate_complete_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
         move |config: &ConfigValue| {
             // Use MultiValidator pattern to accumulate all errors
-            let mut multi_validator = MultiValidator::new();
+            let multi_validator = MultiValidator::new();
 
             // Validate database section
             if let Err(e) = validate_database_config()(config) {

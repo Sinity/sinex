@@ -380,26 +380,36 @@ where
 
 /// Wait for multiple conditions to be met simultaneously
 pub async fn wait_for_multiple_conditions<F, Fut>(
-    conditions: Vec<F>,
+    mut conditions: Vec<F>,
     timeout_secs: u64,
 ) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
-    let mut conditions = conditions;
-    wait_for_condition(
-        move || async {
+    use tokio::time::{timeout, Duration};
+    
+    let result = timeout(Duration::from_secs(timeout_secs), async {
+        loop {
+            let mut all_met = true;
             for condition in &mut conditions {
                 if !condition().await? {
-                    return Ok(false);
+                    all_met = false;
+                    break;
                 }
             }
-            Ok(true)
-        },
-        timeout_secs,
-    )
-    .await
+            if all_met {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await;
+    
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => anyhow::bail!("Multiple conditions not met within {} seconds", timeout_secs),
+    }
 }
 
 /// Wait for a condition with timeout, returning whether condition was met

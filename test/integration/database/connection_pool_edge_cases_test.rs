@@ -222,7 +222,7 @@ async fn test_connection_pool_transaction_isolation(ctx: TestContext) -> TestRes
 
         // This should fail - table doesn't exist in this connection
         let result = sqlx::query("SELECT * FROM pool_test")
-            .fetch_all(pool2)
+            .fetch_all(&pool2)
             .await;
 
         assert!(result.is_err());

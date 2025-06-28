@@ -292,7 +292,7 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
                 event.id.to_uuid(),
                 create_agent
             )
-            .execute(create_pool)
+            .execute(&create_pool)
             .await
             .expect("Work item creation failed");
 

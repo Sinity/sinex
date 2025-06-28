@@ -122,7 +122,7 @@ impl RaceConditionWorker {
             self.agent_name,
             self.worker_id
         )
-        .fetch_optional(&&self.pool)
+        .fetch_optional(&self.pool)
         .await;
 
         match claimed_item {
@@ -257,7 +257,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
-            .fetch_one(detection_pool)
+            .fetch_one(&detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -267,7 +267,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'processing'",
                 detection_agent
             )
-            .fetch_one(detection_pool)
+            .fetch_one(&detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -280,7 +280,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
-            .fetch_one(detection_pool)
+            .fetch_one(&detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);
@@ -296,7 +296,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                  ) conflicts",
                 detection_agent
             )
-            .fetch_one(detection_pool)
+            .fetch_one(&detection_pool)
             .await
             .unwrap_or(None)
             .unwrap_or(0);

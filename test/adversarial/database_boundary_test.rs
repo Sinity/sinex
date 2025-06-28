@@ -447,7 +447,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
                     ORDER BY minute
                     "#
                 )
-                .fetch_all(*pool)
+                .fetch_all(&*pool)
                 .await;
 
                 match result {

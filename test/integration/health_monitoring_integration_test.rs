@@ -769,7 +769,7 @@ async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> TestResu
     let final_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM raw.events WHERE source = 'health_monitoring_test'",
     )
-    .fetch_one(*pool)
+    .fetch_one(pool)
     .await?;
 
     pretty_assertions::assert_eq!(

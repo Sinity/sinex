@@ -216,7 +216,7 @@ impl ResilientDbWorker {
     async fn run_transaction_query(&self, iteration: usize) -> Result<(), anyhow::Error> {
         let _active = self.metrics.add_active_connection();
 
-        let mut tx = match &self.pool.begin().await {
+        let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
                 self.metrics.remove_active_connection();
@@ -282,7 +282,7 @@ impl ResilientDbWorker {
         let _active = self.metrics.add_active_connection();
 
         // Generate a series to stream
-        let mut stream = sqlx::query("SELECT generate_series(1, 100) as num").fetch(&&self.pool);
+        let mut stream = sqlx::query("SELECT generate_series(1, 100) as num").fetch(&self.pool);
 
         let mut count = 0;
         while let Some(row_result) = stream.next().await {
