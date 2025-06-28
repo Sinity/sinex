@@ -32,7 +32,7 @@ async fn test_complete_deployment_workflow(ctx: TestContext) -> TestResult {
 
     // Clear any existing heartbeats
     sqlx::query!("DELETE FROM component_heartbeats WHERE component_name LIKE 'sinex-%'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
 
@@ -69,7 +69,7 @@ async fn test_complete_deployment_workflow(ctx: TestContext) -> TestResult {
         "starting",
         serde_json::json!({"phase": "deployment", "verification_passed": true})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Simulate collector startup
@@ -83,7 +83,7 @@ async fn test_complete_deployment_workflow(ctx: TestContext) -> TestResult {
         "active",
         serde_json::json!({"startup": "successful", "verification": "passed"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Phase 4: Verify deployment success
@@ -104,7 +104,7 @@ async fn test_complete_deployment_workflow(ctx: TestContext) -> TestResult {
         serde_json::json!({"phase": "completed", "verification_passed": true, "deployment_time": verification_duration.as_millis()}),
         deployment_id.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     println!("✓ Complete deployment workflow test passed");
@@ -227,7 +227,7 @@ async fn test_performance_under_load(ctx: TestContext) -> TestResult {
 
     // Clean up load test data
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'load-test-%'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     println!("✓ Performance under load test passed in {:?}", load_test_duration);
@@ -410,7 +410,7 @@ async fn test_resource_cleanup_and_state_management(ctx: TestContext) -> TestRes
         "PASS",
         serde_json::json!({"test": "cleanup", "phase": "testing"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Run verification
@@ -436,7 +436,7 @@ async fn test_resource_cleanup_and_state_management(ctx: TestContext) -> TestRes
         "DELETE FROM component_heartbeats WHERE instance_id = $1",
         test_verification_id.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     println!("✓ Resource cleanup and state management test passed");

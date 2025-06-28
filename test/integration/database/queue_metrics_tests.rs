@@ -31,7 +31,7 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
         "UPDATE sinex_schemas.work_queue SET status = 'processing' WHERE raw_event_id = $1::uuid::ulid",
         event3_id.to_uuid()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Calculate queue depth metrics
@@ -97,7 +97,7 @@ async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> TestResult
         work_item.queue_id.to_uuid(),
         processing_start
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Calculate dequeue latency (this function should exist after implementation)
@@ -149,7 +149,7 @@ async fn test_per_agent_lag_metric_calculation(ctx: TestContext) -> TestResult {
         old_event.to_uuid(),
         Utc::now() - Duration::minutes(10)
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Calculate lag metrics (this function should exist after implementation)
@@ -399,7 +399,7 @@ async fn create_test_agent(pool: &DbPool, agent_name: &str) -> TestResult {
         "#,
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     Ok(())
 }

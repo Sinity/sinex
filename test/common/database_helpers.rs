@@ -108,7 +108,7 @@ pub async fn create_test_work_items(
             chrono::Utc::now(),
             "test_host"
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         // Then create the work queue item
@@ -117,7 +117,7 @@ pub async fn create_test_work_items(
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4)",
             sinex_db::ulid_to_uuid(queue_id), sinex_db::ulid_to_uuid(event_id),
             agent_name, "pending"
-        ).execute(pool).await?;
+        ).execute(&pool).await?;
         items.push(queue_id);
     }
     Ok(items)
@@ -134,7 +134,7 @@ pub async fn register_test_agent(pool: &DbPool, suffix: &str) -> Result<String> 
         "Test agent",
         "running"
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     Ok(agent_name)
 }
@@ -189,7 +189,7 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<()> {
         "Test agent",
         "running"
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     Ok(())
 }
@@ -202,7 +202,7 @@ pub async fn purge_old_work_queue_items(pool: &DbPool) -> Result<u64> {
          WHERE status = 'succeeded'
          AND processed_at < NOW() - INTERVAL '90 days'"
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(result.rows_affected())

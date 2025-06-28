@@ -816,13 +816,13 @@ pub mod cleanup {
     pub async fn truncate_all_tables(pool: &DbPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
         sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
         sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test_%'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
         Ok(())
     }

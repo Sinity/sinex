@@ -73,7 +73,7 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
         test_event_type,
         serde_json::json!({"test": "crud_operations"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     assert_eq!(insert_result.rows_affected(), 1);
@@ -96,7 +96,7 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
         serde_json::json!({"test": "crud_operations", "updated": true}),
         test_id
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     assert_eq!(update_result.rows_affected(), 1);
@@ -106,7 +106,7 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
         "DELETE FROM raw.events WHERE id = $1",
         test_id
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     assert_eq!(delete_result.rows_affected(), 1);
@@ -189,7 +189,7 @@ async fn test_database_transaction_handling(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id_1)
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -249,7 +249,7 @@ async fn test_database_concurrent_operations(ctx: TestContext) -> TestResult {
     // Cleanup
     for test_id in test_ids {
         sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id)
-            .execute(pool)
+            .execute(&pool)
             .await
             .ok();
     }
@@ -385,7 +385,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
         "test.error_handling",
         serde_json::json!({"test": "constraint"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Try to insert with same ID (should fail with constraint violation)
@@ -399,14 +399,14 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
         "test.error_handling",
         serde_json::json!({"test": "duplicate"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await;
 
     assert!(constraint_error.is_err(), "Should fail with constraint violation");
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE id = $1", test_id)
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

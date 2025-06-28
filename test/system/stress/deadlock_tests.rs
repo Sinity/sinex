@@ -18,7 +18,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -35,7 +35,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             "deadlock_item",
             json!({"deadlock_item": i})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         let queue_id = Ulid::new();
@@ -47,7 +47,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             event_id.to_uuid(),
             agent_name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 

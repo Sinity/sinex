@@ -275,7 +275,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());

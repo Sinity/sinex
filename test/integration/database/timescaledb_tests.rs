@@ -51,7 +51,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
 
     // Clean up any previous test data
     let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
-        .execute(pool)
+        .execute(&pool)
         .await;
 
     // Get initial chunk count
@@ -89,7 +89,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
         .bind(event.event_type)
         .bind(event.host)
         .bind(event.payload)
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -171,7 +171,7 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
         .bind("old_event")
         .bind("test_host")
         .bind(json!({"seq": i}))
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -209,7 +209,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
          GROUP BY hour, source, event_type
          WITH NO DATA",
     )
-    .execute(pool)
+    .execute(&pool)
     .await;
 
     // Note: This might fail if the view already exists from previous test runs
@@ -221,7 +221,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
                 end_offset => INTERVAL '1 hour',
                 schedule_interval => INTERVAL '1 hour')",
         )
-        .execute(pool)
+        .execute(&pool)
         .await;
     }
 
@@ -244,7 +244,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
                 .bind(json!({"hour": hour}))
-                .execute(pool)
+                .execute(&pool)
                 .await?;
             }
         }
@@ -252,7 +252,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
 
     // Refresh the aggregate
     let _ = sqlx::query("CALL refresh_continuous_aggregate('event_counts_hourly', NULL, NULL)")
-        .execute(pool)
+        .execute(&pool)
         .await;
 
     // Query the aggregate
@@ -298,7 +298,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
     if retention_policy.is_none() {
         // Create a retention policy (drop chunks older than 1 year)
         let result = sqlx::query("SELECT add_retention_policy('raw.events', INTERVAL '1 year')")
-            .execute(pool)
+            .execute(&pool)
             .await;
 
         if result.is_ok() {
@@ -327,7 +327,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
     .bind("very_old_event")
     .bind("test_host")
     .bind(json!({"data": "old"}))
-    .execute(pool)
+    .execute(&pool)
     .await;
 
     // Insert recent event using ULID from recent timestamp
@@ -341,7 +341,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
     .bind("recent_event")
     .bind("test_host")
     .bind(json!({"data": "recent"}))
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Count chunks that would be dropped by retention policy

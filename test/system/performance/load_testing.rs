@@ -77,7 +77,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -171,7 +171,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'concurrent_load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

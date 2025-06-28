@@ -348,7 +348,7 @@ pub mod database {
             "#,
             schema_id.to_uuid()
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(result.rows_affected() > 0)

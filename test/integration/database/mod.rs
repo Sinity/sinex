@@ -70,7 +70,7 @@ pub mod utils {
             schema,
             format!("Test schema for {}.{}", source, event_type)
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(schema_id)
@@ -116,7 +116,7 @@ pub mod utils {
                 raw_event_id.to_uuid(),
                 format!("{}_item_{}", agent_name, i)
             )
-            .execute(pool)
+            .execute(&pool)
             .await?;
 
             queue_ids.push(queue_id);

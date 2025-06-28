@@ -312,7 +312,7 @@ async fn test_pipeline_with_multiple_workers(ctx: TestContext) -> TestResult {
         .bind(event.ts_ingest)
         .bind(&event.payload)
         .bind("test-host")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         sqlx::query(
@@ -323,7 +323,7 @@ async fn test_pipeline_with_multiple_workers(ctx: TestContext) -> TestResult {
         .bind(Ulid::new().to_uuid())
         .bind(event.id.to_uuid())
         .bind("test_worker")
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -428,7 +428,7 @@ async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
         .bind(event.ts_ingest)
         .bind(&event.payload)
         .bind("test-host")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         // Add to work queue
@@ -440,7 +440,7 @@ async fn test_pipeline_error_recovery(ctx: TestContext) -> TestResult {
         .bind(Ulid::new().to_uuid())
         .bind(event.id.to_uuid())
         .bind("error_test_worker")
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 

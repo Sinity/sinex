@@ -37,7 +37,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                 "#,
             event_id.to_uuid()
         )
-        .execute(pool1)
+        .execute(&pool1)
         .await;
 
         if let Ok(result) = result {
@@ -60,7 +60,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
                 "#,
             event_id.to_uuid()
         )
-        .execute(pool2)
+        .execute(&pool2)
         .await;
 
         if let Ok(result) = result {
