@@ -3,6 +3,8 @@
 //! This module contains integration tests for various event sources,
 //! including filesystem monitoring, terminal command tracking, clipboard
 //! monitoring, and window manager events.
+
+#![allow(dead_code)]
 //!
 //! # Test Coverage
 //! - Event source lifecycle management (start/stop)

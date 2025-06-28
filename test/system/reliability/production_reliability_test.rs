@@ -470,20 +470,20 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         let health_result = timeout(Duration::from_secs(2), async {
             // Comprehensive health check
             let db_health = sqlx::query_scalar!("SELECT 1")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
             let table_count = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM information_schema.tables
                      WHERE table_schema IN ('raw', 'sinex_schemas')"
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
             let recent_events = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
             )
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
 

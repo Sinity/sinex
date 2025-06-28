@@ -3,6 +3,8 @@
 //! This module contains integration tests for agent functionality,
 //! including agent registration, heartbeat monitoring, manifest management,
 //! and agent lifecycle operations.
+
+#![allow(dead_code)]
 //!
 //! # Test Coverage
 //! - Agent manifest registration and updates

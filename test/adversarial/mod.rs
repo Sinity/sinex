@@ -3,6 +3,8 @@
 //! This module contains comprehensive security and edge case tests designed
 //! to stress-test the Sinex system under adverse conditions. Tests include
 //! security attacks, resource exhaustion, race conditions, and boundary cases.
+
+#![allow(dead_code)]
 //!
 //! # Test Categories
 //! - **Security Tests**: SQL injection, privilege escalation, input validation

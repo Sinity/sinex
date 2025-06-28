@@ -1,12 +1,11 @@
 use crate::common::prelude::*;
-use std::sync::Barrier;
 
 #[sinex_test(timeout = 30)]
 async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
     let num_tasks = 10;
     let events_per_task = 100;
-    let barrier = Arc::new(Barrier::new(num_tasks));
+    let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
 
     let mut handles = vec![];
 
@@ -31,7 +30,7 @@ async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
                 );
 
                 let result = insert_event(&pool, &event).await.unwrap();
-                ulids.push(result.id);
+                ulids.push(result);
             }
             ulids
         });
@@ -75,9 +74,9 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
     // Simulate two workers trying to claim the same event
     let pool1 = pool.clone();
     let pool2 = pool.clone();
-    let event_id = inserted.id;
+    let event_id = inserted;
 
-    let barrier = Arc::new(Barrier::new(2));
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let b1 = barrier.clone();
     let b2 = barrier.clone();
 

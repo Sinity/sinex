@@ -8,6 +8,8 @@
 //! - Basic database operations and transactions
 //! - TimescaleDB hypertable functionality
 //! - ULID primary key integration
+
+#![allow(dead_code)]
 //! - JSON schema validation with pg_jsonschema
 //! - Work queue operations and TTL
 //! - Connection pool edge cases and limits

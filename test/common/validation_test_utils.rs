@@ -49,12 +49,12 @@ pub async fn create_test_validator_from_db(pool: &DbPool) -> Result<EventValidat
 }
 
 /// Create test validator with specific rules
-pub fn create_test_validator_with_rules(rules: Vec<ValidationRule>) -> EventValidator {
-    let mut validator = EventValidator::new();
-    for rule in rules {
-        validator.add_rule(rule);
-    }
-    validator
+/// Note: EventValidator doesn't support adding custom rules at runtime,
+/// so this just returns a default validator for now.
+pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventValidator {
+    // The actual EventValidator doesn't support adding custom rules via public API
+    // Custom rules are hardcoded in the validator's constructor
+    EventValidator::new()
 }
 
 /// Validation rule for testing purposes

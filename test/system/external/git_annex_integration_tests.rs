@@ -183,7 +183,7 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult {
             // Add to annex
             let key = annex.add_file(&file_path).await?;
 
-            Ok::<_, Box<dyn std::error::Error>>(key)
+            Ok::<_, anyhow::Error>(key)
         });
 
         handles.push(handle);

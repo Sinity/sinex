@@ -3,6 +3,8 @@
 //! This module contains integration tests for the unified collector system,
 //! including configuration management, event source coordination, backpressure
 //! handling, and hot reload functionality.
+
+#![allow(dead_code)]
 //!
 //! # Test Coverage
 //! - Basic collector startup and shutdown

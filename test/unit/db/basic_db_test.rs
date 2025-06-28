@@ -101,12 +101,13 @@ async fn test_event_validation_creation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_database_connection(ctx: TestContext) -> TestResult {
     // Test database connectivity with enhanced error context
-    let result = assert_database_state(
+    let result: i32 = assert_database_state(
         ctx.pool(),
         async {
-            sqlx::query_scalar("SELECT 1 as test_value")
+            sqlx::query_scalar!("SELECT 1 as test_value")
                 .fetch_one(ctx.pool())
                 .await
+                .map(|opt| opt.unwrap_or(0))
         },
         "basic database connectivity test",
     )

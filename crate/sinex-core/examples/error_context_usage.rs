@@ -1,7 +1,6 @@
 use chrono::Utc;
-use sinex_core::{CoreError, ErrorContext, ResultExt};
+use sinex_core::{CoreError, ResultExt};
 use sinex_ulid::Ulid;
-use std::path::Path;
 
 fn main() {
     // Example 1: Simple error with context
