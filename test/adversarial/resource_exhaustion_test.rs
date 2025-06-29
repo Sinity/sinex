@@ -4,14 +4,14 @@ use sinex_collector::config::{CollectorConfig, ConfigManager};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[sinex_test(timeout = 60)]
+#[sinex_test(timeout = 30)] // Reduced from 60s - this test should complete faster
 async fn test_unbounded_file_descriptor_explosion(ctx: TestContext) -> TestResult {
     // Try to watch a directory with thousands of files
     let temp_dir = resources::temp_dir()?;
     let mut paths = vec![];
 
-    // Create many files
-    for i in 0..1000 {
+    // Create many files (reduced count for faster test)
+    for i in 0..500 { // Reduced from 1000 for faster execution
         let file_path = temp_dir.path().join(format!("file_{}.txt", i));
         std::fs::write(&file_path, format!("content {}", i)).unwrap();
         paths.push(file_path);

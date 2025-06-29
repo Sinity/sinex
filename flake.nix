@@ -191,9 +191,14 @@
             ];
 
             shellHook = ''
+              echo "🚀 Setting up Sinex development environment..."
+              
               # Database configuration
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
+              
+              # Test optimizations (applied per-session in code, not globally)
+              export SINEX_TEST_OPTIMIZATIONS="true"
               
               # Setup database if needed
               if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then

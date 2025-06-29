@@ -228,7 +228,7 @@ async fn test_terminal_utf8_overlong_encoding(_ctx: TestContext) -> Result<(), a
             }
         }
     }
-    
+
     Ok(())
 }
 

@@ -9,7 +9,7 @@ use crate::common::prelude::*;
 
 /// Replace `sleep(Duration::from_millis(10))` with proper synchronization
 pub async fn wait_for_database_ready(pool: &DbPool) -> anyhow::Result<()> {
-    wait_for_database_ready_with_timeout(pool, 10).await
+    wait_for_database_ready_with_timeout(pool, 5).await // Reduced from 10s
 }
 
 /// Wait for database with custom timeout
@@ -46,6 +46,8 @@ pub async fn wait_for_event_count(
 ) -> anyhow::Result<i64> {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
+    let mut last_progress = 0;
+    let progress_threshold = if timeout_secs > 10 { timeout_secs / 4 } else { timeout_secs };
 
     while start.elapsed() < timeout_duration {
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
@@ -57,9 +59,17 @@ pub async fn wait_for_event_count(
             return Ok(count);
         }
 
+        // Show progress for long waits
+        let elapsed_secs = start.elapsed().as_secs();
+        if elapsed_secs > last_progress + progress_threshold {
+            eprintln!("  ⏳ Waiting for {} events, currently have {} ({}s elapsed)", 
+                     expected_count, count, elapsed_secs);
+            last_progress = elapsed_secs;
+        }
+
         // Use exponential backoff instead of fixed sleep
         let elapsed = start.elapsed();
-        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        let backoff = Duration::from_millis(25.min(elapsed.as_millis() as u64 / 20));
         tokio::time::sleep(backoff).await;
     }
 
@@ -150,6 +160,8 @@ pub async fn wait_for_work_queue_count(
 ) -> anyhow::Result<i64> {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
+    let mut last_progress = 0;
+    let progress_threshold = if timeout_secs > 5 { 2 } else { timeout_secs };
 
     while start.elapsed() < timeout_duration {
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.work_queue")
@@ -161,9 +173,17 @@ pub async fn wait_for_work_queue_count(
             return Ok(count);
         }
 
+        // Show progress for longer waits
+        let elapsed_secs = start.elapsed().as_secs();
+        if elapsed_secs > last_progress + progress_threshold {
+            eprintln!("  ⏳ Waiting for work queue count {}, currently {} ({}s elapsed)", 
+                     expected_count, count, elapsed_secs);
+            last_progress = elapsed_secs;
+        }
+
         // Use exponential backoff
         let elapsed = start.elapsed();
-        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        let backoff = Duration::from_millis(25.min(elapsed.as_millis() as u64 / 20));
         tokio::time::sleep(backoff).await;
     }
 
@@ -388,7 +408,7 @@ where
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
     use tokio::time::{timeout, Duration};
-    
+
     let result = timeout(Duration::from_secs(timeout_secs), async {
         loop {
             let mut all_met = true;
@@ -403,12 +423,16 @@ where
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-    }).await;
-    
+    })
+    .await;
+
     match result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(e),
-        Err(_) => anyhow::bail!("Multiple conditions not met within {} seconds", timeout_secs),
+        Err(_) => anyhow::bail!(
+            "Multiple conditions not met within {} seconds",
+            timeout_secs
+        ),
     }
 }
 

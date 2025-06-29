@@ -26,7 +26,13 @@ pub mod database_helpers;
 // NEW: Unified database access
 pub mod database;
 
-// Test database isolation
+// Universal database pool system
+pub mod database_pool;
+
+// Cleanup hook for test infrastructure
+pub mod cleanup_hook;
+
+// Test database isolation (kept for migration)
 pub mod test_database;
 
 // Unified test context for all tests

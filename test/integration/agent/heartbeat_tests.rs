@@ -239,7 +239,7 @@ async fn test_heartbeat_metrics_tracking(ctx: TestContext) -> TestResult {
     .await?;
 
     pretty_assertions::assert_eq!(degraded_count, 1);
-    
+
     Ok(())
 }
 

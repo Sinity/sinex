@@ -1,7 +1,7 @@
 //! Unified test context for Sinex tests
 //!
 //! Provides a comprehensive testing context that encapsulates:
-//! - Database connection with automatic transaction management
+//! - Database connection using the universal pool system
 //! - Event builder factories for consistent event creation
 //! - Timing helpers to eliminate flaky sleeps
 //! - Common test utilities in one ergonomic interface
@@ -19,14 +19,13 @@
 //! }
 //! ```
 
-use crate::common::database::TestPool;
+use crate::common::database_pool::PooledDatabase;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
     wait_for_work_queue_count,
 };
-use sqlx::{Postgres, Transaction};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -46,7 +45,7 @@ pub struct TestConfig {
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            default_timeout: Duration::from_secs(5),
+            default_timeout: Duration::from_secs(3), // Reduced from 5s for faster tests
             pool_size: 5,
             verbose: false,
             test_name: "unnamed_test".to_string(),
@@ -54,18 +53,10 @@ impl Default for TestConfig {
     }
 }
 
-/// Database connection type for TestContext
-pub enum DbConnection {
-    /// Test pool with cleanup strategy
-    TestPool(TestPool),
-    /// Direct pool access
-    Pool(DbPool),
-}
-
 /// Unified test context providing all common test functionality
 pub struct TestContext {
-    /// Database connection (pool or transaction)
-    db: DbConnection,
+    /// Database from the universal pool
+    db: PooledDatabase,
     /// Test configuration
     config: TestConfig,
     /// Test start time for diagnostics
@@ -82,42 +73,29 @@ impl TestContext {
 
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> Result<Self> {
-        let test_pool = TestPool::new().await?;
+        let db = crate::common::database_pool::acquire_database().await?;
 
         Ok(Self {
-            db: DbConnection::TestPool(test_pool),
+            db,
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
-    /// Create a test context using an existing pool
-    pub async fn with_pool(pool: DbPool, config: TestConfig) -> Result<Self> {
+    /// Create a test context with a pooled database (used by #[sinex_test])
+    pub async fn with_pooled_database(db: PooledDatabase, config: TestConfig) -> Result<Self> {
         Ok(Self {
-            db: DbConnection::Pool(pool),
+            db,
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
         })
-    }
-
-    /// Create a test context with a transaction (used by #[sinex_test])
-    pub async fn with_transaction(
-        _tx: &mut Transaction<'_, Postgres>,
-        config: TestConfig,
-    ) -> Result<Self> {
-        // This method is deprecated - use with_pool instead
-        // The macro now passes the pool directly to avoid deadlocks
-        panic!("TestContext::with_transaction is deprecated - use with_pool instead");
     }
 
     /// Get the database pool
     pub fn pool(&self) -> &DbPool {
-        match &self.db {
-            DbConnection::TestPool(test_pool) => test_pool.pool(),
-            DbConnection::Pool(pool) => pool,
-        }
+        self.db.pool()
     }
 
     /// Get the test name
@@ -262,9 +240,9 @@ impl TestContext {
 
     /// Wait a short time for processing (replaces arbitrary sleeps)
     pub async fn wait_for_processing(&self) -> TestResult {
-        // Smart wait that checks for activity
+        // Smart wait that checks for activity with faster polling
         let initial_count = self.event_count().await?;
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await; // Reduced from 10ms
 
         // If events are still being created, wait a bit more
         let new_count = self.event_count().await?;
@@ -276,7 +254,7 @@ impl TestContext {
             self.wait_for_condition(move || {
                 let pool = pool.clone();
                 async move {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::time::sleep(Duration::from_millis(5)).await; // Reduced from 10ms
                     let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
                         .fetch_one(&pool)
                         .await

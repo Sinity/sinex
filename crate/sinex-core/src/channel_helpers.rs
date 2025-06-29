@@ -333,7 +333,6 @@ pub fn monitored_channel(
 mod tests {
     use super::*;
     // use crate::RawEventBuilder; // Commented out due to RawEvent move
-    
 
     #[tokio::test]
     async fn test_channel_sender_ext() {

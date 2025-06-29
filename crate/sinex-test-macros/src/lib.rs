@@ -34,9 +34,20 @@ fn parse_timeout_attr(attr: TokenStream) -> Option<u64> {
 #[proc_macro_attribute]
 pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
+    let fn_name = &input.sig.ident;
 
-    // Parse timeout attribute
-    let timeout_secs = parse_timeout_attr(attr).unwrap_or(10); // Default 10 seconds
+    // Parse timeout attribute with smarter defaults
+    let timeout_secs = parse_timeout_attr(attr).unwrap_or_else(|| {
+        // Smart default based on function name patterns
+        let fn_name_str = fn_name.to_string();
+        if fn_name_str.contains("system") || fn_name_str.contains("end_to_end") {
+            45 // System tests need more time, especially for template creation
+        } else if fn_name_str.contains("adversarial") || fn_name_str.contains("stress") {
+            30 // Adversarial tests need moderate time
+        } else {
+            25 // Default timeout for integration and unit tests (increased for template creation)
+        }
+    });
 
     // Validate it's async
     if input.sig.asyncness.is_none() {
@@ -44,8 +55,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             .to_compile_error()
             .into();
     }
-
-    let fn_name = &input.sig.ident;
     let fn_body = &input.block;
     let fn_vis = &input.vis;
 
@@ -62,31 +71,52 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     });
 
     let output = if takes_context {
-        // Database test with perfect isolation
+        // Database test using universal pool system
         quote! {
             #[tokio::test]
             #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 use crate::common::test_context::{TestContext, TestConfig};
-                use crate::common::test_database::TestDatabase;
+                use crate::common::database_pool;
 
                 // Wrap the entire test in a timeout
                 let test_future = async {
                     // Show test starting (always visible)
                     let test_name = stringify!(#fn_name);
                     let start = std::time::Instant::now();
-                    eprintln!("🔄 {}", test_name.replace('_', " "));
+                    eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                    // Create isolated database for this test
-                    let test_db = TestDatabase::create(test_name).await?;
+                    // Acquire database from pool (near-instant)
+                    let pooled_db = database_pool::acquire_database().await?;
 
                     // Create test context
-                    let ctx = TestContext::with_pool(test_db.pool.clone(), TestConfig {
+                    let ctx = TestContext::with_pooled_database(pooled_db, TestConfig {
                         test_name: test_name.to_string(),
                         ..Default::default()
                     }).await?;
 
-                    // Run the test
-                    let result: Result<(), Box<dyn std::error::Error>> = async { #fn_body }.await;
+                    // Run the test with progress tracking for long tests
+                    let result: Result<(), Box<dyn std::error::Error>> = if #timeout_secs > 10 {
+                        // For long tests, spawn a progress indicator
+                        let progress_task = tokio::spawn(async {
+                            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                            interval.tick().await; // Skip first immediate tick
+                            let mut elapsed_secs = 5;
+                            loop {
+                                interval.tick().await;
+                                eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
+                                elapsed_secs += 5;
+                                if elapsed_secs >= #timeout_secs - 5 {
+                                    break;
+                                }
+                            }
+                        });
+                        
+                        let test_result = async { #fn_body }.await;
+                        progress_task.abort();
+                        test_result
+                    } else {
+                        async { #fn_body }.await
+                    };
 
                     // Show result (always visible)
                     let elapsed = start.elapsed();

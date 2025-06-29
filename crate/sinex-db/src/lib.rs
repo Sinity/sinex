@@ -70,15 +70,15 @@ pub async fn create_pool(database_url: &str) -> Result<DbPool> {
 /// Create a database connection pool optimized for testing with high concurrency
 pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
-        .max_connections(2000) // Even more massive limit for concurrent tests
-        .min_connections(200)
-        .acquire_timeout(Duration::from_secs(600)) // 10 minute timeout
-        .idle_timeout(Duration::from_secs(1200))
+        .max_connections(100) // Reasonable limit to avoid exhausting PostgreSQL
+        .min_connections(10)
+        .acquire_timeout(Duration::from_secs(30)) // 30 second timeout
+        .idle_timeout(Duration::from_secs(300))
         .test_before_acquire(false) // Skip connection testing for speed
         .connect(database_url)
         .await?;
 
-    info!("Test database pool created successfully with ultra-high concurrency settings");
+    info!("Test database pool created successfully with optimized concurrency settings");
     Ok(pool)
 }
 

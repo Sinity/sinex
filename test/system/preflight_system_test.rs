@@ -473,7 +473,7 @@ async fn run_system_preflight_with_env(args: &[&str], env_vars: &[(&str, &str)])
 
     cmd.env("RUST_LOG", "sinex_preflight=info");
 
-    let output = timeout(Duration::from_secs(300), async {
+    let output = timeout(Duration::from_secs(120), async { // Reduced from 300s to 120s
         cmd.output()
     }).await??;
 

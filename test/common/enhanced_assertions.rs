@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(received, "test");
 
         // Test timeout behavior
-        let (tx2, _rx2) = tokio::sync::mpsc::channel::<String>(0); // Zero capacity for immediate full
+        let (tx2, _rx2) = tokio::sync::mpsc::channel::<String>(1); // Minimal capacity (tokio requires > 0)
 
         // This should timeout quickly since channel is full
         let result = assert_channel_send_timeout(

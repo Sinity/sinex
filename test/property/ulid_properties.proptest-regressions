@@ -8,3 +8,4 @@ cc bf40b872bf9e42daec949f181707380e09b60171dfce263a1ad01bbea20128e7 # shrinks to
 cc 125b219f73d43b9ffe7f2ae6035c21e305283eff6482fc508fc5c36f98a8f323 # shrinks to base_timestamp = 230578309573, offsets = [301, 301]
 cc a22bafa24d3d8fa517410ea0cac7e672c5f6b6dd93745bceb6dfa8f55e8f0241 # shrinks to burst_size = 79
 cc 8907d5b2ec635b1777c434d694e09012caa5c3cf553d72b98cba8d552a7bc526 # shrinks to burst_size = 34
+cc 0c2263d13d8d519a03c86c1fa02c2ce5b7b203b169dcfa85009486e97375655e # shrinks to burst_size = 15

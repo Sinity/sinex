@@ -28,9 +28,10 @@ impl<T> TestChannelSetup<T> {
         }
     }
 
-    /// Create a zero-capacity channel for immediate backpressure testing
+    /// Create a minimal capacity channel for immediate backpressure testing
+    /// Note: Tokio mpsc channels require buffer > 0, so we use 1
     pub fn zero_capacity() -> Self {
-        Self::new(0)
+        Self::new(1)
     }
 
     /// Create a small capacity channel for backpressure testing

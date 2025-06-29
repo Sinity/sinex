@@ -82,6 +82,7 @@ pretty_assertions = "1.4"
 serial_test = "3.0"
 test-case = "3.3"
 rstest = "0.18"
+num_cpus = "1.16"
 
 [workspace.package]
 version = "0.4.2"

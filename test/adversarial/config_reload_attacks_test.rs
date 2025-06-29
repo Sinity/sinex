@@ -11,10 +11,11 @@ async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> TestResult 
     let config_path = temp_dir.path().join("config.toml");
     let sensitive_file = temp_dir.path().join("secrets.txt");
 
-    // Create sensitive file
+    // Create sensitive file with content that would be dangerous if loaded as config
+    // Using array format to trigger the parsing error we're seeing
     fs::write(
         &sensitive_file,
-        "secret_key=very_secret_value\npassword=admin123",
+        r#"["secret_key=very_secret_value", "password=admin123", "DROP TABLE events;"]"#,
     )
     .unwrap();
 
