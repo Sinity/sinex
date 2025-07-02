@@ -4,6 +4,36 @@ use proptest::prelude::*;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
 
+/// Helper function to compare JSON values with tolerance for floating-point precision
+fn json_values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            // If both are integers, compare exactly
+            if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                i1 == i2
+            } else if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+                u1 == u2
+            } else if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                // For floats, check if they're very close (accounting for precision loss)
+                // Use a more generous epsilon for JSON roundtrip precision loss
+                let epsilon = 1e-10 * f1.abs().max(f2.abs()).max(1.0);
+                (f1 - f2).abs() < epsilon
+            } else {
+                false
+            }
+        }
+        (Value::Array(arr1), Value::Array(arr2)) => {
+            arr1.len() == arr2.len() && arr1.iter().zip(arr2.iter()).all(|(a, b)| json_values_equal(a, b))
+        }
+        (Value::Object(obj1), Value::Object(obj2)) => {
+            obj1.len() == obj2.len() && obj1.iter().all(|(k, v)| {
+                obj2.get(k).map_or(false, |v2| json_values_equal(v, v2))
+            })
+        }
+        _ => a == b,
+    }
+}
+
 /// Generate arbitrary JSON values for payloads
 fn arb_json_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
@@ -127,7 +157,9 @@ proptest! {
         prop_assert_eq!(event.host, deserialized.host);
         prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
-        prop_assert_eq!(event.payload, deserialized.payload);
+        
+        // For payload, use a custom comparison that handles floating-point precision
+        prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
     }
 
     /// Property: RawEvent IDs should be unique ULIDs with valid timestamps

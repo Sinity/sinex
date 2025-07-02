@@ -178,9 +178,16 @@ where
 
 /// Extract field name from error message (best effort)
 fn extract_field_from_error(msg: &str) -> Option<&str> {
-    // This is a simple parser - in production you might want more sophisticated parsing
-    // ValidationChain errors typically include field names
-    msg.split_whitespace().next()
+    // Parse field name from ValidationError format: "Invalid value for field {field}: {message}"
+    if let Some(field_start) = msg.find("field ") {
+        let field_part = &msg[field_start + 6..]; // Skip "field "
+        if let Some(colon_pos) = field_part.find(':') {
+            return Some(&field_part[..colon_pos]);
+        }
+    }
+    
+    // Fallback: try other formats
+    None
 }
 
 /// Database-specific validation error type

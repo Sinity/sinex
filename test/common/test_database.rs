@@ -110,10 +110,11 @@ impl TestDatabase {
             return Ok(template_name.clone());
         }
 
-        // Create the template database name
-        let template_name = format!("sinex_test_template_{}", std::process::id());
+        // Create the template database name - use a shared name based on migrations hash
+        // This allows multiple test processes to share the same template
+        let template_name = "sinex_test_template_shared";
         
-        eprintln!("🔧 Creating template database {} (one-time setup)...", template_name);
+        eprintln!("🔧 Checking template database {} ...", template_name);
         let template_start = std::time::Instant::now();
 
         // Create template database with aggressive connection handling
@@ -123,6 +124,22 @@ impl TestDatabase {
                 PgConnection::connect(admin_url)
             ).await
             .map_err(|_| CoreError::database("Admin connection timeout").build())??;
+            
+            // Check if template already exists
+            let exists: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{}')",
+                template_name
+            ))
+            .fetch_one(&mut admin_conn)
+            .await?;
+            
+            if exists {
+                eprintln!("✅ Template database already exists, reusing it");
+                admin_conn.close().await?;
+                return Ok::<bool, anyhow::Error>(false);  // false = no migrations needed
+            }
+            
+            eprintln!("🔧 Creating template database {} (one-time setup)...", template_name);
 
             // First, aggressively terminate any existing connections to the template database
             let terminate_query = format!(
@@ -155,12 +172,20 @@ impl TestDatabase {
             .map_err(|_| CoreError::database("Create database timeout").build())??;
 
             admin_conn.close().await?;
-            Ok::<(), anyhow::Error>(())
+            Ok::<bool, anyhow::Error>(true)  // true = needs migrations
         };
 
         // Execute admin operations with timeout
-        tokio::time::timeout(Duration::from_secs(20), admin_conn_future).await
+        let needs_migrations = tokio::time::timeout(Duration::from_secs(20), admin_conn_future).await
             .map_err(|_| CoreError::database("Admin operations timeout").build())??;
+
+        // If template already exists, we're done
+        if !needs_migrations {
+            // Cache the template name for future use
+            TEMPLATE_DB_NAME.set(template_name.to_string())
+                .map_err(|_| CoreError::Other("Failed to cache template database name".to_string()))?;
+            return Ok(template_name.to_string());
+        }
 
         // Connect to template database and run all migrations
         let template_url = base_url.replace("/sinex_dev", &format!("/{}", template_name));
@@ -210,10 +235,10 @@ impl TestDatabase {
         eprintln!("✅ Template database created in {:?}", template_elapsed);
 
         // Cache the template name for future use
-        TEMPLATE_DB_NAME.set(template_name.clone())
+        TEMPLATE_DB_NAME.set(template_name.to_string())
             .map_err(|_| CoreError::Other("Failed to cache template database name".to_string()))?;
 
-        Ok(template_name)
+        Ok(template_name.to_string())
     }
 
     /// Check if required PostgreSQL extensions are available

@@ -218,12 +218,24 @@ async fn test_large_payload_serialization(_ctx: TestContext) -> TestResult {
         });
     }
 
-    let event = crate::common::events::generic_adversarial_event(
+    // Create a large payload with nested data
+    let mut large_data = serde_json::Map::new();
+    for i in 0..100 {
+        let mut nested = serde_json::Map::new();
+        for j in 0..50 {
+            nested.insert(
+                format!("field_{}", j),
+                json!(format!("This is a test value for field {} in object {}", j, i))
+            );
+        }
+        large_data.insert(format!("object_{}", i), json!(nested));
+    }
+    
+    let event = RawEventBuilder::new(
         "test",
         "test.large",
-        json!({"test": true}),
-        None,
-    );
+        json!(large_data)
+    ).build();
 
     // Should serialize without issues
     let json_str = serde_json::to_string(&event)?;

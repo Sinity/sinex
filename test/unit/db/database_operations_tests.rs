@@ -171,7 +171,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
 
     // Add to work queue with limited retries
-    let _queue_item = queries::add_to_work_queue(
+    let queue_item = queries::add_to_work_queue(
         ctx.pool(),
         inserted_event.id,
         "test_agent",
@@ -179,23 +179,31 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     )
     .await?;
 
-    // Get and fail processing multiple times
-    for attempt in 1..=3 {
-        let next_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
-
-        if attempt <= 2 {
-            // Should get an item
-            assert!(next_item.is_some());
-            let item = next_item.unwrap();
-            pretty_assertions::assert_eq!(item.attempts, attempt - 1);
-
-            // Fail the processing
-            queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure").await?;
-        } else {
-            // Should not get an item after max retries
-            assert!(next_item.is_none());
-        }
-    }
+    // First attempt - should succeed
+    let first_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    assert!(first_item.is_some(), "Should get item on first attempt");
+    let item = first_item.unwrap();
+    assert_eq!(item.attempts, 0, "First attempt should have 0 prior attempts");
+    
+    // Fail the first attempt
+    queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure 1").await?;
+    
+    // Second attempt - should succeed (retry)
+    let second_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    assert!(second_item.is_some(), "Should get item on second attempt (retry)");
+    let item = second_item.unwrap();
+    assert_eq!(item.attempts, 1, "Second attempt should have 1 prior attempt");
+    assert_eq!(item.queue_id, queue_item.queue_id, "Should be the same work item");
+    
+    // Fail the second attempt (this will exhaust max_attempts=2)
+    queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure 2").await?;
+    
+    // Third attempt - should not get item (max retries exceeded)
+    let third_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    assert!(
+        third_item.is_none(),
+        "Should not get item on third attempt (max retries exceeded)"
+    );
 
     // Verify item is in DLQ
     let dlq_items = queries::get_dlq_items(ctx.pool(), "test_agent", 10).await?;

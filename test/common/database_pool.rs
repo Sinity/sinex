@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use tokio::sync::{Mutex, Semaphore};
 use anyhow::Result;
+use sqlx::Connection;
 
 /// Global database pool manager
 static POOL_MANAGER: OnceLock<DatabasePoolManager> = OnceLock::new();
@@ -62,17 +63,17 @@ impl Default for PoolConfig {
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         let admin_url = base_url.replace("/sinex_dev", "/postgres");
         
-        // Default to CPU count for optimal parallelism, but cap it
+        // Default to CPU count for optimal parallelism
         let cpu_count = num_cpus::get();
-        let min_size = cpu_count.min(4); // Reduced from 8 to prevent connection exhaustion
-        let max_size = cpu_count.min(8); // Reduced from 16 to be more conservative
+        let min_size = cpu_count; // One database per CPU for parallel test execution
+        let max_size = (cpu_count * 2).min(48); // Allow bursting up to 2x CPUs, cap at 48
         
         Self {
             min_size,
             max_size,
             base_url,
             admin_url,
-            template_name: format!("sinex_test_template_{}", std::process::id()),
+            template_name: "sinex_test_template_shared".to_string(),
             verbose: std::env::var("SINEX_TEST_VERBOSE").is_ok(),
         }
     }
@@ -145,9 +146,67 @@ impl Drop for PooledDatabase {
 }
 
 impl DatabasePoolManager {
+    /// Cleanup old test databases at startup
+    async fn cleanup_old_test_databases(admin_url: &str) -> Result<()> {
+        eprintln!("🧹 Cleaning up old test databases...");
+        
+        let mut conn = sqlx::postgres::PgConnection::connect(admin_url).await?;
+        
+        // Get count of old test databases
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%'"
+        )
+        .fetch_one(&mut conn)
+        .await?;
+        
+        if count > 50 {  // Only cleanup if there are many
+            eprintln!("   Found {} old test databases, cleaning up first 50...", count);
+            
+            // Get list of databases to drop - limit to 50 to avoid timeout
+            let databases: Vec<String> = sqlx::query_scalar(
+                "SELECT datname FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%' LIMIT 50"
+            )
+            .fetch_all(&mut conn)
+            .await?;
+            
+            let mut dropped = 0;
+            for db_name in databases {
+                // Terminate connections
+                let _ = sqlx::query(&format!(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
+                    db_name
+                ))
+                .execute(&mut conn)
+                .await;
+                
+                // Drop database
+                if let Ok(_) = sqlx::query(&format!("DROP DATABASE IF EXISTS {}", db_name))
+                    .execute(&mut conn)
+                    .await
+                {
+                    dropped += 1;
+                    if dropped % 100 == 0 {
+                        eprintln!("   Dropped {} databases...", dropped);
+                    }
+                }
+            }
+            
+            eprintln!("   Cleaned up {} test databases", dropped);
+        }
+        
+        Ok(())
+    }
+
     /// Initialize the global pool manager
     async fn initialize(config: PoolConfig) -> Result<Self> {
         eprintln!("🚀 Initializing database pool (size: {})", config.min_size);
+        
+        // Clean up old databases first - disabled during tests to avoid timeouts
+        if std::env::var("SINEX_CLEANUP_OLD_DBS").unwrap_or_else(|_| "0".to_string()) == "1" {
+            if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
+                eprintln!("⚠️  Failed to cleanup old databases: {}", e);
+            }
+        }
         
         // Create admin connection pool with timeout and retries
         let admin_pool = tokio::time::timeout(
@@ -248,8 +307,96 @@ impl DatabasePoolManager {
         Ok(manager)
     }
     
+    /// Try to reuse an existing clean database
+    async fn try_reuse_existing_database(&self) -> Result<Option<TestDatabaseInfo>> {
+        // Look for existing test databases that might be reusable
+        let mut admin_conn = self.admin_pool.acquire().await?;
+        
+        // Find a candidate database
+        let candidate: Option<String> = sqlx::query_scalar(
+            "SELECT datname FROM pg_database 
+             WHERE datname LIKE 'sinex_test_%' 
+             AND datname NOT LIKE '%template%'
+             AND NOT EXISTS (
+                 SELECT 1 FROM pg_stat_activity 
+                 WHERE pg_stat_activity.datname = pg_database.datname
+                 AND pid <> pg_backend_pid()
+             )
+             LIMIT 1"
+        )
+        .fetch_optional(&mut *admin_conn)
+        .await?;
+        
+        drop(admin_conn);
+        
+        if let Some(db_name) = candidate {
+            // Try to connect and verify it's clean
+            let url = self.config.base_url.replace("/sinex_dev", &format!("/{}", db_name));
+            
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .min_connections(1)
+                .acquire_timeout(Duration::from_secs(2))
+                .connect(&url)
+                .await
+            {
+                Ok(pool) => {
+                    // Verify it's clean by checking event count
+                    let event_count = sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM raw.events"
+                    )
+                    .fetch_one(&pool)
+                    .await
+                    .ok();
+                    
+                    if event_count == Some(0) {
+                        // Clean database, reuse it!
+                        return Ok(Some(TestDatabaseInfo {
+                            name: db_name,
+                            url,
+                            pool,
+                            last_cleanup: std::time::Instant::now(),
+                            use_count: 0,
+                        }));
+                    } else {
+                        // Has data, clean it
+                        if let Ok(_) = self.clean_database(&TestDatabaseInfo {
+                            name: db_name.clone(),
+                            url: url.clone(),
+                            pool: pool.clone(),
+                            last_cleanup: std::time::Instant::now(),
+                            use_count: 0,
+                        }).await {
+                            return Ok(Some(TestDatabaseInfo {
+                                name: db_name,
+                                url,
+                                pool,
+                                last_cleanup: std::time::Instant::now(),
+                                use_count: 0,
+                            }));
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Connection failed, database might be corrupted
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+    
     /// Create a new test database
     async fn create_database(&self, index: usize) -> Result<TestDatabaseInfo> {
+        // Try to reuse an existing clean database first
+        if let Some(existing_db) = self.try_reuse_existing_database().await? {
+            if self.config.verbose {
+                eprintln!("  Reusing existing database: {}", existing_db.name);
+            }
+            return Ok(existing_db);
+        }
+        
+        // Otherwise create a new one
         let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
         let name = format!("sinex_test_{}_{}", std::process::id(), counter);
         

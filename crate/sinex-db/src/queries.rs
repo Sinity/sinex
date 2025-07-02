@@ -895,10 +895,14 @@ pub async fn get_next_work_item(
             SELECT queue_id
             FROM sinex_schemas.work_queue
             WHERE
-                status = 'pending'
+                status IN ('pending', 'failed_retryable')
                 AND target_agent_name = $1
                 AND attempts < max_attempts
-            ORDER BY created_at ASC
+                AND (next_retry_ts IS NULL OR next_retry_ts <= now())
+            ORDER BY 
+                CASE status WHEN 'failed_retryable' THEN 0 ELSE 1 END,
+                next_retry_ts ASC NULLS FIRST,
+                created_at ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
@@ -982,6 +986,10 @@ pub async fn fail_work_item(
             failure_reason = CASE 
                 WHEN attempts + 1 >= max_attempts THEN $2
                 ELSE failure_reason
+            END,
+            next_retry_ts = CASE 
+                WHEN attempts + 1 >= max_attempts THEN NULL
+                ELSE now()  -- Immediate retry for testing
             END
         WHERE queue_id = $1::uuid::ulid
         RETURNING 

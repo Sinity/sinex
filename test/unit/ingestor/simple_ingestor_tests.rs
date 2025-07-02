@@ -55,12 +55,11 @@ impl EventSource for TestEventSource {
                 ));
             }
 
-            let event = crate::common::events::generic_adversarial_event(
-                "test",
+            let event = RawEventBuilder::new(
+                Self::SOURCE_NAME,
                 "test_event",
                 json!({"test": true}),
-                None,
-            );
+            ).build();
 
             if tx.send(event).await.is_err() {
                 break; // Receiver dropped
