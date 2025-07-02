@@ -63,10 +63,10 @@ impl Default for PoolConfig {
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         let admin_url = base_url.replace("/sinex_dev", "/postgres");
         
-        // Default to CPU count for optimal parallelism
+        // Reasonable pool size with proper cleanup
         let cpu_count = num_cpus::get();
-        let min_size = cpu_count; // One database per CPU for parallel test execution
-        let max_size = (cpu_count * 2).min(48); // Allow bursting up to 2x CPUs, cap at 48
+        let min_size = (cpu_count / 2).max(2).min(8); // Half CPUs, min 2, max 8
+        let max_size = cpu_count.max(4).min(16); // CPU count, min 4, max 16
         
         Self {
             min_size,
@@ -134,10 +134,18 @@ impl PooledDatabase {
 impl Drop for PooledDatabase {
     fn drop(&mut self) {
         if !self.returned {
-            // Return database to pool
+            self.returned = true;
+            // Schedule pool cleanup as part of the async cleanup task
+            // We can't await here since Drop is synchronous
+            
+            // Schedule async cleanup
             let info = self.info.clone();
             tokio::spawn(async move {
+                // Close the pool first
+                info.pool.close().await;
+                
                 if let Some(manager) = POOL_MANAGER.get() {
+                    // Return to pool or drop the database
                     manager.return_database(info).await;
                 }
             });
@@ -159,12 +167,12 @@ impl DatabasePoolManager {
         .fetch_one(&mut conn)
         .await?;
         
-        if count > 50 {  // Only cleanup if there are many
-            eprintln!("   Found {} old test databases, cleaning up first 50...", count);
+        if count > 10 {  // Cleanup more aggressively
+            eprintln!("   Found {} old test databases, cleaning up ALL...", count);
             
-            // Get list of databases to drop - limit to 50 to avoid timeout
+            // Get ALL databases to drop, not just 50
             let databases: Vec<String> = sqlx::query_scalar(
-                "SELECT datname FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%' LIMIT 50"
+                "SELECT datname FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%'"
             )
             .fetch_all(&mut conn)
             .await?;
@@ -201,11 +209,9 @@ impl DatabasePoolManager {
     async fn initialize(config: PoolConfig) -> Result<Self> {
         eprintln!("🚀 Initializing database pool (size: {})", config.min_size);
         
-        // Clean up old databases first - disabled during tests to avoid timeouts
-        if std::env::var("SINEX_CLEANUP_OLD_DBS").unwrap_or_else(|_| "0".to_string()) == "1" {
-            if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
-                eprintln!("⚠️  Failed to cleanup old databases: {}", e);
-            }
+        // ALWAYS clean up old databases to prevent accumulation
+        if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
+            eprintln!("⚠️  Failed to cleanup old databases: {}", e);
         }
         
         // Create admin connection pool with timeout and retries
@@ -394,6 +400,12 @@ impl DatabasePoolManager {
                 eprintln!("  Reusing existing database: {}", existing_db.name);
             }
             return Ok(existing_db);
+        }
+        
+        // Clean up orphaned databases before creating new ones
+        if index % 10 == 0 {
+            // Every 10th database creation, do a cleanup
+            let _ = Self::cleanup_old_test_databases(&self.config.admin_url).await;
         }
         
         // Otherwise create a new one
@@ -607,10 +619,9 @@ impl DatabasePoolManager {
             "sinex_schemas.agent_manifests",
             "core.event_annotations",
             "core.artifacts",
-            "raw.events",
         ];
         
-        // Execute TRUNCATE CASCADE for each table
+        // Execute TRUNCATE CASCADE for each regular table
         for table in tables {
             let query = format!("TRUNCATE TABLE {} CASCADE", table);
             if let Err(e) = sqlx::query(&query).execute(&info.pool).await {
@@ -618,6 +629,14 @@ impl DatabasePoolManager {
                 if self.config.verbose {
                     eprintln!("  Note: Could not truncate {}: {}", table, e);
                 }
+            }
+        }
+        
+        // Special handling for TimescaleDB hypertable raw.events
+        // Use DELETE instead of TRUNCATE for hypertables
+        if let Err(e) = sqlx::query("DELETE FROM raw.events").execute(&info.pool).await {
+            if self.config.verbose {
+                eprintln!("  Note: Could not clean raw.events: {}", e);
             }
         }
         
@@ -713,6 +732,17 @@ impl DatabasePoolManager {
 
 /// Get or initialize the global database pool
 pub async fn get_pool_manager() -> Result<&'static DatabasePoolManager> {
+    // Fast path: already initialized
+    if let Some(manager) = POOL_MANAGER.get() {
+        return Ok(manager);
+    }
+    
+    // Slow path: need to initialize, but handle race conditions
+    // Use a static mutex to ensure only one thread initializes
+    static INIT_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = INIT_MUTEX.lock().await;
+    
+    // Check again after acquiring the lock
     if let Some(manager) = POOL_MANAGER.get() {
         return Ok(manager);
     }
@@ -724,6 +754,7 @@ pub async fn get_pool_manager() -> Result<&'static DatabasePoolManager> {
     let config = PoolConfig::default();
     let manager = DatabasePoolManager::initialize(config).await?;
     
+    // This should never fail now since we hold the mutex
     POOL_MANAGER.set(manager)
         .map_err(|_| CoreError::Other("Failed to initialize pool manager".to_string()))?;
     
