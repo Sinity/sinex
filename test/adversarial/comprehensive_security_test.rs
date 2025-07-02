@@ -634,9 +634,9 @@ async fn run_security_test_batch(
 }
 
 /// Test filesystem path traversal attacks specifically
-#[sinex_test]
+#[tokio::test]
 #[ignore = "Security validation not fully implemented yet - TODO: implement proper path sanitization"]
-async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_path_traversal_comprehensive() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -713,8 +713,8 @@ async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> Test
 }
 
 /// Test hash collision DoS attacks
-#[sinex_test]
-async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_hash_collision_dos() -> Result<()> {
     let mut collision_map = HashMap::new();
 
     // Known hash collision strings
@@ -765,9 +765,9 @@ async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
 }
 
 /// Test JSON parser differential attacks
-#[sinex_test]
+#[tokio::test]
 #[ignore = "Security validation not fully implemented yet"]
-async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
+async fn test_json_parser_differential() -> Result<()> {
     let tricky_json_strings = vec![
         (
             r#"{"key": 1.0000000000000000000000000000000001}"#,
@@ -802,9 +802,9 @@ async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
 }
 
 /// Test malicious TOML configuration injection
-#[sinex_test]
+#[tokio::test]
 #[ignore = "Security validation not fully implemented yet - TODO: implement proper config validation"]
-async fn test_configuration_injection(_ctx: TestContext) -> TestResult {
+async fn test_configuration_injection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let config_dir = temp_dir.path().join("config");
     fs::create_dir_all(&config_dir)?;
