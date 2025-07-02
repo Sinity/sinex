@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_core::{ConfigValidator, ConfigValue};
+use sinex_db::security::SecurityValidator;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,6 +64,10 @@ impl CollectorConfig {
 
     pub fn load_from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
+        
+        // Validate configuration content for security issues
+        SecurityValidator::validate_config_content(&content)
+            .map_err(|e| anyhow!("Security validation failed: {}", e))?;
 
         // Try TOML first
         if let Ok(config) = toml::from_str::<Self>(&content) {

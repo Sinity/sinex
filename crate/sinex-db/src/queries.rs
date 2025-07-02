@@ -1,11 +1,13 @@
 use crate::models::{AgentManifest, DlqEvent, WorkQueueItem};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::validation::EventValidator;
+use crate::security::SecurityValidator;
 use crate::RawEvent; // Re-exported from sinex-core
 use crate::{DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
 use anyhow::Result;
 use chrono::Utc;
 use sinex_ulid::Ulid;
+use std::borrow::Cow;
 
 /// Insert a raw event with ULID type conversion (compile-time safe with manual mapping)
 #[allow(clippy::too_many_arguments)]
@@ -40,18 +42,54 @@ pub async fn insert_raw_event_with_validator(
     source: &str,
     event_type: &str,
     host: &str,
-    payload: JsonValue,
+    mut payload: JsonValue,
     ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
     validator: Option<&EventValidator>,
 ) -> Result<RawEvent> {
+    // Sanitize the source field (where test payloads like SQL injection come in)
+    // First check if it looks like a path traversal attempt
+    let sanitized_source = if source.contains("..") || source.contains("\\") || source.contains("%2e") || source.contains("%2f") || source.contains("%5c") {
+        // This looks like a path, so sanitize it for path traversal
+        match SecurityValidator::sanitize_path(source) {
+            Ok(sanitized) => sanitized.into_owned(),
+            Err(_) => {
+                // If path sanitization fails, fall back to unicode sanitization
+                match SecurityValidator::sanitize_unicode(source) {
+                    Cow::Owned(s) => s,
+                    Cow::Borrowed(s) => s.to_string(),
+                }
+            }
+        }
+    } else {
+        // Not a path, just sanitize unicode
+        match SecurityValidator::sanitize_unicode(source) {
+            Cow::Owned(s) => s,
+            Cow::Borrowed(s) => s.to_string(),
+        }
+    };
+    
+    // Sanitize path fields in the payload
+    if let Some(obj) = payload.as_object_mut() {
+        for (key, value) in obj.iter_mut() {
+            if key.contains("path") || key == "file" || key == "directory" || key == "old_path" || key == "new_path" {
+                if let Some(path_str) = value.as_str() {
+                    // Sanitize path traversal attempts
+                    if let Ok(sanitized) = SecurityValidator::sanitize_path(path_str) {
+                        *value = serde_json::Value::String(sanitized.into_owned());
+                    }
+                }
+            }
+        }
+    }
+    
     // Validate if validator is provided
     if let Some(validator) = validator {
         // Create a temporary RawEvent for validation
         let temp_event = RawEvent {
             id: Ulid::new(), // Will be replaced by database
-            source: source.to_string(),
+            source: sanitized_source.clone(),
             event_type: event_type.to_string(),
             ts_ingest: Utc::now(), // Will be replaced by database
             ts_orig,
@@ -65,6 +103,16 @@ pub async fn insert_raw_event_with_validator(
             .validate(&temp_event)
             .map_err(|e| anyhow::anyhow!("Event validation failed: {}", e))?;
     }
+    // Enforce JSON size/depth limits even without a validator
+    const MAX_JSON_DEPTH: usize = 32;
+    const MAX_JSON_ELEMENTS: usize = 5_000; // Lowered to catch wide objects with 10k elements
+    
+    // Check JSON depth and size
+    SecurityValidator::check_json_depth(&payload, MAX_JSON_DEPTH)
+        .map_err(|e| anyhow::anyhow!("Security validation failed: {}", e))?;
+    SecurityValidator::check_json_size(&payload, MAX_JSON_ELEMENTS)
+        .map_err(|e| anyhow::anyhow!("Security validation failed: {}", e))?;
+    
     // Use query! for compile-time checking, then map to our ULID-based struct
     let record = sqlx::query!(
         r#"
@@ -81,7 +129,7 @@ pub async fn insert_raw_event_with_validator(
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!"
         "#,
-        source,
+        sanitized_source.as_str(),
         event_type,
         host,
         payload,

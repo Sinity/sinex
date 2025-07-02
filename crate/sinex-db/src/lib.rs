@@ -5,6 +5,7 @@ pub mod metrics;
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
+pub mod security;
 pub mod validation;
 
 // Re-export commonly used types and query functions

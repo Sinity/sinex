@@ -254,6 +254,14 @@ impl ConfigValidator {
         let path = path.to_string();
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
+                // Check for path traversal attempts
+                if path_str.contains("..") || path_str.contains("\0") {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' contains dangerous content (path traversal or null bytes)",
+                        path
+                    )));
+                }
+                
                 if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
                     return Err(CoreError::Configuration(format!(
                         "Path at '{}' must be an absolute path or start with ~/",
@@ -272,6 +280,14 @@ impl ConfigValidator {
         let path = path.to_string();
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
+                // Check for path traversal attempts
+                if path_str.contains("..") || path_str.contains("\0") {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' contains dangerous content (path traversal or null bytes)",
+                        path
+                    )));
+                }
+                
                 if !Path::new(path_str).is_absolute() {
                     return Err(CoreError::Configuration(format!(
                         "Path at '{}' must be an absolute path",
@@ -310,6 +326,22 @@ impl ConfigValidator {
             if let Ok(array) = config.require_array(&path) {
                 for (i, element) in array.iter().enumerate() {
                     if let Some(path_str) = element.as_str() {
+                        // Check for path traversal attempts
+                        if path_str.contains("..") || path_str.contains("\0") {
+                            return Err(CoreError::Configuration(format!(
+                                "Path pattern at '{}[{}]' ('{}') contains dangerous content (path traversal or null bytes)", 
+                                path, i, path_str
+                            )));
+                        }
+                        
+                        // Check for command injection patterns
+                        if path_str.contains(';') || path_str.contains('|') || path_str.contains('&') {
+                            return Err(CoreError::Configuration(format!(
+                                "Path pattern at '{}[{}]' ('{}') contains shell metacharacters", 
+                                path, i, path_str
+                            )));
+                        }
+                        
                         if !path_str.starts_with('/') && !path_str.starts_with("~/") {
                             return Err(CoreError::Configuration(format!(
                                 "Path pattern at '{}[{}]' ('{}') should be an absolute path or start with ~/", 

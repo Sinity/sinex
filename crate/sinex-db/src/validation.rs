@@ -5,6 +5,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::RawEvent; // Re-exported from sinex-core
+use crate::security::{SecurityValidator, SecurityError};
 use sinex_core::{CoreError, ValidationChain};
 use sinex_ulid::Ulid;
 
@@ -217,6 +218,9 @@ pub enum ValidationError {
 
     #[error("Schema not found for ID: {0}")]
     SchemaNotFound(Ulid),
+
+    #[error("Security validation failed: {0}")]
+    SecurityValidation(String),
 }
 
 /// Type alias for validation functions to reduce complexity
@@ -309,9 +313,15 @@ impl EventValidator {
         event_type: &str,
         payload: &Value,
     ) -> Result<(), ValidationError> {
+        // Security validation for source field (where SQL/command injection payloads come in tests)
+        let sanitized_source = match SecurityValidator::sanitize_unicode(source) {
+            std::borrow::Cow::Owned(s) => s,
+            std::borrow::Cow::Borrowed(s) => s.to_string(),
+        };
+        
         // Basic field validation using ValidationChain
         convert_validation_result(
-            ValidationChain::validate(source.to_string(), "source")
+            ValidationChain::validate(sanitized_source, "source")
                 .not_empty()
                 .into_result(),
         )?;
@@ -361,7 +371,11 @@ impl EventValidator {
         // file.created validation
         self.register_rule("filesystem", "file.created", |payload| {
             // Required: path (string), size (number >= 0)
-            let _path = validate_required_string_field(payload, "path")?;
+            let path = validate_required_string_field(payload, "path")?;
+            
+            // Sanitize the path
+            let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
             let _size = validate_required_numeric_field(payload, "size", |v| v.as_u64())?;
 
@@ -388,7 +402,11 @@ impl EventValidator {
         // file.modified validation
         self.register_rule("filesystem", "file.modified", |payload| {
             // Required: path
-            let _path = validate_required_string_field(payload, "path")?;
+            let path = validate_required_string_field(payload, "path")?;
+            
+            // Sanitize the path
+            let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
             // At least one of: old_size/new_size, modification_type
             let has_size_info =
@@ -407,7 +425,11 @@ impl EventValidator {
         // file.deleted validation
         self.register_rule("filesystem", "file.deleted", |payload| {
             // Required: path
-            let _path = validate_required_string_field(payload, "path")?;
+            let path = validate_required_string_field(payload, "path")?;
+            
+            // Sanitize the path
+            let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
             // Optional: was_directory (boolean)
             let _was_directory =
@@ -419,8 +441,14 @@ impl EventValidator {
         // file.renamed validation
         self.register_rule("filesystem", "file.renamed", |payload| {
             // Required: old_path, new_path
-            let _old_path = validate_required_string_field(payload, "old_path")?;
-            let _new_path = validate_required_string_field(payload, "new_path")?;
+            let old_path = validate_required_string_field(payload, "old_path")?;
+            let new_path = validate_required_string_field(payload, "new_path")?;
+            
+            // Sanitize both paths
+            let _sanitized_old = SecurityValidator::sanitize_path(&old_path)
+                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+            let _sanitized_new = SecurityValidator::sanitize_path(&new_path)
+                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
             Ok(())
         });
@@ -482,48 +510,51 @@ impl EventValidator {
             "*", // Special source to match all
             "*", // Special event_type to match all
             |payload| {
-                // Check JSON size (this is just structure validation, not the raw size)
-                let json_str =
-                    serde_json::to_string(payload).map_err(|e| ValidationError::InvalidValue {
-                        field: "payload".to_string(),
-                        reason: format!("Failed to serialize: {}", e),
-                    })?;
+                // Maximum allowed depth for JSON (prevent stack overflow)
+                const MAX_JSON_DEPTH: usize = 32;
+                // Maximum allowed elements in JSON (prevent memory exhaustion)
+                const MAX_JSON_ELEMENTS: usize = 5_000;
+                
+                // Check JSON depth
+                SecurityValidator::check_json_depth(payload, MAX_JSON_DEPTH)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                
+                // Check JSON size
+                SecurityValidator::check_json_size(payload, MAX_JSON_ELEMENTS)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
-                // Basic size check - actual enforcement should be at parse time
-                if json_str.len() > 50_000_000 {
-                    // 50MB serialized
-                    return Err(ValidationError::InvalidValue {
-                        field: "payload".to_string(),
-                        reason: "Payload too large".to_string(),
-                    });
-                }
-
-                // Check for excessive nesting
-                fn check_depth(val: &Value, depth: usize) -> Result<(), ValidationError> {
-                    if depth > 32 {
-                        return Err(ValidationError::InvalidValue {
-                            field: "payload".to_string(),
-                            reason: "JSON too deeply nested".to_string(),
-                        });
-                    }
-
-                    match val {
-                        Value::Object(map) => {
-                            for (_, v) in map {
-                                check_depth(v, depth + 1)?;
+                // Check string fields for security issues
+                if let Value::Object(map) = payload {
+                    for (key, value) in map {
+                        // Check for path traversal in path-like fields
+                        if key.contains("path") || key == "file" || key == "directory" {
+                            if let Value::String(s) = value {
+                                match SecurityValidator::sanitize_path(s) {
+                                    Ok(_) => {
+                                        // Path was sanitized successfully
+                                    }
+                                    Err(SecurityError::NullByteInjection) => {
+                                        return Err(ValidationError::SecurityValidation(
+                                            "Null byte in path".to_string()
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        return Err(ValidationError::SecurityValidation(e.to_string()));
+                                    }
+                                }
                             }
                         }
-                        Value::Array(arr) => {
-                            for v in arr {
-                                check_depth(v, depth + 1)?;
+                        
+                        // Check all string values for null bytes
+                        if let Value::String(s) = value {
+                            if s.contains('\0') {
+                                return Err(ValidationError::SecurityValidation(
+                                    "Null byte injection detected".to_string()
+                                ));
                             }
                         }
-                        _ => {}
                     }
-                    Ok(())
                 }
-
-                check_depth(payload, 0)?;
 
                 Ok(())
             },
