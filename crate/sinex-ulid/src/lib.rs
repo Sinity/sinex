@@ -108,7 +108,14 @@ impl Ulid {
 
     /// Get the timestamp component
     pub fn timestamp(&self) -> Timestamp {
-        DateTime::from_timestamp_millis(self.0.timestamp_ms() as i64).unwrap_or_else(Utc::now)
+        let timestamp_ms = self.0.timestamp_ms();
+        // Safely convert u64 to i64, clamping to i64::MAX if needed
+        let timestamp_i64 = if timestamp_ms > i64::MAX as u64 {
+            i64::MAX
+        } else {
+            timestamp_ms as i64
+        };
+        DateTime::from_timestamp_millis(timestamp_i64).unwrap_or_else(Utc::now)
     }
 
     /// Convert to UUID for PostgreSQL storage
