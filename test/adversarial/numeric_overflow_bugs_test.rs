@@ -292,14 +292,15 @@ async fn test_dynamic_query_construction(_ctx: TestContext) -> TestResult {
 mod panic_tests {
     use crate::common::prelude::*;
 
-    #[tokio::test]
+    #[sinex_test]
     #[should_panic(expected = "overflow")]
     #[cfg(debug_assertions)]
-    async fn test_debug_panic_on_overflow() {
+    async fn test_debug_panic_on_overflow(_ctx: TestContext) -> TestResult {
         // In debug mode, checked_add returns None on overflow
         // We force a panic by using expect
         let max: u32 = u32::MAX;
         let _overflow = max.checked_add(1).expect("overflow"); // Panics with "overflow"
+        Ok(())
     }
 
     #[sinex_test]
