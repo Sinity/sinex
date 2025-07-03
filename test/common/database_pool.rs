@@ -223,14 +223,21 @@ impl DatabasePoolManager {
     async fn initialize(config: PoolConfig) -> Result<Self> {
         eprintln!("🚀 Initializing database pool (size: {})", config.min_size);
         
-        // Clean up old databases ONLY if there are too many
-        // Do this in background to not block initialization
-        let admin_url_clone = config.admin_url.clone();
-        tokio::spawn(async move {
-            if let Err(e) = Self::cleanup_old_test_databases(&admin_url_clone).await {
-                eprintln!("⚠️  Background cleanup failed: {}", e);
+        // Clean up old databases synchronously but quickly
+        // Only clean if there are many to avoid blocking normal operation
+        let cleanup_result = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%'"
+        )
+        .fetch_one(&mut sqlx::postgres::PgConnection::connect(&config.admin_url).await?)
+        .await?;
+        
+        if cleanup_result > 100 {
+            // Too many databases, do emergency cleanup
+            eprintln!("⚠️  Found {} old test databases, performing emergency cleanup...", cleanup_result);
+            if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
+                eprintln!("⚠️  Cleanup failed: {}", e);
             }
-        });
+        }
         
         // Create admin connection pool with timeout and retries
         let admin_pool = tokio::time::timeout(
