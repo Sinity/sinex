@@ -1002,7 +1002,6 @@ async fn test_atuin_performance_with_many_entries(ctx: TestContext) -> TestResul
 /// Test against real Atuin database if available
 /// This test is ignored by default since it requires a real Atuin installation
 #[sinex_test]
-#[ignore = "requires real Atuin database"]
 async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
     // Check for real Atuin database in standard locations
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
@@ -1096,7 +1095,7 @@ async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
 /// Test that demonstrates how to run against a live Atuin database
 /// while Atuin is actively being used (without interfering)
 #[sinex_test]
-#[ignore = "requires live Atuin usage"]
+#[ignore = "requires live Atuin usage - interactive test"]
 async fn test_live_atuin_monitoring(ctx: TestContext) -> TestResult {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
     let atuin_db_path = PathBuf::from(&home).join(".local/share/atuin/history.db");
