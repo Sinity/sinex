@@ -231,21 +231,25 @@ impl DatabasePoolManager {
         .fetch_one(&mut sqlx::postgres::PgConnection::connect(&config.admin_url).await?)
         .await?;
         
-        if cleanup_result > 100 {
-            // Too many databases, do emergency cleanup
+        if cleanup_result > 200 {
+            // Way too many databases, do emergency cleanup
             eprintln!("⚠️  Found {} old test databases, performing emergency cleanup...", cleanup_result);
-            if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
-                eprintln!("⚠️  Cleanup failed: {}", e);
-            }
+            // Do cleanup in background to not block initialization
+            let admin_url = config.admin_url.clone();
+            tokio::spawn(async move {
+                if let Err(e) = Self::cleanup_old_test_databases(&admin_url).await {
+                    eprintln!("⚠️  Background cleanup failed: {}", e);
+                }
+            });
         }
         
         // Create admin connection pool with timeout and retries
         let admin_pool = tokio::time::timeout(
             Duration::from_secs(10),
             sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
-                .min_connections(1)
-                .acquire_timeout(Duration::from_secs(5))
+                .max_connections(20)
+                .min_connections(2)
+                .acquire_timeout(Duration::from_secs(2))
                 .connect(&config.admin_url)
         ).await
         .map_err(|_| CoreError::database("Admin pool connection timeout").build())??;
@@ -287,15 +291,15 @@ impl DatabasePoolManager {
         let mut initial_dbs = Vec::new();
         let mut failed_count = 0;
         
-        // Create databases in parallel batches
-        let batch_size = 4;
+        // Create databases in parallel batches - reduced to avoid connection starvation
+        let batch_size = 2;
         for batch_start in (0..config.min_size).step_by(batch_size) {
             let batch_end = (batch_start + batch_size).min(config.min_size);
             let mut batch_futures = Vec::new();
             
             for i in batch_start..batch_end {
                 let fut = manager.create_database(i);
-                batch_futures.push(tokio::time::timeout(Duration::from_secs(10), fut));
+                batch_futures.push(tokio::time::timeout(Duration::from_secs(5), fut));
             }
             
             let results = futures::future::join_all(batch_futures).await;
@@ -377,8 +381,8 @@ impl DatabasePoolManager {
             let url = self.config.base_url.replace("/sinex_dev", &format!("/{}", db_name));
             
             match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(5)
-                .min_connections(1)
+                .max_connections(20)
+                .min_connections(2)
                 .acquire_timeout(Duration::from_secs(2))
                 .connect(&url)
                 .await
@@ -463,9 +467,9 @@ impl DatabasePoolManager {
         // Create connection pool for this database
         let url = self.config.base_url.replace("/sinex_dev", &format!("/{}", name));
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
-            .min_connections(1)
-            .acquire_timeout(Duration::from_secs(5))
+            .max_connections(20)
+            .min_connections(2)
+            .acquire_timeout(Duration::from_secs(2))
             .connect(&url)
             .await?;
         
