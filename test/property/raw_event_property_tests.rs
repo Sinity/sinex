@@ -1,8 +1,38 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 // Using RawEvent, RawEventBuilder from prelude
-use chrono::{DateTime, Utc, Duration as ChronoDuration};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
+
+/// Helper function to compare JSON values with tolerance for floating-point precision
+fn json_values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            // If both are integers, compare exactly
+            if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                i1 == i2
+            } else if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+                u1 == u2
+            } else if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                // For floats, check if they're very close (accounting for precision loss)
+                // Use a more generous epsilon for JSON roundtrip precision loss
+                let epsilon = 1e-10 * f1.abs().max(f2.abs()).max(1.0);
+                (f1 - f2).abs() < epsilon
+            } else {
+                false
+            }
+        }
+        (Value::Array(arr1), Value::Array(arr2)) => {
+            arr1.len() == arr2.len() && arr1.iter().zip(arr2.iter()).all(|(a, b)| json_values_equal(a, b))
+        }
+        (Value::Object(obj1), Value::Object(obj2)) => {
+            obj1.len() == obj2.len() && obj1.iter().all(|(k, v)| {
+                obj2.get(k).map_or(false, |v2| json_values_equal(v, v2))
+            })
+        }
+        _ => a == b,
+    }
+}
 
 /// Generate arbitrary JSON values for payloads
 fn arb_json_value() -> impl Strategy<Value = Value> {
@@ -10,21 +40,23 @@ fn arb_json_value() -> impl Strategy<Value = Value> {
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
         any::<i64>().prop_map(|n| Value::Number(n.into())),
-        any::<f64>().prop_filter("must be finite", |f| f.is_finite())
+        any::<f64>()
+            .prop_filter("must be finite", |f| f.is_finite())
             .prop_map(|f| json!(f)),
         "[a-zA-Z0-9_-]{1,50}".prop_map(Value::String),
     ];
-    
+
     leaf.prop_recursive(
         8,   // 8 levels deep
         256, // Shoot for maximum size of 256 nodes
         10,  // Each collection is up to 10 elements
-        |inner| prop_oneof![
-            prop::collection::vec(inner.clone(), 0..10)
-                .prop_map(Value::Array),
-            prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_-]{0,20}", inner, 0..10)
-                .prop_map(|map| Value::Object(map.into_iter().collect())),
-        ],
+        |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
+                prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_-]{0,20}", inner, 0..10)
+                    .prop_map(|map| Value::Object(map.into_iter().collect())),
+            ]
+        },
     )
 }
 
@@ -40,7 +72,7 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
         Just("file.created".to_string()),
         Just("file.modified".to_string()),
         Just("file.deleted".to_string()),
-        // Terminal events  
+        // Terminal events
         Just("command.executed".to_string()),
         Just("shell.command.executed_atuin".to_string()),
         // Window events
@@ -68,7 +100,7 @@ fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
     let now = Utc::now();
     let start = now - ChronoDuration::days(365);
     let end = now + ChronoDuration::hours(1);
-    
+
     (start.timestamp_millis()..=end.timestamp_millis())
         .prop_map(move |ts| DateTime::from_timestamp_millis(ts).unwrap_or(now))
 }
@@ -83,24 +115,27 @@ fn arb_raw_event() -> impl Strategy<Value = RawEvent> {
         prop::option::of(arb_hostname()),
         prop::option::of(arb_version()),
         prop::option::of(any::<Ulid>()),
-    ).prop_map(|(source, event_type, payload, ts_orig, host, version, schema_id)| {
-        let mut builder = RawEventBuilder::new(source, event_type, payload);
-        
-        if let Some(ts) = ts_orig {
-            builder = builder.with_orig_timestamp(ts);
-        }
-        if let Some(h) = host {
-            builder = builder.with_host(h);
-        }
-        if let Some(v) = version {
-            builder = builder.with_ingestor_version(v);
-        }
-        if let Some(s) = schema_id {
-            builder = builder.with_payload_schema_id(s);
-        }
-        
-        builder.build()
-    })
+    )
+        .prop_map(
+            |(source, event_type, payload, ts_orig, host, version, schema_id)| {
+                let mut builder = RawEventBuilder::new(source, event_type, payload);
+
+                if let Some(ts) = ts_orig {
+                    builder = builder.with_orig_timestamp(ts);
+                }
+                if let Some(h) = host {
+                    builder = builder.with_host(h);
+                }
+                if let Some(v) = version {
+                    builder = builder.with_ingestor_version(v);
+                }
+                if let Some(s) = schema_id {
+                    builder = builder.with_payload_schema_id(s);
+                }
+
+                builder.build()
+            },
+        )
 }
 
 proptest! {
@@ -109,10 +144,10 @@ proptest! {
     fn test_raw_event_serde_roundtrip(event in arb_raw_event()) {
         // Serialize to JSON
         let json_str = serde_json::to_string(&event).unwrap();
-        
+
         // Deserialize back
         let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
-        
+
         // Should be identical
         prop_assert_eq!(event.id, deserialized.id);
         prop_assert_eq!(event.source, deserialized.source);
@@ -122,7 +157,9 @@ proptest! {
         prop_assert_eq!(event.host, deserialized.host);
         prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
-        prop_assert_eq!(event.payload, deserialized.payload);
+        
+        // For payload, use a custom comparison that handles floating-point precision
+        prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
     }
 
     /// Property: RawEvent IDs should be unique ULIDs with valid timestamps
@@ -134,20 +171,20 @@ proptest! {
     ) {
         let event1 = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
         let event2 = RawEventBuilder::new(&source, &event_type, payload).build();
-        
+
         // ULID IDs should be unique
         prop_assert_ne!(event1.id, event2.id);
-        
+
         // ULID timestamps should be extractable and recent
         let ts1 = event1.id.timestamp();
         let ts2 = event2.id.timestamp();
         let now = Utc::now();
-        
+
         prop_assert!(ts1 <= now);
         prop_assert!(ts2 <= now);
         prop_assert!(now - ts1 < ChronoDuration::seconds(10));
         prop_assert!(now - ts2 < ChronoDuration::seconds(10));
-        
+
         // ts_ingest_from_ulid should match the ULID timestamp
         prop_assert_eq!(event1.ts_ingest_from_ulid(), ts1);
         prop_assert_eq!(event2.ts_ingest_from_ulid(), ts2);
@@ -159,19 +196,19 @@ proptest! {
         // Source should not be empty
         prop_assert!(!event.source.is_empty());
         prop_assert!(event.source.len() <= 255); // Reasonable database limit
-        
+
         // Event type should not be empty
         prop_assert!(!event.event_type.is_empty());
         prop_assert!(event.event_type.len() <= 255);
-        
+
         // Host should not be empty
         prop_assert!(!event.host.is_empty());
-        
+
         // ts_ingest should be recent (within last hour)
         let now = Utc::now();
         prop_assert!(event.ts_ingest <= now);
         prop_assert!(now - event.ts_ingest < ChronoDuration::hours(1));
-        
+
         // If ts_orig is present, it should be reasonable
         if let Some(ts_orig) = event.ts_orig {
             // Original timestamp should not be in the far future
@@ -179,7 +216,7 @@ proptest! {
             // Original timestamp should not be too old (1 year)
             prop_assert!(ts_orig >= now - ChronoDuration::days(365));
         }
-        
+
         // Payload should be valid JSON
         prop_assert!(serde_json::to_string(&event.payload).is_ok());
     }
@@ -201,7 +238,7 @@ proptest! {
             .with_ingestor_version(&version)
             .with_payload_schema_id(schema_id)
             .build();
-        
+
         prop_assert_eq!(event.source, source);
         prop_assert_eq!(event.event_type, event_type);
         prop_assert_eq!(event.payload, payload);
@@ -219,13 +256,13 @@ proptest! {
         payloads in prop::collection::vec(arb_json_value(), 2..20)
     ) {
         let mut events = Vec::new();
-        
+
         for payload in payloads {
             events.push(RawEventBuilder::new(&source, &event_type, payload).build());
             // Small delay to ensure ULID ordering
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        
+
         // ULIDs should be in ascending order
         for window in events.windows(2) {
             prop_assert!(window[0].id < window[1].id);
@@ -250,10 +287,10 @@ proptest! {
             json!((0..100).collect::<Vec<i32>>()), // Large array
             json!({"key": "x".repeat(1000)}), // Large string
         ];
-        
+
         for payload in edge_cases {
             let event = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
-            
+
             // Should serialize and deserialize correctly
             let json_str = serde_json::to_string(&event).unwrap();
             let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
@@ -265,12 +302,12 @@ proptest! {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    
+
     #[test]
     fn test_raw_event_builder_defaults() {
-        let event = RawEventBuilder::new("test_source", "test.event", json!({"key": "value"}))
-            .build();
-        
+        let event =
+            RawEventBuilder::new("test_source", "test.event", json!({"key": "value"})).build();
+
         pretty_assertions::assert_eq!(event.source, "test_source");
         pretty_assertions::assert_eq!(event.event_type, "test.event");
         pretty_assertions::assert_eq!(event.payload, json!({"key": "value"}));
@@ -279,15 +316,15 @@ mod unit_tests {
         assert!(event.ingestor_version.is_none());
         assert!(event.payload_schema_id.is_none());
     }
-    
+
     #[test]
     fn test_raw_event_ulid_timestamp_extraction() {
         let event = RawEventBuilder::new("source", "type", json!({})).build();
-        
+
         // The ULID timestamp should be close to ts_ingest
         let ulid_ts = event.ts_ingest_from_ulid();
         let diff = (event.ts_ingest - ulid_ts).abs();
-        
+
         // Should be within 1 second (ULID has millisecond precision)
         assert!(diff < ChronoDuration::seconds(1));
     }

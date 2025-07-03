@@ -3,6 +3,8 @@
 //! This module contains integration tests for agent functionality,
 //! including agent registration, heartbeat monitoring, manifest management,
 //! and agent lifecycle operations.
+
+#![allow(dead_code)]
 //!
 //! # Test Coverage
 //! - Agent manifest registration and updates
@@ -18,9 +20,9 @@ pub mod heartbeat_tests;
 
 /// Common utilities for agent testing
 pub mod utils {
-    use crate::common::prelude::*;
     use crate::common::event_builders::EventBuilder;
-    
+    use crate::common::prelude::*;
+
     /// Create a test agent manifest
     pub fn create_test_agent_manifest(name: &str) -> serde_json::Value {
         json!({
@@ -33,7 +35,7 @@ pub mod utils {
             "subscribes_to_event_types": ["test.trigger"]
         })
     }
-    
+
     /// Create agent heartbeat event
     pub fn create_heartbeat_event(agent_name: &str) -> RawEvent {
         EventBuilder::agent()
@@ -43,7 +45,7 @@ pub mod utils {
             .events_processed(42)
             .build()
     }
-    
+
     /// Create agent startup event
     pub fn create_startup_event(agent_name: &str, version: &str) -> RawEvent {
         EventBuilder::agent()
@@ -52,7 +54,7 @@ pub mod utils {
             .version(version)
             .build()
     }
-    
+
     /// Create agent error event
     pub fn create_error_event(agent_name: &str, error_msg: &str) -> RawEvent {
         EventBuilder::agent()
@@ -60,12 +62,12 @@ pub mod utils {
             .error(error_msg)
             .build()
     }
-    
+
     /// Wait for agent to be registered
     pub async fn wait_for_agent_registration(
         pool: &DbPool,
         agent_name: &str,
-        timeout_secs: u64
+        timeout_secs: u64,
     ) -> Result<(), anyhow::Error> {
         crate::common::timing_optimization::wait_helpers::wait_for_condition(
             move || {
@@ -79,7 +81,6 @@ pub mod utils {
                     .fetch_one(&pool)
                     .await?
                     .unwrap_or(false);
-                    
                     Ok(exists)
                 }
             },

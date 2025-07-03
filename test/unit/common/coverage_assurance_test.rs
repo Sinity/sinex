@@ -8,7 +8,7 @@ use crate::common::coverage_assurance::{CoverageTracker, CoverageAssertion};
 async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> TestResult {
     // Reset tracker for clean test
     CoverageTracker::reset();
-    
+
     // Run streamlined test
     scenario_builders::EventScenarioBuilder::new()
         .with_filesystem_event("/valid/path.txt", true)
@@ -20,37 +20,37 @@ async fn test_coverage_tracking_in_streamlined_tests(ctx: TestContext) -> TestRe
         .execute(ctx.pool())
         .await
         .unwrap();
-    
+
     // Get coverage report
     let report = CoverageTracker::get_coverage_report();
-    
+
     // Verify coverage
     assert!(report.event_types_count >= 2, "Should test at least 2 event types");
     assert!(report.edge_case_categories > 0, "Should test edge cases");
     assert!(report.total_edge_cases >= 3, "Should test multiple edge cases");
-    
+
     println!("Coverage Report:");
     println!("  Event types tested: {}", report.event_types_count);
     println!("  Edge cases tested: {}", report.total_edge_cases);
     println!("  Edge case categories: {:?}", report.details.edge_cases);
-    
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_coverage_assertion_ensures_minimum_coverage(_ctx: TestContext) -> TestResult {
     CoverageTracker::reset();
-    
+
     // Define minimum coverage expectations based on original tests
     let coverage_assertion = CoverageAssertion::new()
         .expect_event_types(3)      // filesystem, terminal, hyprland
         .expect_validation_rules(5)  // various validation rules
         .expect_error_conditions(10) // empty fields, invalid values, etc.
         .expect_edge_cases(15);      // paths, unicode, nulls, etc.
-    
+
     // Simulate running streamlined tests
     simulate_comprehensive_test_suite();
-    
+
     // This will panic if coverage has decreased
     coverage_assertion.assert_coverage_maintained();
     Ok(())
@@ -62,14 +62,14 @@ fn simulate_comprehensive_test_suite() {
     CoverageTracker::record_event_type_tested("filesystem", "file.modified");
     CoverageTracker::record_event_type_tested("terminal_kitty", "command.executed");
     CoverageTracker::record_event_type_tested("hyprland", "window.focus");
-    
+
     // Track validation rules
     CoverageTracker::record_validation_rule("non_empty_source");
     CoverageTracker::record_validation_rule("non_empty_event_type");
     CoverageTracker::record_validation_rule("valid_json_payload");
     CoverageTracker::record_validation_rule("absolute_path_required");
     CoverageTracker::record_validation_rule("valid_command_format");
-    
+
     // Track error conditions
     CoverageTracker::record_error_condition("empty_source");
     CoverageTracker::record_error_condition("empty_event_type");
@@ -81,7 +81,7 @@ fn simulate_comprehensive_test_suite() {
     CoverageTracker::record_error_condition("concurrent_modification");
     CoverageTracker::record_error_condition("database_constraint_violation");
     CoverageTracker::record_error_condition("schema_validation_failure");
-    
+
     // Track edge cases
     CoverageTracker::record_edge_case("paths", "empty_path");
     CoverageTracker::record_edge_case("paths", "relative_path");
@@ -103,7 +103,7 @@ fn simulate_comprehensive_test_suite() {
 #[sinex_test]
 async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> TestResult {
     use coverage_assurance::{CoverageSnapshot, CoverageComparison};
-    
+
     // Original verbose test coverage
     let before = CoverageSnapshot {
         timestamp: chrono::Utc::now(),
@@ -117,7 +117,7 @@ async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> TestRe
         ].into_iter().map(String::from).collect(),
         assertions_made: 200,
     };
-    
+
     // Streamlined test coverage
     let after = CoverageSnapshot {
         timestamp: chrono::Utc::now(),
@@ -133,10 +133,10 @@ async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> TestRe
         ].into_iter().map(String::from).collect(),
         assertions_made: 250, // More assertions
     };
-    
+
     let comparison = CoverageComparison::compare(before, after);
     comparison.print_summary();
-    
+
     // Verify improvements
     assert!(comparison.line_count_change < 0, "Should have fewer lines");
     assert!(comparison.assertion_density_after > comparison.assertion_density_before,
@@ -149,14 +149,14 @@ async fn test_coverage_comparison_shows_improvement(_ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_property_coverage_tracking(_ctx: TestContext) -> TestResult {
     use coverage_assurance::PropertyCoverage;
-    
+
     let mut prop_coverage = PropertyCoverage::new();
-    
+
     // Track property-based test execution
     prop_coverage.record_property("ulid_monotonic_ordering", 1000);
     prop_coverage.record_property("event_payload_validation", 500);
     prop_coverage.record_property("concurrent_worker_safety", 100);
-    
+
     // Ensure minimum cases are tested
     assert!(prop_coverage.ensure_minimum_cases("ulid_monotonic_ordering", 100));
     assert!(prop_coverage.ensure_minimum_cases("event_payload_validation", 100));
@@ -168,16 +168,16 @@ async fn test_property_coverage_tracking(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_coverage_tracking_macro(_ctx: TestContext) -> TestResult {
     use crate::track_test_coverage;
-    
+
     CoverageTracker::reset();
-    
+
     // Use tracking macro
     track_test_coverage!(event_type: "filesystem", "file.created");
     track_test_coverage!(validation_rule: "path_validation");
     track_test_coverage!(error_condition: "invalid_path");
     track_test_coverage!(concurrency: "parallel_worker_execution");
     track_test_coverage!(edge_case: "unicode", "emoji_in_path");
-    
+
     let report = CoverageTracker::get_coverage_report();
     pretty_assertions::assert_eq!(report.event_types_count, 1);
     pretty_assertions::assert_eq!(report.validation_rules_count, 1);

@@ -4,37 +4,21 @@ default:
 
 # === Testing ===
 
-# Run all tests (always shows progress)
+# Run all tests
 test *ARGS:
-    cargo test {{ARGS}} -- --nocapture
+    cargo nextest run {{ARGS}}
 
-# Run unit tests
-test-unit *ARGS:
-    cargo test --test tests "unit::" -- {{ARGS}}
+# Run fast tests (unit + property)
+test-fast *ARGS:
+    cargo nextest run -E "test(unit::) or test(property::)" {{ARGS}}
 
-# Run integration tests  
-test-integration *ARGS:
-    cargo test --test tests "integration::" -- {{ARGS}}
-
-# Run system tests
-test-system *ARGS:
-    cargo test --test tests "system::" -- {{ARGS}}
-
-# Run adversarial tests
-test-adversarial *ARGS:
-    cargo test --test tests "adversarial::" -- {{ARGS}}
-
-# Run property tests
-test-property *ARGS:
-    cargo test --test tests "property::" -- {{ARGS}}
-
-# Run specific test with output visible
-test-show TEST:
-    cargo test --test tests {{TEST}} -- --show-output
-
-# Watch tests (re-run on changes)
+# Watch tests (re-run on file changes)
 watch *ARGS:
-    cargo watch -x "test {{ARGS}}"
+    cargo watch -x "nextest run {{ARGS}}"
+
+# Watch only fast tests (unit + property)
+watch-fast *ARGS:
+    cargo watch -x "nextest run -E 'test(unit::) or test(property::)' {{ARGS}}"
 
 # === VM Tests ===
 
@@ -136,7 +120,7 @@ update:
 # === Common Workflows ===
 
 # Quick check before commit
-pre-commit: fmt lint check test-unit
+pre-commit: fmt lint check test-fast
 
 # Full validation
 validate: fmt lint check test

@@ -5,10 +5,14 @@ members = [
     "crate/sinex-db", 
     "crate/sinex-worker",
     "crate/sinex-promo-worker",
-    "crate/sinex-events",
+    "crate/sinex-events-terminal",
+    "crate/sinex-events-desktop",
+    "crate/sinex-events-system", 
+    "crate/sinex-events-fs",
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
+    "crate/sinex-preflight",
     "crate/sinex-test-macros",
 ]
 resolver = "2"
@@ -40,7 +44,10 @@ gethostname.workspace = true
 sinex-core = { path = "crate/sinex-core" }
 sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
-sinex-events = { path = "crate/sinex-events" }
+sinex-events-terminal = { path = "crate/sinex-events-terminal" }
+sinex-events-desktop = { path = "crate/sinex-events-desktop" }
+sinex-events-system = { path = "crate/sinex-events-system" }
+sinex-events-fs = { path = "crate/sinex-events-fs" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
@@ -65,13 +72,17 @@ arbitrary = ["sinex-ulid/arbitrary"]
 proptest.workspace = true
 tempfile = "3"
 rusqlite = { version = "0.30", features = ["bundled"] }
-sinex-events = { path = "crate/sinex-events" }
+sinex-events-terminal = { path = "crate/sinex-events-terminal" }
+sinex-events-desktop = { path = "crate/sinex-events-desktop" }
+sinex-events-system = { path = "crate/sinex-events-system" }
+sinex-events-fs = { path = "crate/sinex-events-fs" }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
 criterion.workspace = true
 pretty_assertions = "1.4"
 serial_test = "3.0"
 test-case = "3.3"
 rstest = "0.18"
+num_cpus = "1.16"
 
 [workspace.package]
 version = "0.4.2"

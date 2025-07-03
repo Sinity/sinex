@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
-use sinex_promo_worker::{WorkRouter, EventScanner, ScannerConfig};
+use sinex_promo_worker::{EventScanner, ScannerConfig, WorkRouter};
 use sinex_ulid::Ulid;
 
 /// Helper to create a test event
@@ -22,11 +22,7 @@ fn create_test_event(source: &str, event_type: &str) -> RawEvent {
 }
 
 /// Helper to create a test agent manifest
-fn create_test_manifest(
-    agent_name: &str,
-    status: &str,
-    subscriptions: JsonValue,
-) -> AgentManifest {
+fn create_test_manifest(agent_name: &str, status: &str, subscriptions: JsonValue) -> AgentManifest {
     AgentManifest {
         agent_name: agent_name.to_string(),
         description: Some("Test agent".to_string()),
@@ -75,26 +71,26 @@ async fn test_work_router_integration() {
             }),
         ),
     ];
-    
+
     let router = WorkRouter::from_manifests(manifests);
-    
+
     // Test event routing
     let event1 = create_test_event("test.source", "event1");
     let agents = router.route_event(&event1);
     assert_eq!(agents, vec!["agent1"]);
-    
+
     let event2 = create_test_event("test.source", "event2");
     let agents = router.route_event(&event2);
     assert_eq!(agents, vec!["agent1", "agent2"]);
-    
+
     let event3 = create_test_event("other.source", "event3");
     let agents = router.route_event(&event3);
     assert_eq!(agents, vec!["agent1"]);
-    
+
     let special_event = create_test_event("any.source", "special_event");
     let agents = router.route_event(&special_event);
     assert_eq!(agents, vec!["agent2"]);
-    
+
     let unmatched_event = create_test_event("unknown.source", "unknown_event");
     let agents = router.route_event(&unmatched_event);
     assert!(agents.is_empty());
@@ -107,31 +103,41 @@ fn test_scanner_state_management() {
         initial_lookback: chrono::Duration::hours(12),
         process_historical: false,
     };
-    
+
     let scanner = EventScanner::new(config);
-    
+
     // Initial state should be empty
     assert!(scanner.state().last_event_ids.is_empty());
     assert!(scanner.state().last_scan_ts.is_none());
-    
+
     // Test state restoration instead of direct mutation
     let mut test_state = sinex_promo_worker::scanner::ScannerState::default();
     let event_id1 = Ulid::new();
     let event_id2 = Ulid::new();
-    test_state.last_event_ids.insert("source1".to_string(), event_id1);
-    test_state.last_event_ids.insert("source2".to_string(), event_id2);
-    
+    test_state
+        .last_event_ids
+        .insert("source1".to_string(), event_id1);
+    test_state
+        .last_event_ids
+        .insert("source2".to_string(), event_id2);
+
     let mut scanner2 = EventScanner::new(ScannerConfig {
         batch_size: 100,
         initial_lookback: chrono::Duration::hours(12),
         process_historical: false,
     });
     scanner2.restore_state(test_state);
-    
+
     // Verify state tracking
     assert_eq!(scanner2.state().last_event_ids.len(), 2);
-    assert_eq!(scanner2.state().last_event_ids.get("source1"), Some(&event_id1));
-    assert_eq!(scanner2.state().last_event_ids.get("source2"), Some(&event_id2));
+    assert_eq!(
+        scanner2.state().last_event_ids.get("source1"),
+        Some(&event_id1)
+    );
+    assert_eq!(
+        scanner2.state().last_event_ids.get("source2"),
+        Some(&event_id2)
+    );
 }
 
 #[test]
@@ -162,25 +168,25 @@ fn test_router_with_complex_subscriptions() {
             }),
         ),
     ];
-    
+
     let router = WorkRouter::from_manifests(manifests);
-    
+
     // Test filesystem events
     let file_event = create_test_event("filesystem.watcher", "file_created");
     assert_eq!(router.route_event(&file_event), vec!["data-processor"]);
-    
+
     // Test terminal events
     let cmd_event = create_test_event("terminal.kitty", "command_executed");
     assert_eq!(router.route_event(&cmd_event), vec!["data-processor"]);
-    
+
     // Test heartbeat events (wildcard match)
     let heartbeat = create_test_event("any.service", "heartbeat");
     assert_eq!(router.route_event(&heartbeat), vec!["metrics-collector"]);
-    
+
     // Test browser events
     let chrome_event = create_test_event("app.chrome", "tab_opened");
     assert_eq!(router.route_event(&chrome_event), vec!["specific-handler"]);
-    
+
     // Test unmatched event
     let unknown = create_test_event("unknown.source", "unknown_type");
     assert!(router.route_event(&unknown).is_empty());

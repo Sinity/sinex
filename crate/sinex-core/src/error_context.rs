@@ -1,9 +1,9 @@
+use crate::{CoreError, Timestamp};
+use serde::{Deserialize, Serialize};
+use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
-use crate::{CoreError, Timestamp};
-use sinex_ulid::Ulid;
 
 /// Builder for creating rich error contexts
 #[derive(Debug)]
@@ -161,8 +161,11 @@ impl CoreError {
 
     /// Create an IO error with context builder
     pub fn io_error(path: impl AsRef<Path>) -> ErrorContext {
-        ErrorContext::new(CoreError::Io(format!("IO error for path: {}", path.as_ref().display())))
-            .with_path(path)
+        ErrorContext::new(CoreError::Io(format!(
+            "IO error for path: {}",
+            path.as_ref().display()
+        )))
+        .with_path(path)
     }
 
     /// Create a generic processing failed error
@@ -192,7 +195,7 @@ fn capture_stack_trace() -> Option<String> {
 pub trait ResultExt<T> {
     /// Add context to an error
     fn context(self, msg: &str) -> crate::Result<T>;
-    
+
     /// Add context with a key-value pair
     fn with_context<F>(self, f: F) -> crate::Result<T>
     where
@@ -206,9 +209,7 @@ where
     fn context(self, msg: &str) -> crate::Result<T> {
         self.map_err(|e| {
             let core_err: CoreError = e.into();
-            core_err.context()
-                .with_context("context", msg)
-                .build()
+            core_err.context().with_context("context", msg).build()
         })
     }
 
@@ -220,7 +221,7 @@ where
     }
 }
 
-/// Integration with anyhow - removed to avoid conflict with blanket impl
+// Integration with anyhow - removed to avoid conflict with blanket impl
 
 // Implement Clone for CoreError to support error chaining
 impl Clone for CoreError {
@@ -300,20 +301,29 @@ mod tests {
             .with_context("config_file", "/etc/sinex/config.toml");
 
         let error_info = error_context.to_error_info();
-        
+
         assert_eq!(error_info.message, "Missing required field");
-        assert_eq!(error_info.context.get("field_database_url"), Some(&"not set".to_string()));
-        assert_eq!(error_info.context.get("config_file"), Some(&"/etc/sinex/config.toml".to_string()));
+        assert_eq!(
+            error_info.context.get("field_database_url"),
+            Some(&"not set".to_string())
+        );
+        assert_eq!(
+            error_info.context.get("config_file"),
+            Some(&"/etc/sinex/config.toml".to_string())
+        );
     }
 
     #[test]
     fn test_result_extension() {
         fn failing_operation() -> Result<(), std::io::Error> {
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File not found"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File not found",
+            ))
         }
 
-        let result: crate::Result<()> = failing_operation()
-            .context("Failed to read configuration file");
+        let result: crate::Result<()> =
+            failing_operation().context("Failed to read configuration file");
 
         assert!(result.is_err());
         let error_str = result.unwrap_err().to_string();

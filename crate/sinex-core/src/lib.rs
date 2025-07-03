@@ -1,26 +1,30 @@
+pub mod channel_helpers;
+pub mod config_extractors;
+pub mod error_context;
 pub mod event;
+pub mod event_source_base;
 pub mod event_source_context;
 pub mod heartbeat;
 pub mod unified_collector;
 pub mod validation;
 pub mod validation_chains;
-pub mod event_source_base;
-pub mod error_context;
-pub mod config_extractors;
-pub mod channel_helpers;
 
-pub use event_source_context::EventSourceContext;
-pub use heartbeat::{ComponentHeartbeat, HealthStatus, HeartbeatEmitter, SystemHealth, MetricsProvider};
-pub use unified_collector::{EventType, EventSource, EventOutput};
-pub use event_source_base::EventSourceBase;
-pub use validation_chains::{ValidationChain, MultiValidator, JsonType};
-pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
-pub use config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
 pub use channel_helpers::{
-    ChannelSenderExt, ChannelReceiverExt, ChannelMonitor, ChannelStats,
-    BackpressureManager
-    // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
+    BackpressureManager, // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
+    ChannelMonitor,
+    ChannelReceiverExt,
+    ChannelSenderExt,
+    ChannelStats,
 };
+pub use config_extractors::{parse_duration, ConfigExtractor, ConfigValidator};
+pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use event_source_base::EventSourceBase;
+pub use event_source_context::EventSourceContext;
+pub use heartbeat::{
+    ComponentHeartbeat, HealthStatus, HeartbeatEmitter, MetricsProvider, SystemHealth,
+};
+pub use unified_collector::{EventOutput, EventSource, EventType};
+pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 
 // Common type aliases for event handling (defined after RawEvent struct)
 
@@ -33,8 +37,8 @@ pub type JsonValue = serde_json::Value;
 pub type ConfigValue = toml::Value;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use sinex_ulid::Ulid;
+use thiserror::Error;
 
 // ===== Database type aliases =====
 
@@ -70,22 +74,26 @@ pub enum CoreError {
 pub enum ValidationError {
     #[error("Field validation failed: {field} - {message}")]
     Field { field: String, message: String },
-    
+
     #[error("Schema validation failed: {0}")]
     Schema(String),
-    
+
     #[error("Business rule validation failed: {0}")]
     BusinessRule(String),
-    
+
     #[error("Invalid value for field {field}: {message}")]
     InvalidValue { field: String, message: String },
-    
+
     #[error("Invalid type for field {field}: expected {expected}, got {actual}")]
-    InvalidType { field: String, expected: String, actual: String },
-    
+    InvalidType {
+        field: String,
+        expected: String,
+        actual: String,
+    },
+
     #[error("Schema validation error: {0}")]
     SchemaValidation(String),
-    
+
     #[error("Missing required field: {field}")]
     MissingField { field: String },
 }
@@ -113,7 +121,7 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 // ===== Core data structures =====
 
 /// Raw event structure
-/// 
+///
 /// This is the canonical event structure used throughout the system.
 /// NOTE: This struct uses ULID directly. When using with SQLX queries,
 /// use type overrides like: `id::uuid as "id: _"` for proper type inference
@@ -149,7 +157,11 @@ pub struct RawEventBuilder {
 }
 
 impl RawEventBuilder {
-    pub fn new(source: impl Into<String>, event_type: impl Into<String>, payload: JsonValue) -> Self {
+    pub fn new(
+        source: impl Into<String>,
+        event_type: impl Into<String>,
+        payload: JsonValue,
+    ) -> Self {
         Self {
             source: source.into(),
             event_type: event_type.into(),
@@ -183,11 +195,9 @@ impl RawEventBuilder {
 
     pub fn build(self) -> RawEvent {
         let id = Ulid::new();
-        let hostname = self.host.unwrap_or_else(|| {
-            gethostname::gethostname()
-                .to_string_lossy()
-                .to_string()
-        });
+        let hostname = self
+            .host
+            .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
 
         RawEvent {
             id,
@@ -243,7 +253,7 @@ pub mod event_type_constants {
     pub mod terminal {
         pub const COMMAND_EXECUTED: &str = "command.executed";
     }
-    
+
     pub mod window_manager {
         // Window events
         pub const WINDOW_FOCUSED: &str = "window.focused";
@@ -252,17 +262,17 @@ pub mod event_type_constants {
         pub const WINDOW_MOVED: &str = "window.moved";
         pub const WINDOW_TITLE_CHANGED: &str = "window.title_changed";
         pub const WINDOW_URGENT: &str = "window.urgent";
-        
+
         // Workspace events
         pub const WORKSPACE_CHANGED: &str = "workspace.changed";
         pub const WORKSPACE_CREATED: &str = "workspace.created";
         pub const WORKSPACE_DESTROYED: &str = "workspace.destroyed";
-        
+
         // Monitor events
         pub const MONITOR_FOCUSED: &str = "monitor.focused";
         pub const MONITOR_ADDED: &str = "monitor.added";
         pub const MONITOR_REMOVED: &str = "monitor.removed";
-        
+
         // State dumps (periodic)
         pub const STATE_SNAPSHOT: &str = "state.snapshot";
     }

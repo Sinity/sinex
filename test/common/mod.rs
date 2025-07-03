@@ -26,7 +26,13 @@ pub mod database_helpers;
 // NEW: Unified database access
 pub mod database;
 
-// Test database isolation
+// Universal database pool system
+pub mod database_pool;
+
+// Cleanup hook for test infrastructure
+pub mod cleanup_hook;
+
+// Test database isolation (kept for migration)
 pub mod test_database;
 
 // Unified test context for all tests
@@ -37,7 +43,7 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate
 use crate::common::prelude::*;
-use sinex_core::{RawEventBuilder, sources, event_type_constants};
+use sinex_core::{event_type_constants, sources, RawEventBuilder};
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -72,11 +78,12 @@ pub mod events {
                 "path": path,
                 "size": 1024,
                 "modified_time": "2025-01-01T00:00:00Z"
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
-    /// Create a test kitty terminal event  
+    /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
             sources::TERMINAL_KITTY,
@@ -85,17 +92,14 @@ pub mod events {
                 "command": command,
                 "exit_code": 0,
                 "duration_ms": 100
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
     /// Create a test hyprland event
     pub fn hyprland_event(event_type: &str, data: Value) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            sources::HYPRLAND,
-            event_type,
-            data
-        ).build()
+        RawEventBuilder::new(sources::HYPRLAND, event_type, data).build()
     }
 
     /// Create a test sinex agent event
@@ -111,8 +115,9 @@ pub mod events {
                 "uptime_seconds": 3600,
                 "events_processed_session": 42,
                 "dlq_size": 0
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
     /// Create an invalid event for error testing
@@ -120,7 +125,7 @@ pub mod events {
         use chrono::Utc;
         sinex_db::RawEvent {
             id: sinex_ulid::Ulid::new(),
-            source: "".to_string(), // Invalid empty source
+            source: "".to_string(),     // Invalid empty source
             event_type: "".to_string(), // Invalid empty event_type
             ts_ingest: Utc::now(),
             ts_orig: None,
@@ -148,27 +153,33 @@ pub mod events {
 
     /// Create a test event for race condition testing
     pub fn race_test_event(target: &str) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            "test",
-            "race.test",
-            json!({"target": target})
-        ).build()
+        RawEventBuilder::new("test", "race.test", json!({"target": target})).build()
     }
 
     /// Create a test event with minimal fields for adversarial testing
-    pub fn adversarial_test_event(event_type: &str, payload: serde_json::Value) -> sinex_db::RawEvent {
+    pub fn adversarial_test_event(
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> sinex_db::RawEvent {
         RawEventBuilder::new("test", event_type, payload).build()
     }
 
     /// Create a batch of test events efficiently
-    pub fn test_event_batch(source: &str, event_type: &str, count: usize) -> Vec<sinex_db::RawEvent> {
-        (0..count).map(|i| {
-            RawEventBuilder::new(
-                source,
-                event_type,
-                json!({"sequence": i, "batch": true, "timestamp": chrono::Utc::now()})
-            ).build()
-        }).collect()
+    pub fn test_event_batch(
+        source: &str,
+        event_type: &str,
+        count: usize,
+    ) -> Vec<sinex_db::RawEvent> {
+        (0..count)
+            .map(|i| {
+                RawEventBuilder::new(
+                    source,
+                    event_type,
+                    json!({"sequence": i, "batch": true, "timestamp": chrono::Utc::now()}),
+                )
+                .build()
+            })
+            .collect()
     }
 
     /// Create a quick filesystem event with default payload
@@ -190,8 +201,9 @@ pub mod events {
                 "sequence": sequence,
                 "delay_ms": delay_ms,
                 "created_at": chrono::Utc::now()
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
     /// Create test events for performance testing
@@ -207,12 +219,16 @@ pub mod events {
                     "test_type": "performance",
                     "created_at": chrono::Utc::now()
                 }
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
     /// Create agent heartbeat event for chaos testing
-    pub fn agent_heartbeat_chaos_event(agent_name: &str, version: Option<&str>) -> sinex_db::RawEvent {
+    pub fn agent_heartbeat_chaos_event(
+        agent_name: &str,
+        version: Option<&str>,
+    ) -> sinex_db::RawEvent {
         let mut builder = RawEventBuilder::new(
             "agent",
             "agent.heartbeat",
@@ -220,31 +236,35 @@ pub mod events {
                 "agent_name": agent_name,
                 "status": "alive",
                 "version": version.unwrap_or("1.0.0")
-            })
+            }),
         );
-        
+
         if let Some(v) = version {
             builder = builder.with_ingestor_version(v);
         }
-        
+
         builder.build()
     }
 
     /// Create filesystem event for chaos testing
-    pub fn filesystem_chaos_event(event_type: &str, path: &str, version: Option<&str>) -> sinex_db::RawEvent {
+    pub fn filesystem_chaos_event(
+        event_type: &str,
+        path: &str,
+        version: Option<&str>,
+    ) -> sinex_db::RawEvent {
         let mut builder = RawEventBuilder::new(
             "filesystem",
             event_type,
             json!({
                 "path": path,
                 "chaos_test": true
-            })
+            }),
         );
-        
+
         if let Some(v) = version {
             builder = builder.with_ingestor_version(v);
         }
-        
+
         builder.build()
     }
 
@@ -258,12 +278,16 @@ pub mod events {
                 "data": large_data,
                 "size": data_size,
                 "test_type": "boundary"
-            })
-        ).build()
+            }),
+        )
+        .build()
     }
 
     /// Create indexed test event for database boundary testing
-    pub fn indexed_test_event(index: i64, event_time: chrono::DateTime<chrono::Utc>) -> sinex_db::RawEvent {
+    pub fn indexed_test_event(
+        index: i64,
+        event_time: chrono::DateTime<chrono::Utc>,
+    ) -> sinex_db::RawEvent {
         RawEventBuilder::new(
             "btree_test",
             "index.split",
@@ -271,23 +295,35 @@ pub mod events {
                 "index": index,
                 "timestamp": event_time,
                 "test_type": "btree_boundary"
-            })
-        ).with_orig_timestamp(event_time).build()
+            }),
+        )
+        .with_orig_timestamp(event_time)
+        .build()
     }
 
-    /// Generic adversarial event with customizable source and type  
-    pub fn generic_adversarial_event(source: &str, event_type: &str, payload: serde_json::Value, version: Option<&str>) -> sinex_db::RawEvent {
+    /// Generic adversarial event with customizable source and type
+    pub fn generic_adversarial_event(
+        source: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+        version: Option<&str>,
+    ) -> sinex_db::RawEvent {
         let mut builder = RawEventBuilder::new(source, event_type, payload);
-        
+
         if let Some(v) = version {
             builder = builder.with_ingestor_version(v);
         }
-        
+
         builder.build()
     }
 
     /// Create a raw event with specified timestamp (for comprehensive tests)
-    pub fn create_raw_event(source: &str, event_type: &str, payload: serde_json::Value, timestamp: chrono::DateTime<chrono::Utc>) -> sinex_db::RawEvent {
+    pub fn create_raw_event(
+        source: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> sinex_db::RawEvent {
         RawEventBuilder::new(source, event_type, payload)
             .with_orig_timestamp(timestamp)
             .build()
@@ -310,10 +346,7 @@ pub mod assertions {
     }
 
     /// Assert that an event was inserted successfully
-    pub async fn assert_event_inserted(
-        pool: &DbPool,
-        event: &RawEvent
-    ) -> Result<Ulid> {
+    pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> Result<Ulid> {
         let inserted = queries::insert_event(&pool, event).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
@@ -322,19 +355,23 @@ pub mod assertions {
     /// Assert that an event insertion fails with validation error
     pub async fn assert_event_insertion_fails(
         pool: &DbPool,
-        event: &RawEvent
+        event: &RawEvent,
     ) -> Result<(), anyhow::Error> {
         let result = queries::insert_event(&pool, event).await;
-        assert!(result.is_err(), "Expected event insertion to fail, but it succeeded");
+        assert!(
+            result.is_err(),
+            "Expected event insertion to fail, but it succeeded"
+        );
         Ok(())
     }
 
     /// Assert that manifest was registered successfully
     pub async fn assert_manifest_registered(
         pool: &DbPool,
-        manifest: &AgentManifest
+        manifest: &AgentManifest,
     ) -> Result<(), anyhow::Error> {
-        let result = queries::upsert_agent_manifest(&pool,
+        let result = queries::upsert_agent_manifest(
+            &pool,
             &manifest.agent_name,
             &manifest.description.as_deref().unwrap_or(""),
             &manifest.version,
@@ -342,7 +379,8 @@ pub mod assertions {
             Some(&manifest.agent_type),
             manifest.config_template_json.clone(),
             manifest.produces_event_types.clone(),
-        ).await;
+        )
+        .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
         assert!(!manifest.agent_name.is_empty());
         assert!(!manifest.version.is_empty());
@@ -362,7 +400,13 @@ pub mod generators {
 
     /// Common terminal commands for testing
     pub fn common_commands() -> Vec<&'static str> {
-        vec!["ls -la", "cd /home", "git status", "cargo build", "vim file.rs"]
+        vec![
+            "ls -la",
+            "cd /home",
+            "git status",
+            "cargo build",
+            "vim file.rs",
+        ]
     }
 
     /// Generate test event with predictable data based on index
@@ -370,7 +414,7 @@ pub mod generators {
         match index % 3 {
             0 => events::filesystem_event(
                 event_type_constants::filesystem::FILE_CREATED,
-                &file_path(&format!("file_{}", index))
+                &file_path(&format!("file_{}", index)),
             ),
             1 => events::kitty_event(&common_commands()[index % common_commands().len()]),
             _ => events::hyprland_event("workspace", json!({"id": index})),
@@ -392,18 +436,20 @@ pub mod generators {
             "/home/user/.config/app/settings.toml",
             "/home/user/Downloads/image.png",
         ];
-        
+
         let event_types = vec![
             event_type_constants::filesystem::FILE_CREATED,
             event_type_constants::filesystem::FILE_MODIFIED,
             event_type_constants::filesystem::FILE_DELETED,
         ];
-        
-        (0..count).map(|i| {
-            let path = realistic_paths[i % realistic_paths.len()];
-            let event_type = event_types[i % event_types.len()];
-            events::filesystem_event(event_type, path)
-        }).collect()
+
+        (0..count)
+            .map(|i| {
+                let path = realistic_paths[i % realistic_paths.len()];
+                let event_type = event_types[i % event_types.len()];
+                events::filesystem_event(event_type, path)
+            })
+            .collect()
     }
 
     /// Generate realistic terminal command events
@@ -420,41 +466,46 @@ pub mod generators {
             "systemctl status postgresql",
             "nix develop",
         ];
-        
-        (0..count).map(|i| {
-            let command = realistic_commands[i % realistic_commands.len()];
-            events::kitty_event(command)
-        }).collect()
+
+        (0..count)
+            .map(|i| {
+                let command = realistic_commands[i % realistic_commands.len()];
+                events::kitty_event(command)
+            })
+            .collect()
     }
 
     /// Generate events with realistic time distribution
     pub fn time_distributed_events(
-        count: usize, 
+        count: usize,
         start_time: chrono::DateTime<chrono::Utc>,
-        interval_secs: i64
+        interval_secs: i64,
     ) -> Vec<sinex_db::RawEvent> {
-        (0..count).map(|i| {
-            let mut event = indexed_event(i);
-            event.ts_orig = Some(start_time + chrono::Duration::seconds(interval_secs * i as i64));
-            event
-        }).collect()
+        (0..count)
+            .map(|i| {
+                let mut event = indexed_event(i);
+                event.ts_orig =
+                    Some(start_time + chrono::Duration::seconds(interval_secs * i as i64));
+                event
+            })
+            .collect()
     }
 
     /// Generate events simulating burst patterns
     pub fn burst_pattern_events(burst_count: usize, burst_size: usize) -> Vec<sinex_db::RawEvent> {
         let mut events = Vec::new();
         let base_time = chrono::Utc::now();
-        
+
         for burst in 0..burst_count {
             let burst_start = base_time + chrono::Duration::minutes(burst as i64 * 10);
-            
+
             for i in 0..burst_size {
                 let mut event = indexed_event(burst * burst_size + i);
                 event.ts_orig = Some(burst_start + chrono::Duration::milliseconds(i as i64 * 100));
                 events.push(event);
             }
         }
-        
+
         events
     }
 
@@ -467,7 +518,6 @@ pub mod generators {
                 2 => json!({"large": "data".repeat(100), "metadata": {"tags": vec!["tag1", "tag2", "tag3"]}}), // Large payload
                 _ => json!({"binary_data": "a".repeat(1000)}), // Very large payload
             };
-            
             test_event_with_payload(
                 sources::FILESYSTEM,
                 event_type_constants::filesystem::FILE_MODIFIED,
@@ -479,7 +529,7 @@ pub mod generators {
     /// Generate test agent manifest
     pub fn test_agent_manifest(name: &str) -> AgentManifest {
         use chrono::Utc;
-        
+
         AgentManifest {
             agent_name: name.to_string(),
             description: Some(format!("Test agent {}", name)),
@@ -523,7 +573,7 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(exists.exists)
 }
 
@@ -557,8 +607,7 @@ macro_rules! test_invalid_event_insertion {
 pub mod env {
     /// Check if we're running in a test environment
     pub fn is_test_env() -> bool {
-        std::env::var("TEST_DATABASE_URL").is_ok() || 
-        std::env::var("CARGO_TEST").is_ok()
+        std::env::var("TEST_DATABASE_URL").is_ok() || std::env::var("CARGO_TEST").is_ok()
     }
 
     /// Setup test environment variables
@@ -570,7 +619,7 @@ pub mod env {
             std::env::set_var("DATABASE_URL", super::test_database_url());
         }
     }
-    
+
     /// Initialize test logging
     pub fn init_test_logging() {
         let _ = tracing_subscriber::fmt()
@@ -580,12 +629,20 @@ pub mod env {
 }
 
 /// Create test event with custom payload
-pub fn test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::RawEvent {
+pub fn test_event_with_payload(
+    source: &str,
+    event_type: &str,
+    payload: Value,
+) -> sinex_db::RawEvent {
     RawEventBuilder::new(source, event_type, payload).build()
 }
 
 /// Legacy compatibility alias
-pub fn create_test_event_with_payload(source: &str, event_type: &str, payload: Value) -> sinex_db::RawEvent {
+pub fn create_test_event_with_payload(
+    source: &str,
+    event_type: &str,
+    payload: Value,
+) -> sinex_db::RawEvent {
     test_event_with_payload(source, event_type, payload)
 }
 
@@ -597,7 +654,8 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    queries::upsert_agent_manifest(&pool,
+    queries::upsert_agent_manifest(
+        &pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -605,7 +663,8 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
         Some(&manifest.agent_type),
         manifest.config_template_json.clone(),
         manifest.produces_event_types.clone(),
-    ).await?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -618,15 +677,16 @@ pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) ->
 
 /// Helper for creating agent with specific subscriptions
 pub async fn create_agent_with_subscriptions(
-    pool: &DbPool, 
-    agent_name: &str, 
-    subscriptions: &serde_json::Value
+    pool: &DbPool,
+    agent_name: &str,
+    subscriptions: &serde_json::Value,
 ) -> Result<(), anyhow::Error> {
     // Create a test agent manifest and add subscriptions
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
-    
-    queries::upsert_agent_manifest(&pool,
+
+    queries::upsert_agent_manifest(
+        &pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -634,8 +694,9 @@ pub async fn create_agent_with_subscriptions(
         Some(&manifest.agent_type),
         manifest.config_template_json.clone(),
         manifest.produces_event_types.clone(),
-    ).await?;
-    
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -668,7 +729,7 @@ impl TestExecutionSummary {
 #[allow(dead_code)]
 pub mod db_utils {
     use super::*;
-    
+
     /// Insert multiple test events quickly
     pub async fn insert_test_events(pool: &DbPool, count: usize) -> Result<Vec<Ulid>> {
         let mut ids = Vec::new();
@@ -684,7 +745,7 @@ pub mod db_utils {
 /// Essential assertion helpers
 #[allow(dead_code)]
 pub mod assertions_extra {
-    
+
     use sinex_db::RawEvent;
 
     /// Assert events are in chronological order
@@ -702,7 +763,11 @@ pub mod assertions_extra {
     pub fn assert_no_duplicate_events(events: &[RawEvent]) {
         let mut seen_ids = std::collections::HashSet::new();
         for event in events {
-            assert!(seen_ids.insert(event.id), "Duplicate event found: {}", event.id);
+            assert!(
+                seen_ids.insert(event.id),
+                "Duplicate event found: {}",
+                event.id
+            );
         }
     }
 }
@@ -711,7 +776,7 @@ pub mod assertions_extra {
 #[allow(dead_code)]
 pub mod health {
     use super::*;
-    
+
     /// Check if database is healthy
     pub async fn check_database_health(pool: &DbPool) -> Result<bool> {
         match sqlx::query("SELECT 1").fetch_one(pool).await {
@@ -719,22 +784,22 @@ pub mod health {
             Err(_) => Ok(false),
         }
     }
-    
+
     /// Check if git-annex is available
     pub async fn check_git_annex_available() -> bool {
         use std::process::Command;
-        
+
         match Command::new("git").args(["annex", "version"]).output() {
             Ok(output) => output.status.success(),
             Err(_) => false,
         }
     }
-    
+
     /// Check if required system tools are available
     pub async fn check_system_tools() -> Vec<(String, bool)> {
         let tools = vec!["git", "kitty", "hyprctl", "wl-paste", "xclip"];
         let mut results = Vec::new();
-        
+
         for tool in tools {
             let available = std::process::Command::new(tool)
                 .arg("--version")
@@ -743,7 +808,7 @@ pub mod health {
                 .unwrap_or(false);
             results.push((tool.to_string(), available));
         }
-        
+
         results
     }
 }
@@ -752,19 +817,22 @@ pub mod health {
 #[allow(dead_code)]
 pub mod cleanup {
     use super::*;
-    
+
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &DbPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
-            .execute(pool).await?;
+            .execute(pool)
+            .await?;
         sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
-            .execute(pool).await?;
+            .execute(pool)
+            .await?;
         sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test_%'")
-            .execute(pool).await?;
+            .execute(pool)
+            .await?;
         Ok(())
     }
-    
+
     /// Clean up test files and directories
     pub async fn cleanup_test_files(paths: &[&str]) -> Result<(), anyhow::Error> {
         for path in paths {
@@ -784,15 +852,15 @@ pub mod cleanup {
 #[allow(dead_code)]
 pub mod resources {
     use super::*;
-    use tempfile::{TempDir, NamedTempFile};
-    use tokio::fs;
     use std::path::{Path, PathBuf};
-    
+    use tempfile::{NamedTempFile, TempDir};
+    use tokio::fs;
+
     /// Create temporary directory with standard test structure
     pub fn temp_dir() -> Result<TempDir> {
         TempDir::new().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))
     }
-    
+
     /// Create temp directory with specific subdirectories
     pub fn temp_dir_with_structure(subdirs: &[&str]) -> Result<TempDir> {
         let temp = temp_dir()?;
@@ -801,14 +869,14 @@ pub mod resources {
         }
         Ok(temp)
     }
-    
+
     /// Create a temporary configuration file
     pub async fn temp_config_file(content: &str) -> Result<NamedTempFile> {
         let temp_file = NamedTempFile::new()?;
         fs::write(temp_file.path(), content).await?;
         Ok(temp_file)
     }
-    
+
     /// Create test file with content
     pub fn create_test_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf> {
         let file_path = dir.join(name);
@@ -819,17 +887,19 @@ pub mod resources {
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
-pub use sinex_db::queries::{get_event_by_id, get_events_by_source, get_recent_events, get_events_by_type};
+pub use sinex_db::queries::{
+    get_event_by_id, get_events_by_source, get_events_by_type, get_recent_events,
+};
+pub mod channel_test_utils;
+pub mod config_test_utils;
+pub mod enhanced_assertions;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
-pub mod enhanced_assertions;
-pub mod config_test_utils;
-pub mod channel_test_utils;
 
 /// Validation test utilities
 pub mod validation_test_utils;
 
-/// Schema test utilities 
+/// Schema test utilities
 pub mod schema_test_utils;
 
 /// Worker test utilities
@@ -844,17 +914,17 @@ pub mod event_sources {
     use super::*;
     use sinex_core::{EventSource, EventSourceContext, RawEvent};
     use tokio::time::{timeout, Duration};
-    
+
     /// Create EventSourceContext with test configuration
     pub fn test_context(config: Value) -> EventSourceContext {
         EventSourceContext::new(config)
     }
-    
+
     /// Create EventSourceContext with database pool
     pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceContext {
         EventSourceContext::new(config).with_db_pool(pool)
     }
-    
+
     /// Standard filesystem event source config
     pub fn filesystem_config(watch_path: &str) -> Value {
         serde_json::json!({
@@ -863,15 +933,15 @@ pub mod event_sources {
             "debounce_ms": 50
         })
     }
-    
-    /// Standard terminal event source config  
+
+    /// Standard terminal event source config
     pub fn terminal_config(socket_path: &str) -> Value {
         serde_json::json!({
             "socket_path": socket_path,
             "polling_interval_secs": 1
         })
     }
-    
+
     /// Standard clipboard event source config
     pub fn clipboard_config() -> Value {
         serde_json::json!({
@@ -881,7 +951,7 @@ pub mod event_sources {
             "max_content_size": 1024
         })
     }
-    
+
     /// Test event source until it produces events or times out
     pub async fn test_event_production<T: EventSource>(
         mut source: T,
@@ -890,22 +960,20 @@ pub mod event_sources {
     ) -> Result<Vec<RawEvent>> {
         let (tx, mut rx) = mpsc::channel(100);
         let timeout_duration = Duration::from_secs(timeout_secs);
-        
-        let source_handle = tokio::spawn(async move {
-            source.stream_events(tx).await
-        });
-        
+
+        let source_handle = tokio::spawn(async move { source.stream_events(tx).await });
+
         let mut events = Vec::new();
         let start = std::time::Instant::now();
-        
+
         while events.len() < min_events && start.elapsed() < timeout_duration {
             match timeout(Duration::from_millis(100), rx.recv()).await {
                 Ok(Some(event)) => events.push(event),
-                Ok(None) => break, // Channel closed
+                Ok(None) => break,  // Channel closed
                 Err(_) => continue, // Timeout, keep waiting
             }
         }
-        
+
         source_handle.abort();
         Ok(events)
     }
@@ -936,7 +1004,8 @@ pub mod parallelization {
         ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
         where
             F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
-            Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
+            Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
+                + Send,
             T: Send + 'static,
         {
             let mut join_set = JoinSet::new();
@@ -955,7 +1024,9 @@ pub mod parallelization {
             while let Some(result) = join_set.join_next().await {
                 match result {
                     Ok(op_result) => results.push(op_result),
-                    Err(join_error) => results.push(Err(Box::new(join_error) as Box<dyn std::error::Error + Send + Sync>)),
+                    Err(join_error) => results.push(Err(
+                        Box::new(join_error) as Box<dyn std::error::Error + Send + Sync>
+                    )),
                 }
 
                 // Start next operation if available
@@ -977,7 +1048,8 @@ pub mod parallelization {
     ) -> Vec<Result<T, Box<dyn std::error::Error + Send + Sync>>>
     where
         F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send,
+        Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
+            + Send,
         T: Send + 'static,
     {
         ParallelTestExecutor::new(max_concurrent)

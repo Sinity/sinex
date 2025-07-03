@@ -103,15 +103,15 @@ impl RaceConditionWorker {
 
     async fn claim_work_competitively(&self) -> Result<Option<WorkItem>> {
         let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'processing', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'processing',
                  attempts = attempts + 1,
                  last_attempt_ts = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = (
-                 SELECT queue_id 
-                 FROM sinex_schemas.work_queue 
-                 WHERE status = 'pending' 
+                 SELECT queue_id
+                 FROM sinex_schemas.work_queue
+                 WHERE status = 'pending'
                    AND target_agent_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                  ORDER BY created_at
@@ -126,14 +126,16 @@ impl RaceConditionWorker {
         .await;
 
         match claimed_item {
-            Ok(Some(item)) => {
-                Ok(Some(WorkItem {
-                    queue_id: item.queue_id.ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                    event_id: item.raw_event_id.ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
-                    target_agent: self.agent_name.clone(),
-                    created_at: chrono::Utc::now(),
-                }))
-            }
+            Ok(Some(item)) => Ok(Some(WorkItem {
+                queue_id: item
+                    .queue_id
+                    .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
+                event_id: item
+                    .raw_event_id
+                    .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
+                target_agent: self.agent_name.clone(),
+                created_at: chrono::Utc::now(),
+            })),
             Ok(None) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -145,7 +147,7 @@ impl RaceConditionWorker {
 
         if rand::random::<f64>() < 0.05 {
             sqlx::query!(
-                "UPDATE sinex_schemas.work_queue 
+                "UPDATE sinex_schemas.work_queue
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '500 milliseconds'
@@ -159,8 +161,8 @@ impl RaceConditionWorker {
         }
 
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'succeeded', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'succeeded',
                  processed_at = NOW(),
                  processing_worker_id = $2::uuid::ulid
              WHERE queue_id = $1::uuid::ulid",
@@ -197,7 +199,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     let agent_name = format!("race_condition_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -205,7 +207,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         "generic",
         "running"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -216,24 +218,26 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     for i in 0..race_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload) 
+            "INSERT INTO raw.events (id, source, event_type, payload)
              VALUES ($1::uuid::ulid, $2, $3, $4)",
             event_id.to_uuid(),
             "stress.race_condition",
             "race_item",
             json!({"race_item": i})
-        ).execute(&pool).await?;
+        )
+        .execute(pool)
+        .await?;
 
         let queue_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.work_queue 
-             (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
+            "INSERT INTO sinex_schemas.work_queue
+             (queue_id, raw_event_id, target_agent_name, max_attempts, status)
              VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
             agent_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 
@@ -244,12 +248,12 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         let mut detection_events = Vec::new();
         let mut interval = interval(Duration::from_millis(200));
         let mut last_succeeded_count = 0i64;
-        
+
         for check in 0..25 {
             interval.tick().await;
 
             let current_succeeded: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
@@ -259,7 +263,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             .unwrap_or(0);
 
             let processing_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue
                  WHERE target_agent_name = $1 AND status = 'processing'",
                 detection_agent
             )
@@ -269,10 +273,10 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             .unwrap_or(0);
 
             let succeeded_delta = current_succeeded - last_succeeded_count;
-            
+
             let duplicate_check: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) - COUNT(DISTINCT raw_event_id) 
-                 FROM sinex_schemas.work_queue 
+                "SELECT COUNT(*) - COUNT(DISTINCT raw_event_id)
+                 FROM sinex_schemas.work_queue
                  WHERE target_agent_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
@@ -284,7 +288,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             let worker_conflicts: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM (
                    SELECT processing_worker_id, COUNT(*) as cnt
-                   FROM sinex_schemas.work_queue 
+                   FROM sinex_schemas.work_queue
                    WHERE target_agent_name = $1 AND status = 'processing'
                      AND processing_worker_id IS NOT NULL
                    GROUP BY processing_worker_id
@@ -321,10 +325,12 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             }
 
             last_succeeded_count = current_succeeded;
-            
+
             if check % 5 == 0 {
-                println!("Race detector check {}: succeeded={}, processing={}, conflicts={}", 
-                        check, current_succeeded, processing_count, worker_conflicts);
+                println!(
+                    "Race detector check {}: succeeded={}, processing={}, conflicts={}",
+                    check, current_succeeded, processing_count, worker_conflicts
+                );
             }
         }
 
@@ -365,10 +371,12 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             Ok(worker_result) => {
                 total_processed += worker_result.items_processed;
                 total_race_conditions += worker_result.race_conditions;
-                
+
                 if worker_result.race_conditions > 0 {
-                    println!("Race worker {} detected {} race conditions", 
-                            i, worker_result.race_conditions);
+                    println!(
+                        "Race worker {} detected {} race conditions",
+                        i, worker_result.race_conditions
+                    );
                 }
             }
             Err(e) => {
@@ -378,20 +386,20 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
     let unique_completed: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(DISTINCT raw_event_id) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(DISTINCT raw_event_id) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?
     .unwrap_or(0);
 
@@ -409,12 +417,21 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         println!("  Race event: {}", event);
     }
 
-    pretty_assertions::assert_eq!(final_succeeded, unique_completed, 
-              "No duplicate processing should occur (race condition check)");
-    assert!(total_processed > 0, "Should process work items despite race potential");
+    pretty_assertions::assert_eq!(
+        final_succeeded,
+        unique_completed,
+        "No duplicate processing should occur (race condition check)"
+    );
+    assert!(
+        total_processed > 0,
+        "Should process work items despite race potential"
+    );
 
     if !race_events.is_empty() {
-        println!("  ✓ Race condition detection system identified {} potential issues", race_events.len());
+        println!(
+            "  ✓ Race condition detection system identified {} potential issues",
+            race_events.len()
+        );
     } else {
         println!("  ✓ No race conditions detected - system maintained integrity");
     }

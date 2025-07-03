@@ -1,5 +1,5 @@
 //! Database integration tests
-//! 
+//!
 //! These tests verify core database operations work correctly:
 //! - Event insertion and retrieval
 //! - Batch operations
@@ -10,10 +10,10 @@
 //! Uses #[sinex_test] for automatic transaction isolation
 
 use crate::common::prelude::*;
-use crate::common::{self, events, assertions, generators};
+use crate::common::{self, assertions, events, generators};
 
 /// Test basic event lifecycle: insert → retrieve → verify
-/// 
+///
 /// This is the most fundamental test - if this fails, nothing else works.
 /// Verifies:
 /// - Events can be inserted into raw.events table
@@ -25,7 +25,7 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
     // Create a test event using our utilities
     let event = events::filesystem_event(
         event_type_constants::filesystem::FILE_CREATED,
-        "/test/file.txt"
+        "/test/file.txt",
     );
 
     // Insert and verify using shared assertion helpers
@@ -44,13 +44,13 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let events = generators::test_events(10);
-    
+
     let mut inserted_ids = Vec::new();
     for event in &events {
         let id = assertions::assert_event_inserted(ctx.pool(), event).await?;
         inserted_ids.push(id);
     }
-    
+
     // Verify all events exist
     for id in inserted_ids {
         assert!(common::event_exists(ctx.pool(), id).await?);
@@ -71,15 +71,15 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     let fs_event2 = events::file_modified_event("/test/file2.txt");
     assertions::assert_event_inserted(ctx.pool(), &fs_event1).await?;
     assertions::assert_event_inserted(ctx.pool(), &fs_event2).await?;
-    
+
     // Insert terminal event
     let term_event = events::kitty_event("ls -la");
     assertions::assert_event_inserted(ctx.pool(), &term_event).await?;
-    
+
     // Query using our helper function
     let filesystem_events = common::get_events_by_source(ctx.pool(), "filesystem", 10).await?;
     assert!(filesystem_events.len() >= 2);
-    
+
     for event in &filesystem_events {
         pretty_assertions::assert_eq!(event.source, "filesystem");
     }
@@ -101,14 +101,14 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
     // Insert events with a small delay to ensure different timestamps
     let event1 = events::file_created_event("/test/first.txt");
     let id1 = assertions::assert_event_inserted(ctx.pool(), &event1).await?;
-    
+
     tokio::task::yield_now().await;
-    
+
     let event2 = events::file_created_event("/test/second.txt");
     let id2 = assertions::assert_event_inserted(ctx.pool(), &event2).await?;
-    
+
     // Verify ULIDs are in time order (later ULID should be larger)
     assert!(id2.to_string() > id1.to_string());
-    
+
     Ok(())
 }

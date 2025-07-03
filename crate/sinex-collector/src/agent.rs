@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sinex_core::{JsonValue, Timestamp, OptionalTimestamp, EventSender, RawEvent};
-use sinex_ulid::Ulid;
+use sinex_core::{EventSender, JsonValue, OptionalTimestamp, RawEvent, Timestamp};
 use sinex_db::DbPool;
+use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tracing::{info, warn};
 
@@ -144,7 +144,7 @@ impl ManifestManager {
     /// Register or update an agent manifest
     pub async fn register_agent(&self, manifest: &AgentManifest) -> Result<()> {
         let produces_json = serde_json::to_value(&manifest.produces_event_types)?;
-        
+
         sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.agent_manifests 
@@ -216,8 +216,7 @@ impl ManifestManager {
         .await?;
 
         if let Some(row) = row {
-            let config_schema_id: Option<Ulid> = row.config_schema_id
-                .map(|uuid| uuid.into());
+            let config_schema_id: Option<Ulid> = row.config_schema_id.map(|uuid| uuid.into());
             let manifest = AgentManifest {
                 agent_name: row.agent_name,
                 description: row.description.unwrap_or_default(),
@@ -228,8 +227,11 @@ impl ManifestManager {
                     _ => AgentManifestStatus::Development,
                 },
                 config_schema_id,
-                produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
-                    .unwrap_or_default(),
+                produces_event_types: serde_json::from_value(
+                    row.produces_event_types
+                        .unwrap_or(JsonValue::Object(Default::default())),
+                )
+                .unwrap_or_default(),
                 repo_url: row.repo_url,
                 last_heartbeat_ts: row.last_heartbeat_ts,
                 registered_at: Some(row.registered_at),
@@ -262,8 +264,7 @@ impl ManifestManager {
 
         let mut manifests = Vec::new();
         for row in rows {
-            let config_schema_id: Option<Ulid> = row.config_schema_id
-                .map(|uuid| uuid.into());
+            let config_schema_id: Option<Ulid> = row.config_schema_id.map(|uuid| uuid.into());
             manifests.push(AgentManifest {
                 agent_name: row.agent_name,
                 description: row.description.unwrap_or_default(),
@@ -274,8 +275,11 @@ impl ManifestManager {
                     _ => AgentManifestStatus::Development,
                 },
                 config_schema_id,
-                produces_event_types: serde_json::from_value(row.produces_event_types.unwrap_or(JsonValue::Object(Default::default())))
-                    .unwrap_or_default(),
+                produces_event_types: serde_json::from_value(
+                    row.produces_event_types
+                        .unwrap_or(JsonValue::Object(Default::default())),
+                )
+                .unwrap_or_default(),
                 repo_url: row.repo_url,
                 last_heartbeat_ts: row.last_heartbeat_ts,
                 registered_at: Some(row.registered_at),
@@ -296,7 +300,7 @@ pub struct AgentLifecycle {
 
 impl AgentLifecycle {
     pub fn new(
-        agent_name: impl Into<String>, 
+        agent_name: impl Into<String>,
         version: impl Into<String>,
         db_pool: Option<DbPool>,
         heartbeat_interval: Option<std::time::Duration>,
@@ -304,7 +308,7 @@ impl AgentLifecycle {
         let metrics = AgentMetrics::new(agent_name, version);
         let manifest_manager = db_pool.map(ManifestManager::new);
         let heartbeat_interval = heartbeat_interval.unwrap_or(std::time::Duration::from_secs(30));
-        
+
         Self {
             metrics,
             manifest_manager,
@@ -312,34 +316,34 @@ impl AgentLifecycle {
             event_tx: None,
         }
     }
-    
+
     /// Register agent manifest and start heartbeat loop
     pub async fn start(&mut self, manifest: AgentManifest, event_tx: EventSender) -> Result<()> {
         // Register manifest if we have a database connection
         if let Some(manager) = &self.manifest_manager {
             manager.register_agent(&manifest).await?;
         }
-        
+
         self.event_tx = Some(event_tx.clone());
-        
+
         // Start heartbeat loop
         let agent_name = manifest.agent_name.clone();
         let manifest_manager = self.manifest_manager.clone();
         let mut interval = tokio::time::interval(self.heartbeat_interval);
         let metrics_clone = self.metrics.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 interval.tick().await;
-                
+
                 let heartbeat = metrics_clone.create_heartbeat(AgentStatus::Running);
                 let heartbeat_event = create_heartbeat_event(heartbeat);
-                
+
                 if let Err(e) = event_tx.send(heartbeat_event).await {
                     warn!("Failed to send heartbeat event: {}", e);
                     break;
                 }
-                
+
                 // Update manifest heartbeat timestamp
                 if let Some(manager) = &manifest_manager {
                     if let Err(e) = manager.update_heartbeat(&agent_name).await {
@@ -348,37 +352,37 @@ impl AgentLifecycle {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Record successful event processing
     pub fn record_event_processed(&mut self) {
         self.metrics.increment_processed();
     }
-    
+
     /// Record DLQ event and send notification
     pub async fn record_dlq_event(&mut self, dlq_event: DlqEventWritten) -> Result<()> {
         self.metrics.increment_dlq();
-        
+
         if let Some(tx) = &self.event_tx {
             let event = create_dlq_event(dlq_event);
             tx.send(event).await.context("Failed to send DLQ event")?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Send agent error event
     pub async fn report_error(&self, error: AgentError) -> Result<()> {
         if let Some(tx) = &self.event_tx {
             let event = create_error_event(error);
             tx.send(event).await.context("Failed to send error event")?;
         }
-        
+
         Ok(())
     }
-    
+
     pub fn get_metrics(&self) -> &AgentMetrics {
         &self.metrics
     }
@@ -407,30 +411,33 @@ pub fn create_agent_manifest(
 /// Helper functions to create agent events
 pub fn create_heartbeat_event(heartbeat: AgentHeartbeat) -> RawEvent {
     use sinex_core::{event_type_constants, sources, RawEventBuilder};
-    
+
     RawEventBuilder::new(
         sources::SINEX,
         event_type_constants::sinex::AGENT_HEARTBEAT,
         serde_json::to_value(heartbeat).unwrap(),
-    ).build()
+    )
+    .build()
 }
 
 pub fn create_error_event(error: AgentError) -> RawEvent {
     use sinex_core::{event_type_constants, sources, RawEventBuilder};
-    
+
     RawEventBuilder::new(
         sources::SINEX,
         event_type_constants::sinex::AGENT_ERROR,
         serde_json::to_value(error).unwrap(),
-    ).build()
+    )
+    .build()
 }
 
 pub fn create_dlq_event(dlq: DlqEventWritten) -> RawEvent {
     use sinex_core::{event_type_constants, sources, RawEventBuilder};
-    
+
     RawEventBuilder::new(
         sources::SINEX,
         event_type_constants::sinex::AGENT_DLQ_EVENT_WRITTEN,
         serde_json::to_value(dlq).unwrap(),
-    ).build()
+    )
+    .build()
 }

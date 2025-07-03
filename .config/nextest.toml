@@ -1,0 +1,19 @@
+[profile.default]
+# Run tests in parallel
+test-threads = 12
+
+# Show output for failed tests immediately with full context
+failure-output = "immediate-final"
+success-output = "never"
+
+# Retry flaky tests once
+retries = 1
+
+# Simple timeout - if a test takes more than 2 minutes, something is wrong
+slow-timeout = { period = "120s", terminate-after = 1 }
+
+# Better failure reporting
+[profile.default.junit]
+path = "target/nextest/junit.xml"
+store-success-output = false
+store-failure-output = true

@@ -9,13 +9,13 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     // Create test agent
     let agent_name = format!("degradation_test_{}", Ulid::new());
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
          VALUES ($1, $2, $3)",
         agent_name,
         "1.0.0",
         "Graceful degradation test"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -38,13 +38,16 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         }
     }
 
-    println!("  Connection pool exhausted with {} connections", held_connections.len());
+    println!(
+        "  Connection pool exhausted with {} connections",
+        held_connections.len()
+    );
 
     // Test graceful handling of no available connections
     let pool1 = pool.clone();
     let pool2 = pool.clone();
     let pool3 = pool.clone();
-    
+
     // Define async functions for each operation
     async fn event_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _event = insert_raw_event(
@@ -56,10 +59,12 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             None,
             Some("1.0.0"),
             None,
-        ).await.map_err(anyhow::Error::from)?;
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
         Ok(())
     }
-    
+
     async fn health_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
             .fetch_one(&pool)
@@ -68,15 +73,16 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             .unwrap_or(0);
         Ok(())
     }
-    
+
     async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
-        let _agent_check = sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .map_err(anyhow::Error::from)?;
+        let _agent_check =
+            sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .map_err(anyhow::Error::from)?;
         Ok(())
     }
-    
+
     let mut graceful_timeouts = 0;
     let mut unexpected_errors = 0;
 
@@ -144,8 +150,9 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             None,
             Some("1.0.0"),
             None,
-        )
-    ).await;
+        ),
+    )
+    .await;
 
     let recovery_duration = recovery_start.elapsed();
 
@@ -157,7 +164,10 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             println!("  WARNING: Recovery failed: {}", e);
         }
         Err(_) => {
-            println!("  WARNING: Recovery timed out after {:?}", recovery_duration);
+            println!(
+                "  WARNING: Recovery timed out after {:?}",
+                recovery_duration
+            );
         }
     }
 
@@ -167,14 +177,26 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     println!("  Recovery time: {:?}", recovery_duration);
 
     // System should handle degradation gracefully
-    assert!(graceful_timeouts >= 2, "System should timeout gracefully under load");
-    assert!(recovery_duration < Duration::from_secs(5), "Recovery should be fast");
+    assert!(
+        graceful_timeouts >= 2,
+        "System should timeout gracefully under load"
+    );
+    assert!(
+        recovery_duration < Duration::from_secs(5),
+        "Recovery should be fast"
+    );
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'degradation.test'")
-        .execute(&pool).await.ok();
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-        .execute(&pool).await?;
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -194,7 +216,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     // Monitor memory usage while creating many events
     let memory_monitoring = Arc::new(AtomicBool::new(true));
     let memory_counter = Arc::new(AtomicU64::new(0));
-    
+
     // Spawn memory monitoring task
     let monitor_handle = {
         let monitoring = memory_monitoring.clone();
@@ -218,7 +240,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Create high volume of events
     let (tx, mut rx) = mpsc::channel(100);
-    
+
     // Event generation task
     let generation_task = tokio::spawn(async move {
         for i in 0..events_to_create {
@@ -228,11 +250,11 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "memory_test": true
             });
-            
+
             if tx.send(event_data).await.is_err() {
                 break;
             }
-            
+
             // Small delay to allow monitoring
             if i % 100 == 0 {
                 tokio::task::yield_now().await;
@@ -256,7 +278,8 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                     None,
                     Some("1.0.0"),
                     None,
-                ).await;
+                )
+                .await;
 
                 if result.is_ok() {
                     processed += 1;
@@ -277,10 +300,10 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     };
 
     // Wait for completion or timeout
-    let load_test_result = timeout(
-        Duration::from_secs(5),
-        async { tokio::try_join!(generation_task, processing_task) }
-    ).await;
+    let load_test_result = timeout(Duration::from_secs(5), async {
+        tokio::try_join!(generation_task, processing_task)
+    })
+    .await;
 
     memory_monitoring.store(false, Ordering::Relaxed);
     monitor_handle.await.ok();
@@ -289,8 +312,11 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     match load_test_result {
         Ok(Ok(((), processed_count))) => {
-            println!("  ✓ Load test completed: {} events in {:?}", processed_count, load_test_duration);
-            
+            println!(
+                "  ✓ Load test completed: {} events in {:?}",
+                processed_count, load_test_duration
+            );
+
             // Analyze memory usage patterns
             let samples = memory_usage_samples.lock().unwrap();
             if samples.len() >= 2 {
@@ -298,14 +324,28 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 let final_memory = samples.last().unwrap().1;
                 let memory_growth = final_memory.saturating_sub(initial_memory);
                 let growth_rate = memory_growth as f64 / processed_count as f64;
-                
+
                 println!("  Memory analysis:");
-                println!("    Initial: {}KB, Final: {}KB", initial_memory, final_memory);
-                println!("    Growth: {}KB ({:.2}KB per event)", memory_growth, growth_rate);
-                
+                println!(
+                    "    Initial: {}KB, Final: {}KB",
+                    initial_memory, final_memory
+                );
+                println!(
+                    "    Growth: {}KB ({:.2}KB per event)",
+                    memory_growth, growth_rate
+                );
+
                 // Memory growth should be reasonable
-                assert!(growth_rate < 10.0, "Memory growth rate too high: {:.2}KB per event", growth_rate);
-                assert!(memory_growth < 50_000, "Total memory growth too high: {}KB", memory_growth);
+                assert!(
+                    growth_rate < 10.0,
+                    "Memory growth rate too high: {:.2}KB per event",
+                    growth_rate
+                );
+                assert!(
+                    memory_growth < 50_000,
+                    "Total memory growth too high: {}KB",
+                    memory_growth
+                );
             }
         }
         Ok(Err(e)) => {
@@ -326,20 +366,18 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         let pool = pool.clone();
         let task = tokio::spawn(async move {
             let start_time = Instant::now();
-            
+
             // Try to acquire connection and perform operation
-            let result = timeout(
-                Duration::from_secs(3),
-                async {
-                    let mut conn = pool.acquire().await?;
-                    
-                    // Perform a quick operation
-                    sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                        .fetch_one(&mut *conn)
-                        .await
-                        .map(|opt| opt.unwrap_or(0))
-                }
-            ).await;
+            let result = timeout(Duration::from_secs(3), async {
+                let mut conn = pool.acquire().await?;
+
+                // Perform a quick operation
+                sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map(|opt| opt.unwrap_or(0))
+            })
+            .await;
 
             let duration = start_time.elapsed();
             (i, result, duration)
@@ -351,8 +389,9 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     // Wait for all connection tests
     let connection_results = timeout(
         Duration::from_secs(5),
-        futures::future::join_all(connection_tasks)
-    ).await;
+        futures::future::join_all(connection_tasks),
+    )
+    .await;
 
     match connection_results {
         Ok(results) => {
@@ -364,7 +403,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
             for result in results {
                 if let Ok((i, conn_result, duration)) = result {
                     total_duration += duration;
-                    
+
                     match conn_result {
                         Ok(Ok(_)) => {
                             successful_connections += 1;
@@ -391,17 +430,27 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
             let avg_duration = total_duration / concurrent_connections as u32;
 
             println!("\nConnection Limit Test Results:");
-            println!("  Concurrent connections attempted: {}", concurrent_connections);
+            println!(
+                "  Concurrent connections attempted: {}",
+                concurrent_connections
+            );
             println!("  Successful: {}", successful_connections);
             println!("  Failed: {}", failed_connections);
             println!("  Timed out: {}", timed_out_connections);
             println!("  Average duration: {:?}", avg_duration);
 
             // System should handle concurrent load reasonably
-            assert!(successful_connections > concurrent_connections / 2, 
-                   "Too many connection failures: {}/{}", failed_connections, concurrent_connections);
-            assert!(avg_duration < Duration::from_secs(3),
-                   "Average connection time too slow: {:?}", avg_duration);
+            assert!(
+                successful_connections > concurrent_connections / 2,
+                "Too many connection failures: {}/{}",
+                failed_connections,
+                concurrent_connections
+            );
+            assert!(
+                avg_duration < Duration::from_secs(3),
+                "Average connection time too slow: {:?}",
+                avg_duration
+            );
         }
         Err(_) => {
             println!("  Connection limit test timed out");
@@ -417,31 +466,40 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     for i in 0..health_checks {
         let health_start = Instant::now();
-        
-        let health_result = timeout(
-            Duration::from_secs(2),
-            async {
-                // Comprehensive health check
-                let db_health = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?.unwrap_or(0);
-                let table_count = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM information_schema.tables 
+
+        let health_result = timeout(Duration::from_secs(2), async {
+            // Comprehensive health check
+            let db_health = sqlx::query_scalar!("SELECT 1")
+                .fetch_one(pool)
+                .await?
+                .unwrap_or(0);
+            let table_count = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM information_schema.tables
                      WHERE table_schema IN ('raw', 'sinex_schemas')"
-                ).fetch_one(&pool).await?.unwrap_or(0);
-                let recent_events = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
-                ).fetch_one(&pool).await?.unwrap_or(0);
-                
-                Ok::<_, sqlx::Error>((db_health, table_count, recent_events))
-            }
-        ).await;
+            )
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+            let recent_events = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 hour'"
+            )
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+
+            Ok::<_, sqlx::Error>((db_health, table_count, recent_events))
+        })
+        .await;
 
         let health_duration = health_start.elapsed();
-        
+
         if i % 5 == 0 {
             match &health_result {
                 Ok(Ok((_, table_count, event_count))) => {
-                    println!("  Health check {}: OK ({} tables, {} recent events) in {:?}", 
-                            i, table_count, event_count, health_duration);
+                    println!(
+                        "  Health check {}: OK ({} tables, {} recent events) in {:?}",
+                        i, table_count, event_count, health_duration
+                    );
                 }
                 Ok(Err(e)) => {
                     println!("  Health check {}: FAILED - {}", i, e);
@@ -451,7 +509,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 }
             }
         }
-        
+
         health_results.push((i, health_result, health_duration));
 
         // Small delay between health checks
@@ -461,21 +519,26 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     let total_health_duration = health_check_start.elapsed();
 
     // Analyze health check results
-    let successful_health_checks = health_results.iter()
+    let successful_health_checks = health_results
+        .iter()
         .filter(|(_, result, _)| matches!(result, Ok(Ok(_))))
         .count();
-    
-    let failed_health_checks = health_results.iter()
+
+    let failed_health_checks = health_results
+        .iter()
         .filter(|(_, result, _)| matches!(result, Ok(Err(_))))
         .count();
-    
-    let timed_out_health_checks = health_results.iter()
+
+    let timed_out_health_checks = health_results
+        .iter()
         .filter(|(_, result, _)| matches!(result, Err(_)))
         .count();
 
-    let avg_health_duration: Duration = health_results.iter()
+    let avg_health_duration: Duration = health_results
+        .iter()
         .map(|(_, _, duration)| *duration)
-        .sum::<Duration>() / health_checks as u32;
+        .sum::<Duration>()
+        / health_checks as u32;
 
     println!("\nHealth Monitoring Test Results:");
     println!("  Total health checks: {}", health_checks);
@@ -486,16 +549,25 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     println!("  Total monitoring duration: {:?}", total_health_duration);
 
     // Health monitoring should be reliable
-    assert!(successful_health_checks >= health_checks * 8 / 10,
-           "Health check success rate too low: {}/{}", successful_health_checks, health_checks);
-    assert!(avg_health_duration < Duration::from_millis(500),
-           "Health checks too slow: {:?}", avg_health_duration);
+    assert!(
+        successful_health_checks >= health_checks * 8 / 10,
+        "Health check success rate too low: {}/{}",
+        successful_health_checks,
+        health_checks
+    );
+    assert!(
+        avg_health_duration < Duration::from_millis(500),
+        "Health checks too slow: {:?}",
+        avg_health_duration
+    );
 
     println!("  ✓ Health monitoring maintains reliability under stress");
 
     // Cleanup
     sqlx::query!("DELETE FROM raw.events WHERE source = 'resource.monitoring'")
-        .execute(&pool).await.ok();
+        .execute(pool)
+        .await
+        .ok();
 
     Ok(())
 }
@@ -509,42 +581,43 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
     // Test 1: Large transaction handling
     let large_transaction_start = Instant::now();
-    
-    let large_transaction_result = timeout(
-        Duration::from_secs(5),
-        async {
-            let mut tx = pool.begin().await?;
-            
-            // Try to insert many events in a single transaction
-            for i in 0..1000 {
-                sqlx::query!(
-                    "INSERT INTO raw.events (id, source, event_type, host, payload) 
+
+    let large_transaction_result = timeout(Duration::from_secs(5), async {
+        let mut tx = pool.begin().await?;
+
+        // Try to insert many events in a single transaction
+        for i in 0..1000 {
+            sqlx::query!(
+                "INSERT INTO raw.events (id, source, event_type, host, payload)
                      VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-                    Ulid::new().to_uuid(),
-                    "exhaustion.test",
-                    "large_transaction",
-                    "localhost",
-                    json!({"batch_item": i, "data": "x".repeat(100)})
-                )
-                .execute(&mut *tx)
-                .await?;
-                
-                // Check for timeout every 100 items
-                if i % 100 == 0 {
-                    println!("    Inserted {} items in transaction", i + 1);
-                }
+                Ulid::new().to_uuid(),
+                "exhaustion.test",
+                "large_transaction",
+                "localhost",
+                json!({"batch_item": i, "data": "x".repeat(100)})
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            // Check for timeout every 100 items
+            if i % 100 == 0 {
+                println!("    Inserted {} items in transaction", i + 1);
             }
-            
-            tx.commit().await?;
-            Ok::<(), sqlx::Error>(())
         }
-    ).await;
+
+        tx.commit().await?;
+        Ok::<(), sqlx::Error>(())
+    })
+    .await;
 
     let large_transaction_duration = large_transaction_start.elapsed();
 
     match large_transaction_result {
         Ok(Ok(())) => {
-            println!("  ✓ Large transaction completed in {:?}", large_transaction_duration);
+            println!(
+                "  ✓ Large transaction completed in {:?}",
+                large_transaction_duration
+            );
         }
         Ok(Err(e)) => {
             println!("  Large transaction failed: {}", e);
@@ -564,31 +637,29 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
         let pool = pool.clone();
         let task = tokio::spawn(async move {
             let start_time = Instant::now();
-            
-            let result = timeout(
-                Duration::from_secs(3),
-                async {
-                    let mut tx = pool.begin().await?;
-                    
-                    // Each transaction inserts a small batch
-                    for j in 0..10 {
-                        sqlx::query!(
-                            "INSERT INTO raw.events (id, source, event_type, host, payload) 
+
+            let result = timeout(Duration::from_secs(3), async {
+                let mut tx = pool.begin().await?;
+
+                // Each transaction inserts a small batch
+                for j in 0..10 {
+                    sqlx::query!(
+                        "INSERT INTO raw.events (id, source, event_type, host, payload)
                              VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-                            Ulid::new().to_uuid(),
-                            format!("concurrent.tx.{}", i),
-                            "concurrent_test",
-                            "localhost",
-                            json!({"tx_id": i, "item": j})
-                        )
-                        .execute(&mut *tx)
-                        .await?;
-                    }
-                    
-                    tx.commit().await?;
-                    Ok::<(), sqlx::Error>(())
+                        Ulid::new().to_uuid(),
+                        format!("concurrent.tx.{}", i),
+                        "concurrent_test",
+                        "localhost",
+                        json!({"tx_id": i, "item": j})
+                    )
+                    .execute(&mut *tx)
+                    .await?;
                 }
-            ).await;
+
+                tx.commit().await?;
+                Ok::<(), sqlx::Error>(())
+            })
+            .await;
 
             let duration = start_time.elapsed();
             (i, result, duration)
@@ -599,8 +670,9 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
     let transaction_results = timeout(
         Duration::from_secs(5),
-        futures::future::join_all(transaction_tasks)
-    ).await;
+        futures::future::join_all(transaction_tasks),
+    )
+    .await;
 
     match transaction_results {
         Ok(results) => {
@@ -611,7 +683,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
             for result in results {
                 if let Ok((i, tx_result, duration)) = result {
                     total_tx_duration += duration;
-                    
+
                     match tx_result {
                         Ok(Ok(())) => {
                             successful_transactions += 1;
@@ -644,8 +716,12 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
             println!("  Average duration: {:?}", avg_tx_duration);
 
             // Most transactions should succeed under normal load
-            assert!(successful_transactions >= concurrent_transactions * 7 / 10,
-                   "Transaction failure rate too high: {}/{}", failed_transactions, concurrent_transactions);
+            assert!(
+                successful_transactions >= concurrent_transactions * 7 / 10,
+                "Transaction failure rate too high: {}/{}",
+                failed_transactions,
+                concurrent_transactions
+            );
         }
         Err(_) => {
             println!("  Concurrent transaction test timed out");
@@ -659,13 +735,13 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     let complex_queries = vec![
         // Aggregation query
         "SELECT source, COUNT(*) as event_count FROM raw.events WHERE created_at > NOW() - INTERVAL '1 hour' GROUP BY source",
-        
+
         // Recent events query
         "SELECT * FROM raw.events ORDER BY created_at DESC LIMIT 100",
-        
+
         // Pattern matching query
         "SELECT * FROM raw.events WHERE source LIKE 'exhaustion%' AND payload ? 'batch_item'",
-        
+
         // Agent statistics query
         "SELECT agent_name, version, description FROM sinex_schemas.agent_manifests",
     ];
@@ -674,17 +750,20 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
     for (i, query) in complex_queries.iter().enumerate() {
         let query_start = Instant::now();
-        
-        let query_result = timeout(
-            Duration::from_secs(2),
-            sqlx::query(query).fetch_all(&pool)
-        ).await;
+
+        let query_result =
+            timeout(Duration::from_secs(2), sqlx::query(query).fetch_all(pool)).await;
 
         let query_duration = query_start.elapsed();
-        
+
         match query_result {
             Ok(Ok(rows)) => {
-                println!("    Query {}: {} rows in {:?}", i, rows.len(), query_duration);
+                println!(
+                    "    Query {}: {} rows in {:?}",
+                    i,
+                    rows.len(),
+                    query_duration
+                );
                 query_performance_results.push((i, true, query_duration, rows.len()));
             }
             Ok(Err(e)) => {
@@ -698,13 +777,16 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
         }
     }
 
-    let successful_queries = query_performance_results.iter()
+    let successful_queries = query_performance_results
+        .iter()
         .filter(|(_, success, _, _)| *success)
         .count();
-    
-    let avg_query_time: Duration = query_performance_results.iter()
+
+    let avg_query_time: Duration = query_performance_results
+        .iter()
         .map(|(_, _, duration, _)| *duration)
-        .sum::<Duration>() / complex_queries.len() as u32;
+        .sum::<Duration>()
+        / complex_queries.len() as u32;
 
     let total_performance_duration = query_performance_start.elapsed();
 
@@ -715,16 +797,27 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     println!("  Total test duration: {:?}", total_performance_duration);
 
     // Query performance should be reasonable
-    assert!(successful_queries >= complex_queries.len() * 3 / 4,
-           "Query success rate too low: {}/{}", successful_queries, complex_queries.len());
-    assert!(avg_query_time < Duration::from_secs(1),
-           "Average query time too slow: {:?}", avg_query_time);
+    assert!(
+        successful_queries >= complex_queries.len() * 3 / 4,
+        "Query success rate too low: {}/{}",
+        successful_queries,
+        complex_queries.len()
+    );
+    assert!(
+        avg_query_time < Duration::from_secs(1),
+        "Average query time too slow: {:?}",
+        avg_query_time
+    );
 
     println!("  ✓ Query performance remains acceptable under load");
 
     // Cleanup all test data
-    sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'")
-        .execute(&pool).await.ok();
+    sqlx::query!(
+        "DELETE FROM raw.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
+    )
+    .execute(pool)
+    .await
+    .ok();
 
     Ok(())
 }

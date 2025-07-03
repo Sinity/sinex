@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
-use sinex_db::validation::EventValidator;
 use crate::common::{events, validation_test_utils};
+use sinex_db::validation::EventValidator;
 
 #[sinex_test]
 async fn test_event_validator_creation(_ctx: TestContext) -> TestResult {
@@ -12,10 +12,7 @@ async fn test_event_validator_creation(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_validator_valid_filesystem_event(_ctx: TestContext) -> TestResult {
-    let event = events::filesystem_event(
-        "file.created",
-        "/home/user/document.txt"
-    );
+    let event = events::filesystem_event("file.created", "/home/user/document.txt");
     validation_test_utils::assert_valid_event(&event);
     Ok(())
 }
@@ -36,7 +33,7 @@ async fn test_event_validator_valid_window_manager_event(_ctx: TestContext) -> T
             "window_title": "Terminal - user@host",
             "window_class": "kitty",
             "workspace": 1
-        })
+        }),
     );
     validation_test_utils::assert_valid_event(&event);
     Ok(())
@@ -47,9 +44,10 @@ async fn test_event_validator_invalid_empty_source(_ctx: TestContext) -> TestRes
     let event = RawEventBuilder::new(
         "", // Empty source
         "file.created",
-        json!({"path": "/test/file.txt"})
-    ).build();
-    
+        json!({"path": "/test/file.txt"}),
+    )
+    .build();
+
     validation_test_utils::assert_invalid_event(&event, "source");
     Ok(())
 }
@@ -59,9 +57,10 @@ async fn test_event_validator_invalid_empty_event_type(_ctx: TestContext) -> Tes
     let event = RawEventBuilder::new(
         "filesystem",
         "", // Empty event type
-        json!({"path": "/test/file.txt"})
-    ).build();
-    
+        json!({"path": "/test/file.txt"}),
+    )
+    .build();
+
     validation_test_utils::assert_invalid_event(&event, "event_type");
     Ok(())
 }
@@ -69,22 +68,26 @@ async fn test_event_validator_invalid_empty_event_type(_ctx: TestContext) -> Tes
 #[sinex_test]
 async fn test_event_validator_invalid_null_payload(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
-        json!(null) // Null payload
-    ).build();
-    
+        json!(null), // Null payload
+    )
+    .build();
+
     let result = validator.validate(&event);
-    assert!(result.is_err(), "Event with null payload should fail validation");
+    assert!(
+        result.is_err(),
+        "Event with null payload should fail validation"
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_event_validator_filesystem_missing_path(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
@@ -92,9 +95,10 @@ async fn test_event_validator_filesystem_missing_path(_ctx: TestContext) -> Test
             "size": 1024,
             "permissions": "644"
             // Missing required "path" field
-        })
-    ).build();
-    
+        }),
+    )
+    .build();
+
     let result = validator.validate(&event);
     // This might pass or fail depending on validation strictness
     // The test verifies the validator handles missing fields gracefully
@@ -109,12 +113,12 @@ async fn test_event_validator_filesystem_missing_path(_ctx: TestContext) -> Test
 async fn test_event_validator_filesystem_invalid_path(_ctx: TestContext) -> TestResult {
     // Test with various invalid path scenarios
     let invalid_paths = [
-        "", // Empty path
-        "relative/path", // Non-absolute path
-        "/path/with\0null", // Path with null byte
+        "",                     // Empty path
+        "relative/path",        // Non-absolute path
+        "/path/with\0null",     // Path with null byte
         "/path/with\n newline", // Path with newline
     ];
-    
+
     for invalid_path in invalid_paths {
         let event = RawEventBuilder::new(
             "filesystem",
@@ -122,9 +126,10 @@ async fn test_event_validator_filesystem_invalid_path(_ctx: TestContext) -> Test
             json!({
                 "path": invalid_path,
                 "size": 1024
-            })
-        ).build();
-        
+            }),
+        )
+        .build();
+
         // If validation fails, it should mention path or invalid
         let validator = EventValidator::new();
         let result = validator.validate(&event);
@@ -139,7 +144,7 @@ async fn test_event_validator_filesystem_invalid_path(_ctx: TestContext) -> Test
 #[sinex_test]
 async fn test_event_validator_terminal_invalid_exit_code(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     let event = RawEventBuilder::new(
         "terminal_kitty",
         "command.executed",
@@ -147,9 +152,10 @@ async fn test_event_validator_terminal_invalid_exit_code(_ctx: TestContext) -> T
             "command": "test command",
             "exit_code": -1000, // Potentially invalid exit code
             "duration_ms": 100
-        })
-    ).build();
-    
+        }),
+    )
+    .build();
+
     let _result = validator.validate(&event);
     // The validator should handle this gracefully, whether it passes or fails
     // This tests that extreme values don't cause panics
@@ -159,10 +165,10 @@ async fn test_event_validator_terminal_invalid_exit_code(_ctx: TestContext) -> T
 #[sinex_test]
 async fn test_event_validator_large_payload(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     // Create a large payload
     let large_data = "x".repeat(1_000_000); // 1MB of data
-    
+
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
@@ -170,9 +176,10 @@ async fn test_event_validator_large_payload(_ctx: TestContext) -> TestResult {
             "path": "/test/large_file.txt",
             "content": large_data,
             "size": 1_000_000
-        })
-    ).build();
-    
+        }),
+    )
+    .build();
+
     let _result = validator.validate(&event);
     // The validator should handle large payloads gracefully
     // This might pass or fail depending on size limits, but shouldn't panic
@@ -182,22 +189,23 @@ async fn test_event_validator_large_payload(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_event_validator_deeply_nested_payload(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     // Create deeply nested JSON
     let mut nested = json!("deep_value");
     for _ in 0..100 {
         nested = json!({"level": nested});
     }
-    
+
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
         json!({
             "path": "/test/nested.txt",
             "metadata": nested
-        })
-    ).build();
-    
+        }),
+    )
+    .build();
+
     let _result = validator.validate(&event);
     // Should handle deep nesting without stack overflow
     Ok(())
@@ -206,7 +214,7 @@ async fn test_event_validator_deeply_nested_payload(_ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_event_validator_unicode_content(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     let event = RawEventBuilder::new(
         "filesystem",
         "file.created",
@@ -215,21 +223,25 @@ async fn test_event_validator_unicode_content(_ctx: TestContext) -> TestResult {
             "size": 1024,
             "content": "Unicode content: 🚀 🎉 ✨ مرحبا العالم 🌍",
             "encoding": "UTF-8"
-        })
-    ).build();
-    
+        }),
+    )
+    .build();
+
     let result = validator.validate(&event);
-    assert!(result.is_ok(), "Unicode content should be handled correctly");
+    assert!(
+        result.is_ok(),
+        "Unicode content should be handled correctly"
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_event_validator_concurrent_validation(_ctx: TestContext) -> TestResult {
     use std::thread;
-    
+
     let validator = Arc::new(EventValidator::new());
     let mut handles = vec![];
-    
+
     // Test concurrent validation
     for i in 0..10 {
         let validator_clone = Arc::clone(&validator);
@@ -240,14 +252,15 @@ async fn test_event_validator_concurrent_validation(_ctx: TestContext) -> TestRe
                 json!({
                     "path": format!("/test/concurrent_{}.txt", i),
                     "size": 1024 * i
-                })
-            ).build();
-            
+                }),
+            )
+            .build();
+
             validator_clone.validate(&event)
         });
         handles.push(handle);
     }
-    
+
     // Wait for all validations and verify they all succeed
     for handle in handles {
         let result = handle.join().unwrap();
@@ -259,13 +272,14 @@ async fn test_event_validator_concurrent_validation(_ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_event_validator_unknown_source(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     let event = RawEventBuilder::new(
         "unknown_source_type",
         "unknown.event",
-        json!({"data": "test"})
-    ).build();
-    
+        json!({"data": "test"}),
+    )
+    .build();
+
     let _result = validator.validate(&event);
     // Should handle unknown sources gracefully - might pass or fail
     // depending on validation policy, but shouldn't panic
@@ -275,23 +289,32 @@ async fn test_event_validator_unknown_source(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_event_validator_hardcoded_rules(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     // Test that hardcoded validation rules are working
     let test_cases = [
         // Valid cases
-        ("filesystem", "file.created", json!({"path": "/valid/path.txt"}), true),
-        ("terminal_kitty", "command.executed", json!({"command": "ls"}), true),
+        (
+            "filesystem",
+            "file.created",
+            json!({"path": "/valid/path.txt"}),
+            true,
+        ),
+        (
+            "terminal_kitty",
+            "command.executed",
+            json!({"command": "ls"}),
+            true,
+        ),
         ("hyprland", "window.focus", json!({"window_id": 123}), true),
-        
         // Invalid cases (if hardcoded rules exist)
         ("filesystem", "file.created", json!({}), false), // Missing path
         ("terminal_kitty", "command.executed", json!({}), false), // Missing command
     ];
-    
+
     for (source, event_type, payload, should_pass) in test_cases {
         let event = RawEventBuilder::new(source, event_type, payload).build();
         let _result = validator.validate(&event);
-        
+
         if should_pass {
             // Don't assert here as validation might be lenient
             // Just ensure it doesn't panic

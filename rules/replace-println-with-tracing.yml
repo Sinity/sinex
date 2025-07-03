@@ -1,8 +1,0 @@
-id: replace-println-with-tracing
-language: rust
-rule:
-  kind: macro_invocation
-  has: { field: path, pattern: 'println' }
-  inside: { kind: function_item, has: { pattern: '#[sinex_test]' } }
-  pattern: println!$ARGS
-fix: 'tracing::debug!$ARGS'

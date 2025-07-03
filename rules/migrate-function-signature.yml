@@ -1,6 +1,0 @@
-id: migrate-function-signature
-language: rust
-rule:
-  kind: function_item
-  pattern: $VIS async fn $NAME() $BODY
-fix: '$VIS async fn $NAME(ctx: TestContext) -> Result<(), Box<dyn std::error::Error>> $BODY'

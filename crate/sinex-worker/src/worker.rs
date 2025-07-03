@@ -2,11 +2,10 @@ use crate::{calculate_backoff_secs, EventProcessor};
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use sinex_db::queries::{
-    claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
-    insert_dlq_event,
+    claim_work_queue_items, complete_work_queue_item, fail_work_queue_item, insert_dlq_event,
 };
-use sinex_db::RawEvent;
 use sinex_db::DbPool;
+use sinex_db::RawEvent;
 use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -21,7 +20,7 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(pool: DbPool, processor: Arc<dyn EventProcessor>, worker_id: String) -> Self {
-        let metrics = crate::WorkerMetrics::new(&processor.agent_name());
+        let metrics = crate::WorkerMetrics::new(processor.agent_name());
         Self {
             pool,
             processor,
@@ -85,11 +84,11 @@ impl Worker {
 
         for item in items {
             let start = std::time::Instant::now();
-            
+
             match self.processor.process_event(&self.pool, &item).await {
                 Ok(()) => {
                     // Successfully processed
-                    if let Err(e) = complete_work_queue_item(&self.pool, item.queue_id.into()).await {
+                    if let Err(e) = complete_work_queue_item(&self.pool, item.queue_id).await {
                         error!(
                             worker_id = %self.worker_id,
                             queue_id = %item.queue_id,
@@ -115,7 +114,7 @@ impl Worker {
                     self.metrics.items_failed.inc();
 
                     let new_attempts = item.attempts + 1;
-                    
+
                     if new_attempts >= item.max_attempts {
                         // Max attempts reached, move to DLQ
                         error!(
@@ -124,7 +123,7 @@ impl Worker {
                             attempts = new_attempts,
                             "Item exceeded max attempts, moving to DLQ"
                         );
-                        
+
                         // Get the original event for DLQ
                         match self.get_raw_event(item.raw_event_id).await {
                             Ok(Some(raw_event)) => {
@@ -135,7 +134,10 @@ impl Worker {
                                     &item.target_agent_name,
                                     &raw_event.source,
                                     &raw_event.event_type,
-                                    &format!("Max attempts exceeded after {} retries: {}", new_attempts, e),
+                                    &format!(
+                                        "Max attempts exceeded after {} retries: {}",
+                                        new_attempts, e
+                                    ),
                                     "permanent", // Permanent failure after max retries
                                     raw_event.payload,
                                     Some(serde_json::json!({
@@ -143,7 +145,9 @@ impl Worker {
                                         "final_attempt_count": new_attempts,
                                         "worker_id": self.worker_id
                                     })),
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!(
                                         worker_id = %self.worker_id,
                                         queue_id = %item.queue_id,
@@ -175,7 +179,7 @@ impl Worker {
                                 );
                             }
                         }
-                        
+
                         // Remove from promotion queue regardless
                         let _ = complete_work_queue_item(&self.pool, item.queue_id).await;
                         self.metrics.items_dlq.inc();
@@ -183,10 +187,10 @@ impl Worker {
                         // Schedule retry
                         let delay_secs = calculate_backoff_secs(item.attempts);
                         let next_retry = Utc::now() + Duration::seconds(delay_secs as i64);
-                        
+
                         if let Err(e) = fail_work_queue_item(
                             &self.pool,
-                            item.queue_id.into(),
+                            item.queue_id,
                             &format!("{:?}", e),
                             next_retry,
                         )
@@ -211,7 +215,7 @@ impl Worker {
     pub fn metrics(&self) -> &crate::WorkerMetrics {
         &self.metrics
     }
-    
+
     /// Helper to fetch raw event by ID for DLQ (using consolidated query)
     async fn get_raw_event(&self, event_id: sinex_ulid::Ulid) -> Result<Option<RawEvent>> {
         match sinex_db::queries::get_event_by_id(&self.pool, event_id).await {
