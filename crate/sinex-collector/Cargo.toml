@@ -8,7 +8,10 @@ authors.workspace = true
 # Core sinex dependencies
 sinex-core = { path = "../sinex-core" }
 sinex-db = { path = "../sinex-db" }
-sinex-events = { path = "../sinex-events" }
+sinex-events-terminal = { path = "../sinex-events-terminal" }
+sinex-events-desktop = { path = "../sinex-events-desktop" }
+sinex-events-system = { path = "../sinex-events-system" }
+sinex-events-fs = { path = "../sinex-events-fs" }
 sinex-ulid = { path = "../sinex-ulid" }
 
 # Async runtime

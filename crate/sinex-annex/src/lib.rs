@@ -33,12 +33,13 @@ impl AnnexKey {
 
         let backend = parts[0].to_string();
         let size_part = &parts[1];
-        
+
         if !size_part.starts_with('s') {
             anyhow::bail!("Invalid size format in annex key: {}", key_str);
         }
-        
-        let size = size_part[1..].parse::<u64>()
+
+        let size = size_part[1..]
+            .parse::<u64>()
             .context("Failed to parse size from annex key")?;
 
         let hash = parts[2..].join("-");
@@ -60,8 +61,7 @@ pub struct GitAnnex {
 impl GitAnnex {
     pub fn new(config: AnnexConfig) -> Result<Self> {
         // Verify git-annex is available
-        which::which("git-annex")
-            .context("git-annex not found in PATH")?;
+        which::which("git-annex").context("git-annex not found in PATH")?;
 
         // Verify repository exists
         if !config.repo_path.exists() {
@@ -70,7 +70,7 @@ impl GitAnnex {
 
         Ok(GitAnnex { config })
     }
-    
+
     /// Get the repository path
     pub fn repo_path(&self) -> &Path {
         &self.config.repo_path
@@ -79,9 +79,10 @@ impl GitAnnex {
     /// Initialize a new git-annex repository
     pub async fn init(repo_path: &Path, description: Option<&str>) -> Result<()> {
         info!("Initializing git-annex repository at {:?}", repo_path);
-        
+
         // Ensure directory exists
-        tokio::fs::create_dir_all(repo_path).await
+        tokio::fs::create_dir_all(repo_path)
+            .await
             .context("Failed to create repository directory")?;
 
         // Initialize git repository if needed
@@ -95,23 +96,28 @@ impl GitAnnex {
                 .context("Failed to run git init")?;
 
             if !output.status.success() {
-                anyhow::bail!("git init failed: {}", String::from_utf8_lossy(&output.stderr));
+                anyhow::bail!(
+                    "git init failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         }
 
         // Initialize git-annex
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("init").current_dir(repo_path);
-        
+
         if let Some(desc) = description {
             cmd.arg(desc);
         }
 
-        let output = cmd.output().await
-            .context("Failed to run git-annex init")?;
+        let output = cmd.output().await.context("Failed to run git-annex init")?;
 
         if !output.status.success() {
-            anyhow::bail!("git-annex init failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "git-annex init failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         info!("Successfully initialized git-annex repository");
@@ -135,7 +141,10 @@ impl GitAnnex {
             .context("Failed to run git-annex add")?;
 
         if !output.status.success() {
-            anyhow::bail!("git-annex add failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "git-annex add failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Get the annex key for the added file
@@ -153,7 +162,10 @@ impl GitAnnex {
             .context("Failed to run git-annex lookupkey")?;
 
         if !output.status.success() {
-            anyhow::bail!("git-annex lookupkey failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "git-annex lookupkey failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         let key_str = String::from_utf8(output.stdout)
@@ -177,7 +189,10 @@ impl GitAnnex {
             .context("Failed to run git-annex get")?;
 
         if !output.status.success() {
-            anyhow::bail!("git-annex get failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "git-annex get failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -189,7 +204,7 @@ impl GitAnnex {
 
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("drop").arg(key_or_path);
-        
+
         if force {
             cmd.arg("--force");
         }
@@ -201,7 +216,10 @@ impl GitAnnex {
             .context("Failed to run git-annex drop")?;
 
         if !output.status.success() {
-            anyhow::bail!("git-annex drop failed: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "git-annex drop failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -213,11 +231,11 @@ impl GitAnnex {
 
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("fsck");
-        
+
         if fast {
             cmd.arg("--fast");
         }
-        
+
         if incremental {
             cmd.arg("--incremental");
         }
@@ -228,12 +246,13 @@ impl GitAnnex {
             .await
             .context("Failed to run git-annex fsck")?;
 
-        let result = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in fsck output")?;
+        let result = String::from_utf8(output.stdout).context("Invalid UTF-8 in fsck output")?;
 
         if !output.status.success() {
-            warn!("git-annex fsck completed with errors: {}", 
-                  String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "git-annex fsck completed with errors: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(result)
@@ -248,15 +267,15 @@ impl GitAnnex {
             .await
             .context("Failed to run git-annex status")?;
 
-        String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in status output")
+        String::from_utf8(output.stdout).context("Invalid UTF-8 in status output")
     }
 
     /// Compute BLAKE3 hash for deduplication
     pub async fn compute_blake3_hash(file_path: &Path) -> Result<String> {
-        let content = tokio::fs::read(file_path).await
+        let content = tokio::fs::read(file_path)
+            .await
             .context("Failed to read file for hashing")?;
-        
+
         let hash = blake3::hash(&content);
         Ok(hash.to_hex().to_string())
     }
@@ -264,7 +283,8 @@ impl GitAnnex {
     /// Configure repository settings
     pub async fn configure(&self) -> Result<()> {
         if let Some(num_copies) = self.config.num_copies {
-            self.set_config("annex.numcopies", &num_copies.to_string()).await?;
+            self.set_config("annex.numcopies", &num_copies.to_string())
+                .await?;
         }
 
         if let Some(ref large_files) = self.config.large_files {
@@ -285,8 +305,11 @@ impl GitAnnex {
             .context("Failed to set git config")?;
 
         if !output.status.success() {
-            anyhow::bail!("Failed to set config {}: {}", key, 
-                         String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to set config {}: {}",
+                key,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -311,7 +334,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         tokio::fs::write(&test_file, b"hello world").await.unwrap();
-        
+
         let hash = GitAnnex::compute_blake3_hash(&test_file).await.unwrap();
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // BLAKE3 hex string length

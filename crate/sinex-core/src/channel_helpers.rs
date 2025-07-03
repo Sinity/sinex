@@ -1,30 +1,30 @@
 //! Channel operation helpers for consistent patterns across the codebase
-//! 
+//!
 //! This module provides extension traits and utilities for working with channels,
 //! particularly focused on event streaming operations. It includes:
-//! 
+//!
 //! - Extension traits for senders and receivers with common patterns
 //! - Backpressure handling and monitoring
 //! - Error handling with context
 //! - Batch operations for efficiency
 
+use crate::{CoreError, Result};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::{timeout, sleep};
-use crate::{CoreError, Result};
+use tokio::time::{sleep, timeout};
 
 /// Extension trait for channel senders with common patterns
 #[async_trait]
 pub trait ChannelSenderExt<T> {
     /// Send a value with automatic error logging and context
     async fn send_or_log(&self, value: T, context: &str) -> Result<()>;
-    
+
     /// Send with a timeout, returning error if channel is full for too long
     async fn send_timeout(&self, value: T, timeout_duration: Duration) -> Result<()>;
-    
+
     /// Try to send immediately, queueing if channel is full (up to max_queue items)
     async fn try_send_or_queue(&self, value: T, queue: &mut Vec<T>, max_queue: usize) -> Result<()>
     where
@@ -36,10 +36,10 @@ pub trait ChannelSenderExt<T> {
 pub trait ChannelReceiverExt<T> {
     /// Receive with a timeout, returning None if no items arrive in time
     async fn recv_timeout(&mut self, timeout_duration: Duration) -> Result<Option<T>>;
-    
+
     /// Receive up to max_items within the timeout window
     async fn recv_batch(&mut self, max_items: usize, timeout_duration: Duration) -> Vec<T>;
-    
+
     /// Drain all currently available items without blocking
     async fn drain_all(&mut self) -> Vec<T>;
 }
@@ -62,17 +62,17 @@ impl ChannelMonitor {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Record a successful send
     pub fn record_send(&self) {
         self.sent.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Record a successful receive
     pub fn record_receive(&self) {
         self.received.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Record an error with context
     pub fn record_error(&self, error: String) {
         self.errors.fetch_add(1, Ordering::Relaxed);
@@ -80,14 +80,14 @@ impl ChannelMonitor {
             *last_error = Some(error);
         }
     }
-    
+
     /// Get current queue depth estimate (sent - received)
     pub fn queue_depth(&self) -> i64 {
         let sent = self.sent.load(Ordering::Relaxed) as i64;
         let received = self.received.load(Ordering::Relaxed) as i64;
         sent - received
     }
-    
+
     /// Get current statistics
     pub fn stats(&self) -> ChannelStats {
         ChannelStats {
@@ -118,11 +118,14 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
             Ok(()) => Ok(()),
             Err(e) => {
                 tracing::error!("Failed to send on channel ({}): {}", context, e);
-                Err(CoreError::Other(format!("Channel send failed ({}): {}", context, e)))
+                Err(CoreError::Other(format!(
+                    "Channel send failed ({}): {}",
+                    context, e
+                )))
             }
         }
     }
-    
+
     async fn send_timeout(&self, value: T, timeout_duration: Duration) -> Result<()> {
         match timeout(timeout_duration, self.send(value)).await {
             Ok(Ok(())) => Ok(()),
@@ -130,7 +133,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
             Err(_) => Err(CoreError::Other("Channel send timed out".to_string())),
         }
     }
-    
+
     async fn try_send_or_queue(&self, value: T, queue: &mut Vec<T>, max_queue: usize) -> Result<()>
     where
         T: Clone,
@@ -149,7 +152,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                 }
             }
         }
-        
+
         // Now try to send the new value
         match self.try_send(value) {
             Ok(()) => Ok(()),
@@ -158,7 +161,10 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                     queue.push(value);
                     Ok(())
                 } else {
-                    Err(CoreError::Other(format!("Channel full and queue at limit ({})", max_queue)))
+                    Err(CoreError::Other(format!(
+                        "Channel full and queue at limit ({})",
+                        max_queue
+                    )))
                 }
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -175,19 +181,19 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
         match timeout(timeout_duration, self.recv()).await {
             Ok(Some(value)) => Ok(Some(value)),
             Ok(None) => Ok(None), // Channel closed
-            Err(_) => Ok(None), // Timeout
+            Err(_) => Ok(None),   // Timeout
         }
     }
-    
+
     async fn recv_batch(&mut self, max_items: usize, timeout_duration: Duration) -> Vec<T> {
         let mut items = Vec::with_capacity(max_items.min(100)); // Cap pre-allocation
-        
+
         // First item waits for timeout
         match self.recv_timeout(timeout_duration).await {
             Ok(Some(item)) => items.push(item),
             _ => return items,
         }
-        
+
         // Subsequent items are collected without waiting
         while items.len() < max_items {
             match self.try_recv() {
@@ -195,13 +201,13 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
                 _ => break,
             }
         }
-        
+
         items
     }
-    
+
     async fn drain_all(&mut self) -> Vec<T> {
         let mut items = Vec::new();
-        
+
         while let Ok(item) = self.try_recv() {
             items.push(item);
             // Prevent unbounded growth
@@ -210,21 +216,22 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
                 break;
             }
         }
-        
+
         items
     }
 }
 
+/*
 /// Specialized implementation for RawEvent channels with metrics
 /// Note: Temporarily disabled due to RawEvent being moved to sinex-db
-/*
 pub struct MonitoredEventSender {
     inner: mpsc::Sender<RawEvent>,
     monitor: ChannelMonitor,
     source_name: String,
 }*/
 
-/* MonitoredEventSender implementation temporarily commented out due to RawEvent move
+/*
+/// MonitoredEventSender implementation temporarily commented out due to RawEvent move
 impl MonitoredEventSender {
     /// Create a new monitored event sender
     pub fn new(sender: mpsc::Sender<RawEvent>, source_name: String) -> Self {
@@ -234,11 +241,11 @@ impl MonitoredEventSender {
             source_name,
         }
     }
-    
+
     /// Send an event with monitoring
     pub async fn send(&self, event: RawEvent) -> Result<()> {
         let event_type = event.event_type.clone();
-        
+
         match self.inner.send(event).await {
             Ok(()) => {
                 self.monitor.record_send();
@@ -252,12 +259,12 @@ impl MonitoredEventSender {
             }
         }
     }
-    
+
     /// Get current channel statistics
     pub fn stats(&self) -> ChannelStats {
         self.monitor.stats()
     }
-    
+
     /// Get reference to the inner sender
     pub fn inner(&self) -> &mpsc::Sender<RawEvent> {
         &self.inner
@@ -283,7 +290,7 @@ impl BackpressureManager {
             max_delay: Duration::from_secs(1),
         }
     }
-    
+
     /// Check queue depth and apply backpressure if needed
     pub async fn check_and_wait(&mut self, queue_depth: usize) {
         if queue_depth > self.high_watermark {
@@ -293,15 +300,18 @@ impl BackpressureManager {
             } else {
                 self.current_delay = (self.current_delay * 2).min(self.max_delay);
             }
-            tracing::debug!("Applying backpressure: {:?} delay for queue depth {}", 
-                          self.current_delay, queue_depth);
+            tracing::debug!(
+                "Applying backpressure: {:?} delay for queue depth {}",
+                self.current_delay,
+                queue_depth
+            );
             sleep(self.current_delay).await;
         } else if queue_depth < self.low_watermark {
             // Decrease delay when queue is draining
-            self.current_delay = self.current_delay / 2;
+            self.current_delay /= 2;
         }
     }
-    
+
     /// Reset backpressure state
     pub fn reset(&mut self) {
         self.current_delay = Duration::from_millis(0);
@@ -323,71 +333,76 @@ pub fn monitored_channel(
 mod tests {
     use super::*;
     // use crate::RawEventBuilder; // Commented out due to RawEvent move
-    use serde_json::json;
-    
+
     #[tokio::test]
     async fn test_channel_sender_ext() {
         let (tx, mut rx) = mpsc::channel::<String>(2);
-        
+
         // Test send_or_log
-        assert!(tx.send_or_log("test1".to_string(), "test context").await.is_ok());
+        assert!(tx
+            .send_or_log("test1".to_string(), "test context")
+            .await
+            .is_ok());
         assert_eq!(rx.recv().await, Some("test1".to_string()));
-        
+
         // Test send_timeout
-        assert!(tx.send_timeout("test2".to_string(), Duration::from_secs(1)).await.is_ok());
+        assert!(tx
+            .send_timeout("test2".to_string(), Duration::from_secs(1))
+            .await
+            .is_ok());
         assert_eq!(rx.recv().await, Some("test2".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_channel_receiver_ext() {
         let (tx, mut rx) = mpsc::channel::<i32>(10);
-        
+
         // Send some test data
         for i in 0..5 {
             tx.send(i).await.unwrap();
         }
         drop(tx); // Close sender
-        
+
         // Test recv_batch
         let batch = rx.recv_batch(3, Duration::from_millis(100)).await;
         assert_eq!(batch, vec![0, 1, 2]);
-        
+
         // Test drain_all
         let remaining = rx.drain_all().await;
         assert_eq!(remaining, vec![3, 4]);
     }
-    
+
     /* Test temporarily commented out due to RawEvent move
     #[tokio::test]
     async fn test_monitored_event_sender() {
         let (monitored_tx, mut rx) = monitored_channel(10, "test_source".to_string());
-        
+
         let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
             .build();
-        
+
         // Send event
         assert!(monitored_tx.send(event.clone()).await.is_ok());
-        
+
         // Check stats
         let stats = monitored_tx.stats();
         assert_eq!(stats.sent, 1);
         assert_eq!(stats.errors, 0);
-        
+
         // Receive event
         let received = rx.recv().await.unwrap();
         assert_eq!(received.source, "test");
     }
     */
-    
+
     #[tokio::test]
     async fn test_backpressure_manager() {
         let mut manager = BackpressureManager::new(100, 50);
-        
+
         // No delay when under low watermark
         let start = tokio::time::Instant::now();
         manager.check_and_wait(25).await;
         assert!(start.elapsed() < Duration::from_millis(10));
-        
+
         // Delay increases when over high watermark
         manager.check_and_wait(150).await;
         assert!(manager.current_delay > Duration::from_millis(0));

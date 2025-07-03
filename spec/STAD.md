@@ -97,11 +97,22 @@ Unified event collection system managing multiple data sources.
 - **Hot-Reload Config** - Dynamic source management without restart
 - **Schema Validation** - All events validated before storage
 
-### Implemented Event Sources
-- **Filesystem** - File creation, modification, deletion monitoring
-- **Terminal** - Command history via Atuin, session recording via Asciinema
-- **Clipboard** - Text and image capture with deduplication
-- **Hyprland IPC** - Window focus and workspace events ([ADR-003](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md))
+### Current Event Sources (35% System Coverage)
+
+**Operational Sources:**
+- **Filesystem Monitor** - File creation, modification, deletion (5% coverage)
+- **Clipboard Monitor** - Copy/paste events with git-annex storage (2% coverage)
+- **Terminal Sources** - Kitty, Asciinema, shell history (8% coverage)
+- **Window Manager** - Hyprland IPC, basic X11 support (5% coverage)
+- **System Sources** - Git events, downloads, SQLite history (15% coverage)
+
+**Critical Missing Sources (65% gap):**
+See [TIM-ComprehensiveEventSources.md](planned/event-sources/TIM-ComprehensiveEventSources.md) for detailed roadmap to 80%+ coverage including:
+- Browser Activity Monitor (40-60% of knowledge work)
+- Process Execution Tracker (all non-terminal programs)
+- Network Activity Monitor (external interactions)
+- Screen Capture with OCR (visual context)
+- Input Pattern Monitor (activity detection)
 
 ### Planned Sources
 - **Browser** - History and activity via extension
@@ -148,11 +159,18 @@ Multiple interfaces for data access and exploration.
 - **Query DSL** - Simplified query language
 - **Grafana Dashboards** - Metrics and monitoring
 
-### Query Capabilities (Future)
-- **Semantic Search** - Vector similarity with pgvector
-- **Hybrid Search** - Combined keyword and semantic
-- **Activity Timeline** - Temporal event visualization
-- **Knowledge Graph** - Entity relationship exploration
+### Current Analytics Limitations (20% of Vision)
+- **Basic Routing** - Mechanical event routing via promotion worker
+- **Health Metrics Only** - System metrics (CPU, memory, event counts)
+- **Simple Queries** - Basic SQL with time/source filtering
+- **No Pattern Detection** - No cross-event correlation or insight generation
+
+### Planned Analytics Infrastructure (80% Gap)
+See [TIM-AnalyticsInfrastructure.md](planned/infrastructure/TIM-AnalyticsInfrastructure.md) for transformation roadmap including:
+- **SinexQL Query Language** - Domain-specific pattern matching language
+- **Multi-Tier Processing** - Real-time stream + historical batch analysis
+- **Personal AI Models** - Productivity analytics, anomaly detection, predictive insights
+- **Real-Time Dashboards** - WebSocket-powered visualization with pattern alerts
 
 **Detailed Architecture:** [UserInteraction_And_Query_Architecture.md](docs/arch_modules/UserInteraction_And_Query_Architecture.md)
 

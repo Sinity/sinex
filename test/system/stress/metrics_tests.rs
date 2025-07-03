@@ -1,7 +1,7 @@
-use crate::common::prelude::*;
 use super::common::*;
+use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::time::{sleep, interval};
+use tokio::time::{interval, sleep};
 
 /// A worker that specifically tests for deadlock scenarios and race conditions
 struct StressTestWorker {
@@ -68,7 +68,7 @@ impl StressTestWorker {
                     println!("Worker {} cycle error: {}", self.worker_id, e);
                     result.connection_errors += 1;
                     self.metrics.connection_error();
-                    
+
                     sleep(Duration::from_millis(100)).await;
                 }
             }
@@ -91,12 +91,17 @@ impl StressTestWorker {
         let mut cycle_result = WorkCycleResult::default();
 
         let claim_start = Instant::now();
-        
-        match tokio::time::timeout(self.deadlock_timeout, self.claim_work_with_deadlock_detection()).await {
+
+        match tokio::time::timeout(
+            self.deadlock_timeout,
+            self.claim_work_with_deadlock_detection(),
+        )
+        .await
+        {
             Ok(Ok(Some(work_item))) => {
                 let claim_time = claim_start.elapsed();
                 cycle_result.max_claim_time = claim_time;
-                
+
                 if claim_time > Duration::from_millis(500) {
                     cycle_result.deadlocks_detected += 1;
                     self.metrics.deadlock_recovery_attempt();
@@ -143,15 +148,15 @@ impl StressTestWorker {
 
     async fn claim_work_with_deadlock_detection(&self) -> Result<Option<WorkItem>> {
         let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'processing', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'processing',
                  attempts = attempts + 1,
                  last_attempt_ts = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = (
-                 SELECT queue_id 
-                 FROM sinex_schemas.work_queue 
-                 WHERE status = 'pending' 
+                 SELECT queue_id
+                 FROM sinex_schemas.work_queue
+                 WHERE status = 'pending'
                    AND target_agent_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                    AND (processing_worker_id IS NULL OR processing_worker_id != $2)
@@ -173,8 +178,12 @@ impl StressTestWorker {
                 }
 
                 Ok(Some(WorkItem {
-                    queue_id: item.queue_id.ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                    event_id: item.raw_event_id.ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
+                    queue_id: item
+                        .queue_id
+                        .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
+                    event_id: item
+                        .raw_event_id
+                        .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
                     target_agent: self.agent_name.clone(),
                     created_at: chrono::Utc::now(),
                 }))
@@ -195,7 +204,7 @@ impl StressTestWorker {
 
         if self.aggressive_claiming && rand::random::<f64>() < 0.05 {
             sqlx::query!(
-                "UPDATE sinex_schemas.work_queue 
+                "UPDATE sinex_schemas.work_queue
                  SET status = 'failed_retryable',
                      processing_worker_id = NULL,
                      next_retry_ts = NOW() + INTERVAL '1 second'
@@ -209,8 +218,8 @@ impl StressTestWorker {
         }
 
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue 
-             SET status = 'succeeded', 
+            "UPDATE sinex_schemas.work_queue
+             SET status = 'succeeded',
                  processed_at = NOW(),
                  processing_worker_id = $2
              WHERE queue_id = $1::uuid::ulid",
@@ -248,8 +257,8 @@ struct WorkerStressResult {
 }
 
 #[sinex_test]
-async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult{
-let pool = ctx.pool();
+async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
     run_migrations(pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());
@@ -258,7 +267,7 @@ let pool = ctx.pool();
     let test_duration = Duration::from_secs(5);
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status) 
+        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -277,18 +286,21 @@ let pool = ctx.pool();
         for i in 0..work_items {
             let event_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload) 
+                "INSERT INTO raw.events (id, source, event_type, payload)
                  VALUES ($1::uuid::ulid, $2, $3, $4)",
                 event_id.to_uuid(),
                 "stress.extreme_concurrency",
                 "stress_item",
                 json!({"stress_item": i, "batch": "extreme"})
-            ).execute(&create_pool).await.expect("Event creation failed");
+            )
+            .execute(&create_pool)
+            .await
+            .expect("Event creation failed");
 
             let queue_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO sinex_schemas.work_queue 
-                 (queue_id, raw_event_id, target_agent_name, max_attempts, status) 
+                "INSERT INTO sinex_schemas.work_queue
+                 (queue_id, raw_event_id, target_agent_name, max_attempts, status)
                  VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 5, 'pending')",
                 queue_id.to_uuid(),
                 event_id.to_uuid(),
@@ -303,10 +315,10 @@ let pool = ctx.pool();
     });
 
     let mut worker_handles = Vec::new();
-    
+
     for i in 0..extreme_worker_count {
         let is_aggressive = i < extreme_worker_count / 3;
-        
+
         let worker = StressTestWorker::new(
             format!("extreme_worker_{}", i),
             ctx.pool().clone(),
@@ -316,9 +328,7 @@ let pool = ctx.pool();
             is_aggressive,
         );
 
-        let handle = tokio::spawn(async move {
-            worker.run_stress_cycle(test_duration).await
-        });
+        let handle = tokio::spawn(async move { worker.run_stress_cycle(test_duration).await });
 
         worker_handles.push(handle);
     }
@@ -328,17 +338,17 @@ let pool = ctx.pool();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {
         use crate::common::timing_optimization::replacements::wait_for_work_queue_status_count;
-        
+
         let mut interval = interval(Duration::from_secs(2));
         let mut detected_deadlocks = 0u64;
-        
+
         for _ in 0..15 {
             interval.tick().await;
 
             let stuck_items: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue 
-                 WHERE target_agent_name = $1 
-                   AND status = 'processing' 
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue
+                 WHERE target_agent_name = $1
+                   AND status = 'processing'
                    AND last_attempt_ts < NOW() - INTERVAL '10 seconds'",
                 monitor_agent
             )
@@ -350,14 +360,14 @@ let pool = ctx.pool();
             if stuck_items > 0 {
                 detected_deadlocks += stuck_items as u64;
                 monitor_metrics.deadlock_recovery_attempt();
-                
+
                 let recovered = sqlx::query!(
-                    "UPDATE sinex_schemas.work_queue 
+                    "UPDATE sinex_schemas.work_queue
                      SET status = 'failed_retryable',
                          processing_worker_id = NULL,
                          next_retry_ts = NOW() + INTERVAL '1 second'
-                     WHERE target_agent_name = $1 
-                       AND status = 'processing' 
+                     WHERE target_agent_name = $1
+                       AND status = 'processing'
                        AND last_attempt_ts < NOW() - INTERVAL '10 seconds'
                      RETURNING queue_id::text",
                     monitor_agent
@@ -372,7 +382,14 @@ let pool = ctx.pool();
             }
 
             // Use optimized utility functions for work queue monitoring
-            let pending_count = match wait_for_work_queue_status_count(&monitor_pool, "pending", 0, 1).await {
+            let pending_count = match wait_for_work_queue_status_count(
+                &monitor_pool,
+                "pending",
+                0,
+                1,
+            )
+            .await
+            {
                 Ok(count) => count,
                 Err(_) => {
                     // Fallback to direct query on timeout
@@ -387,7 +404,14 @@ let pool = ctx.pool();
                 }
             };
 
-            let processing_count = match wait_for_work_queue_status_count(&monitor_pool, "processing", 0, 1).await {
+            let processing_count = match wait_for_work_queue_status_count(
+                &monitor_pool,
+                "processing",
+                0,
+                1,
+            )
+            .await
+            {
                 Ok(count) => count,
                 Err(_) => {
                     // Fallback to direct query on timeout
@@ -402,8 +426,10 @@ let pool = ctx.pool();
                 }
             };
 
-            println!("Monitor: pending={}, processing={}, stuck_detected={}", 
-                    pending_count, processing_count, stuck_items);
+            println!(
+                "Monitor: pending={}, processing={}, stuck_detected={}",
+                pending_count, processing_count, stuck_items
+            );
         }
 
         detected_deadlocks
@@ -425,9 +451,12 @@ let pool = ctx.pool();
                 total_deadlocks += worker_result.deadlocks_detected;
                 total_timeouts += worker_result.timeouts_experienced;
                 total_race_conditions += worker_result.race_conditions;
-                
+
                 if worker_result.deadlocks_detected > 0 {
-                    println!("Worker {} detected {} deadlocks", i, worker_result.deadlocks_detected);
+                    println!(
+                        "Worker {} detected {} deadlocks",
+                        i, worker_result.deadlocks_detected
+                    );
                 }
             }
             Err(e) => {
@@ -437,7 +466,7 @@ let pool = ctx.pool();
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status = 'succeeded'",
         agent_name
     )
@@ -446,7 +475,7 @@ let pool = ctx.pool();
     .unwrap_or(0);
 
     let final_pending: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status = 'pending'",
         agent_name
     )
@@ -455,7 +484,7 @@ let pool = ctx.pool();
     .unwrap_or(0);
 
     let final_failed: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue 
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue
          WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
@@ -480,21 +509,31 @@ let pool = ctx.pool();
     let processing_rate = total_processed as f64 / elapsed_secs;
     println!("  Processing rate: {:.2} items/sec", processing_rate);
 
-    assert!(total_processed > 0, "Should have processed some work items under extreme stress");
-    pretty_assertions::assert_eq!(final_succeeded, total_processed as i64, "Succeeded count should match processed");
-    
+    assert!(
+        total_processed > 0,
+        "Should have processed some work items under extreme stress"
+    );
+    pretty_assertions::assert_eq!(
+        final_succeeded,
+        total_processed as i64,
+        "Succeeded count should match processed"
+    );
+
     assert!(
         processing_rate > 100.0,
         "Work queue performance regression under stress: {:.0}/sec is below 100/sec threshold",
         processing_rate
     );
-    
+
     if total_deadlocks > 0 || total_deadlocks_detected > 0 {
         println!("  ✓ Deadlocks detected and handled correctly under extreme stress");
     }
 
     let total_items = final_succeeded + final_pending + final_failed;
-    assert!(total_items >= work_items as i64, "All created work items should be accounted for");
+    assert!(
+        total_items >= work_items as i64,
+        "All created work items should be accounted for"
+    );
 
     StressTestUtils::cleanup_test_data(pool, &agent_name, "stress.extreme_concurrency").await?;
 

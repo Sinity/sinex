@@ -25,6 +25,7 @@ uuid = { workspace = true }
 once_cell = { workspace = true }
 jsonschema = "0.17"
 gethostname = { workspace = true }
+urlencoding = "2.1"
 
 # No additional dependencies needed for declarative macros
 

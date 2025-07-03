@@ -10,8 +10,8 @@
 //! - Extension trait for common test operations
 
 use crate::common::prelude::*;
+use sqlx::{Postgres, Transaction};
 use std::ops::{Deref, DerefMut};
-use sqlx::{Transaction, Postgres};
 
 /// The standard way to access database in tests
 pub struct TestPool {
@@ -67,14 +67,12 @@ impl TestPool {
     /// Create a test pool with specific cleanup strategy
     pub async fn with_strategy(strategy: CleanupStrategy) -> Result<Self> {
         let pool = database_helpers::get_shared_test_pool().await?;
-        
+
         let cleanup_handle = match strategy {
-            CleanupStrategy::Transaction | CleanupStrategy::Truncate => {
-                Some(CleanupHandle {
-                    pool: pool.clone(),
-                    strategy,
-                })
-            }
+            CleanupStrategy::Transaction | CleanupStrategy::Truncate => Some(CleanupHandle {
+                pool: pool.clone(),
+                strategy,
+            }),
             CleanupStrategy::None => None,
         };
 
@@ -122,15 +120,15 @@ async fn cleanup_test_data(pool: &DbPool) -> Result<()> {
     sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
         .execute(pool)
         .await?;
-    
+
     sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
         .execute(pool)
         .await?;
-        
+
     sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test%' OR source = 'test'")
         .execute(pool)
         .await?;
-        
+
     Ok(())
 }
 
@@ -143,10 +141,10 @@ pub async fn cleanup_all_test_data(pool: &DbPool) -> Result<()> {
 pub trait TestPoolExt {
     /// Insert a test event and track it
     async fn insert_test_event(&self, event: &RawEvent) -> Result<Ulid>;
-    
+
     /// Get count of all events
     async fn event_count(&self) -> Result<i64>;
-    
+
     /// Clear all test data
     async fn clear_test_data(&self) -> Result<()>;
 }
@@ -173,18 +171,19 @@ impl TestPoolExt for TestPool {
 impl TestPool {
     /// Get event count for specific source
     pub async fn event_count_by_source(&self, source: &str) -> Result<i64> {
-        let count = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM raw.events WHERE source = $1",
-            source
-        )
-        .fetch_one(&self.inner)
-        .await?;
+        let count =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events WHERE source = $1", source)
+                .fetch_one(&self.inner)
+                .await?;
         Ok(count.unwrap_or(0))
     }
-    
+
     /// Check if database is accessible
     pub async fn check_health(&self) -> Result<bool> {
-        match sqlx::query!("SELECT 1 as test").fetch_one(&self.inner).await {
+        match sqlx::query!("SELECT 1 as test")
+            .fetch_one(&self.inner)
+            .await
+        {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }

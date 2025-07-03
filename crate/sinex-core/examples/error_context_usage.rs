@@ -1,7 +1,6 @@
-use sinex_core::{CoreError, ErrorContext, ResultExt};
-use sinex_ulid::Ulid;
 use chrono::Utc;
-use std::path::Path;
+use sinex_core::{CoreError, ResultExt};
+use sinex_ulid::Ulid;
 
 fn main() {
     // Example 1: Simple error with context
@@ -10,21 +9,21 @@ fn main() {
         .with_context("port", 5432)
         .with_context("retry_count", 3)
         .build();
-    
+
     println!("Example 1 - Database error with context:");
     println!("{}\n", error);
 
     // Example 2: Validation error with event context
     let event_id = Ulid::new();
     let timestamp = Utc::now();
-    
+
     let error = CoreError::validation("Invalid event payload")
         .with_event_id(event_id)
         .with_timestamp(timestamp)
         .with_field("source", "filesystem")
         .with_field("event_type", "file.created")
         .build();
-    
+
     println!("Example 2 - Validation error with event context:");
     println!("{}\n", error);
 
@@ -34,7 +33,7 @@ fn main() {
         .with_context("bytes_written", 1024)
         .with_source("Permission denied")
         .build();
-    
+
     println!("Example 3 - IO error with path and source:");
     println!("{}\n", error);
 
@@ -44,7 +43,7 @@ fn main() {
         .with_source("DATABASE_URL environment variable not set")
         .with_source("No default value provided")
         .build();
-    
+
     println!("Example 4 - Configuration error with source chain:");
     println!("{}\n", error);
 
@@ -56,19 +55,19 @@ fn main() {
         .with_context("processing_time_ms", 250)
         .with_source("JSON deserialization failed")
         .build();
-    
+
     println!("Example 5 - Processing error with rich context:");
     println!("{}\n", error);
 
     // Example 6: Using ResultExt trait
     let result: Result<(), std::io::Error> = Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
-        "File not found"
+        "File not found",
     ));
-    
-    let enhanced_result: sinex_core::Result<()> = result
-        .context("Failed to read event source configuration");
-    
+
+    let enhanced_result: sinex_core::Result<()> =
+        result.context("Failed to read event source configuration");
+
     if let Err(e) = enhanced_result {
         println!("Example 6 - Result with context:");
         println!("{}\n", e);
@@ -79,9 +78,9 @@ fn main() {
         .with_context("query", "SELECT * FROM raw.events")
         .with_context("timeout_seconds", 30)
         .with_context("connection_pool_size", 10);
-    
+
     let error_info = error_context.to_error_info();
-    
+
     println!("Example 7 - Structured error info:");
     println!("{:#?}", error_info);
 }

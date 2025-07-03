@@ -1,6 +1,6 @@
 use crate::common::prelude::*;
+use chrono::{DateTime, Duration, Utc};
 use proptest::prelude::*;
-use chrono::{DateTime, Utc, Duration};
 
 // Property tests for ULID generation and ordering
 // Agent Alpha - VM Infrastructure (adding quick property test example)
@@ -21,16 +21,16 @@ mod ulid_ordering_properties {
                 .iter()
                 .map(|&offset| base_time + Duration::seconds(offset as i64))
                 .collect();
-            
+
             // Sort timestamps to ensure chronological order
             timestamps.sort();
-            
+
             // Generate ULIDs from sorted timestamps
             let ulids: Vec<Ulid> = timestamps
                 .iter()
                 .map(|&ts| Ulid::from_datetime(ts))
                 .collect();
-            
+
             // Verify ULIDs maintain chronological order
             for window in ulids.windows(2) {
                 let (prev, curr) = (&window[0], &window[1]);
@@ -51,18 +51,18 @@ mod ulid_ordering_properties {
         proptest!(|(count in 2usize..1000)| {
             let base_time = Utc::now();
             let mut ulids = Vec::new();
-            
+
             // Generate ULIDs rapidly (simulating high-frequency events)
             for i in 0..count {
                 let timestamp = base_time + Duration::milliseconds(i as i64);
                 ulids.push(Ulid::from_datetime(timestamp));
             }
-            
+
             // Verify all ULIDs are unique
             let mut sorted_ulids = ulids.clone();
             sorted_ulids.sort();
             sorted_ulids.dedup();
-            
+
             prop_assert_eq!(
                 ulids.len(),
                 sorted_ulids.len(),
@@ -79,7 +79,7 @@ mod ulid_ordering_properties {
             let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
             let ulid = Ulid::from_datetime(dt);
             let extracted_timestamp = ulid.timestamp();
-            
+
             // ULID timestamp should be within 1ms of original
             let time_diff = (timestamp * 1000) as i64 - extracted_timestamp.timestamp_millis();
             prop_assert!(
@@ -106,7 +106,7 @@ mod event_ulid_properties {
                 Utc::now() - Duration::hours(1),
                 60  // 60 seconds between events
             );
-            
+
             // Verify events are in ULID order (which implies time order)
             for window in events.windows(2) {
                 let (prev, curr) = (&window[0], &window[1]);
@@ -124,7 +124,7 @@ mod event_ulid_properties {
     fn test_burst_events_maintain_order() {
         proptest!(|(burst_size in 10usize..100)| {
             let burst_events = generators::burst_pattern_events(3, burst_size);
-            
+
             // Group events by burst (every burst_size events)
             for burst_chunk in burst_events.chunks(burst_size) {
                 // Within each burst, ULIDs should still maintain order

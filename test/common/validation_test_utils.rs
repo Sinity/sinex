@@ -12,21 +12,28 @@ use sinex_db::RawEvent;
 pub fn assert_valid_event(event: &RawEvent) {
     let validator = EventValidator::new();
     let result = validator.validate(event);
-    assert!(result.is_ok(), "Event should be valid but validation failed: {:?}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "Event should be valid but validation failed: {:?}",
+        result.unwrap_err()
+    );
 }
 
 /// Assert that an event is invalid and contains the expected field in error message
 pub fn assert_invalid_event(event: &RawEvent, expected_field: &str) {
     let validator = EventValidator::new();
     let result = validator.validate(event);
-    assert!(result.is_err(), "Event should be invalid but validation passed");
-    
+    assert!(
+        result.is_err(),
+        "Event should be invalid but validation passed"
+    );
+
     let error = result.unwrap_err();
     let error_msg = error.to_string();
     assert!(
-        error_msg.contains(expected_field), 
-        "Error message should mention '{}' but got: {}", 
-        expected_field, 
+        error_msg.contains(expected_field),
+        "Error message should mention '{}' but got: {}",
+        expected_field,
         error_msg
     );
 }
@@ -42,12 +49,12 @@ pub async fn create_test_validator_from_db(pool: &DbPool) -> Result<EventValidat
 }
 
 /// Create test validator with specific rules
-pub fn create_test_validator_with_rules(rules: Vec<ValidationRule>) -> EventValidator {
-    let mut validator = EventValidator::new();
-    for rule in rules {
-        validator.add_rule(rule);
-    }
-    validator
+/// Note: EventValidator doesn't support adding custom rules at runtime,
+/// so this just returns a default validator for now.
+pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventValidator {
+    // The actual EventValidator doesn't support adding custom rules via public API
+    // Custom rules are hardcoded in the validator's constructor
+    EventValidator::new()
 }
 
 /// Validation rule for testing purposes
@@ -68,12 +75,12 @@ impl ValidationRule {
             optional_fields: Vec::new(),
         }
     }
-    
+
     pub fn require_field(mut self, field: &str) -> Self {
         self.required_fields.push(field.to_string());
         self
     }
-    
+
     pub fn optional_field(mut self, field: &str) -> Self {
         self.optional_fields.push(field.to_string());
         self
@@ -85,11 +92,14 @@ pub mod validation_chains {
     use super::*;
 
     /// Create test ValidationChain for string validation scenarios
-    pub fn test_string_validation_chain(value: String, field_name: &str) -> ValidationChain<String> {
+    pub fn test_string_validation_chain(
+        value: String,
+        field_name: &str,
+    ) -> ValidationChain<String> {
         ValidationChain::validate(value, field_name)
     }
 
-    /// Create test ValidationChain for JSON validation scenarios  
+    /// Create test ValidationChain for JSON validation scenarios
     pub fn test_json_validation_chain(value: Value, field_name: &str) -> ValidationChain<Value> {
         ValidationChain::validate(value, field_name)
     }
@@ -111,15 +121,17 @@ pub mod validation_chains {
 
     /// Test ValidationChain with custom validation
     pub fn test_custom_validation(value: String) -> ValidationChain<String> {
-        ValidationChain::validate(value, "custom_field")
-            .custom(|s| s.chars().all(|c| c.is_alphanumeric()), "must be alphanumeric")
+        ValidationChain::validate(value, "custom_field").custom(
+            |s| s.chars().all(|c| c.is_alphanumeric()),
+            "must be alphanumeric",
+        )
     }
 
     /// Test MultiValidator with multiple chains
     pub fn test_multi_validator() -> MultiValidator {
         MultiValidator::new()
-            // Add individual ValidationChain instances
-            // This demonstrates the new multi-validation patterns
+        // Add individual ValidationChain instances
+        // This demonstrates the new multi-validation patterns
     }
 }
 
@@ -167,7 +179,7 @@ pub mod events {
             .payload(json!({"circular_ref": null})) // Simplified malformed payload
             .build()
     }
-    
+
     /// Create event with invalid data types
     pub fn invalid_type_event() -> RawEvent {
         EventBuilder::filesystem()
@@ -182,85 +194,122 @@ pub mod assertions {
     use super::*;
 
     /// Assert that validation passes using enhanced error context
-    pub fn assert_validation_passes(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_passes(
+        validator: &EventValidator,
+        event: &RawEvent,
+    ) -> Result<(), anyhow::Error> {
         match validator.validate(event) {
             Ok(()) => Ok(()),
-            Err(e) => anyhow::bail!("Validation should have passed for event: {}/{}, but got error: {}", event.source, event.event_type, e),
+            Err(e) => anyhow::bail!(
+                "Validation should have passed for event: {}/{}, but got error: {}",
+                event.source,
+                event.event_type,
+                e
+            ),
         }
     }
 
     /// Assert that validation fails with specific error type using ValidationChain patterns
-    pub fn assert_validation_fails_with<F>(validator: &EventValidator, event: &RawEvent, check: F) -> Result<()> 
+    pub fn assert_validation_fails_with<F>(
+        validator: &EventValidator,
+        event: &RawEvent,
+        check: F,
+    ) -> Result<()>
     where
         F: Fn(&ValidationError) -> bool,
     {
         match validator.validate(event) {
-            Ok(()) => anyhow::bail!("Expected validation to fail for event: {}/{}, but it passed", event.source, event.event_type),
+            Ok(()) => anyhow::bail!(
+                "Expected validation to fail for event: {}/{}, but it passed",
+                event.source,
+                event.event_type
+            ),
             Err(e) => {
                 if check(&e) {
                     Ok(())
                 } else {
-                    anyhow::bail!("Validation failed with unexpected error for {}/{}: {}", event.source, event.event_type, e)
+                    anyhow::bail!(
+                        "Validation failed with unexpected error for {}/{}: {}",
+                        event.source,
+                        event.event_type,
+                        e
+                    )
                 }
             }
         }
     }
 
     /// Assert validation chain behavior directly (new abstraction)
-    pub fn assert_validation_chain_fails<T>(chain: ValidationChain<T>, expected_error_substring: &str) -> Result<()> {
+    pub fn assert_validation_chain_fails<T>(
+        chain: ValidationChain<T>,
+        expected_error_substring: &str,
+    ) -> Result<()> {
         if chain.is_valid() {
             anyhow::bail!("Expected validation chain to fail, but it was valid");
         }
-        
+
         let error_messages: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
         let combined_errors = error_messages.join("; ");
-        
+
         if combined_errors.contains(expected_error_substring) {
             Ok(())
         } else {
-            anyhow::bail!("Expected error containing '{}', but got: {}", expected_error_substring, combined_errors)
+            anyhow::bail!(
+                "Expected error containing '{}', but got: {}",
+                expected_error_substring,
+                combined_errors
+            )
         }
     }
 
     /// Assert multi-validator behavior (new abstraction)
-    pub fn assert_multi_validator_accumulates_errors(validators: Vec<ValidationChain<String>>) -> Result<()> {
-        let mut multi_validator = MultiValidator::new();
-        
+    pub fn assert_multi_validator_accumulates_errors(
+        validators: Vec<ValidationChain<String>>,
+    ) -> Result<()> {
+        let multi_validator = MultiValidator::new();
+
         for chain in validators {
             if !chain.is_valid() {
                 // Convert ValidationChain to validator for MultiValidator
                 // This is a simplified example - in production you might have better integration
             }
         }
-        
+
         // Test that multiple errors are properly accumulated
         Ok(())
     }
 
     /// Assert that validation fails with unknown event type error
-    pub fn assert_validation_fails_unknown_type(validator: &EventValidator, event: &RawEvent) -> Result<(), anyhow::Error> {
+    pub fn assert_validation_fails_unknown_type(
+        validator: &EventValidator,
+        event: &RawEvent,
+    ) -> Result<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| {
             matches!(e, ValidationError::UnknownEventType { .. })
         })
     }
 
     /// Assert that validation fails with missing field error
-    pub fn assert_validation_fails_missing_field(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
-        assert_validation_fails_with(validator, event, |e| {
-            match e {
-                ValidationError::MissingField { field } => field == expected_field,
-                _ => false,
-            }
+    pub fn assert_validation_fails_missing_field(
+        validator: &EventValidator,
+        event: &RawEvent,
+        expected_field: &str,
+    ) -> Result<(), anyhow::Error> {
+        assert_validation_fails_with(validator, event, |e| match e {
+            ValidationError::MissingField { field } => field == expected_field,
+            _ => false,
         })
     }
 
     /// Assert that validation fails with invalid type error
-    pub fn assert_validation_fails_invalid_type(validator: &EventValidator, event: &RawEvent, expected_field: &str) -> Result<(), anyhow::Error> {
-        assert_validation_fails_with(validator, event, |e| {
-            match e {
-                ValidationError::InvalidType { field, .. } => field == expected_field,
-                _ => false,
-            }
+    pub fn assert_validation_fails_invalid_type(
+        validator: &EventValidator,
+        event: &RawEvent,
+        expected_field: &str,
+    ) -> Result<(), anyhow::Error> {
+        assert_validation_fails_with(validator, event, |e| match e {
+            ValidationError::InvalidType { field, .. } => field == expected_field,
+            _ => false,
         })
     }
 }
@@ -272,11 +321,27 @@ pub mod generators {
     /// Generate events with various validation scenarios
     pub fn validation_test_events() -> Vec<(String, RawEvent, bool)> {
         vec![
-            ("valid_filesystem".to_string(), events::valid_filesystem_event(), true),
-            ("invalid_filesystem".to_string(), events::invalid_filesystem_event(), false),
-            ("valid_terminal".to_string(), events::valid_terminal_event(), true),
+            (
+                "valid_filesystem".to_string(),
+                events::valid_filesystem_event(),
+                true,
+            ),
+            (
+                "invalid_filesystem".to_string(),
+                events::invalid_filesystem_event(),
+                false,
+            ),
+            (
+                "valid_terminal".to_string(),
+                events::valid_terminal_event(),
+                true,
+            ),
             ("unknown_event".to_string(), events::unknown_event(), false),
-            ("malformed_payload".to_string(), events::malformed_payload_event(), false),
+            (
+                "malformed_payload".to_string(),
+                events::malformed_payload_event(),
+                false,
+            ),
         ]
     }
 
@@ -319,29 +384,38 @@ pub mod performance {
     use super::*;
 
     /// Measure validation performance
-    pub fn measure_validation_time(validator: &EventValidator, event: &RawEvent, iterations: usize) -> Duration {
+    pub fn measure_validation_time(
+        validator: &EventValidator,
+        event: &RawEvent,
+        iterations: usize,
+    ) -> Duration {
         let start = Instant::now();
-        
+
         for _ in 0..iterations {
             let _ = validator.validate(event);
         }
-        
+
         start.elapsed()
     }
 
     /// Benchmark validation against multiple events
-    pub fn benchmark_validation(validator: &EventValidator, events: &[RawEvent]) -> Vec<(usize, Duration)> {
-        events.iter().enumerate().map(|(i, event)| {
-            (i, measure_validation_time(validator, event, 1000))
-        }).collect()
+    pub fn benchmark_validation(
+        validator: &EventValidator,
+        events: &[RawEvent],
+    ) -> Vec<(usize, Duration)> {
+        events
+            .iter()
+            .enumerate()
+            .map(|(i, event)| (i, measure_validation_time(validator, event, 1000)))
+            .collect()
     }
 
     /// Test validation performance under concurrent load
     pub async fn concurrent_validation_test(
-        validator: EventValidator, 
-        event: RawEvent, 
+        validator: EventValidator,
+        event: RawEvent,
         concurrent_tasks: usize,
-        operations_per_task: usize
+        operations_per_task: usize,
     ) -> Result<Duration> {
         use tokio::task;
 
@@ -350,17 +424,17 @@ pub mod performance {
         let start = Instant::now();
 
         let mut handles = Vec::new();
-        
+
         for _ in 0..concurrent_tasks {
             let validator_clone = validator.clone();
             let event_clone = event.clone();
-            
+
             let handle = task::spawn(async move {
                 for _ in 0..operations_per_task {
                     let _ = validator_clone.validate(&event_clone);
                 }
             });
-            
+
             handles.push(handle);
         }
 
@@ -371,15 +445,15 @@ pub mod performance {
 
         Ok(start.elapsed())
     }
-    
+
     /// Measure validation latency percentiles
     pub fn measure_validation_percentiles(
         validator: &EventValidator,
         events: &[RawEvent],
-        iterations: usize
+        iterations: usize,
     ) -> ValidationPerformanceReport {
         let mut durations = Vec::new();
-        
+
         for event in events {
             for _ in 0..iterations {
                 let start = Instant::now();
@@ -387,10 +461,10 @@ pub mod performance {
                 durations.push(start.elapsed());
             }
         }
-        
+
         durations.sort();
         let len = durations.len();
-        
+
         ValidationPerformanceReport {
             total_operations: len,
             min_duration: durations[0],
@@ -432,28 +506,32 @@ pub mod integration {
     /// Test validation with database schemas
     pub async fn test_with_database_schemas(pool: &DbPool) -> Result<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
-        
+
         // Test various events
         for (name, event, should_pass) in generators::validation_test_events() {
             let result = validator.validate(&event);
-            
+
             match (result.is_ok(), should_pass) {
                 (true, true) => {
                     println!("✓ {} passed validation as expected", name);
-                },
+                }
                 (false, false) => {
                     println!("✓ {} failed validation as expected", name);
-                },
+                }
                 (true, false) => {
                     anyhow::bail!("Expected {} to fail validation, but it passed", name);
-                },
+                }
                 (false, true) => {
-                    println!("⚠ {} failed validation unexpectedly: {:?}", name, result.unwrap_err());
+                    println!(
+                        "⚠ {} failed validation unexpectedly: {:?}",
+                        name,
+                        result.unwrap_err()
+                    );
                     // Log but don't fail - might be expected with unknown schemas
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -467,13 +545,17 @@ pub mod integration {
 
         // Benchmark validation performance
         let benchmarks = performance::benchmark_validation(&validator, &events);
-        
+
         for (i, duration) in benchmarks {
             println!("Event {}: 1000 validations took {:?}", i, duration);
-            
+
             // Ensure reasonable performance (adjust thresholds as needed)
             if duration > Duration::from_millis(1000) {
-                anyhow::bail!("Validation performance too slow for event {}: {:?}", i, duration);
+                anyhow::bail!(
+                    "Validation performance too slow for event {}: {:?}",
+                    i,
+                    duration
+                );
             }
         }
 

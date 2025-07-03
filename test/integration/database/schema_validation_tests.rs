@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use sinex_core::{RawEventBuilder, sources, event_type_constants};
+use sinex_core::{event_type_constants, sources, RawEventBuilder};
 
 /// Test that validation prevents malformed events from being inserted
 #[sinex_test]
@@ -12,12 +12,16 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResu
             "path": "/test/valid.txt",
             "size": 1024,
             "permissions": "644"
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     // This should succeed
     let result = insert_event(ctx.pool(), &valid_event).await;
-    assert!(result.is_ok(), "Valid event should be inserted successfully");
+    assert!(
+        result.is_ok(),
+        "Valid event should be inserted successfully"
+    );
 
     // Test 2: Invalid event should fail (empty source)
     let invalid_event = RawEventBuilder::new(
@@ -26,12 +30,16 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResu
         json!({
             "path": "/test/invalid.txt",
             "size": 1024
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     // This should fail
     let result = insert_event(ctx.pool(), &invalid_event).await;
-    assert!(result.is_err(), "Invalid event with empty source should fail");
+    assert!(
+        result.is_err(),
+        "Invalid event with empty source should fail"
+    );
 
     Ok(())
 }
@@ -46,8 +54,9 @@ async fn test_event_type_validation(ctx: TestContext) -> TestResult {
         json!({
             "path": "/test/modified.txt",
             "size": 2048
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     let result = insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok(), "Valid event type should be accepted");
@@ -60,8 +69,9 @@ async fn test_event_type_validation(ctx: TestContext) -> TestResult {
             "agent_name": "test-agent",
             "status": "running",
             "uptime_seconds": 3600
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     let result = insert_event(ctx.pool(), &agent_event).await;
     assert!(result.is_ok(), "Valid agent event should be accepted");
@@ -80,8 +90,9 @@ async fn test_payload_validation(ctx: TestContext) -> TestResult {
             "command": "ls -la",
             "exit_code": 0,
             "duration_ms": 150
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     let result = insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok(), "Valid JSON payload should be accepted");
@@ -100,8 +111,9 @@ async fn test_payload_validation(ctx: TestContext) -> TestResult {
                 "name": "workspace2"
             },
             "timestamp": "2025-01-01T00:00:00Z"
-        })
-    ).build();
+        }),
+    )
+    .build();
 
     let result = insert_event(ctx.pool(), &complex_event).await;
     assert!(result.is_ok(), "Complex nested payload should be accepted");

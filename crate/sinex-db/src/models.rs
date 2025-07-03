@@ -54,8 +54,8 @@ pub struct WorkQueueItem {
     pub error_message_last: Option<String>,
     pub created_at: Timestamp,
     pub processing_worker_id: Option<String>,
-    pub processed_at: OptionalTimestamp,  // New: TTL policy tracking
-    pub failure_reason: Option<String>,       // New: Detailed failure information
+    pub processed_at: OptionalTimestamp, // New: TTL policy tracking
+    pub failure_reason: Option<String>,  // New: Detailed failure information
 }
 
 /// Legacy alias for backward compatibility during transition
@@ -68,8 +68,8 @@ pub type PromotionQueueItem = WorkQueueItem;
 pub enum QueueStatus {
     Pending,
     Processing,
-    Succeeded,       // New: Successfully processed
-    Failed,          // New: Permanently failed
+    Succeeded, // New: Successfully processed
+    Failed,    // New: Permanently failed
     FailedRetryable,
 }
 
@@ -278,10 +278,9 @@ impl From<&str> for AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHeartbeat {
     pub agent_name: String,
-    pub status: String,  // "running", "degraded", "erroring"
+    pub status: String, // "running", "degraded", "erroring"
     pub uptime_seconds: u64,
     pub events_processed_session: u64,
     pub dlq_size: u64,
     pub version: String,
 }
-

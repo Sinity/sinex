@@ -8,6 +8,8 @@
 //! - Basic database operations and transactions
 //! - TimescaleDB hypertable functionality
 //! - ULID primary key integration
+
+#![allow(dead_code)]
 //! - JSON schema validation with pg_jsonschema
 //! - Work queue operations and TTL
 //! - Connection pool edge cases and limits
@@ -47,20 +49,20 @@ pub mod connection_pool_edge_cases_test;
 /// Common utilities for database testing
 pub mod utils {
     use crate::common::prelude::*;
-    use chrono::{DateTime, Utc};
-    
+    // use chrono::{DateTime, Utc};
+
     /// Create test schema for validation
     pub async fn create_test_schema(
         pool: &DbPool,
         source: &str,
         event_type: &str,
-        schema: serde_json::Value
+        schema: serde_json::Value,
     ) -> Result<Ulid> {
         let schema_id = Ulid::new();
-        
+
         sqlx::query!(
             r#"
-            INSERT INTO sinex_schemas.event_payload_schemas 
+            INSERT INTO sinex_schemas.event_payload_schemas
             (id, event_source, event_type, schema_version, json_schema_definition, description)
             VALUES ($1::uuid::ulid, $2, $3, '1.0', $4, $5)
             "#,
@@ -72,16 +74,16 @@ pub mod utils {
         )
         .execute(pool)
         .await?;
-        
+
         Ok(schema_id)
     }
-    
+
     /// Verify TimescaleDB hypertable exists
     pub async fn verify_hypertable_exists(pool: &DbPool, table_name: &str) -> Result<bool> {
         let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS(
-                SELECT 1 FROM timescaledb_information.hypertables 
+                SELECT 1 FROM timescaledb_information.hypertables
                 WHERE hypertable_name = $1
             )
             "#,
@@ -90,22 +92,22 @@ pub mod utils {
         .fetch_one(pool)
         .await?
         .unwrap_or(false);
-        
+
         Ok(exists)
     }
-    
+
     /// Create test work queue items
     pub async fn create_test_work_items(
         pool: &DbPool,
         agent_name: &str,
-        count: usize
+        count: usize,
     ) -> Result<Vec<Ulid>> {
         let mut queue_ids = Vec::new();
-        
+
         for i in 0..count {
             let queue_id = Ulid::new();
             let raw_event_id = Ulid::new();
-            
+
             sqlx::query!(
                 r#"
                 INSERT INTO sinex_schemas.work_queue
@@ -118,17 +120,17 @@ pub mod utils {
             )
             .execute(pool)
             .await?;
-            
+
             queue_ids.push(queue_id);
         }
-        
+
         Ok(queue_ids)
     }
-    
+
     /// Measure query performance
     pub async fn measure_query_performance<F, Fut, T>(
         operation: F,
-        iterations: usize
+        iterations: usize,
     ) -> Result<(Vec<std::time::Duration>, T)>
     where
         F: Fn() -> Fut,
@@ -136,22 +138,22 @@ pub mod utils {
     {
         let mut durations = Vec::new();
         let mut last_result = None;
-        
+
         for _ in 0..iterations {
             let start = std::time::Instant::now();
             let result = operation().await?;
             durations.push(start.elapsed());
             last_result = Some(result);
         }
-        
+
         Ok((durations, last_result.unwrap()))
     }
-    
+
     /// Get database connection statistics
     pub async fn get_connection_stats(pool: &DbPool) -> Result<DatabaseConnectionStats> {
         let row = sqlx::query!(
             r#"
-            SELECT 
+            SELECT
                 COUNT(*) as total_connections,
                 COUNT(CASE WHEN state = 'active' THEN 1 END) as active_connections,
                 COUNT(CASE WHEN state = 'idle' THEN 1 END) as idle_connections
@@ -161,14 +163,14 @@ pub mod utils {
         )
         .fetch_one(pool)
         .await?;
-        
+
         Ok(DatabaseConnectionStats {
             total: row.total_connections.unwrap_or(0),
             active: row.active_connections.unwrap_or(0),
             idle: row.idle_connections.unwrap_or(0),
         })
     }
-    
+
     /// Database connection statistics
     #[derive(Debug, Clone)]
     pub struct DatabaseConnectionStats {
@@ -176,7 +178,7 @@ pub mod utils {
         pub active: i64,
         pub idle: i64,
     }
-    
+
     /// Verify database constraints and indexes
     pub async fn verify_database_integrity(pool: &DbPool) -> Result<IntegrityReport> {
         // Check for foreign key violations
@@ -192,7 +194,7 @@ pub mod utils {
         .fetch_one(pool)
         .await?
         .unwrap_or(0);
-        
+
         // Check for orphaned records
         let orphaned_schemas = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE json_schema_definition IS NULL"
@@ -200,14 +202,14 @@ pub mod utils {
         .fetch_one(pool)
         .await?
         .unwrap_or(0);
-        
+
         Ok(IntegrityReport {
             foreign_key_violations: fk_violations,
             orphaned_records: orphaned_schemas,
             integrity_ok: fk_violations == 0 && orphaned_schemas == 0,
         })
     }
-    
+
     /// Database integrity report
     #[derive(Debug, Clone)]
     pub struct IntegrityReport {

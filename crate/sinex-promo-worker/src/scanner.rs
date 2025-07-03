@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
-use sinex_db::{RawEvent, DbPoolRef, Timestamp, OptionalTimestamp};
+use sinex_db::{DbPoolRef, OptionalTimestamp, RawEvent, Timestamp};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -27,21 +27,12 @@ impl Default for ScannerConfig {
 }
 
 /// Tracks scanning progress across runs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScannerState {
     /// Last processed event ID for each source
     pub last_event_ids: HashMap<String, Ulid>,
     /// Timestamp of last scan
     pub last_scan_ts: OptionalTimestamp,
-}
-
-impl Default for ScannerState {
-    fn default() -> Self {
-        Self {
-            last_event_ids: HashMap::new(),
-            last_scan_ts: None,
-        }
-    }
 }
 
 /// Scans for new events to promote
@@ -57,22 +48,22 @@ impl EventScanner {
             state: ScannerState::default(),
         }
     }
-    
+
     /// Create scanner with default configuration
     pub fn with_defaults() -> Self {
         Self::new(ScannerConfig::default())
     }
-    
+
     /// Get current state (for persistence)
     pub fn state(&self) -> &ScannerState {
         &self.state
     }
-    
+
     /// Restore state from previous run
     pub fn restore_state(&mut self, state: ScannerState) {
         self.state = state;
     }
-    
+
     /// Scan for new events that need promotion
     pub async fn scan_new_events(&mut self, pool: DbPoolRef<'_>) -> Result<Vec<RawEvent>> {
         let start_time = if let Some(last_scan) = self.state.last_scan_ts {
@@ -82,18 +73,19 @@ impl EventScanner {
         } else {
             Utc::now() - self.config.initial_lookback
         };
-        
+
         debug!(
             start_time = %start_time,
             batch_size = self.config.batch_size,
             "Scanning for new events"
         );
-        
+
         let events = self.fetch_new_events(pool, start_time).await?;
-        
+
         // Update state with new event IDs
         for event in &events {
-            self.state.last_event_ids
+            self.state
+                .last_event_ids
                 .entry(event.source.clone())
                 .and_modify(|id| {
                     if event.id > *id {
@@ -102,7 +94,7 @@ impl EventScanner {
                 })
                 .or_insert(event.id);
         }
-        
+
         if !events.is_empty() {
             self.state.last_scan_ts = Some(Utc::now());
             info!(
@@ -111,10 +103,10 @@ impl EventScanner {
                 "Found new events"
             );
         }
-        
+
         Ok(events)
     }
-    
+
     /// Fetch events newer than the given timestamp
     async fn fetch_new_events(
         &self,
@@ -130,7 +122,7 @@ impl EventScanner {
             self.fetch_by_event_ids(pool, since).await
         }
     }
-    
+
     /// Fetch events using timestamp filter
     async fn fetch_by_timestamp(
         &self,
@@ -159,7 +151,7 @@ impl EventScanner {
         )
         .fetch_all(pool)
         .await?;
-        
+
         let events = records
             .into_iter()
             .map(|r| RawEvent {
@@ -174,10 +166,10 @@ impl EventScanner {
                 payload: r.payload,
             })
             .collect();
-        
+
         Ok(events)
     }
-    
+
     /// Fetch events using last known event IDs per source
     async fn fetch_by_event_ids(
         &self,
@@ -186,12 +178,14 @@ impl EventScanner {
     ) -> Result<Vec<RawEvent>> {
         // For simplicity, we'll fetch all events newer than any of our last IDs
         // In production, you might want per-source queries for efficiency
-        let min_id = self.state.last_event_ids
+        let min_id = self
+            .state
+            .last_event_ids
             .values()
             .min()
             .copied()
             .unwrap_or_else(Ulid::new);
-        
+
         let records = sqlx::query!(
             r#"
             SELECT 
@@ -216,7 +210,7 @@ impl EventScanner {
         )
         .fetch_all(pool)
         .await?;
-        
+
         let events: Vec<RawEvent> = records
             .into_iter()
             .filter_map(|r| {
@@ -231,7 +225,7 @@ impl EventScanner {
                     payload_schema_id: r.payload_schema_id.map(Ulid::from_uuid),
                     payload: r.payload,
                 };
-                
+
                 // Only include if newer than last known ID for this source
                 if let Some(&last_id) = self.state.last_event_ids.get(&event.source) {
                     if event.id > last_id {
@@ -245,10 +239,10 @@ impl EventScanner {
                 }
             })
             .collect();
-        
+
         Ok(events)
     }
-    
+
     /// Get events that don't have work queue entries yet
     pub async fn get_unqueued_events(
         &self,
@@ -280,7 +274,7 @@ impl EventScanner {
         )
         .fetch_all(pool)
         .await?;
-        
+
         let events = records
             .into_iter()
             .map(|r| RawEvent {
@@ -295,7 +289,7 @@ impl EventScanner {
                 payload: r.payload,
             })
             .collect();
-        
+
         Ok(events)
     }
 }
@@ -303,7 +297,7 @@ impl EventScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_scanner_config_default() {
         let config = ScannerConfig::default();
@@ -311,34 +305,45 @@ mod tests {
         assert_eq!(config.initial_lookback, Duration::hours(24));
         assert!(!config.process_historical);
     }
-    
+
     #[test]
     fn test_scanner_state_tracking() {
         let mut scanner = EventScanner::with_defaults();
         assert!(scanner.state.last_event_ids.is_empty());
         assert!(scanner.state.last_scan_ts.is_none());
-        
+
         // Simulate state update
         let event_id = Ulid::new();
-        scanner.state.last_event_ids.insert("test.source".to_string(), event_id);
+        scanner
+            .state
+            .last_event_ids
+            .insert("test.source".to_string(), event_id);
         scanner.state.last_scan_ts = Some(Utc::now());
-        
-        assert_eq!(scanner.state.last_event_ids.get("test.source"), Some(&event_id));
+
+        assert_eq!(
+            scanner.state.last_event_ids.get("test.source"),
+            Some(&event_id)
+        );
         assert!(scanner.state.last_scan_ts.is_some());
     }
-    
+
     #[test]
     fn test_scanner_state_restore() {
         let mut scanner = EventScanner::with_defaults();
-        
+
         let mut state = ScannerState::default();
         let event_id = Ulid::new();
-        state.last_event_ids.insert("test.source".to_string(), event_id);
+        state
+            .last_event_ids
+            .insert("test.source".to_string(), event_id);
         state.last_scan_ts = Some(Utc::now());
-        
+
         scanner.restore_state(state.clone());
-        
-        assert_eq!(scanner.state.last_event_ids.get("test.source"), Some(&event_id));
+
+        assert_eq!(
+            scanner.state.last_event_ids.get("test.source"),
+            Some(&event_id)
+        );
         assert_eq!(scanner.state.last_scan_ts, state.last_scan_ts);
     }
 }

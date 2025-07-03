@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 TEST_RESULTS_DIR="${TEST_RESULTS_DIR:-./test-results}"
 KEEP_FAILED_VMS="${KEEP_FAILED_VMS:-false}"
 PARALLEL_TESTS="${PARALLEL_TESTS:-false}"
-TEST_TIMEOUT="${TEST_TIMEOUT:-1800}" # 30 minutes default
+TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 
 # Test categories
 SMOKE_TESTS=("basic-flow")
@@ -107,40 +107,61 @@ run_test() {
         cmd="$cmd --keep-failed"
     fi
     
-    # Run test with timeout
-    if timeout "$TEST_TIMEOUT" bash -c "$cmd 2>&1 | tee '$test_log'"; then
-        local end_time=$(date +%s)
-        local duration=$((end_time - start_time))
+    # Run test with timeout and progress indicator
+    (
+        # Background process to show progress for long-running VM tests
+        {
+            sleep 60  # Wait 1 minute before first progress message
+            elapsed=60
+            while kill -0 $$ 2>/dev/null; do
+                echo "[$(date +'%H:%M:%S')] 🔄 VM test $test_name still running (${elapsed}s elapsed)..." >&2
+                sleep 120  # Progress update every 2 minutes
+                elapsed=$((elapsed + 120))
+            done
+        } &
+        progress_pid=$!
         
-        echo "PASSED" > "$test_result"
-        echo "Duration: ${duration}s" >> "$test_result"
-        
-        success "Test $test_name passed (${duration}s)"
-        return 0
-    else
-        local exit_code=$?
-        local end_time=$(date +%s)
-        local duration=$((end_time - start_time))
-        
-        echo "FAILED" > "$test_result"
-        echo "Exit code: $exit_code" >> "$test_result"
-        echo "Duration: ${duration}s" >> "$test_result"
-        
-        if [[ $exit_code -eq 124 ]]; then
-            error "Test $test_name timed out after ${TEST_TIMEOUT}s"
+        # Run the actual test
+        if timeout "$TEST_TIMEOUT" bash -c "$cmd 2>&1 | tee '$test_log'"; then
+            kill $progress_pid 2>/dev/null || true
+            wait $progress_pid 2>/dev/null || true
+            
+            local end_time=$(date +%s)
+            local duration=$((end_time - start_time))
+            
+            echo "PASSED" > "$test_result"
+            echo "Duration: ${duration}s" >> "$test_result"
+            
+            success "Test $test_name passed (${duration}s)"
+            return 0
         else
-            error "Test $test_name failed (exit code: $exit_code, duration: ${duration}s)"
+            kill $progress_pid 2>/dev/null || true
+            wait $progress_pid 2>/dev/null || true
+            
+            local exit_code=$?
+            local end_time=$(date +%s)
+            local duration=$((end_time - start_time))
+            
+            echo "FAILED" > "$test_result"
+            echo "Exit code: $exit_code" >> "$test_result"
+            echo "Duration: ${duration}s" >> "$test_result"
+            
+            if [[ $exit_code -eq 124 ]]; then
+                error "Test $test_name timed out after ${TEST_TIMEOUT}s"
+            else
+                error "Test $test_name failed (exit code: $exit_code, duration: ${duration}s)"
+            fi
+            
+            # Extract failure info from log
+            if [[ -f "$test_log" ]]; then
+                echo "" >> "$test_result"
+                echo "Last 50 lines of output:" >> "$test_result"
+                tail -50 "$test_log" >> "$test_result"
+            fi
+            
+            return 1
         fi
-        
-        # Extract failure info from log
-        if [[ -f "$test_log" ]]; then
-            echo "" >> "$test_result"
-            echo "Last 50 lines of output:" >> "$test_result"
-            tail -50 "$test_log" >> "$test_result"
-        fi
-        
-        return 1
-    fi
+    )
 }
 
 run_tests_parallel() {

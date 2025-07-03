@@ -1,7 +1,6 @@
-use crate::{CoreError, Result, JsonValue, ValidationError};
+use crate::{CoreError, JsonValue, Result, ValidationError};
 use regex::Regex;
 use serde_json::Value;
-use std::marker::PhantomData;
 use url::Url;
 
 /// A validation chain that accumulates errors and provides fluent API for validation
@@ -32,7 +31,8 @@ impl<T> ValidationChain<T> {
             Ok(self.value)
         } else {
             // Combine all errors into a single message
-            let combined_message = self.errors
+            let combined_message = self
+                .errors
                 .iter()
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
@@ -45,7 +45,6 @@ impl<T> ValidationChain<T> {
     pub fn errors(&self) -> &[ValidationError] {
         &self.errors
     }
-
 }
 
 // String-specific validations
@@ -97,7 +96,7 @@ impl ValidationChain<String> {
     /// Validate string is safe for use as a file path (no directory traversal)
     pub fn is_path_safe(mut self) -> Self {
         match crate::validation::validate_path(&self.value) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
@@ -111,7 +110,7 @@ impl ValidationChain<String> {
     /// Validate string is a valid URL
     pub fn is_valid_url(mut self) -> Self {
         match Url::parse(&self.value) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
@@ -132,12 +131,10 @@ impl ValidationChain<String> {
         }
         self
     }
-
 }
 
 // Generic validations for all types
-impl<T> ValidationChain<T>
-{
+impl<T> ValidationChain<T> {
     /// Custom validation with a predicate for any type
     pub fn custom<F>(mut self, predicate: F, error_message: &str) -> Self
     where
@@ -185,7 +182,10 @@ where
         if self.value < range.start || self.value >= range.end {
             self.errors.push(ValidationError::InvalidValue {
                 field: self.field_name.clone(),
-                message: format!("must be between {} and {} (exclusive)", range.start, range.end),
+                message: format!(
+                    "must be between {} and {} (exclusive)",
+                    range.start, range.end
+                ),
             });
         }
         self
@@ -218,24 +218,22 @@ impl ValidationChain<JsonValue> {
     /// Validate field has expected type
     pub fn field_type(mut self, field: &str, expected: JsonType) -> Self {
         match &self.value {
-            Value::Object(map) => {
-                match map.get(field) {
-                    Some(value) => {
-                        if !expected.matches(value) {
-                            self.errors.push(ValidationError::InvalidType {
-                                field: field.to_string(),
-                                expected: expected.to_string(),
-                                actual: json_type_name(value),
-                            });
-                        }
-                    }
-                    None => {
-                        self.errors.push(ValidationError::MissingField {
+            Value::Object(map) => match map.get(field) {
+                Some(value) => {
+                    if !expected.matches(value) {
+                        self.errors.push(ValidationError::InvalidType {
                             field: field.to_string(),
+                            expected: expected.to_string(),
+                            actual: json_type_name(value),
                         });
                     }
                 }
-            }
+                None => {
+                    self.errors.push(ValidationError::MissingField {
+                        field: field.to_string(),
+                    });
+                }
+            },
             _ => {
                 self.errors.push(ValidationError::InvalidType {
                     field: self.field_name.clone(),
@@ -265,7 +263,11 @@ impl ValidationChain<JsonValue> {
                 if json_str.len() > bytes {
                     self.errors.push(ValidationError::InvalidValue {
                         field: self.field_name.clone(),
-                        message: format!("JSON size ({} bytes) exceeds maximum of {} bytes", json_str.len(), bytes),
+                        message: format!(
+                            "JSON size ({} bytes) exceeds maximum of {} bytes",
+                            json_str.len(),
+                            bytes
+                        ),
                     });
                 }
             }
@@ -282,7 +284,7 @@ impl ValidationChain<JsonValue> {
     /// Validate against potential billion laughs attack
     pub fn no_excessive_expansion(mut self) -> Self {
         match crate::validation::check_json_expansion(&self.value) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => {
                 self.errors.push(ValidationError::InvalidValue {
                     field: self.field_name.clone(),
@@ -322,14 +324,11 @@ impl ValidationChain<crate::RawEvent> {
     pub fn payload_matches_schema(mut self, schema: &jsonschema::JSONSchema) -> Self {
         let payload = self.value.payload.clone();
         match schema.validate(&payload) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(errors) => {
-                let error_messages: Vec<String> = errors
-                    .map(|e| e.to_string())
-                    .collect();
-                self.errors.push(ValidationError::SchemaValidation(
-                    error_messages.join("; ")
-                ));
+                let error_messages: Vec<String> = errors.map(|e| e.to_string()).collect();
+                self.errors
+                    .push(ValidationError::SchemaValidation(error_messages.join("; ")));
             }
         }
         self
@@ -362,15 +361,15 @@ pub enum JsonType {
 
 impl JsonType {
     fn matches(&self, value: &Value) -> bool {
-        match (self, value) {
-            (JsonType::Null, Value::Null) => true,
-            (JsonType::Bool, Value::Bool(_)) => true,
-            (JsonType::Number, Value::Number(_)) => true,
-            (JsonType::String, Value::String(_)) => true,
-            (JsonType::Array, Value::Array(_)) => true,
-            (JsonType::Object, Value::Object(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self, value),
+            (JsonType::Null, Value::Null)
+                | (JsonType::Bool, Value::Bool(_))
+                | (JsonType::Number, Value::Number(_))
+                | (JsonType::String, Value::String(_))
+                | (JsonType::Array, Value::Array(_))
+                | (JsonType::Object, Value::Object(_))
+        )
     }
 }
 
@@ -406,7 +405,7 @@ impl MultiValidator {
     }
 
     /// Add a validator to the collection
-    pub fn add<T: Validator + 'static>(mut self, validator: T) -> Self {
+    pub fn with_validator<T: Validator + 'static>(mut self, validator: T) -> Self {
         self.validators.push(Box::new(validator));
         self
     }
@@ -416,17 +415,14 @@ impl MultiValidator {
         let mut all_errors = Vec::new();
 
         for validator in self.validators {
-            if let Err(e) = validator.validate() {
-                // Extract validation errors from CoreError
-                if let CoreError::Validation(msg) = e {
-                    // Parse the combined error message back into individual errors
-                    // This is a simplified approach - in production you might want
-                    // to store errors differently
-                    all_errors.push(ValidationError::InvalidValue {
-                        field: "multiple".to_string(),
-                        message: msg,
-                    });
-                }
+            if let Err(CoreError::Validation(msg)) = validator.validate() {
+                // Parse the combined error message back into individual errors
+                // This is a simplified approach - in production you might want
+                // to store errors differently
+                all_errors.push(ValidationError::InvalidValue {
+                    field: "multiple".to_string(),
+                    message: msg,
+                });
             }
         }
 
@@ -434,7 +430,10 @@ impl MultiValidator {
             Ok(())
         } else {
             let error_messages: Vec<String> = all_errors.iter().map(|e| e.to_string()).collect();
-            Err(CoreError::Validation(format!("Multiple validation errors: {}", error_messages.join("; "))))
+            Err(CoreError::Validation(format!(
+                "Multiple validation errors: {}",
+                error_messages.join("; ")
+            )))
         }
     }
 }
@@ -445,42 +444,11 @@ impl Default for MultiValidator {
     }
 }
 
-// Wrapper to make ValidationChain implement Validator
-struct ValidationChainValidator<T> {
-    chain: ValidationChain<T>,
-    _phantom: PhantomData<T>,
-}
-
-impl<T: Send> Validator for ValidationChainValidator<T> {
-    fn validate(&self) -> Result<()> {
-        if self.chain.is_valid() {
-            Ok(())
-        } else {
-            let combined_message = self.chain.errors()
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-            Err(CoreError::Validation(combined_message))
-        }
-    }
-}
-
 // Helper function to calculate JSON depth
 fn calculate_json_depth(value: &Value) -> usize {
     match value {
-        Value::Object(map) => {
-            1 + map.values()
-                .map(calculate_json_depth)
-                .max()
-                .unwrap_or(0)
-        }
-        Value::Array(arr) => {
-            1 + arr.iter()
-                .map(calculate_json_depth)
-                .max()
-                .unwrap_or(0)
-        }
+        Value::Object(map) => 1 + map.values().map(calculate_json_depth).max().unwrap_or(0),
+        Value::Array(arr) => 1 + arr.iter().map(calculate_json_depth).max().unwrap_or(0),
         _ => 0,
     }
 }
@@ -525,9 +493,10 @@ mod tests {
         assert!(result.is_err());
 
         // Too long
-        let result = ValidationChain::validate("this is a very long string".to_string(), "test_field")
-            .max_length(10)
-            .into_result();
+        let result =
+            ValidationChain::validate("this is a very long string".to_string(), "test_field")
+                .max_length(10)
+                .into_result();
         assert!(result.is_err());
     }
 
@@ -631,12 +600,18 @@ mod tests {
     #[test]
     fn test_custom_validation() {
         let result = ValidationChain::validate("test123".to_string(), "username")
-            .custom(|s| s.chars().all(|c| c.is_alphanumeric()), "must be alphanumeric")
+            .custom(
+                |s| s.chars().all(|c| c.is_alphanumeric()),
+                "must be alphanumeric",
+            )
             .into_result();
         assert!(result.is_ok());
 
         let result = ValidationChain::validate("test@123".to_string(), "username")
-            .custom(|s| s.chars().all(|c| c.is_alphanumeric()), "must be alphanumeric")
+            .custom(
+                |s| s.chars().all(|c| c.is_alphanumeric()),
+                "must be alphanumeric",
+            )
             .into_result();
         assert!(result.is_err());
     }

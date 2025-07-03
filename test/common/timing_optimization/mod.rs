@@ -1,8 +1,8 @@
 //! Timing optimization utilities to replace sleep-based synchronization
 
 use crate::common::prelude::*;
-use tokio::sync::Notify;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::sync::Notify;
 
 /// Deterministic wait utilities for database conditions
 pub mod wait_helpers;
@@ -79,7 +79,10 @@ impl EventCounter {
     }
 
     /// Wait for the target count to be reached
-    pub async fn wait_for_target(&self, timeout_duration: Duration) -> Result<usize, tokio::time::error::Elapsed> {
+    pub async fn wait_for_target(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<usize, tokio::time::error::Elapsed> {
         loop {
             let current = self.count.load(Ordering::Acquire);
             if current >= self.target {
@@ -134,7 +137,10 @@ impl ProgressTracker {
     }
 
     /// Wait for all steps to complete
-    pub async fn wait_for_completion(&self, timeout_duration: Duration) -> Result<(), tokio::time::error::Elapsed> {
+    pub async fn wait_for_completion(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<(), tokio::time::error::Elapsed> {
         loop {
             if self.is_complete() {
                 return Ok(());
@@ -151,7 +157,10 @@ impl ProgressTracker {
 
     /// Get completion status of each step
     pub fn get_completion_status(&self) -> Vec<bool> {
-        self.steps.iter().map(|step| step.load(Ordering::Acquire)).collect()
+        self.steps
+            .iter()
+            .map(|step| step.load(Ordering::Acquire))
+            .collect()
     }
 
     /// Reset all steps
@@ -182,7 +191,10 @@ impl TestBarrier {
     }
 
     /// Wait for all participants to reach the barrier
-    pub async fn wait(&self, timeout_duration: Duration) -> Result<(), tokio::time::error::Elapsed> {
+    pub async fn wait(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<(), tokio::time::error::Elapsed> {
         let current_generation = self.generation.load(Ordering::Acquire);
         let count = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -203,12 +215,12 @@ impl TestBarrier {
             }
         }
     }
-    
+
     /// Get current participants count
     pub fn current_count(&self) -> usize {
         self.counter.load(Ordering::Acquire)
     }
-    
+
     /// Get current generation (number of times barrier has been passed)
     pub fn generation(&self) -> usize {
         self.generation.load(Ordering::Acquire)
@@ -218,27 +230,27 @@ impl TestBarrier {
 /// High-level timing utilities for common test patterns
 pub mod patterns {
     use super::*;
-    
+
     /// Wait for all workers to reach a checkpoint
     pub async fn wait_for_workers(
         worker_count: usize,
-        timeout: Duration
+        timeout: Duration,
     ) -> Result<TestBarrier, tokio::time::error::Elapsed> {
         let barrier = TestBarrier::new(worker_count);
         barrier.wait(timeout).await?;
         Ok(barrier)
     }
-    
+
     /// Wait for a specific number of events to be processed
     pub async fn wait_for_event_processing(
         target_count: usize,
-        timeout: Duration
+        timeout: Duration,
     ) -> Result<EventCounter, tokio::time::error::Elapsed> {
         let counter = EventCounter::new(target_count);
         counter.wait_for_target(timeout).await?;
         Ok(counter)
     }
-    
+
     /// Create a progress tracker for multi-phase testing
     pub fn create_test_phases(phase_names: &[&str]) -> (ProgressTracker, Vec<String>) {
         let tracker = ProgressTracker::new(phase_names.len());

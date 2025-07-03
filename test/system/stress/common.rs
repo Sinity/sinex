@@ -39,17 +39,20 @@ impl ConcurrencyStressMetrics {
 
     pub fn worker_started(&self) -> usize {
         let current = self.workers_started.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         // Track maximum concurrent workers
         loop {
             let max = self.max_concurrent_workers.load(Ordering::Relaxed);
-            if current <= max || self.max_concurrent_workers.compare_exchange(
-                max, current, Ordering::Relaxed, Ordering::Relaxed
-            ).is_ok() {
+            if current <= max
+                || self
+                    .max_concurrent_workers
+                    .compare_exchange(max, current, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
                 break;
             }
         }
-        
+
         current
     }
 
@@ -85,11 +88,13 @@ impl ConcurrencyStressMetrics {
     }
 
     pub fn race_condition_detected(&self) {
-        self.race_conditions_detected.fetch_add(1, Ordering::Relaxed);
+        self.race_conditions_detected
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn deadlock_recovery_attempt(&self) {
-        self.deadlock_recovery_attempts.fetch_add(1, Ordering::Relaxed);
+        self.deadlock_recovery_attempts
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub async fn report(&self) -> String {
@@ -101,8 +106,16 @@ impl ConcurrencyStressMetrics {
             Duration::from_secs(0)
         };
 
-        let max_cycle_time = cycle_times.iter().max().copied().unwrap_or(Duration::from_secs(0));
-        let min_cycle_time = cycle_times.iter().min().copied().unwrap_or(Duration::from_secs(0));
+        let max_cycle_time = cycle_times
+            .iter()
+            .max()
+            .copied()
+            .unwrap_or(Duration::from_secs(0));
+        let min_cycle_time = cycle_times
+            .iter()
+            .min()
+            .copied()
+            .unwrap_or(Duration::from_secs(0));
 
         format!(
             "ConcurrencyStressMetrics {{
@@ -147,38 +160,56 @@ impl StressTestUtils {
             "INSERT INTO sinex_schemas.agent_manifests (
                 agent_name, version, description, agent_type, status
             ) VALUES ($1, '1.0.0', $2, 'generic', 'running')
-            ON CONFLICT (agent_name) 
-            DO UPDATE SET 
+            ON CONFLICT (agent_name)
+            DO UPDATE SET
                 version = '1.0.0',
                 status = 'running'",
             agent_name,
             format!("Stress test agent for {}", source_prefix)
-        ).execute(&pool).await?;
+        )
+        .execute(&pool)
+        .await?;
 
         Ok(pool.clone())
-}
+    }
     /// Clean up test data after a stress test
-    pub async fn cleanup_test_data(pool: &DbPool, agent_name: &str, source_prefix: &str) -> Result<(), anyhow::Error> {
+    pub async fn cleanup_test_data(
+        pool: &DbPool,
+        agent_name: &str,
+        source_prefix: &str,
+    ) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
-        sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name)
-            .execute(pool).await?;
-        sqlx::query!("DELETE FROM raw.events WHERE source LIKE $1", format!("{}%", source_prefix))
-            .execute(pool).await?;
-        sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name)
-            .execute(pool).await?;
+        sqlx::query!(
+            "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+            agent_name
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM raw.events WHERE source LIKE $1",
+            format!("{}%", source_prefix)
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+            agent_name
+        )
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
 
     /// Create test events for stress testing scenarios
     pub async fn create_test_events(
-        pool: &DbPool, 
-        count: usize, 
-        source: &str, 
-        event_type: &str
+        pool: &DbPool,
+        count: usize,
+        source: &str,
+        event_type: &str,
     ) -> Result<Vec<String>> {
         let mut event_ids = Vec::new();
-        
+
         for i in 0..count {
             let event_id = Ulid::new();
             let payload = json!({
@@ -188,13 +219,15 @@ impl StressTestUtils {
             });
 
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload) 
+                "INSERT INTO raw.events (id, source, event_type, payload)
                  VALUES ($1::uuid::ulid, $2, $3, $4)",
                 event_id.to_uuid(),
                 source,
                 event_type,
                 payload
-            ).execute(pool).await?;
+            )
+            .execute(pool)
+            .await?;
 
             event_ids.push(event_id.to_string());
         }
