@@ -15,6 +15,7 @@ use std::sync::OnceLock;
 use tokio::sync::{Mutex, Semaphore};
 use anyhow::Result;
 use sqlx::Connection;
+use tokio::time::Duration;
 
 /// Global database pool manager
 static POOL_MANAGER: OnceLock<DatabasePoolManager> = OnceLock::new();
@@ -167,39 +168,52 @@ impl DatabasePoolManager {
         .fetch_one(&mut conn)
         .await?;
         
-        if count > 10 {  // Cleanup more aggressively
+        if count > 0 {  // Always cleanup orphaned databases
             eprintln!("   Found {} old test databases, cleaning up ALL...", count);
             
-            // Get ALL databases to drop, not just 50
+            // Terminate all connections to test databases in one query
+            let _ = sqlx::query(
+                "SELECT pg_terminate_backend(pid) 
+                 FROM pg_stat_activity 
+                 WHERE datname LIKE 'sinex_test_%' 
+                 AND datname NOT LIKE '%template%' 
+                 AND pid <> pg_backend_pid()"
+            )
+            .execute(&mut conn)
+            .await;
+            
+            // Drop all test databases in parallel for speed
+            let batch_size = 20;
             let databases: Vec<String> = sqlx::query_scalar(
-                "SELECT datname FROM pg_database WHERE datname LIKE 'sinex_test_%' AND datname NOT LIKE '%template%'"
+                "SELECT datname FROM pg_database 
+                 WHERE datname LIKE 'sinex_test_%' 
+                 AND datname NOT LIKE '%template%' 
+                 ORDER BY datname"
             )
             .fetch_all(&mut conn)
             .await?;
             
-            let mut dropped = 0;
-            for db_name in databases {
-                // Terminate connections
-                let _ = sqlx::query(&format!(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-                    db_name
-                ))
-                .execute(&mut conn)
-                .await;
+            let total = databases.len();
+            for (i, chunk) in databases.chunks(batch_size).enumerate() {
+                // Build a single query to drop multiple databases
+                let drop_queries: Vec<String> = chunk
+                    .iter()
+                    .map(|db| format!("DROP DATABASE IF EXISTS {}", db))
+                    .collect();
                 
-                // Drop database
-                if let Ok(_) = sqlx::query(&format!("DROP DATABASE IF EXISTS {}", db_name))
-                    .execute(&mut conn)
-                    .await
-                {
-                    dropped += 1;
-                    if dropped % 100 == 0 {
-                        eprintln!("   Dropped {} databases...", dropped);
-                    }
+                // Build a single query to drop multiple databases at once
+                for db_name in chunk {
+                    let query = format!("DROP DATABASE IF EXISTS {}", db_name);
+                    let _ = sqlx::query(&query).execute(&mut conn).await;
+                }
+                
+                let dropped_so_far = (i + 1) * batch_size.min(chunk.len());
+                if dropped_so_far % 20 == 0 || dropped_so_far == total {
+                    eprintln!("   Dropped {}/{} databases...", dropped_so_far, total);
                 }
             }
             
-            eprintln!("   Cleaned up {} test databases", dropped);
+            eprintln!("   Cleaned up {} test databases", total);
         }
         
         Ok(())
@@ -209,10 +223,14 @@ impl DatabasePoolManager {
     async fn initialize(config: PoolConfig) -> Result<Self> {
         eprintln!("🚀 Initializing database pool (size: {})", config.min_size);
         
-        // ALWAYS clean up old databases to prevent accumulation
-        if let Err(e) = Self::cleanup_old_test_databases(&config.admin_url).await {
-            eprintln!("⚠️  Failed to cleanup old databases: {}", e);
-        }
+        // Clean up old databases ONLY if there are too many
+        // Do this in background to not block initialization
+        let admin_url_clone = config.admin_url.clone();
+        tokio::spawn(async move {
+            if let Err(e) = Self::cleanup_old_test_databases(&admin_url_clone).await {
+                eprintln!("⚠️  Background cleanup failed: {}", e);
+            }
+        });
         
         // Create admin connection pool with timeout and retries
         let admin_pool = tokio::time::timeout(
@@ -257,24 +275,36 @@ impl DatabasePoolManager {
             admin_pool,
         };
         
-        // Pre-create initial databases with better error handling
+        // Pre-create initial databases in parallel with better error handling
         let create_start = std::time::Instant::now();
         let mut initial_dbs = Vec::new();
         let mut failed_count = 0;
         
-        for i in 0..config.min_size {
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                manager.create_database(i)
-            ).await {
-                Ok(Ok(db_info)) => initial_dbs.push(db_info),
-                Ok(Err(e)) => {
-                    eprintln!("⚠️  Failed to create initial database {}: {}", i, e);
-                    failed_count += 1;
-                }
-                Err(_) => {
-                    eprintln!("⚠️  Timeout creating initial database {}", i);
-                    failed_count += 1;
+        // Create databases in parallel batches
+        let batch_size = 4;
+        for batch_start in (0..config.min_size).step_by(batch_size) {
+            let batch_end = (batch_start + batch_size).min(config.min_size);
+            let mut batch_futures = Vec::new();
+            
+            for i in batch_start..batch_end {
+                let fut = manager.create_database(i);
+                batch_futures.push(tokio::time::timeout(Duration::from_secs(10), fut));
+            }
+            
+            let results = futures::future::join_all(batch_futures).await;
+            
+            for (idx, result) in results.into_iter().enumerate() {
+                let db_idx = batch_start + idx;
+                match result {
+                    Ok(Ok(db_info)) => initial_dbs.push(db_info),
+                    Ok(Err(e)) => {
+                        eprintln!("⚠️  Failed to create initial database {}: {}", db_idx, e);
+                        failed_count += 1;
+                    }
+                    Err(_) => {
+                        eprintln!("⚠️  Timeout creating initial database {}", db_idx);
+                        failed_count += 1;
+                    }
                 }
             }
         }
@@ -394,21 +424,10 @@ impl DatabasePoolManager {
     
     /// Create a new test database
     async fn create_database(&self, index: usize) -> Result<TestDatabaseInfo> {
-        // Try to reuse an existing clean database first
-        if let Some(existing_db) = self.try_reuse_existing_database().await? {
-            if self.config.verbose {
-                eprintln!("  Reusing existing database: {}", existing_db.name);
-            }
-            return Ok(existing_db);
-        }
+        // Don't try to reuse during initial pool creation - it's too slow
+        // Reuse only happens during runtime via acquire_database
         
-        // Clean up orphaned databases before creating new ones
-        if index % 10 == 0 {
-            // Every 10th database creation, do a cleanup
-            let _ = Self::cleanup_old_test_databases(&self.config.admin_url).await;
-        }
-        
-        // Otherwise create a new one
+        // Create a new database
         let counter = DB_COUNTER.fetch_add(1, Ordering::SeqCst);
         let name = format!("sinex_test_{}_{}", std::process::id(), counter);
         
