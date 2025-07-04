@@ -40,7 +40,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(
                 // Try to claim items using the production function
                 let items = claim_work_queue_items(
                     &pool,
-                    "test_worker",
+                    "test_worker_agent",
                     &format!("worker-{}", worker_id),
                     1,
                 )
@@ -84,7 +84,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(
     );
 
     // Verify no items remain
-    worker_test_utils::verify_all_items_processed_by_worker(ctx.pool(), "test_worker").await?;
+    worker_test_utils::verify_all_items_processed_by_worker(ctx.pool(), "test_worker_agent").await?;
 
     // Verify work distribution
     let mut workers_that_worked = 0;
@@ -133,7 +133,7 @@ async fn test_skip_locked_allows_parallel_processing(ctx: TestContext) -> TestRe
                 // Try to claim items
                 let items = claim_work_queue_items(
                     &pool,
-                    "test_worker",
+                    "test_worker_agent",
                     &format!("worker-{}", worker_id),
                     1,
                 )
@@ -190,13 +190,13 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> TestR
     // Insert single test item
     let _ = worker_test_utils::insert_test_items(ctx.pool(), 1).await?;
 
-    // Worker 1: Claim the item
-    let claimed = claim_work_queue_items(ctx.pool(), "test_worker", "worker-1", 1).await?;
+    // Worker 1: Claim the item (using the agent name created by setup_test_worker)
+    let claimed = claim_work_queue_items(ctx.pool(), "test_worker_agent", "worker-1", 1).await?;
 
     pretty_assertions::assert_eq!(claimed.len(), 1, "Should claim exactly one item");
 
     // Worker 2: Try to claim - should get nothing
-    let items = claim_work_queue_items(ctx.pool(), "test_worker", "worker-2", 1).await?;
+    let items = claim_work_queue_items(ctx.pool(), "test_worker_agent", "worker-2", 1).await?;
 
     pretty_assertions::assert_eq!(items.len(), 0, "Worker 2 should not get any items");
 
@@ -312,7 +312,7 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
     let _ = worker_test_utils::insert_test_items(&ctx.pool(), 5).await?;
 
     // Worker 1 claims items but "crashes"
-    let claimed = claim_work_queue_items(ctx.pool(), "test_worker", "worker-failing", 5).await?;
+    let claimed = claim_work_queue_items(ctx.pool(), "test_worker_agent", "worker-failing", 5).await?;
 
     pretty_assertions::assert_eq!(claimed.len(), 5, "Should claim all items");
 
@@ -324,7 +324,7 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
         sqlx::query!(
             "UPDATE sinex_schemas.work_queue
              SET status = 'pending', processing_worker_id = NULL
-             WHERE queue_id = $1::uuid::ulid",
+             WHERE queue_id::uuid = $1",
             item.queue_id.to_uuid()
         )
         .execute(ctx.pool())
@@ -332,7 +332,7 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
     }
 
     // Worker 2 should be able to claim them
-    let reclaimed = claim_work_queue_items(ctx.pool(), "test_worker", "worker-recovery", 5).await?;
+    let reclaimed = claim_work_queue_items(ctx.pool(), "test_worker_agent", "worker-recovery", 5).await?;
 
     pretty_assertions::assert_eq!(reclaimed.len(), 5, "Should reclaim all items");
 
