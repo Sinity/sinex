@@ -25,6 +25,7 @@ pub use heartbeat::{
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
+pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 
 // Common type aliases for event handling (defined after RawEvent struct)
 
@@ -236,15 +237,6 @@ pub mod sources {
     pub const DBUS: &str = "dbus";
     pub const JOURNALD: &str = "journald";
     
-    // Legacy aliases for backward compatibility during migration
-    #[deprecated(note = "Use FS instead")]
-    pub const FILESYSTEM: &str = "filesystem";
-    #[deprecated(note = "Use SHELL_KITTY instead")]
-    pub const TERMINAL_KITTY: &str = "terminal.kitty";
-    #[deprecated(note = "Use WM_HYPRLAND instead")]
-    pub const WINDOW_MANAGER_HYPRLAND: &str = "window_manager.hyprland";
-    #[deprecated(note = "Use SHELL_ATUIN instead")]
-    pub const ATUIN_DB_READER: &str = "ingestor.atuin_db_reader";
 }
 
 /// Common event type constants
@@ -291,11 +283,6 @@ pub mod event_type_constants {
         pub const MONITOR_FOCUSED: &str = "monitor.focused";
         pub const STATE_CAPTURED: &str = "state.captured";
         
-        // Legacy aliases for migration
-        #[deprecated(note = "Use WORKSPACE_SWITCHED instead")]
-        pub const WORKSPACE_CHANGED: &str = "workspace.switched";
-        #[deprecated(note = "Use STATE_CAPTURED instead")]
-        pub const STATE_SNAPSHOT: &str = "state.captured";
     }
 
     pub mod clipboard {

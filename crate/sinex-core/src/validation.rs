@@ -40,6 +40,56 @@ pub fn validate_path(path: &str) -> Result<PathBuf> {
     Ok(path_buf)
 }
 
+/// Validate a file path stays within a watch root directory
+pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
+    // First do basic validation
+    let path_buf = validate_path(path)?;
+    
+    // Convert to absolute paths for comparison
+    let abs_path = if path_buf.is_absolute() {
+        path_buf.clone()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| CoreError::Io(format!("Failed to get current dir: {}", e)))?
+            .join(&path_buf)
+    };
+    
+    let root_path = PathBuf::from(root);
+    let abs_root = if root_path.is_absolute() {
+        root_path
+    } else {
+        std::env::current_dir()
+            .map_err(|e| CoreError::Io(format!("Failed to get current dir: {}", e)))?
+            .join(&root_path)
+    };
+    
+    // Canonicalize paths to resolve symlinks and normalize
+    let canonical_path = abs_path
+        .canonicalize()
+        .or_else(|_| {
+            // If file doesn't exist yet, canonicalize parent and append filename
+            abs_path.parent()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path"))
+                .and_then(|parent| parent.canonicalize())
+                .map(|parent| parent.join(abs_path.file_name().unwrap_or_default()))
+        })
+        .map_err(|e| CoreError::Validation(format!("Path canonicalization failed: {}", e)))?;
+        
+    let canonical_root = abs_root
+        .canonicalize()
+        .map_err(|e| CoreError::Validation(format!("Root canonicalization failed: {}", e)))?;
+    
+    // Check if the canonical path starts with the canonical root
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(CoreError::Validation(format!(
+            "Path '{}' escapes watch root '{}'",
+            path, root
+        )));
+    }
+    
+    Ok(canonical_path)
+}
+
 /// Validate JSON with size and depth limits
 pub fn validate_json(json_str: &str) -> Result<Value> {
     // Size check

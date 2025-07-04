@@ -95,6 +95,7 @@ impl Default for FilesystemConfig {
 /// File system monitor using the notify crate (inotify on Linux)
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
+    watch_roots: Vec<PathBuf>,
 }
 
 // Legacy alias for compatibility
@@ -102,25 +103,35 @@ pub type FilesystemWatcher = FilesystemMonitor;
 
 impl FilesystemMonitor {
     async fn new(config: FilesystemConfig) -> Result<Self> {
-        Ok(Self { config })
+        Ok(Self { 
+            config,
+            watch_roots: Vec::new(),
+        })
     }
 
     fn process_notify_event(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
+        watch_roots: &[PathBuf],
     ) -> Option<RawEvent> {
         let path = event.paths.first()?;
         let path_str = path.to_string_lossy().to_string();
 
-        // Validate path for security issues
-        match sinex_core::validation::validate_path(&path_str) {
-            Ok(_) => {
-                // Path is safe, continue processing
+        // Validate path stays within watch roots
+        let mut path_valid = false;
+        for root in watch_roots {
+            match sinex_core::validation::validate_path_within_root(&path_str, &root.to_string_lossy()) {
+                Ok(_) => {
+                    path_valid = true;
+                    break;
+                }
+                Err(_) => continue,
             }
-            Err(e) => {
-                error!("Path validation failed: {} - path: {}", e, path_str);
-                return None;
-            }
+        }
+        
+        if !path_valid {
+            error!("Path validation failed: path '{}' escapes all watch roots", path_str);
+            return None;
         }
 
         // Check if path matches any watch pattern
@@ -296,6 +307,7 @@ impl EventSource for FilesystemMonitor {
 
         // Watch all matching paths
         let mut watched_paths = std::collections::HashSet::new();
+        self.watch_roots.clear();
 
         for pattern in &self.config.watch_patterns {
             // Expand home directory
@@ -347,19 +359,25 @@ impl EventSource for FilesystemMonitor {
                             .build()
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
+                
+                // Add to watch roots for validation
+                if let Ok(canonical) = base_path.canonicalize() {
+                    self.watch_roots.push(canonical);
+                }
             }
         }
 
         // Process events in a separate task
         let config = self.config.clone();
         let event_tx = tx.clone();
+        let watch_roots = self.watch_roots.clone();
 
         tokio::task::spawn_blocking(move || {
             for result in notify_rx {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(raw_event) = Self::process_notify_event(&event, &config) {
+                            if let Some(raw_event) = Self::process_notify_event(&event, &config, &watch_roots) {
                                 if let Err(e) = event_tx.blocking_send(raw_event) {
                                     error!("Failed to send event: {}", e);
                                     return;
