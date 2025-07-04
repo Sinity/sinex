@@ -215,7 +215,7 @@ impl TestDatabase {
                 Ok(_) => {},
                 Err(e) => {
                     eprintln!("❌ Missing required PostgreSQL extensions: {}", e);
-                    eprintln!("   Run ./check_postgresql_setup.sh for installation instructions.");
+                    eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
                     return Err(e);
                 }
             }

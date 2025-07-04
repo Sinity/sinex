@@ -115,10 +115,7 @@ just unified                  # Collector shows live metrics
 ```
 
 ### Configuration
-Sinex uses a TOML configuration file. Example configs are in `config/`:
-- `minimal.toml` - Basic filesystem monitoring
-- `development.toml` - Common development sources
-- `with-annex.toml` - Including git-annex blob storage
+Configuration is now managed through the NixOS module system. See `config/nixos-example.nix` for example configuration.
 
 ## 📚 Documentation
 

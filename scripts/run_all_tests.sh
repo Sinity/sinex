@@ -164,18 +164,18 @@ main() {
     print_section "Test Suites (Fastest to Slowest)"
     
     # Fast unit tests (< 30s each)
-    run_test_suite "unit" "cargo test --test unit -- --test-threads=$MAX_THREADS"
-    run_test_suite "integration" "cargo test --test integration -- --test-threads=$MAX_THREADS"
-    run_test_suite "system" "cargo test --test system -- --test-threads=$MAX_THREADS"
+    run_test_suite "unit" "cargo test --test tests unit:: -- --test-threads=$MAX_THREADS"
+    run_test_suite "integration" "cargo test --test tests integration:: -- --test-threads=$MAX_THREADS"
+    run_test_suite "system" "cargo test --test tests system:: -- --test-threads=$MAX_THREADS"
     
-    # Medium tests (30s - 2min)
-    run_test_suite "stress" "cargo test stress_tests -- --test-threads=$MAX_THREADS"
+    # Medium tests (30s - 2min)  
+    run_test_suite "stress" "cargo test --test tests stress_tests:: -- --test-threads=$MAX_THREADS"
     
     # Slower property-based tests (2-5min)
-    run_test_suite "property" "cargo test --test property -- --test-threads=$MAX_THREADS --timeout=300"
+    run_test_suite "property" "cargo test --test tests property:: -- --test-threads=$MAX_THREADS"
     
     # Adversarial tests (can be slow)
-    run_test_suite "adversarial" "cargo test --test adversarial -- --test-threads=$MAX_THREADS --timeout=300"
+    run_test_suite "adversarial" "cargo test --test tests adversarial:: -- --test-threads=$MAX_THREADS"
     
     # VM tests (slowest, if available)
     if command -v nix &> /dev/null; then
@@ -185,7 +185,7 @@ main() {
         local vm_snapshot_script="$PROJECT_ROOT/test/nixos-vm/run-vm-tests-with-snapshots.sh"
         if [ -f "$vm_snapshot_script" ]; then
             info "Running VM tests with snapshot acceleration..."
-            run_test_suite "vm-snapshots" "$vm_snapshot_script --quick" 600
+            run_test_suite "vm-snapshots" "$vm_snapshot_script -c smoke" 600
         else
             info "Running traditional VM tests..."
             
