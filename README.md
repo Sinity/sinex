@@ -103,8 +103,8 @@ just
 # Run the unified collector
 just unified                  # or: cargo run --bin sinex-collector
 
-# Run with custom config
-cargo run --bin sinex-collector -- --config myconfig.toml
+# Run with custom annex repo
+cargo run --bin sinex-collector -- --annex-repo /path/to/annex
 
 # Query recent events
 just query                    # or: ./cli/exo.py query
@@ -115,7 +115,7 @@ just unified                  # Collector shows live metrics
 ```
 
 ### Configuration
-Configuration is now managed through the NixOS module system. See `config/nixos-example.nix` for example configuration.
+Configuration is now managed through the NixOS module system. See `nixos/example.nix` for example configuration.
 
 ## 📚 Documentation
 

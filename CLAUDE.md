@@ -47,7 +47,7 @@ sinex-preflight verify --timeout 120       # Manual verification
 2. **SQLX offline errors** → Run `just sqlx-prepare` and commit `.sqlx/`
 3. **Test failures** → Use `#[sinex_test]` not `#[tokio::test]`
 4. **Config not loading** → Priority: CLI args → env → file → defaults
-5. **Events not captured** → Check source enabled in config, verify schema
+5. **Events not captured** → Start the UnifiedCollector (event sources are ready)
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ async fn stream_events(&mut self, tx: EventSender) -> Result<()>
 
 ### UnifiedCollector
 - Single process coordinating all sources
-- Loads config (TOML/NixOS format)
+- Loads config (NixOS module system)
 - Spawns EventSource tasks
 - Validates events via JSON schemas
 - Writes to `raw.events` or logs (dry-run)
@@ -128,7 +128,7 @@ impl EventType for FileCreated {
 }
 ```
 
-**NOTE**: EventRegistry is currently manually maintained in `create_registry()` but intended to be auto-generated from these types (see TODO comment).
+**NOTE**: EventRegistry autogeneration has been implemented via EventRegistryBuilder pattern, eliminating manual maintenance.
 
 ### Naming Convention 
 - Sources use dots for hierarchy: `fs`, `shell.kitty`, `wm.hyprland`
