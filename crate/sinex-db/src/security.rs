@@ -253,29 +253,23 @@ mod tests {
     
     #[test]
     fn test_path_sanitization() {
-        // Basic traversal
+        // Valid paths should work
         assert_eq!(
-            SecurityValidator::sanitize_path("../../../etc/passwd").unwrap(),
-            "/etc/passwd"
+            SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
+            "/home/user/file.txt"
         );
         
-        // Windows style
-        assert_eq!(
-            SecurityValidator::sanitize_path("..\\..\\windows\\system32").unwrap(),
-            "/windows/system32"
-        );
+        // Basic traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("../../../etc/passwd").is_err());
         
-        // URL encoded
-        assert_eq!(
-            SecurityValidator::sanitize_path("%2e%2e%2f%2e%2e%2fetc%2fpasswd").unwrap(),
-            "/etc/passwd"
-        );
+        // Windows style should be rejected
+        assert!(SecurityValidator::sanitize_path("..\\..\\windows\\system32").is_err());
         
-        // Double encoded
-        assert_eq!(
-            SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").unwrap(),
-            "/etc/passwd"
-        );
+        // URL encoded traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("%2e%2e%2f%2e%2e%2fetc%2fpasswd").is_err());
+        
+        // Double encoded traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").is_err());
     }
     
     #[test]

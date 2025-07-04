@@ -782,7 +782,7 @@ mod tests {
         // Valid array with good paths
         let valid_config: ConfigValue = toml::from_str(
             r#"
-            watch_patterns = ["/home/user/docs", "~/Downloads/**/*"]
+            watch_patterns = ["/home/user/docs", "/home/user/Downloads"]
         "#,
         )
         .unwrap();

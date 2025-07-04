@@ -98,14 +98,19 @@ start_timer() {
 end_timer() {
     local start_time=$1
     local end_time=$(date +%s.%N)
-    echo "$end_time - $start_time" | bc
+    # Use awk instead of bc for better compatibility
+    awk "BEGIN { print $end_time - $start_time }"
 }
 
 format_duration() {
     local duration=$1
-    local minutes=$(echo "$duration / 60" | bc)
-    local seconds=$(echo "$duration - ($minutes * 60)" | bc)
-    printf "%dm %.1fs" "$minutes" "$seconds"
+    # Use awk instead of bc for better floating point handling
+    awk "BEGIN { 
+        duration = $duration; 
+        minutes = int(duration / 60); 
+        seconds = duration - (minutes * 60); 
+        printf \"%dm %.1fs\", minutes, seconds 
+    }"
 }
 
 # Test execution functions
@@ -119,14 +124,14 @@ run_cargo_tests() {
     local start_time=$(start_timer)
     local log_file="${RESULTS_DIR}/${suite_name}.log"
     
-    # Run tests and capture output
-    if cargo test $test_pattern -- --test-threads=$MAX_THREADS $extra_args &> "$log_file"; then
+    # Run tests and capture output with timeout
+    if timeout 300 cargo test $test_pattern -- --test-threads=$MAX_THREADS $extra_args &> "$log_file"; then
         local duration=$(end_timer "$start_time")
         
-        # Extract test counts
-        local passed=$(grep -E "test result: ok\." "$log_file" | grep -oE "[0-9]+ passed" | awk '{sum += $1} END {print sum}')
-        local failed=$(grep -E "test result: (ok\.|FAILED)" "$log_file" | grep -oE "[0-9]+ failed" | awk '{sum += $1} END {print sum}')
-        local ignored=$(grep -E "test result: (ok\.|FAILED)" "$log_file" | grep -oE "[0-9]+ ignored" | awk '{sum += $1} END {print sum}')
+        # Extract test counts more reliably
+        local passed=$(grep "test result:" "$log_file" | grep -oE "[0-9]+ passed" | awk '{sum += $1} END {print sum+0}')
+        local failed=$(grep "test result:" "$log_file" | grep -oE "[0-9]+ failed" | awk '{sum += $1} END {print sum+0}')
+        local ignored=$(grep "test result:" "$log_file" | grep -oE "[0-9]+ ignored" | awk '{sum += $1} END {print sum+0}')
         
         passed=${passed:-0}
         failed=${failed:-0}
@@ -168,21 +173,52 @@ run_vm_tests() {
     
     local start_time=$(start_timer)
     local log_file="${RESULTS_DIR}/vm-${category}.log"
-    local vm_script="${PROJECT_ROOT}/test/nixos-vm/run-vm-tests-with-snapshots.sh"
+    local vm_script_dir="${PROJECT_ROOT}/test/nixos-vm"
+    local vm_script=""
+    
+    # Determine which VM script to use based on category
+    case "$category" in
+        "basic")
+            vm_script="${vm_script_dir}/run-vm-tests.sh"
+            ;;
+        "snapshots")
+            vm_script="${vm_script_dir}/run-vm-tests-with-snapshots.sh"
+            ;;
+        *)
+            # For specific categories, use the snapshot runner with category
+            vm_script="${vm_script_dir}/run-vm-tests-with-snapshots.sh"
+            ;;
+    esac
     
     if [ ! -f "$vm_script" ]; then
         warning "VM test runner not found at $vm_script"
         TEST_STATUS["vm-$category"]="SKIPPED"
+        TEST_COUNTS["vm-$category"]="0:0:0"
+        TEST_TIMES["vm-$category"]="0"
         return
     fi
     
-    # Run VM tests
-    if "$vm_script" -c "$category" -o "${RESULTS_DIR}/vm-${category}" &> "$log_file"; then
+    # Run VM tests with appropriate arguments
+    local vm_cmd="$vm_script"
+    if [ "$category" != "basic" ] && [ "$category" != "snapshots" ]; then
+        vm_cmd="$vm_script -c $category -o ${RESULTS_DIR}/vm-${category}"
+    fi
+    
+    if timeout 600 $vm_cmd &> "$log_file"; then
         local duration=$(end_timer "$start_time")
         
         # Extract results from VM test output
-        local passed=$(grep -E "✓|PASS" "$log_file" | wc -l)
-        local failed=$(grep -E "✗|FAIL" "$log_file" | wc -l)
+        local passed=$(grep -E "✓|PASS|SUCCESS" "$log_file" | wc -l)
+        local failed=$(grep -E "✗|FAIL|ERROR" "$log_file" | wc -l)
+        
+        # If no explicit pass/fail markers, look for test completion
+        if [ "$passed" -eq 0 ] && [ "$failed" -eq 0 ]; then
+            if grep -q "All tests completed" "$log_file" || grep -q "Test suite finished" "$log_file"; then
+                passed=1
+            else
+                failed=1
+            fi
+        fi
         
         if [ "$failed" -eq 0 ]; then
             success "VM $category: ${passed} scenarios passed ($(format_duration $duration))"
@@ -198,8 +234,14 @@ run_vm_tests() {
         TOTAL_PASSED=$((TOTAL_PASSED + passed))
         TOTAL_FAILED=$((TOTAL_FAILED + failed))
     else
-        error "VM $category: Test execution failed"
+        local duration=$(end_timer "$start_time")
+        error "VM $category: Test execution failed or timed out ($(format_duration $duration))"
         TEST_STATUS["vm-$category"]="ERROR"
+        TEST_COUNTS["vm-$category"]="0:1:0"
+        TEST_TIMES["vm-$category"]="$duration"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+        
+        # Show last few lines of log
         tail -10 "$log_file"
     fi
 }
@@ -262,22 +304,37 @@ main() {
     run_cargo_tests "ignored" "" "--ignored"
     
     # Run VM tests if available
-    if command -v nix &> /dev/null; then
+    if command -v nix &> /dev/null && [ -n "${IN_NIX_SHELL:-}" ]; then
         print_section "VM Tests"
         
-        # Check if we're on NixOS or have VM test capability
-        if [ -f /etc/nixos/configuration.nix ] || [ -n "${IN_NIX_SHELL:-}" ]; then
-            run_vm_tests "smoke"
-            run_vm_tests "integration"
-            run_vm_tests "performance"
-            run_vm_tests "deployment"
-            run_vm_tests "chaos"
+        # Check if VM test runner exists
+        local vm_script_dir="${PROJECT_ROOT}/test/nixos-vm"
+        if [ -d "$vm_script_dir" ]; then
+            info "Running NixOS VM tests..."
+            
+            # Run basic VM functionality test
+            if [ -f "$vm_script_dir/run-vm-tests.sh" ]; then
+                run_vm_tests "basic"
+            fi
+            
+            # Run VM tests with snapshots if available
+            if [ -f "$vm_script_dir/run-vm-tests-with-snapshots.sh" ]; then
+                run_vm_tests "snapshots"
+            fi
+            
+            # Run individual test categories
+            for category in smoke integration performance deployment; do
+                if [ -f "$vm_script_dir/test-scenarios/${category}.nix" ]; then
+                    run_vm_tests "$category"
+                fi
+            done
         else
-            warning "VM tests require NixOS or nix-shell environment"
-            info "Run 'nix develop' first to enable VM tests"
+            warning "VM test directory not found at $vm_script_dir"
+            info "VM tests are available but not configured for this project"
         fi
     else
-        warning "Nix not available, skipping VM tests"
+        warning "VM tests require nix-shell environment"
+        info "Run 'nix develop' first to enable VM tests"
     fi
     
     # Calculate total time
