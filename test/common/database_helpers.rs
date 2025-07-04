@@ -8,7 +8,7 @@ use serde_json::json;
 
 /// Get shared test pool
 pub async fn get_shared_test_pool() -> Result<DbPool> {
-    let db = crate::common::db_pool_final::acquire_test_database().await?;
+    let db = crate::common::database_pool::acquire_test_database().await?;
     Ok(db.pool().clone())
 }
 
