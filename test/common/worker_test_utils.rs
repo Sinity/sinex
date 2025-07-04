@@ -40,10 +40,10 @@ pub async fn setup_test_worker(
             r#"
             INSERT INTO sinex_schemas.work_queue
             (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
-            VALUES ($1, $2, $3, 'pending', 0, 3, NOW())
+            VALUES ($1::uuid, $2::uuid, $3, 'pending', 0, 3, NOW())
             "#,
-            queue_id,
-            raw_event_id,
+            queue_id.to_uuid(),
+            raw_event_id.to_uuid(),
             format!("{}_item_{}", worker_name, i)
         )
         .execute(pool)
@@ -88,10 +88,10 @@ pub async fn create_test_work_item(
         r#"
         INSERT INTO sinex_schemas.work_queue
         (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
-        VALUES ($1, $2, $3, $4, 0, 3, NOW())
+        VALUES ($1::uuid, $2::uuid, $3, $4, 0, 3, NOW())
         "#,
-        queue_id,
-        raw_event_id,
+        queue_id.to_uuid(),
+        raw_event_id.to_uuid(),
         target_agent,
         status
     )
@@ -243,7 +243,7 @@ pub async fn simulate_worker_processing(
             )
             RETURNING queue_id::uuid
             "#,
-            worker_id
+            worker_id.to_string()
         )
         .fetch_optional(pool)
         .await?;
@@ -255,9 +255,9 @@ pub async fn simulate_worker_processing(
                 UPDATE sinex_schemas.work_queue
                 SET status = 'succeeded',
                     processed_at = NOW()
-                WHERE queue_id = $1
+                WHERE queue_id::uuid = $1
                 "#,
-                uuid_to_ulid(row.queue_id.expect("queue_id should exist"))
+                row.queue_id.expect("queue_id should exist")
             )
             .execute(pool)
             .await?;
@@ -320,11 +320,11 @@ pub mod lifecycle {
                 UPDATE sinex_schemas.work_queue
                 SET status = 'succeeded',
                     processed_at = NOW(),
-                    processing_worker_id = $1
-                WHERE queue_id = $2 AND status = 'processing'
+                    processing_worker_id = $1::uuid
+                WHERE queue_id::uuid = $2 AND status = 'processing'
                 "#,
-                self.worker_id,
-                queue_id
+                self.worker_id.to_uuid(),
+                queue_id.to_uuid()
             )
             .execute(&self.pool)
             .await?;
@@ -345,12 +345,12 @@ pub mod lifecycle {
                 UPDATE sinex_schemas.work_queue
                 SET status = 'failed',
                     processed_at = NOW(),
-                    processing_worker_id = $1,
+                    processing_worker_id = $1::uuid,
                     attempts = attempts + 1
-                WHERE queue_id = $2 AND status = 'processing'
+                WHERE queue_id::uuid = $2 AND status = 'processing'
                 "#,
-                self.worker_id,
-                queue_id
+                self.worker_id.to_uuid(),
+                queue_id.to_uuid()
             )
             .execute(&self.pool)
             .await?;

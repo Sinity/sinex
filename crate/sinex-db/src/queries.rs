@@ -7,6 +7,7 @@ use crate::{DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
 use anyhow::Result;
 use chrono::Utc;
 use sinex_ulid::Ulid;
+use sqlx::types::Uuid;
 use std::borrow::Cow;
 
 /// Insert a raw event with ULID type conversion (compile-time safe with manual mapping)
@@ -113,11 +114,14 @@ pub async fn insert_raw_event_with_validator(
     SecurityValidator::check_json_size(&payload, MAX_JSON_ELEMENTS)
         .map_err(|e| anyhow::anyhow!("Security validation failed: {}", e))?;
     
+    // Convert ULID to UUID for SQLx compatibility
+    let payload_schema_uuid: Option<Uuid> = payload_schema_id.map(ulid_to_uuid);
+    
     // Use query! for compile-time checking, then map to our ULID-based struct
     let record = sqlx::query!(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid)
         RETURNING 
             id::uuid as "id!", 
             source as "source!", 
@@ -135,7 +139,7 @@ pub async fn insert_raw_event_with_validator(
         payload,
         ts_orig,
         ingestor_version,
-        payload_schema_id as Option<sinex_ulid::Ulid>
+        payload_schema_uuid
     )
     .fetch_one(pool)
     .await?;
@@ -275,8 +279,8 @@ pub async fn claim_work_queue_items(
             FOR UPDATE SKIP LOCKED
         )
         RETURNING 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!", 
             status as "status!", 
             attempts as "attempts!", 
@@ -300,8 +304,8 @@ pub async fn claim_work_queue_items(
     let items = records
         .into_iter()
         .map(|record| WorkQueueItem {
-            queue_id.to_uuid(): uuid_to_ulid(record.queue_id),
-            raw_event_id.to_uuid(): uuid_to_ulid(record.raw_event_id),
+            queue_id: uuid_to_ulid(record.queue_id),
+            raw_event_id: uuid_to_ulid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
             status: record.status,
             attempts: record.attempts,
@@ -321,13 +325,14 @@ pub async fn claim_work_queue_items(
 
 /// Mark a work queue item as successfully processed
 pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue 
         SET status = 'succeeded', processed_at = now(), processing_worker_id = NULL
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         "#,
-        queue_id.to_uuid()
+        queue_uuid
     )
     .execute(pool)
     .await?;
@@ -342,6 +347,7 @@ pub async fn fail_work_queue_item(
     error_message: &str,
     next_retry_ts: Timestamp,
 ) -> Result<()> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
@@ -351,9 +357,9 @@ pub async fn fail_work_queue_item(
             error_message_last = $2,
             next_retry_ts = $3,
             processing_worker_id = NULL
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         "#,
-        queue_id.to_uuid(),
+        queue_uuid,
         error_message,
         next_retry_ts
     )
@@ -369,6 +375,7 @@ pub async fn fail_work_queue_item_permanently(
     queue_id: Ulid,
     failure_reason: &str,
 ) -> Result<()> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
@@ -377,9 +384,9 @@ pub async fn fail_work_queue_item_permanently(
             failure_reason = $2,
             processed_at = now(),
             processing_worker_id = NULL
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         "#,
-        queue_id.to_uuid(),
+        queue_uuid,
         failure_reason
     )
     .execute(pool)
@@ -417,15 +424,16 @@ pub async fn insert_dlq_event(
     original_event_payload: JsonValue,
     additional_metadata: Option<JsonValue>,
 ) -> Result<DlqEvent> {
+    let failed_event_uuid: Uuid = ulid_to_uuid(failed_event_id);
     let record = sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.dlq_events 
             (failed_event_id, agent_name, source, event_type, failure_reason, 
              error_category, original_event_payload, additional_metadata)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
         RETURNING 
-            dlq_id.to_uuid()::uuid as "dlq_id!",
-            failed_event_id.to_uuid()::uuid as "failed_event_id!",
+            dlq_id::uuid as "dlq_id!",
+            failed_event_id::uuid as "failed_event_id!",
             agent_name as "agent_name!",
             source as "source!",
             event_type as "event_type!",
@@ -440,7 +448,7 @@ pub async fn insert_dlq_event(
             resolved_at,
             resolved_by
         "#,
-        failed_event_id.to_uuid(),
+        failed_event_uuid,
         agent_name,
         source,
         event_type,
@@ -453,8 +461,8 @@ pub async fn insert_dlq_event(
     .await?;
 
     Ok(DlqEvent {
-        dlq_id.to_uuid(): uuid_to_ulid(record.dlq_id),
-        failed_event_id.to_uuid(): uuid_to_ulid(record.failed_event_id),
+        dlq_id: uuid_to_ulid(record.dlq_id),
+        failed_event_id: uuid_to_ulid(record.failed_event_id),
         agent_name: record.agent_name,
         source: record.source,
         event_type: record.event_type,
@@ -480,8 +488,8 @@ pub async fn get_retryable_dlq_events_for_agent(
     let records = sqlx::query!(
         r#"
         SELECT 
-            dlq_id.to_uuid()::uuid as "dlq_id!",
-            failed_event_id.to_uuid()::uuid as "failed_event_id!",
+            dlq_id::uuid as "dlq_id!",
+            failed_event_id::uuid as "failed_event_id!",
             agent_name as "agent_name!",
             source as "source!",
             event_type as "event_type!",
@@ -512,8 +520,8 @@ pub async fn get_retryable_dlq_events_for_agent(
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id.to_uuid(): uuid_to_ulid(record.dlq_id),
-            failed_event_id.to_uuid(): uuid_to_ulid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -538,8 +546,8 @@ pub async fn get_retryable_dlq_events(pool: DbPoolRef<'_>, limit: i64) -> Result
     let records = sqlx::query!(
         r#"
         SELECT 
-            dlq_id.to_uuid()::uuid as "dlq_id!",
-            failed_event_id.to_uuid()::uuid as "failed_event_id!",
+            dlq_id::uuid as "dlq_id!",
+            failed_event_id::uuid as "failed_event_id!",
             agent_name as "agent_name!",
             source as "source!",
             event_type as "event_type!",
@@ -568,8 +576,8 @@ pub async fn get_retryable_dlq_events(pool: DbPoolRef<'_>, limit: i64) -> Result
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id.to_uuid(): uuid_to_ulid(record.dlq_id),
-            failed_event_id.to_uuid(): uuid_to_ulid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -595,6 +603,7 @@ pub async fn update_dlq_retry_attempt(
     dlq_id: Ulid,
     next_retry_at: OptionalTimestamp,
 ) -> Result<()> {
+    let dlq_uuid: Uuid = ulid_to_uuid(dlq_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.dlq_events
@@ -602,9 +611,9 @@ pub async fn update_dlq_retry_attempt(
             retry_count = retry_count + 1,
             last_retry_at = NOW(),
             next_retry_at = $2
-        WHERE dlq_id = $1
+        WHERE dlq_id::uuid = $1
         "#,
-        dlq_id.to_uuid(),
+        dlq_uuid,
         next_retry_at
     )
     .execute(pool)
@@ -615,15 +624,16 @@ pub async fn update_dlq_retry_attempt(
 
 /// Mark DLQ event as resolved
 pub async fn resolve_dlq_event(pool: DbPoolRef<'_>, dlq_id: Ulid, resolved_by: &str) -> Result<()> {
+    let dlq_uuid: Uuid = ulid_to_uuid(dlq_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.dlq_events
         SET 
             resolved_at = NOW(),
             resolved_by = $2
-        WHERE dlq_id = $1
+        WHERE dlq_id::uuid = $1
         "#,
-        dlq_id.to_uuid(),
+        dlq_uuid,
         resolved_by
     )
     .execute(pool)
@@ -665,6 +675,7 @@ pub async fn get_dlq_stats(pool: DbPoolRef<'_>) -> Result<JsonValue> {
 
 /// Get an event by its ULID
 pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
+    let event_uuid: Uuid = ulid_to_uuid(event_id);
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -678,9 +689,9 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!"
         FROM raw.events
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
-        event_id.to_uuid()
+        event_uuid
     )
     .fetch_one(pool)
     .await?;
@@ -886,14 +897,15 @@ pub async fn add_to_work_queue(
     target_agent_name: &str,
     max_attempts: i32,
 ) -> Result<WorkQueueItem> {
+    let raw_event_uuid: Uuid = ulid_to_uuid(raw_event_id);
     let record = sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.work_queue 
             (raw_event_id, target_agent_name, max_attempts)
-        VALUES ($1, $2, $3)
+        VALUES ($1::uuid, $2, $3)
         RETURNING 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!", 
             status as "status!", 
             attempts as "attempts!", 
@@ -906,7 +918,7 @@ pub async fn add_to_work_queue(
             processed_at,
             failure_reason
         "#,
-        raw_event_id.to_uuid(),
+        raw_event_uuid,
         target_agent_name,
         max_attempts
     )
@@ -914,8 +926,8 @@ pub async fn add_to_work_queue(
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id.to_uuid(): uuid_to_ulid(record.queue_id),
-        raw_event_id.to_uuid(): uuid_to_ulid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
@@ -955,8 +967,8 @@ pub async fn get_next_work_item(
             FOR UPDATE SKIP LOCKED
         )
         RETURNING 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!", 
             status as "status!", 
             attempts as "attempts!", 
@@ -976,8 +988,8 @@ pub async fn get_next_work_item(
 
     match record {
         Some(record) => Ok(Some(WorkQueueItem {
-            queue_id.to_uuid(): uuid_to_ulid(record.queue_id),
-            raw_event_id.to_uuid(): uuid_to_ulid(record.raw_event_id),
+            queue_id: uuid_to_ulid(record.queue_id),
+            raw_event_id: uuid_to_ulid(record.raw_event_id),
             target_agent_name: record.target_agent_name,
             status: record.status,
             attempts: record.attempts,
@@ -996,13 +1008,14 @@ pub async fn get_next_work_item(
 
 /// Complete a work queue item (mark as completed)
 pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
         SET status = 'succeeded', processed_at = now()
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         "#,
-        queue_id.to_uuid()
+        queue_uuid
     )
     .execute(pool)
     .await?;
@@ -1016,6 +1029,7 @@ pub async fn fail_work_item(
     queue_id: Ulid,
     error_message: &str,
 ) -> Result<()> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     let record = sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
@@ -1039,16 +1053,16 @@ pub async fn fail_work_item(
                 WHEN attempts + 1 >= max_attempts THEN NULL
                 ELSE now()  -- Immediate retry for testing
             END
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         RETURNING 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!",
             attempts as "attempts!",
             max_attempts as "max_attempts!",
             status as "status!"
         "#,
-        queue_id.to_uuid(),
+        queue_uuid,
         error_message
     )
     .fetch_one(pool)
@@ -1077,11 +1091,12 @@ pub async fn fail_work_item(
 
 /// Get a work queue item by ID
 pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
+    let queue_uuid: Uuid = ulid_to_uuid(queue_id);
     let record = sqlx::query!(
         r#"
         SELECT 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!", 
             status as "status!", 
             attempts as "attempts!", 
@@ -1094,16 +1109,16 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
             processed_at,
             failure_reason
         FROM sinex_schemas.work_queue
-        WHERE queue_id = $1
+        WHERE queue_id::uuid = $1
         "#,
-        queue_id.to_uuid()
+        queue_uuid
     )
     .fetch_one(pool)
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id.to_uuid(): uuid_to_ulid(record.queue_id),
-        raw_event_id.to_uuid(): uuid_to_ulid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
@@ -1161,8 +1176,8 @@ pub async fn get_dlq_items(
     let records = sqlx::query!(
         r#"
         SELECT 
-            dlq_id.to_uuid()::uuid as "dlq_id!",
-            failed_event_id.to_uuid()::uuid as "failed_event_id!",
+            dlq_id::uuid as "dlq_id!",
+            failed_event_id::uuid as "failed_event_id!",
             agent_name as "agent_name!",
             source as "source!",
             event_type as "event_type!",
@@ -1190,8 +1205,8 @@ pub async fn get_dlq_items(
     let events = records
         .into_iter()
         .map(|record| DlqEvent {
-            dlq_id.to_uuid(): uuid_to_ulid(record.dlq_id),
-            failed_event_id.to_uuid(): uuid_to_ulid(record.failed_event_id),
+            dlq_id: uuid_to_ulid(record.dlq_id),
+            failed_event_id: uuid_to_ulid(record.failed_event_id),
             agent_name: record.agent_name,
             source: record.source,
             event_type: record.event_type,
@@ -1237,13 +1252,14 @@ pub async fn insert_work_queue_item(
     raw_event_id: Ulid,
     target_agent_name: &str,
 ) -> Result<WorkQueueItem> {
+    let raw_event_uuid: Uuid = ulid_to_uuid(raw_event_id);
     let record = sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-        VALUES ($1, $2)
+        VALUES ($1::uuid, $2)
         RETURNING 
-            queue_id.to_uuid()::uuid as "queue_id!",
-            raw_event_id.to_uuid()::uuid as "raw_event_id!",
+            queue_id::uuid as "queue_id!",
+            raw_event_id::uuid as "raw_event_id!",
             target_agent_name as "target_agent_name!", 
             status as "status!", 
             attempts as "attempts!", 
@@ -1256,15 +1272,15 @@ pub async fn insert_work_queue_item(
             processed_at,
             failure_reason
         "#,
-        raw_event_id.to_uuid(),
+        raw_event_uuid,
         target_agent_name
     )
     .fetch_one(pool)
     .await?;
 
     Ok(WorkQueueItem {
-        queue_id.to_uuid(): uuid_to_ulid(record.queue_id),
-        raw_event_id.to_uuid(): uuid_to_ulid(record.raw_event_id),
+        queue_id: uuid_to_ulid(record.queue_id),
+        raw_event_id: uuid_to_ulid(record.raw_event_id),
         target_agent_name: record.target_agent_name,
         status: record.status,
         attempts: record.attempts,
