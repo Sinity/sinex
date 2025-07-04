@@ -59,12 +59,6 @@ impl SecurityValidator {
                     cleaned = cleaned.replace("//", "/");
                 }
                 
-                // Further sanitize sensitive paths
-                cleaned = cleaned
-                    .replace("/etc/passwd", "/sanitized/path")
-                    .replace("/windows/system32", "/sanitized/path")
-                    .replace("windows/system32", "sanitized/path");
-                
                 return Ok(Cow::Owned(cleaned));
             }
         }

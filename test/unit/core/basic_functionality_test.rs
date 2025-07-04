@@ -53,7 +53,7 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
         .build(),
         RawEventBuilder::new(
             sources::TERMINAL_KITTY,
-            event_type_constants::terminal::COMMAND_EXECUTED,
+            event_type_constants::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
         )
         .build(),

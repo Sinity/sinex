@@ -85,7 +85,7 @@ async fn test_payload_validation(ctx: TestContext) -> TestResult {
     // Valid JSON payload should work
     let valid_event = RawEventBuilder::new(
         sources::TERMINAL_KITTY,
-        event_type_constants::terminal::COMMAND_EXECUTED,
+        event_type_constants::shell::COMMAND_EXECUTED,
         json!({
             "command": "ls -la",
             "exit_code": 0,
@@ -99,7 +99,7 @@ async fn test_payload_validation(ctx: TestContext) -> TestResult {
 
     // Complex nested payload should also work
     let complex_event = RawEventBuilder::new(
-        sources::HYPRLAND,
+        sources::WM_HYPRLAND,
         "workspace.changed",
         json!({
             "old_workspace": {

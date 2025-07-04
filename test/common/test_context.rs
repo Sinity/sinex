@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-use crate::common::database_pool::PooledDatabase;
+use crate::common::db_pool_final::TestDatabase;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
@@ -55,8 +55,8 @@ impl Default for TestConfig {
 
 /// Unified test context providing all common test functionality
 pub struct TestContext {
-    /// Database from the universal pool
-    db: PooledDatabase,
+    /// Database from the managed pool
+    db: TestDatabase,
     /// Test configuration
     config: TestConfig,
     /// Test start time for diagnostics
@@ -73,7 +73,7 @@ impl TestContext {
 
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> Result<Self> {
-        let db = crate::common::database_pool::acquire_database().await?;
+        let db = crate::common::db_pool_final::acquire_test_database().await?;
 
         Ok(Self {
             db,
@@ -83,8 +83,8 @@ impl TestContext {
         })
     }
 
-    /// Create a test context with a pooled database (used by #[sinex_test])
-    pub async fn with_pooled_database(db: PooledDatabase, config: TestConfig) -> Result<Self> {
+    /// Create a test context with a managed database (used by #[sinex_test])
+    pub async fn with_managed_database(db: TestDatabase, config: TestConfig) -> Result<Self> {
         Ok(Self {
             db,
             config,

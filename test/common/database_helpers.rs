@@ -6,13 +6,9 @@
 use crate::common::prelude::*;
 use serde_json::json;
 
-// DEPRECATED: Use database_pool::acquire_database() instead
-// This function is kept for backwards compatibility during migration
-
-/// Get shared test pool - DEPRECATED, use database_pool instead
+/// Get shared test pool
 pub async fn get_shared_test_pool() -> Result<DbPool> {
-    // For backwards compatibility, create a pooled database and return its pool
-    let db = crate::common::database_pool::acquire_database().await?;
+    let db = crate::common::db_pool_final::acquire_test_database().await?;
     Ok(db.pool().clone())
 }
 

@@ -23,14 +23,11 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
-// NEW: Unified database access
+// Unified database access
 pub mod database;
 
-// Universal database pool system
-pub mod database_pool;
-
-// Cleanup hook for test infrastructure
-pub mod cleanup_hook;
+// Pre-initialized database pool with clean-before-use
+pub mod db_pool_final;
 
 // Test database isolation (kept for migration)
 pub mod test_database;
@@ -87,7 +84,7 @@ pub mod events {
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
             sources::TERMINAL_KITTY,
-            event_type_constants::terminal::COMMAND_EXECUTED,
+            event_type_constants::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -99,7 +96,7 @@ pub mod events {
 
     /// Create a test hyprland event
     pub fn hyprland_event(event_type: &str, data: Value) -> sinex_db::RawEvent {
-        RawEventBuilder::new(sources::HYPRLAND, event_type, data).build()
+        RawEventBuilder::new(sources::WM_HYPRLAND, event_type, data).build()
     }
 
     /// Create a test sinex agent event
@@ -898,6 +895,9 @@ pub mod timing_optimization;
 
 /// Validation test utilities
 pub mod validation_test_utils;
+
+// Re-export the final pool as the default
+pub use db_pool_final::acquire_test_database;
 
 /// Schema test utilities
 pub mod schema_test_utils;

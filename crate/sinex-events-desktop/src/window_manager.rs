@@ -112,7 +112,7 @@ pub struct WorkspaceChanged;
 impl EventType for WorkspaceChanged {
     type Payload = WorkspaceChangedPayload;
     type SourceImpl = HyprlandListener;
-    const EVENT_NAME: &'static str = event_type_constants::window_manager::WORKSPACE_CHANGED;
+    const EVENT_NAME: &'static str = event_type_constants::window_manager::WORKSPACE_SWITCHED;
 }
 
 pub struct MonitorFocused;
@@ -126,7 +126,7 @@ pub struct StateSnapshot;
 impl EventType for StateSnapshot {
     type Payload = StateSnapshotPayload;
     type SourceImpl = HyprlandStateSnapshotter;
-    const EVENT_NAME: &'static str = event_type_constants::window_manager::STATE_SNAPSHOT;
+    const EVENT_NAME: &'static str = event_type_constants::window_manager::STATE_CAPTURED;
 }
 
 // ============================================================================
@@ -222,7 +222,7 @@ pub type HyprlandListener = HyprlandIPCMonitor;
 impl EventSource for HyprlandIPCMonitor {
     type Config = HyprlandConfig;
 
-    const SOURCE_NAME: &'static str = sources::WINDOW_MANAGER_HYPRLAND;
+    const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
@@ -331,7 +331,7 @@ impl HyprlandIPCMonitor {
                         event_type_constants::window_manager::WINDOW_MOVED
                     }
                     "workspace" | "workspacev2" => {
-                        event_type_constants::window_manager::WORKSPACE_CHANGED
+                        event_type_constants::window_manager::WORKSPACE_SWITCHED
                     }
                     "focusedmon" => event_type_constants::window_manager::MONITOR_FOCUSED,
                     _ => event_name, // Pass through unknown events
@@ -340,7 +340,7 @@ impl HyprlandIPCMonitor {
                 // Build raw event
                 let raw_event = RawEvent {
                     id: sinex_ulid::Ulid::new(),
-                    source: sources::WINDOW_MANAGER_HYPRLAND.to_string(),
+                    source: sources::WM_HYPRLAND.to_string(),
                     event_type: event_type.to_string(),
                     ts_ingest: Utc::now(),
                     ts_orig: Some(Utc::now()),
@@ -583,7 +583,7 @@ impl HyprlandIPCMonitor {
 impl EventSource for HyprlandStateSnapshotter {
     type Config = SnapshotterConfig;
 
-    const SOURCE_NAME: &'static str = "window_manager.hyprland_snapshotter";
+    const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
@@ -630,7 +630,7 @@ impl EventSource for HyprlandStateSnapshotter {
             let event = RawEvent {
                 id: sinex_ulid::Ulid::new(),
                 source: Self::SOURCE_NAME.to_string(),
-                event_type: event_type_constants::window_manager::STATE_SNAPSHOT.to_string(),
+                event_type: event_type_constants::window_manager::STATE_CAPTURED.to_string(),
                 ts_ingest: Utc::now(),
                 ts_orig: Some(Utc::now()),
                 host: gethostname::gethostname().to_string_lossy().to_string(),

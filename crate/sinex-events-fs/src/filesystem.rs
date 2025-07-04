@@ -240,7 +240,7 @@ impl FilesystemMonitor {
         // and use the helper in stream_events instead
         Some(RawEvent {
             id: sinex_ulid::Ulid::new(),
-            source: sources::FILESYSTEM.to_string(),
+            source: sources::FS.to_string(),
             event_type: event_type.to_string(),
             ts_ingest: Utc::now(),
             ts_orig: Some(Utc::now()),
@@ -259,7 +259,7 @@ impl EventSourceBase for FilesystemMonitor {}
 impl EventSource for FilesystemMonitor {
     type Config = FilesystemConfig;
 
-    const SOURCE_NAME: &'static str = sources::FILESYSTEM;
+    const SOURCE_NAME: &'static str = sources::FS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing

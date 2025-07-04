@@ -156,130 +156,105 @@ impl EventRegistry {
 pub fn create_registry() -> EventRegistry {
     EventRegistry {
         event_types: &[
+            // Filesystem events
             "file.created",
             "file.modified",
             "file.deleted",
+            "file.moved",
+            "dir.created",
+            "dir.deleted",
+            // Shell events
             "command.executed",
-            "shell.command.executed_atuin",
-            // Window events
-            "window.focused",
+            "command.failed",
+            "session.started",
+            "session.ended",
+            // Shell history/atuin events
+            "command.imported",
+            // Shell recording events
+            "recording.started",
+            "recording.ended",
+            // Shell scrollback events
+            "output.captured",
+            // Window manager events
             "window.opened",
             "window.closed",
+            "window.focused",
             "window.moved",
-            "window.title_changed",
-            "window.urgent",
-            // Workspace events
-            "workspace.changed",
+            "window.resized",
+            "workspace.switched",
             "workspace.created",
             "workspace.destroyed",
-            // Monitor events
+            "display.connected",
+            "display.disconnected",
             "monitor.focused",
-            "monitor.added",
-            "monitor.removed",
-            // State dumps
-            "state.snapshot",
-            // Shell history
-            "shell.history.command",
-            // Terminal recording
-            "terminal.asciinema.session_started",
-            "terminal.asciinema.session_ended",
-            "terminal.scrollback.captured",
-            "terminal.command_output.captured",
-            // D-Bus events
-            "dbus.signal",
-            "dbus.method_call",
-            "system.notification",
-            "media.playback.changed",
-            "system.power.event",
-            "hardware.device.event",
-            "session.state.changed",
-            "security.policykit.authorization",
-            "bluetooth.device.event",
-            "network.connection.event",
-            "screen.saver.event",
-            "storage.mount.event",
+            "state.captured",
             // Clipboard events
-            "clipboard.content.changed",
-            "clipboard.selection.changed",
+            "copied",
+            "selected",
+            // D-Bus events
+            "signal.received",
+            "method.called",
+            "notification.sent",
+            "device.connected",
+            "device.disconnected",
+            "media.state_changed",
+            "power.state_changed",
+            "network.state_changed",
+            "bluetooth.device_changed",
+            "mount.changed",
             // Journal events
-            "system.journal.entry",
-            "system.journal.sync",
+            "entry.written",
         ],
         event_to_source: &[
-            ("file.created", "filesystem"),
-            ("file.modified", "filesystem"),
-            ("file.deleted", "filesystem"),
-            ("command.executed", "terminal.kitty"),
-            ("shell.command.executed_atuin", "ingestor.atuin_db_reader"),
-            ("shell.history.command", "ingestor.shell_history_reader"),
-            (
-                "terminal.asciinema.session_started",
-                "ingestor.asciinema_recorder",
-            ),
-            (
-                "terminal.asciinema.session_ended",
-                "ingestor.asciinema_recorder",
-            ),
-            (
-                "terminal.scrollback.captured",
-                "ingestor.scrollback_capture",
-            ),
-            (
-                "terminal.command_output.captured",
-                "ingestor.scrollback_capture",
-            ),
-            // All window manager events
-            ("window.focused", "window_manager.hyprland"),
-            ("window.opened", "window_manager.hyprland"),
-            ("window.closed", "window_manager.hyprland"),
-            ("window.moved", "window_manager.hyprland"),
-            ("window.title_changed", "window_manager.hyprland"),
-            ("window.urgent", "window_manager.hyprland"),
-            ("workspace.changed", "window_manager.hyprland"),
-            ("workspace.created", "window_manager.hyprland"),
-            ("workspace.destroyed", "window_manager.hyprland"),
-            ("monitor.focused", "window_manager.hyprland"),
-            ("monitor.added", "window_manager.hyprland"),
-            ("monitor.removed", "window_manager.hyprland"),
-            ("state.snapshot", "window_manager.hyprland"),
-            // Shell history
-            ("shell.history.command", "ingestor.shell_history_reader"),
-            // Terminal recording
-            (
-                "terminal.asciinema.session_started",
-                "ingestor.asciinema_recorder",
-            ),
-            (
-                "terminal.asciinema.session_ended",
-                "ingestor.asciinema_recorder",
-            ),
-            (
-                "terminal.scrollback.captured",
-                "ingestor.scrollback_capture",
-            ),
-            (
-                "terminal.command_output.captured",
-                "ingestor.scrollback_capture",
-            ),
-            // D-Bus events
-            ("dbus.signal", "dbus.monitor"),
-            ("dbus.method_call", "dbus.monitor"),
-            ("system.notification", "dbus.monitor"),
-            ("media.playback.changed", "dbus.monitor"),
-            ("system.power.event", "dbus.monitor"),
-            ("hardware.device.event", "dbus.monitor"),
-            ("session.state.changed", "dbus.monitor"),
-            ("security.policykit.authorization", "dbus.monitor"),
-            ("bluetooth.device.event", "dbus.monitor"),
-            ("network.connection.event", "dbus.monitor"),
-            ("screen.saver.event", "dbus.monitor"),
-            ("storage.mount.event", "dbus.monitor"),
+            // Filesystem events
+            ("file.created", "fs"),
+            ("file.modified", "fs"),
+            ("file.deleted", "fs"),
+            ("file.moved", "fs"),
+            ("dir.created", "fs"),
+            ("dir.deleted", "fs"),
+            // Shell events
+            ("command.executed", "shell.kitty"),
+            ("command.failed", "shell.kitty"),
+            ("session.started", "shell.kitty"),
+            ("session.ended", "shell.kitty"),
+            // Shell history/atuin events
+            ("command.imported", "shell.atuin"),
+            ("command.imported", "shell.history"),
+            // Shell recording events
+            ("recording.started", "shell.recording"),
+            ("recording.ended", "shell.recording"),
+            // Shell scrollback events
+            ("output.captured", "shell.scrollback"),
+            // Window manager events
+            ("window.opened", "wm.hyprland"),
+            ("window.closed", "wm.hyprland"),
+            ("window.focused", "wm.hyprland"),
+            ("window.moved", "wm.hyprland"),
+            ("window.resized", "wm.hyprland"),
+            ("workspace.switched", "wm.hyprland"),
+            ("workspace.created", "wm.hyprland"),
+            ("workspace.destroyed", "wm.hyprland"),
+            ("display.connected", "wm.hyprland"),
+            ("display.disconnected", "wm.hyprland"),
+            ("monitor.focused", "wm.hyprland"),
+            ("state.captured", "wm.hyprland"),
             // Clipboard events
-            ("clipboard.content.changed", "clipboard"),
-            ("clipboard.selection.changed", "clipboard"),
+            ("copied", "clipboard"),
+            ("selected", "clipboard"),
+            // D-Bus events
+            ("signal.received", "dbus"),
+            ("method.called", "dbus"),
+            ("notification.sent", "dbus"),
+            ("device.connected", "dbus"),
+            ("device.disconnected", "dbus"),
+            ("media.state_changed", "dbus"),
+            ("power.state_changed", "dbus"),
+            ("network.state_changed", "dbus"),
+            ("bluetooth.device_changed", "dbus"),
+            ("mount.changed", "dbus"),
             // Journal events
-            ("system.journal.entry", "journal.monitor"),
-            ("system.journal.sync", "journal.monitor"),
+            ("entry.written", "journald"),
         ],
         schema_generators: {
             let mut generators: HashMap<&'static str, fn() -> RootSchema> = HashMap::new();

@@ -79,6 +79,10 @@ impl TestDatabase {
         let db_url = base_url.replace("/sinex_dev", &format!("/{}", name));
         let pool: DbPool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
+            .min_connections(1)
+            .max_lifetime(Duration::from_secs(300))
+            .idle_timeout(Duration::from_secs(10))
+            .acquire_timeout(Duration::from_secs(5))
             .connect(&db_url)
             .await?;
 
@@ -194,6 +198,8 @@ impl TestDatabase {
             let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(5)
                 .min_connections(1)
+                .max_lifetime(Duration::from_secs(300))
+                .idle_timeout(Duration::from_secs(10))
                 .acquire_timeout(Duration::from_secs(5))
                 .connect(&template_url)
                 .await?;
@@ -331,6 +337,20 @@ impl TestDatabase {
             }
         }
         
+        // CRITICAL: Disable TimescaleDB continuous aggregate policies in tests
+        // These consume all background workers and cause timeouts
+        eprintln!("  🔧 Disabling TimescaleDB continuous aggregate policies...");
+        let disable_policies_sql = r#"
+            SELECT alter_job(job_id, scheduled => false) 
+            FROM timescaledb_information.jobs 
+            WHERE application_name LIKE '%Continuous Aggregate%'
+               OR application_name LIKE '%Telemetry%'
+        "#;
+        
+        if let Err(e) = sqlx::query(disable_policies_sql).execute(pool).await {
+            eprintln!("  ⚠️  Could not disable TimescaleDB policies: {}", e);
+        }
+        
         // Disable autovacuum on template (tests don't need it)
         let disable_autovacuum_tables = vec![
             "raw.events",
@@ -382,65 +402,54 @@ impl TestDatabase {
         }
     }
 
-    /// Clean up template database (called at process exit)
-    pub async fn cleanup_template_database() -> Result<()> {
-        if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-            let base_url = std::env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-            let admin_url = base_url.replace("/sinex_dev", "/postgres");
-
-            if let Ok(mut admin_conn) = PgConnection::connect(&admin_url).await {
-                // Force disconnect all connections
-                let disconnect_query = format!(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-                    template_name
-                );
-                let _ = sqlx::query(&disconnect_query).execute(&mut admin_conn).await;
-
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-                // Drop template database
-                let drop_query = format!("DROP DATABASE IF EXISTS {}", template_name);
-                let _ = sqlx::query(&drop_query).execute(&mut admin_conn).await;
-                let _ = admin_conn.close().await;
-                
-                eprintln!("🧹 Cleaned up template database {}", template_name);
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        // Schedule database cleanup
         let admin_url = self.admin_url.clone();
         let db_name = self.name.clone();
-
-        // We can't do async in drop, so spawn a task
-        tokio::spawn(async move {
-            if let Ok(mut conn) = PgConnection::connect(&admin_url).await {
-                // Force disconnect all connections with retry logic
-                for attempt in 0..3 {
-                    let disconnect_query = format!(
+        
+        // Try to clean up in existing runtime if available
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // We have a runtime, use it
+            let dummy_pool = DbPool::connect_lazy("postgresql://localhost/postgres").unwrap();
+            let pool = std::mem::replace(&mut self.pool, dummy_pool);
+            handle.spawn(async move {
+                // Close pool first
+                pool.close().await;
+                
+                // Then drop database
+                if let Ok(mut conn) = PgConnection::connect(&admin_url).await {
+                    let _ = sqlx::query(&format!(
                         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
                         db_name
-                    );
-                    let _ = sqlx::query(&disconnect_query).execute(&mut conn).await;
-
-                    // Wait a bit for connections to close
-                    tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
-
-                    // Try to drop the database
-                    let drop_query = format!("DROP DATABASE IF EXISTS {}", db_name);
-                    if sqlx::query(&drop_query).execute(&mut conn).await.is_ok() {
-                        break;
-                    }
+                    )).execute(&mut conn).await;
+                    
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    
+                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {}", db_name))
+                        .execute(&mut conn)
+                        .await;
+                    
+                    let _ = conn.close().await;
                 }
-
-                let _ = conn.close().await;
-            }
-        });
+            });
+        } else {
+            // No runtime, do basic cleanup
+            let dummy_pool = DbPool::connect_lazy("postgresql://localhost/postgres").unwrap();
+            let pool = std::mem::replace(&mut self.pool, dummy_pool);
+            std::thread::spawn(move || {
+                // Block on closing the pool
+                let _ = futures::executor::block_on(pool.close());
+                
+                // Try to drop database using psql command
+                let _ = std::process::Command::new("psql")
+                    .arg(&admin_url)
+                    .arg("-c")
+                    .arg(&format!("DROP DATABASE IF EXISTS {}", db_name))
+                    .output();
+            });
+        }
     }
 }
 

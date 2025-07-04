@@ -612,7 +612,7 @@ impl HyprlandEventBuilder {
             }
         }
 
-        let mut builder = RawEventBuilder::new(sources::HYPRLAND, event_type.as_str(), payload);
+        let mut builder = RawEventBuilder::new(sources::WM_HYPRLAND, event_type.as_str(), payload);
 
         if let Some(ts) = self.timestamp {
             builder = builder.with_orig_timestamp(ts);
