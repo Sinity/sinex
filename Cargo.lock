@@ -2915,6 +2915,7 @@ dependencies = [
  "rand 0.8.5",
  "rstest",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "serial_test",

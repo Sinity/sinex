@@ -1,5 +1,6 @@
 mod basic_functionality_test;
 mod error_propagation_test;
 mod event_registry_tests;
+mod event_registry_auto_registration_test;
 mod event_source_context_tests;
 mod raw_event_builder_tests;

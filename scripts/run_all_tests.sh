@@ -119,7 +119,7 @@ run_vm_test() {
     local start_time=$(start_timer)
     local log_file="${RESULTS_DIR}/vm-${name}.log"
     
-    if timeout 600 nix build ".#checks.x86_64-linux.${check_name}" -L &> "$log_file"; then
+    if timeout 600 nix build --impure ".#checks.x86_64-linux.${check_name}" -L &> "$log_file"; then
         local duration=$(end_timer "$start_time")
         success "VM $name: completed ($(format_duration $duration))"
         TEST_STATUS["vm-$name"]="PASSED"
@@ -180,18 +180,26 @@ main() {
     # VM tests (slowest, if available)
     if command -v nix &> /dev/null; then
         print_section "VM Tests"
-        info "Running NixOS VM tests..."
         
-        # Basic VM functionality
-        run_vm_test "basic-flow" "sinex-vm-basic"
-        
-        # Additional VM tests if they exist
-        if nix eval ".#checks.x86_64-linux" --apply "builtins.attrNames" 2>/dev/null | grep -q "sinex-vm-chaos"; then
-            run_vm_test "chaos" "sinex-vm-chaos"
-        fi
-        
-        if nix eval ".#checks.x86_64-linux" --apply "builtins.attrNames" 2>/dev/null | grep -q "sinex-vm-production"; then
-            run_vm_test "production" "sinex-vm-production"
+        # Check if snapshot infrastructure is available
+        local vm_snapshot_script="$PROJECT_ROOT/test/nixos-vm/run-vm-tests-with-snapshots.sh"
+        if [ -f "$vm_snapshot_script" ]; then
+            info "Running VM tests with snapshot acceleration..."
+            run_test_suite "vm-snapshots" "$vm_snapshot_script --quick" 600
+        else
+            info "Running traditional VM tests..."
+            
+            # Basic VM functionality
+            run_vm_test "basic-flow" "sinex-vm-basic"
+            
+            # Additional VM tests if they exist
+            if nix eval ".#checks.x86_64-linux" --apply "builtins.attrNames" 2>/dev/null | grep -q "sinex-vm-chaos"; then
+                run_vm_test "chaos" "sinex-vm-chaos"
+            fi
+            
+            if nix eval ".#checks.x86_64-linux" --apply "builtins.attrNames" 2>/dev/null | grep -q "sinex-vm-production"; then
+                run_vm_test "production" "sinex-vm-production"
+            fi
         fi
     else
         warning "VM tests require nix command - skipping"

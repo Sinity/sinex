@@ -202,7 +202,7 @@ impl Default for EventRegistryBuilder {
 }
 
 /// Create the EventRegistry using the builder pattern
-/// This will eventually be auto-populated by event crates registering themselves
+/// Uses automatic registration from event crates where available
 pub fn create_registry() -> EventRegistry {
     let mut builder = EventRegistryBuilder::new();
     
@@ -384,6 +384,7 @@ pub fn create_registry() -> EventRegistry {
     
     builder.build()
 }
+
 
 // Manual registry kept as fallback 
 #[allow(dead_code)]

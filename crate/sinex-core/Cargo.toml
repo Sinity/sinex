@@ -52,3 +52,4 @@ dirs = { workspace = true }
 # For improved path validation (B2 replacement)
 path-clean = "1.0"
 sanitize-filename = "0.5"
+

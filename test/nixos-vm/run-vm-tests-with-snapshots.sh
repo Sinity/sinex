@@ -100,22 +100,61 @@ EXAMPLES:
 EOF
 }
 
+# Check if snapshots need rebuilding
+snapshots_need_rebuild() {
+    local snapshots_dir="$SCRIPT_DIR/snapshots"
+    
+    # If no snapshots directory, definitely need rebuild
+    if [ ! -d "$snapshots_dir" ]; then
+        return 0
+    fi
+    
+    # If no base snapshot files, need rebuild
+    if ! ls "$snapshots_dir"/*.qcow2 >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    # Check if Cargo.lock is newer than snapshots (most common invalidation)
+    local cargo_lock="../../../Cargo.lock"
+    if [ -f "$cargo_lock" ]; then
+        local newest_snapshot=$(ls -t "$snapshots_dir"/*.qcow2 2>/dev/null | head -1)
+        if [ -n "$newest_snapshot" ] && [ "$cargo_lock" -nt "$newest_snapshot" ]; then
+            log "Cargo.lock newer than snapshots - rebuild needed"
+            return 0
+        fi
+    fi
+    
+    # Snapshots exist and seem current
+    return 1
+}
+
 # Initialize VM snapshots
 init_snapshots() {
-    log "Initializing VM snapshots..."
+    log "Checking VM snapshots..."
     
     if ! command -v "$VM_SNAPSHOT_MANAGER" >/dev/null 2>&1; then
         error "VM snapshot manager not found: $VM_SNAPSHOT_MANAGER"
         return 1
     fi
     
-    # Initialize base VM and create snapshot
-    if ! "$VM_SNAPSHOT_MANAGER" init; then
-        error "Failed to initialize VM snapshots"
-        return 1
+    # Check if rebuild needed
+    if snapshots_need_rebuild; then
+        log "Rebuilding VM snapshots (60s initial setup)..."
+        
+        # Clean old snapshots
+        "$VM_SNAPSHOT_MANAGER" clean-pool 2>/dev/null || true
+        
+        # Initialize base VM and create snapshot
+        if ! "$VM_SNAPSHOT_MANAGER" init; then
+            error "Failed to initialize VM snapshots"
+            return 1
+        fi
+        
+        success "VM snapshots rebuilt successfully"
+    else
+        log "VM snapshots up to date"
     fi
     
-    success "VM snapshots initialized successfully"
     return 0
 }
 

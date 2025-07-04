@@ -60,6 +60,7 @@ rand = "0.8"
 lazy_static = "1.4"
 fastrand = "2.0"
 jsonschema = "0.17"
+schemars = { workspace = true }
 
 # Example dependencies
 tracing-subscriber = { workspace = true }
