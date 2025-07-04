@@ -560,10 +560,10 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     let exists = sqlx::query!(
         r#"
         SELECT EXISTS(
-            SELECT 1 FROM raw.events WHERE id = $1::uuid::ulid
+            SELECT 1 FROM raw.events WHERE id = $1
         ) as "exists!"
         "#,
-        event_id.to_uuid()
+        event_id
     )
     .fetch_one(pool)
     .await?;

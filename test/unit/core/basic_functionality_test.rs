@@ -18,13 +18,13 @@ use sinex_core::{event_type_constants, sources, RawEventBuilder};
 #[sinex_test]
 async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt"}),
     )
     .build();
 
-    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
         event.event_type,
         event_type_constants::filesystem::FILE_CREATED
@@ -46,13 +46,13 @@ async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
 async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
         RawEventBuilder::new(
-            sources::FILESYSTEM,
+            sources::FS,
             event_type_constants::filesystem::FILE_CREATED,
             json!({"path": "/test/file1.txt"}),
         )
         .build(),
         RawEventBuilder::new(
-            sources::TERMINAL_KITTY,
+            sources::SHELL_KITTY,
             event_type_constants::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
         )

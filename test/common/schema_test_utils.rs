@@ -302,9 +302,9 @@ pub mod database {
             r#"
             SELECT json_schema_definition
             FROM sinex_schemas.event_payload_schemas
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1
             "#,
-            schema_id.to_uuid()
+            schema_id
         )
         .fetch_optional(pool)
         .await?;
@@ -344,9 +344,9 @@ pub mod database {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.event_payload_schemas
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1
             "#,
-            schema_id.to_uuid()
+            schema_id
         )
         .execute(pool)
         .await?;

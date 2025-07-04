@@ -76,7 +76,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             #[tokio::test]
             #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 use crate::common::test_context::{TestContext, TestConfig};
-                use crate::common::db_pool_final;
+                use crate::common::database_pool;
 
                 // Wrap the entire test in a timeout
                 let test_future = async {
@@ -86,7 +86,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
                     // Acquire database from manager (guaranteed cleanup)
-                    let managed_db = db_pool_final::acquire_test_database().await?;
+                    let managed_db = database_pool::acquire_test_database().await?;
 
                     // Create test context
                     let ctx = TestContext::with_managed_database(managed_db, TestConfig {

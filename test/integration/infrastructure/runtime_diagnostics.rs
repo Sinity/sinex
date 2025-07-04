@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use crate::common::db_pool_final::acquire_test_database;
+use crate::common::database_pool::acquire_test_database;
 use std::sync::Arc;
 use tokio::sync::Barrier;
 

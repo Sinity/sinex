@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod stress_tests {
     use crate::common::prelude::*;
-    use crate::common::db_pool_final::acquire_test_database;
+    use crate::common::database_pool::acquire_test_database;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::task::JoinSet;

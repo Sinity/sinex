@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-use crate::common::db_pool_final::TestDatabase;
+use crate::common::database_pool::TestDatabase;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
@@ -73,7 +73,7 @@ impl TestContext {
 
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> Result<Self> {
-        let db = crate::common::db_pool_final::acquire_test_database().await?;
+        let db = crate::common::database_pool::acquire_test_database().await?;
 
         Ok(Self {
             db,
