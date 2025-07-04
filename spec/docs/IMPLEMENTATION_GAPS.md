@@ -289,3 +289,7 @@ The Sinex event capture system has established a solid foundation but remains ap
 ## Conclusion
 
 Sinex has a solid foundation but requires significant development to achieve its vision of comprehensive activity capture. The highest-impact improvements are enabling existing features (compression, ready sources) and adding system-wide monitoring (D-Bus, journald). Following the quick wins would dramatically improve the system within 1-2 weeks of effort.
+
+**See Also**: 
+- `/spec/docs/QUICK_WINS_CHECKLIST.md` - Actionable improvements (1-2 days each)
+- `/spec/docs/test-infrastructure-improvements-2025-07.md` - Recent test stability improvements
