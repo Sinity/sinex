@@ -27,10 +27,7 @@ pub mod database_helpers;
 pub mod database;
 
 // Pre-initialized database pool with clean-before-use
-pub mod db_pool_final;
-
-// Test database isolation (kept for migration)
-pub mod test_database;
+pub mod database_pool;
 
 // Unified test context for all tests
 pub mod test_context;
@@ -69,7 +66,7 @@ pub mod events {
     /// Create a test filesystem event
     pub fn filesystem_event(event_type: &str, path: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
-            sources::FILESYSTEM,
+            sources::FS,
             event_type,
             json!({
                 "path": path,
@@ -83,7 +80,7 @@ pub mod events {
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
-            sources::TERMINAL_KITTY,
+            sources::SHELL_KITTY,
             event_type_constants::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
@@ -516,7 +513,7 @@ pub mod generators {
                 _ => json!({"binary_data": "a".repeat(1000)}), // Very large payload
             };
             test_event_with_payload(
-                sources::FILESYSTEM,
+                sources::FS,
                 event_type_constants::filesystem::FILE_MODIFIED,
                 payload
             )
@@ -897,7 +894,7 @@ pub mod timing_optimization;
 pub mod validation_test_utils;
 
 // Re-export the final pool as the default
-pub use db_pool_final::acquire_test_database;
+pub use database_pool::acquire_test_database;
 
 /// Schema test utilities
 pub mod schema_test_utils;
