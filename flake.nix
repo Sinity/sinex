@@ -230,6 +230,18 @@
               pg_jsonschema = self.packages.${system}.pg_jsonschema;
             };
             
+            sinex-vm-basic-flow = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
+              pg_jsonschema = self.packages.${system}.pg_jsonschema;
+            };
+            
+            sinex-vm-performance = pkgs.callPackage ./test/nixos-vm/test-scenarios/performance.nix { 
+              sinex-collector = self.packages.${system}.unifiedCollector;
+              sinex-promo-worker = self.packages.${system}.sinexPromoWorker;
+              pg_jsonschema = self.packages.${system}.pg_jsonschema;
+            };
+            
             # Advanced testing capabilities
             sinex-vm-chaos = pkgs.callPackage ./test/nixos-vm/chaos-engineering.nix { 
               sinex-collector = self.packages.${system}.unifiedCollector;
