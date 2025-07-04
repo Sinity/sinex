@@ -16,7 +16,7 @@ async fn test_filesystem_watcher_initialization(_ctx: TestContext) -> TestResult
 
     // FilesystemMonitor doesn't have name() or version() methods
     // These are provided by the EventSource trait constants
-    pretty_assertions::assert_eq!(FilesystemMonitor::SOURCE_NAME, "filesystem");
+    pretty_assertions::assert_eq!(FilesystemMonitor::SOURCE_NAME, "fs");
 
     Ok(())
 }
@@ -50,7 +50,7 @@ async fn test_filesystem_watcher_captures_events(_ctx: TestContext) -> TestResul
     assert!(event.is_some());
 
     let event = event.unwrap();
-    pretty_assertions::assert_eq!(event.source, "filesystem");
+    pretty_assertions::assert_eq!(event.source, "fs");
     assert!(event.event_type.contains("created") || event.event_type.contains("modify"));
 
     // Verify payload contains expected fields
@@ -123,7 +123,7 @@ async fn test_kitty_socket_listener_initialization(_ctx: TestContext) -> TestRes
     let ctx = event_sources::test_context(config);
     let _listener = KittySocketListener::initialize(ctx).await?;
 
-    pretty_assertions::assert_eq!(KittySocketListener::SOURCE_NAME, "terminal.kitty");
+    pretty_assertions::assert_eq!(KittySocketListener::SOURCE_NAME, "shell.kitty");
 
     Ok(())
 }

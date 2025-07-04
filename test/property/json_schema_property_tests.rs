@@ -276,7 +276,7 @@ mod integration_tests {
 
         // Test filesystem events that should have hardcoded validation
         let valid_fs_event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": "/home/user/test.txt",
@@ -287,7 +287,7 @@ mod integration_tests {
         .build();
 
         let invalid_fs_event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 // Missing required fields or invalid data

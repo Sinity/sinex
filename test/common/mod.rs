@@ -247,7 +247,7 @@ pub mod events {
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
         let mut builder = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             event_type,
             json!({
                 "path": path,
@@ -447,7 +447,7 @@ pub mod generators {
     }
 
     /// Generate realistic terminal command events
-    pub fn realistic_terminal_events(count: usize) -> Vec<sinex_db::RawEvent> {
+    pub fn realistic_shell_events(count: usize) -> Vec<sinex_db::RawEvent> {
         let realistic_commands = vec![
             "git status",
             "cargo build --release",

@@ -157,7 +157,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
     // Query by source
     let filesystem_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM raw.events WHERE source = $1",
-        "filesystem"
+        "fs"
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -311,7 +311,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     // Filesystem events
     events.push(
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             serde_json::json!({
                 "path": "/test/doc1.txt",
@@ -325,7 +325,7 @@ fn generate_test_events() -> Vec<RawEvent> {
 
     events.push(
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.modified",
             serde_json::json!({
                 "path": "/test/doc1.txt",
@@ -340,7 +340,7 @@ fn generate_test_events() -> Vec<RawEvent> {
 
     events.push(
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.deleted",
             serde_json::json!({
                 "path": "/test/old.txt",
@@ -354,7 +354,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     // Terminal events
     events.push(
         RawEventBuilder::new(
-            "terminal.kitty",
+            "shell.kitty",
             "command.executed",
             serde_json::json!({
                 "command": "ls -la",
@@ -368,7 +368,7 @@ fn generate_test_events() -> Vec<RawEvent> {
 
     events.push(
         RawEventBuilder::new(
-            "terminal.kitty",
+            "shell.kitty",
             "command.executed",
             serde_json::json!({
                 "command": "cargo build",
@@ -385,7 +385,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     // Window manager events
     events.push(
         RawEventBuilder::new(
-            "window_manager.hyprland",
+            "wm.hyprland",
             "window.focused",
             serde_json::json!({
                 "window": {
@@ -402,7 +402,7 @@ fn generate_test_events() -> Vec<RawEvent> {
 
     events.push(
         RawEventBuilder::new(
-            "window_manager.hyprland",
+            "wm.hyprland",
             "workspace.changed",
             serde_json::json!({
                 "workspace": "2",
@@ -417,7 +417,7 @@ fn generate_test_events() -> Vec<RawEvent> {
     for i in 7..20 {
         events.push(
             RawEventBuilder::new(
-                "filesystem",
+                "fs",
                 "file.created",
                 serde_json::json!({
                     "path": format!("/test/file{}.txt", i),

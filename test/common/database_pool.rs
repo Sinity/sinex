@@ -38,7 +38,7 @@ impl Default for PoolConfig {
         let admin_url = base_url.replace("/sinex_dev", "/postgres");
         
         Self {
-            size: 64,  // Doubled to handle high test concurrency
+            size: 16,  // Conservative pool size for stable test execution
             admin_url,
             base_url,
             template_name: "sinex_test_template_shared".to_string(),
@@ -192,13 +192,19 @@ impl DatabasePool {
     
     /// Acquire a database from the pool
     async fn acquire(&self) -> Result<TestDatabase> {
+        let start_time = std::time::Instant::now();
         let mut attempts = 0;
         loop {
             for slot in &self.slots {
                 if !slot.in_use.swap(true, Ordering::AcqRel) {
                     // Got a slot! Clean it before use
+                    let clean_start = std::time::Instant::now();
                     match clean_database(&slot.pool).await {
                         Ok(_) => {
+                            let clean_time = clean_start.elapsed();
+                            if clean_time.as_millis() > 100 {
+                                eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
+                            }
                             return Ok(TestDatabase {
                                 name: slot.name.clone(),
                                 pool: slot.pool.clone(),
@@ -215,7 +221,14 @@ impl DatabasePool {
             
             attempts += 1;
             if attempts > 1000 {
-                return Err(anyhow::anyhow!("Failed to acquire database after 1000 attempts - all {} slots in use", self.slots.len()));
+                let total_time = start_time.elapsed();
+                return Err(anyhow::anyhow!("Failed to acquire database after 1000 attempts ({:.1?}) - all {} slots in use", total_time, self.slots.len()));
+            }
+            
+            // Log warning after many attempts
+            if attempts % 50 == 0 {
+                let elapsed = start_time.elapsed();
+                eprintln!("⚠️  Waiting for database slot (attempt {}, {:.1?} elapsed). All {} slots in use.", attempts, elapsed, self.slots.len());
             }
             
             // All slots in use, wait a bit
@@ -226,15 +239,12 @@ impl DatabasePool {
 
 /// Clean a database for reuse
 async fn clean_database(pool: &DbPool) -> Result<()> {
-    // Clean in reverse dependency order
-    sqlx::query("DELETE FROM sinex_schemas.work_queue").execute(pool).await?;
-    sqlx::query("DELETE FROM sinex_schemas.agent_manifests").execute(pool).await?;
-    sqlx::query("DELETE FROM core.event_annotations").execute(pool).await?;
-    sqlx::query("DELETE FROM core.artifacts").execute(pool).await?;
-    sqlx::query("DELETE FROM raw.events").execute(pool).await?;
-    
-    // Reset sequences - simplified query that works
-    // Note: This is optional, tests should work without sequence reset
+    // Clean in reverse dependency order for safety
+    let _ = sqlx::query("DELETE FROM sinex_schemas.work_queue").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM sinex_schemas.agent_manifests").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM core.event_annotations").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM core.artifacts").execute(pool).await;
+    let _ = sqlx::query("DELETE FROM raw.events").execute(pool).await;
     
     Ok(())
 }

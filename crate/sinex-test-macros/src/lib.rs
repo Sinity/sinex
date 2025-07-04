@@ -45,7 +45,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         } else if fn_name_str.contains("adversarial") || fn_name_str.contains("stress") {
             30 // Adversarial tests need moderate time
         } else {
-            25 // Default timeout for integration and unit tests (increased for template creation)
+            25 // Default timeout for integration and unit tests
         }
     });
 

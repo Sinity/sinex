@@ -66,8 +66,8 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     ];
 
     pretty_assertions::assert_eq!(events.len(), 3);
-    pretty_assertions::assert_eq!(events[0].source, "filesystem");
-    pretty_assertions::assert_eq!(events[1].source, "terminal.kitty");
+    pretty_assertions::assert_eq!(events[0].source, "fs");
+    pretty_assertions::assert_eq!(events[1].source, "shell.kitty");
     pretty_assertions::assert_eq!(events[2].source, "sinex");
 
     // All events should have unique IDs

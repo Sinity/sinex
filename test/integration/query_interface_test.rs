@@ -37,7 +37,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
     assert!(output.status.success(), "CLI should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("filesystem"),
+        stdout.contains("fs"),
         "Should show filesystem events"
     );
 
@@ -160,7 +160,7 @@ async fn test_exo_cli_agent_commands(ctx: TestContext) -> TestResult {
     // Insert test agent manifest using helpers
     let mut manifest = generators::test_agent_manifest("test-collector");
     manifest.status = "active".to_string();
-    manifest.produces_event_types = Some(json!(["filesystem", "terminal"]));
+    manifest.produces_event_types = Some(json!(["fs", "terminal"]));
     assertions::assert_manifest_registered(&pool, &manifest).await?;
 
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
@@ -196,7 +196,7 @@ async fn test_exo_cli_agent_commands(ctx: TestContext) -> TestResult {
         stdout.contains("test-collector"),
         "Should show agent details"
     );
-    assert!(stdout.contains("filesystem"), "Should show capabilities");
+    assert!(stdout.contains("fs"), "Should show capabilities");
     Ok(())
 }
 

@@ -248,7 +248,7 @@ async fn test_window_geometry_overflow(ctx: TestContext) -> TestResult {
 
     for (x, y, width, height, desc) in overflow_geometries {
         let event = crate::common::events::generic_adversarial_event(
-            "hyprland",
+            "wm.hyprland",
             "window.created",
             json!({
                 "x": x,
@@ -366,7 +366,7 @@ async fn test_event_cascade_explosion(ctx: TestContext) -> TestResult {
 
         // Each terminal command opens a notification window
         let win_event = crate::common::events::generic_adversarial_event(
-            "hyprland",
+            "wm.hyprland",
             "window.created",
             json!({"test": true}),
             None,
@@ -398,7 +398,7 @@ async fn test_event_type_confusion(_ctx: TestContext) -> TestResult {
     // Send events to wrong sources
     let confused_events = vec![
         (
-            "filesystem",
+            "fs",
             json!({
                 "window_id": "0x12345",  // Window data in filesystem event
                 "geometry": {"x": 0, "y": 0},
@@ -412,7 +412,7 @@ async fn test_event_type_confusion(_ctx: TestContext) -> TestResult {
             }),
         ),
         (
-            "hyprland",
+            "wm.hyprland",
             json!({
                 "command": "rm -rf /",  // Terminal data in window event
                 "exit_code": 0,
@@ -430,7 +430,7 @@ async fn test_event_type_confusion(_ctx: TestContext) -> TestResult {
 
         // Check if payload makes sense for source
         match source {
-            "filesystem" => {
+            "fs" => {
                 if wrong_payload.get("window_id").is_some() {
                     println!("    TYPE CONFUSION: Window data in filesystem event!");
                 }
@@ -440,7 +440,7 @@ async fn test_event_type_confusion(_ctx: TestContext) -> TestResult {
                     println!("    TYPE CONFUSION: Filesystem data in terminal event!");
                 }
             }
-            "hyprland" => {
+            "wm.hyprland" => {
                 if wrong_payload.get("command").is_some() {
                     println!("    TYPE CONFUSION: Terminal data in window event!");
                 }
