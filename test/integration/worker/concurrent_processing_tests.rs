@@ -203,8 +203,9 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> TestR
     // Complete the item
     complete_work_queue_item(&ctx.pool(), claimed[0].queue_id).await?;
 
-    // Wait for completion using context helper
-    ctx.wait_for_work_queue(0).await?;
+    // Verify the item was completed successfully
+    let completed_item = sinex_db::queries::get_work_item_by_id(&ctx.pool(), claimed[0].queue_id).await?;
+    pretty_assertions::assert_eq!(completed_item.status, "succeeded", "Item should be marked as succeeded");
 
     Ok(())
 }
@@ -341,8 +342,10 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
         complete_work_queue_item(&ctx.pool(), item.queue_id).await?;
     }
 
-    // Verify all completed
-    ctx.wait_for_work_queue(0).await?;
+    // Verify all items were completed (status = succeeded)
+    let stats = worker_test_utils::get_work_queue_stats(&ctx.pool()).await?;
+    pretty_assertions::assert_eq!(stats.succeeded, 5, "All 5 items should be succeeded");
+    pretty_assertions::assert_eq!(stats.pending, 0, "No items should be pending");
 
     Ok(())
 }

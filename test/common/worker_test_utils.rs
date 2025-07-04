@@ -4,6 +4,7 @@
 //! including work queue management, worker lifecycle simulation, and assertion helpers.
 
 use crate::common::prelude::*;
+#[allow(unused_imports)]
 use sinex_db::query_helpers::uuid_to_ulid;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_work_queue_count, wait_for_work_queue_status_count,

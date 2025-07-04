@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod stress_tests {
+    #[allow(unused_imports)]
     use crate::common::prelude::*;
     use crate::common::database_pool::acquire_test_database;
     use std::sync::Arc;

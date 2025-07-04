@@ -83,16 +83,19 @@ async fn test_dequeue_latency_metric_calculation(ctx: TestContext) -> TestResult
     let event_id = insert_test_event(pool, "latency_test", "event").await?;
     let work_item = add_to_work_queue(pool, event_id, agent_name, 3).await?;
 
-    // Wait for any pending work queue operations
-    ctx.wait_for_work_queue(0).await?;
+    // Wait for work queue item to be confirmed present
+    ctx.wait_for_work_queue(1).await?;
 
+    // Simulate realistic dequeue latency (100ms delay)
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    
     // Mark as processing (simulate worker claim)
     let processing_start = Utc::now();
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue
         SET status = 'processing', last_attempt_ts = $2
-        WHERE queue_id = $1::uuid::ulid
+        WHERE queue_id::uuid = $1
         "#,
         work_item.queue_id.to_uuid(),
         processing_start

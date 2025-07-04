@@ -894,6 +894,7 @@ pub mod timing_optimization;
 pub mod validation_test_utils;
 
 // Re-export the final pool as the default
+#[allow(unused_imports)]
 pub use database_pool::acquire_test_database;
 
 /// Schema test utilities
