@@ -2,9 +2,10 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 95% (ULID generation and PostgreSQL integration fully working)
-**Dependencies**: pgx_ulid PostgreSQL extension, NixOS PostgreSQL configuration
+**Implementation**: 98% (ULID generation, PostgreSQL integration, and UUID casting for FKs fully working)
+**Dependencies**: pgx_ulid PostgreSQL extension, NixOS PostgreSQL configuration, UUID casting support
 **Blocks**: All database operations, event identification, cross-table relationships
+**Recent Improvements**: ULID to UUID casting for foreign key constraints
 
 ## MVP Specification
 - pgx_ulid extension installation and activation
@@ -27,6 +28,8 @@
 - [x] gen_ulid() default generation
 - [x] UUID casting compatibility
 - [x] Primary key migration patterns
+- [x] ULID to UUID casting for foreign keys
+- [x] Foreign key constraint support with ULIDs
 - [ ] Monotonic ULID configuration
 - [ ] Performance benchmarking
 - [ ] Advanced operator support
@@ -35,6 +38,14 @@
 *   **Original UG Context:** Section 1.1
 
 This Technical Implementation Module details the use of ULIDs (Universally Unique Lexicographically Sortable Identifiers) as the standard primary key strategy for the Sinnix Exocortex, leveraging the `pgx_ulid` PostgreSQL extension.
+
+## Recent Improvements (July 2025)
+
+### ULID UUID Casting for Foreign Keys
+- Implemented automatic ULID to UUID casting for foreign key relationships
+- Fixed constraint violations in work_queue and related tables
+- Enabled seamless integration between ULID primary keys and UUID foreign keys
+- Added comprehensive test coverage for ULID FK relationships
 
 ## 1. Rationale Summary
 
