@@ -130,7 +130,7 @@ def query(source: Optional[str], event_type: Optional[str], since: Optional[str]
             if last:
                 time_delta = parse_time_delta(last)
                 conditions.append("ts_ingest > %s")
-                params.append(datetime.utcnow() - time_delta)
+                params.append(datetime.now(datetime.timezone.utc) - time_delta)
             
             if conditions:
                 query_parts.append("WHERE " + " AND ".join(conditions))
@@ -296,7 +296,7 @@ def agent_list(status: Optional[str]):
         with conn.cursor() as cur:
             query_parts = [
                 "SELECT agent_name, description, version, status, "
-                "produces_event_types, last_seen_heartbeat, registered_at "
+                "produces_event_types, last_heartbeat_ts, registered_at "
                 "FROM sinex_schemas.agent_manifests"
             ]
             params = []
@@ -323,10 +323,10 @@ def agent_list(status: Optional[str]):
     table.add_column("Description", style="white")
     
     for agent in agents:
-        last_heartbeat = agent['last_seen_heartbeat']
+        last_heartbeat = agent['last_heartbeat_ts']
         if last_heartbeat:
             # Check if heartbeat is recent (within 5 minutes)
-            age = datetime.utcnow() - last_heartbeat.replace(tzinfo=None)
+            age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
             if age.total_seconds() < 300:
                 heartbeat_style = "green"
                 heartbeat_text = "🟢 " + last_heartbeat.strftime('%H:%M:%S')
@@ -1152,7 +1152,7 @@ def dlq_show(dlq_id: str):
     if entry['next_retry_at']:
         panel_content.append(f"[bold]Next Retry:[/bold] {entry['next_retry_at']}")
     
-    age_seconds = int((datetime.utcnow() - entry['failed_at'].replace(tzinfo=None)).total_seconds())
+    age_seconds = int((datetime.now(datetime.timezone.utc) - entry['failed_at'].replace(tzinfo=None)).total_seconds())
     panel_content.append(f"[bold]Age:[/bold] {format_duration(age_seconds)}")
     
     if entry['resolved_at']:
@@ -1216,7 +1216,7 @@ def dlq_retry(dlq_id: str, dry_run: bool):
         with conn.cursor() as cur:
             # Calculate next retry time with exponential backoff
             next_retry_seconds = min(300 * (2 ** entry['retry_count']), 3600)  # Cap at 1 hour
-            next_retry_at = datetime.utcnow() + timedelta(seconds=next_retry_seconds)
+            next_retry_at = datetime.now(datetime.timezone.utc) + timedelta(seconds=next_retry_seconds)
             
             cur.execute("""
                 UPDATE sinex_schemas.dlq_events 
@@ -1624,7 +1624,7 @@ def stats():
         for agent in agent_health:
             last_hb = agent['last_heartbeat']
             if last_hb:
-                age = datetime.utcnow() - last_hb.replace(tzinfo=None)
+                age = datetime.now(datetime.timezone.utc) - last_hb.replace(tzinfo=None)
                 if age.total_seconds() < 300:  # 5 minutes
                     status_icon = "🟢"
                 elif age.total_seconds() < 3600:  # 1 hour
