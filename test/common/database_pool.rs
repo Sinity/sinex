@@ -38,7 +38,7 @@ impl Default for PoolConfig {
         let admin_url = base_url.replace("/sinex_dev", "/postgres");
         
         Self {
-            size: 16,  // Conservative pool size for stable test execution
+            size: 64,  // Large pool to minimize contention on high-core systems
             admin_url,
             base_url,
             template_name: "sinex_test_template_shared".to_string(),
@@ -239,12 +239,29 @@ impl DatabasePool {
 
 /// Clean a database for reuse
 async fn clean_database(pool: &DbPool) -> Result<()> {
-    // Clean in reverse dependency order for safety
-    let _ = sqlx::query("DELETE FROM sinex_schemas.work_queue").execute(pool).await;
-    let _ = sqlx::query("DELETE FROM sinex_schemas.agent_manifests").execute(pool).await;
-    let _ = sqlx::query("DELETE FROM core.event_annotations").execute(pool).await;
-    let _ = sqlx::query("DELETE FROM core.artifacts").execute(pool).await;
-    let _ = sqlx::query("DELETE FROM raw.events").execute(pool).await;
+    // Clean in proper dependency order based on foreign key constraints
+    // First clean tables that reference other tables
+    let cleanup_queries = [
+        "DELETE FROM sinex_schemas.work_queue",
+        "DELETE FROM core.event_annotations", 
+        "DELETE FROM core.event_artifact_refs",
+        "DELETE FROM core.event_relations",
+        "DELETE FROM core.event_cluster_members",
+        "DELETE FROM core.artifact_event_sources",
+        "DELETE FROM core.event_embeddings",
+        "DELETE FROM core.artifact_embeddings",
+        "DELETE FROM core.artifact_contents",
+        "DELETE FROM core.artifact_tags",
+        "DELETE FROM core.artifact_relations", 
+        "DELETE FROM core.entity_relations",
+        "DELETE FROM core.artifacts",
+        "DELETE FROM raw.events",
+        "DELETE FROM sinex_schemas.agent_manifests",
+    ];
+    
+    for query in cleanup_queries {
+        let _ = sqlx::query(query).execute(pool).await;
+    }
     
     Ok(())
 }

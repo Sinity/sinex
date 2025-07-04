@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Configuration
-MAX_THREADS="${MAX_THREADS:-2}"
+MAX_THREADS="${MAX_THREADS:-8}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESULTS_DIR="${PROJECT_ROOT}/test-results-$(date +%Y%m%d-%H%M%S)"
