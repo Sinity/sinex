@@ -1,4 +1,5 @@
 pub mod channel_helpers;
+pub mod chunking;
 pub mod config_extractors;
 pub mod error_context;
 pub mod event;
@@ -15,6 +16,9 @@ pub use channel_helpers::{
     ChannelReceiverExt,
     ChannelSenderExt,
     ChannelStats,
+};
+pub use chunking::{
+    ChunkingConfig, ChunkingService, ContentChunk, ChunkInfo,
 };
 pub use config_extractors::{parse_duration, ConfigExtractor, ConfigValidator};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
