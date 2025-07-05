@@ -104,3 +104,6 @@ pub mod deployment_validation_test;
 
 /// FastCDC chunking and notification system integration testing
 pub mod chunking_notification_test;
+
+/// Git-annex multi-location storage system testing
+pub mod git_annex_multi_location_test;

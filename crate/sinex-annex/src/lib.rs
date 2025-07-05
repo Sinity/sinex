@@ -5,7 +5,12 @@ use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn};
 
 pub mod blob_manager;
+pub mod multi_location;
+pub mod health_monitor;
+
 pub use blob_manager::{BlobManager, BlobMetadata};
+pub use multi_location::{MultiLocationCoordinator, StorageLocation, LocationStatus, SyncError, SyncErrorType};
+pub use health_monitor::{StorageHealthMonitor, StorageHealthMetrics, HealthAlert, HealthAlertType, AlertSeverity, HealthMonitorConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnexConfig {
