@@ -2,6 +2,7 @@ pub mod models;
 // Re-export RawEvent and RawEventBuilder from sinex-core for type unification
 pub use sinex_core::{RawEvent, RawEventBuilder};
 pub mod metrics;
+pub mod notifications;
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
@@ -26,6 +27,11 @@ pub use query_helpers::{
 pub mod prelude {
     pub use crate::models::{
         AgentManifest, DlqErrorCategory, DlqEvent, EventPayloadSchema, QueueStatus, WorkQueueItem,
+    };
+    pub use crate::notifications::{
+        NotificationService, NotificationMessage, RealtimeEventProcessor,
+        EventInsertedNotification, WorkQueueNotification, SchemaChangedNotification,
+        WorkQueueAction, SchemaAction,
     };
     pub use crate::queries::*;
     pub use crate::query_helpers::{
