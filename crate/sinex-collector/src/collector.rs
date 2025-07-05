@@ -18,9 +18,9 @@ use sinex_events_system::{
 use sinex_events_terminal::{
     asciinema::{AsciinemaConfig, AsciinemaRecorder},
     atuin::{AtuinConfig, AtuinDbReader},
+    kitty::{KittyConfig, KittyEventSource},
     scrollback::{ScrollbackCapture, ScrollbackConfig},
     shell_history::{ShellHistoryConfig, ShellHistoryReader},
-    terminal::{KittyConfig, KittySocketListener},
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -321,7 +321,7 @@ impl UnifiedCollector {
             ctx = ctx.with_annex_path(annex_path.clone());
         }
 
-        let mut source = KittySocketListener::initialize(ctx).await?;
+        let mut source = KittyEventSource::initialize(ctx).await?;
 
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {
