@@ -13,8 +13,8 @@ use tracing::{debug, error, info, warn};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, OptionalTimestamp,
-    Result,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType,
+    OptionalTimestamp, Result,
 };
 
 // ============================================================================
@@ -39,7 +39,7 @@ pub struct ShellHistoryCommand;
 impl EventType for ShellHistoryCommand {
     type Payload = ShellHistoryCommandPayload;
     type SourceImpl = ShellHistoryReader;
-    const EVENT_NAME: &'static str = "shell.history.command";
+    const EVENT_NAME: &'static str = "command.imported";
 }
 
 // ============================================================================
@@ -93,7 +93,7 @@ pub struct ShellHistoryReader {
 impl EventSource for ShellHistoryReader {
     type Config = ShellHistoryConfig;
 
-    const SOURCE_NAME: &'static str = "ingestor.shell_history_reader";
+    const SOURCE_NAME: &'static str = sources::SHELL_HISTORY;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {

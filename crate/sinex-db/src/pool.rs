@@ -20,5 +20,5 @@ pub async fn get_pool() -> Result<&'static DbPool> {
         .map_err(|_| anyhow::anyhow!("Failed to set global pool"))?;
 
     info!("Global database pool initialized");
-    Ok(POOL.get().unwrap())
+    Ok(POOL.get().ok_or_else(|| anyhow::anyhow!("Pool not initialized"))?)
 }

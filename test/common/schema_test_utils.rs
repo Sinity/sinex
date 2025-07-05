@@ -302,7 +302,7 @@ pub mod database {
             r#"
             SELECT json_schema_definition
             FROM sinex_schemas.event_payload_schemas
-            WHERE id = $1::uuid::ulid
+            WHERE id::uuid = $1
             "#,
             schema_id.to_uuid()
         )
@@ -344,7 +344,7 @@ pub mod database {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.event_payload_schemas
-            WHERE id = $1::uuid::ulid
+            WHERE id::uuid = $1
             "#,
             schema_id.to_uuid()
         )
@@ -361,7 +361,7 @@ pub mod database {
         // Insert filesystem schema
         let fs_id = insert_test_schema(
             &pool,
-            "filesystem",
+            "fs",
             "file.created",
             "1.0",
             schemas::filesystem_event_schema(),
@@ -372,7 +372,7 @@ pub mod database {
         // Insert terminal schema
         let term_id = insert_test_schema(
             &pool,
-            "terminal.kitty",
+            "shell.kitty",
             "command.executed",
             "1.0",
             schemas::terminal_event_schema(),
@@ -383,7 +383,7 @@ pub mod database {
         // Insert window manager schema
         let wm_id = insert_test_schema(
             &pool,
-            "hyprland",
+            "wm.hyprland",
             "window.focused",
             "1.0",
             schemas::window_event_schema(),

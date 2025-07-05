@@ -208,7 +208,7 @@ async fn test_large_file_event_capture(
 
     // Create events referencing git-annex stored files
     let large_file_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/large_file.txt",
@@ -221,7 +221,7 @@ async fn test_large_file_event_capture(
     .build();
 
     let medium_file_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/medium_file.txt",
@@ -241,7 +241,7 @@ async fn test_large_file_event_capture(
     let retrieved_large = crate::common::get_event_by_id(&pool, large_event.id).await?;
     let retrieved_medium = crate::common::get_event_by_id(&pool, medium_event.id).await?;
 
-    pretty_assertions::assert_eq!(retrieved_large.source, "filesystem");
+    pretty_assertions::assert_eq!(retrieved_large.source, "fs");
     pretty_assertions::assert_eq!(retrieved_large.event_type, "file.created");
     assert!(retrieved_large.payload["git_annex_key"].as_str().is_some());
     pretty_assertions::assert_eq!(
@@ -249,7 +249,7 @@ async fn test_large_file_event_capture(
         "git_annex"
     );
 
-    pretty_assertions::assert_eq!(retrieved_medium.source, "filesystem");
+    pretty_assertions::assert_eq!(retrieved_medium.source, "fs");
     pretty_assertions::assert_eq!(retrieved_medium.event_type, "file.created");
     assert!(retrieved_medium.payload["git_annex_key"].as_str().is_some());
 
@@ -582,7 +582,7 @@ async fn test_query_interface_annex_integration(
     let documents = vec![
         ("important_document.txt", "This document contains important information about the Sinex project."),
         ("meeting_notes.md", "# Meeting Notes\n\n- Discussed git-annex integration\n- Reviewed test coverage\n- Next steps defined"),
-        ("data_export.json", r#"{"events": 1000, "sources": ["filesystem", "terminal"], "status": "complete"}"#),
+        ("data_export.json", r#"{"events": 1000, "sources": ["fs", "terminal"], "status": "complete"}"#),
     ];
 
     let mut document_events = Vec::new();
@@ -730,7 +730,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Er
     let large_file_content = "x".repeat(2048); // 2KB content
 
     let fallback_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/large_file_no_annex.txt",
@@ -784,7 +784,7 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
 
     for (scenario, error_message) in failure_scenarios {
         let failure_event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": format!("/test/{}_test.txt", scenario),
@@ -843,7 +843,7 @@ async fn test_annex_recovery_scenarios(pool: &DbPool) -> Result<(), anyhow::Erro
 
     for (filename, content) in &unavailable_events {
         let outage_event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": format!("/recovery_test/{}", filename),
@@ -900,7 +900,7 @@ async fn test_annex_recovery_scenarios(pool: &DbPool) -> Result<(), anyhow::Erro
                 if add_result.status.success() {
                     // Update event to reflect successful migration
                     let migration_event = RawEventBuilder::new(
-                        "filesystem",
+                        "fs",
                         "file.migrated",
                         json!({
                             "original_event_id": event_id,

@@ -45,7 +45,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         } else if fn_name_str.contains("adversarial") || fn_name_str.contains("stress") {
             30 // Adversarial tests need moderate time
         } else {
-            25 // Default timeout for integration and unit tests (increased for template creation)
+            25 // Default timeout for integration and unit tests
         }
     });
 
@@ -85,11 +85,11 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let start = std::time::Instant::now();
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                    // Acquire database from pool (near-instant)
-                    let pooled_db = database_pool::acquire_database().await?;
+                    // Acquire database from manager (guaranteed cleanup)
+                    let managed_db = database_pool::acquire_test_database().await?;
 
                     // Create test context
-                    let ctx = TestContext::with_pooled_database(pooled_db, TestConfig {
+                    let ctx = TestContext::with_managed_database(managed_db, TestConfig {
                         test_name: test_name.to_string(),
                         ..Default::default()
                     }).await?;

@@ -152,7 +152,7 @@ pub mod events {
 
     /// Create an invalid filesystem event (missing required fields)
     pub fn invalid_filesystem_event() -> RawEvent {
-        EventBuilder::generic("filesystem", "file.created")
+        EventBuilder::generic("fs", "file.created")
             .payload(json!({"invalid": true})) // Missing required 'path' field
             .build()
     }

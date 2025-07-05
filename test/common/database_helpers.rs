@@ -6,13 +6,9 @@
 use crate::common::prelude::*;
 use serde_json::json;
 
-// DEPRECATED: Use database_pool::acquire_database() instead
-// This function is kept for backwards compatibility during migration
-
-/// Get shared test pool - DEPRECATED, use database_pool instead
+/// Get shared test pool
 pub async fn get_shared_test_pool() -> Result<DbPool> {
-    // For backwards compatibility, create a pooled database and return its pool
-    let db = crate::common::database_pool::acquire_database().await?;
+    let db = crate::common::database_pool::acquire_test_database().await?;
     Ok(db.pool().clone())
 }
 
@@ -30,8 +26,8 @@ pub async fn create_test_work_items(
         // First create a raw event for the foreign key constraint
         sqlx::query!(
             "INSERT INTO raw.events (id, source, event_type, payload, ts_orig, host)
-             VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
-            sinex_db::ulid_to_uuid(event_id),
+             VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+            event_id.to_uuid(),
             "test_source",
             format!("test.event.{}", i),
             serde_json::json!({"test": true, "index": i}),
@@ -41,11 +37,12 @@ pub async fn create_test_work_items(
         .execute(pool)
         .await?;
 
-        // Then create the work queue item
+        // Then create the work queue item  
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name, status)
-             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4)",
-            sinex_db::ulid_to_uuid(queue_id), sinex_db::ulid_to_uuid(event_id),
+             VALUES ($1::uuid, $2::uuid, $3, $4)",
+            queue_id.to_uuid(),
+            event_id.to_uuid(),
             agent_name, "pending"
         ).execute(pool).await?;
         items.push(queue_id);

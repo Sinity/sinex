@@ -11,8 +11,8 @@ use tracing::{error, info, warn};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue, Result,
-    Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp,
 };
 
 // ============================================================================
@@ -52,14 +52,14 @@ pub struct AsciinemaSessionStarted;
 impl EventType for AsciinemaSessionStarted {
     type Payload = AsciinemaSessionStartedPayload;
     type SourceImpl = AsciinemaRecorder;
-    const EVENT_NAME: &'static str = "terminal.asciinema.session_started";
+    const EVENT_NAME: &'static str = "recording.started";
 }
 
 pub struct AsciinemaSessionEnded;
 impl EventType for AsciinemaSessionEnded {
     type Payload = AsciinemaSessionEndedPayload;
     type SourceImpl = AsciinemaRecorder;
-    const EVENT_NAME: &'static str = "terminal.asciinema.session_ended";
+    const EVENT_NAME: &'static str = "recording.ended";
 }
 
 // ============================================================================
@@ -132,7 +132,7 @@ pub struct AsciinemaRecorder {
 impl EventSource for AsciinemaRecorder {
     type Config = AsciinemaConfig;
 
-    const SOURCE_NAME: &'static str = "ingestor.asciinema_recorder";
+    const SOURCE_NAME: &'static str = sources::SHELL_RECORDING;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {

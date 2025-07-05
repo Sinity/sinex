@@ -47,7 +47,7 @@ sinex-preflight verify --timeout 120       # Manual verification
 2. **SQLX offline errors** → Run `just sqlx-prepare` and commit `.sqlx/`
 3. **Test failures** → Use `#[sinex_test]` not `#[tokio::test]`
 4. **Config not loading** → Priority: CLI args → env → file → defaults
-5. **Events not captured** → Check source enabled in config, verify schema
+5. **Events not captured** → Start the UnifiedCollector (event sources are ready)
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ async fn stream_events(&mut self, tx: EventSender) -> Result<()>
 
 ### UnifiedCollector
 - Single process coordinating all sources
-- Loads config (TOML/NixOS format)
+- Loads config (NixOS module system)
 - Spawns EventSource tasks
 - Validates events via JSON schemas
 - Writes to `raw.events` or logs (dry-run)
@@ -128,55 +128,59 @@ impl EventType for FileCreated {
 }
 ```
 
-**NOTE**: EventRegistry is currently manually maintained in `create_registry()` but intended to be auto-generated from these types (see TODO comment).
+**NOTE**: EventRegistry autogeneration has been implemented via EventRegistryBuilder pattern, eliminating manual maintenance.
 
-### Naming Inconsistencies (Technical Debt)
-- Sources mix dots/underscores: `terminal.kitty` vs `window_manager.hyprland`
-- Event types inconsistent: `file.created` vs `shell.command.executed_atuin`
-- Source names don't match crate names: `filesystem` vs `sinex-events-fs`
+### Naming Convention 
+- Sources use dots for hierarchy: `fs`, `shell.kitty`, `wm.hyprland`
+- Event types are concise: `file.created`, `command.executed`, `copied`
+- No redundancy between source and event type
 
 ### Registered Sources
-- `filesystem` - File system events
-- `terminal.kitty` - Kitty terminal commands  
-- `window_manager.hyprland` - Hyprland window manager
+- `fs` - File system events
+- `shell.kitty` - Kitty terminal commands  
+- `wm.hyprland` - Hyprland window manager
 - `clipboard` - Clipboard content changes
-- `ingestor.atuin_db_reader` - Atuin shell history
-- `ingestor.shell_history_reader` - Shell history files
-- `ingestor.asciinema_recorder` - Terminal recordings
-- `ingestor.scrollback_capture` - Terminal scrollback
-- `dbus.monitor` - D-Bus system events
-- `journal.monitor` - Systemd journal events
+- `shell.atuin` - Atuin shell history
+- `shell.history` - Shell history files
+- `shell.recording` - Terminal recordings
+- `shell.scrollback` - Terminal scrollback
+- `dbus` - D-Bus system events
+- `journald` - Systemd journal events
 
 ### Event Types by Category
 ```
-# Filesystem (3)
-file.created, file.modified, file.deleted
+# Filesystem (6)
+file.created, file.modified, file.deleted, file.moved
+dir.created, dir.deleted
 
-# Terminal/Shell (6)
-command.executed
-shell.command.executed_atuin, shell.history.command
-terminal.asciinema.session_started/ended
-terminal.scrollback.captured, terminal.command_output.captured
+# Shell (8)
+command.executed, command.failed
+session.started, session.ended
+command.imported (for shell.atuin, shell.history)
+recording.started, recording.ended (for shell.recording)
+output.captured (for shell.scrollback)
 
-# Window Manager (13)
-window.{focused,opened,closed,moved,title_changed,urgent}
-workspace.{changed,created,destroyed}
-monitor.{focused,added,removed}
-state.snapshot
+# Window Manager (12)
+window.opened, window.closed, window.focused
+window.moved, window.resized
+workspace.switched, workspace.created, workspace.destroyed
+display.connected, display.disconnected
+monitor.focused
+state.captured
 
 # Clipboard (2)
-clipboard.content.changed, clipboard.selection.changed
+copied, selected
 
-# D-Bus/System (12)
-dbus.signal, dbus.method_call
-system.notification, media.playback.changed
-system.power.event, hardware.device.event
-session.state.changed, security.policykit.authorization
-bluetooth.device.event, network.connection.event
-screen.saver.event, storage.mount.event
+# D-Bus (10)
+signal.received, method.called
+notification.sent
+device.connected, device.disconnected
+media.state_changed, power.state_changed
+network.state_changed, bluetooth.device_changed
+mount.changed
 
-# Journal (2)
-system.journal.entry, system.journal.sync
+# Journal (1)
+entry.written
 ```
 
 ## Testing

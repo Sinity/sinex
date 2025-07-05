@@ -12,7 +12,7 @@ async fn test_invalid_octal_permissions(ctx: TestContext) -> TestResult {
         "permissions": "888"  // Invalid octal (8 is not a valid octal digit)
     });
 
-    let result = validator.validate_with_rules("filesystem", "file.created", &invalid_octal);
+    let result = validator.validate_with_rules("fs", "file.created", &invalid_octal);
     assert!(
         result.is_err(),
         "Should reject invalid octal permissions like '888'"
@@ -44,7 +44,7 @@ async fn test_permissions_edge_cases(ctx: TestContext) -> TestResult {
             "permissions": perms
         });
 
-        let result = validator.validate_with_rules("filesystem", "file.created", &event);
+        let result = validator.validate_with_rules("fs", "file.created", &event);
         if should_be_valid {
             assert!(result.is_ok(), "Should accept {}: {}", desc, perms);
         } else {
@@ -73,7 +73,7 @@ async fn test_path_validation_missing(ctx: TestContext) -> TestResult {
             "size": 1024
         });
 
-        let result = validator.validate_with_rules("filesystem", "file.created", &event);
+        let result = validator.validate_with_rules("fs", "file.created", &event);
         // This will likely PASS but shouldn't for security reasons
         println!("Path '{}' validation: {:?}", path, result.is_ok());
     }

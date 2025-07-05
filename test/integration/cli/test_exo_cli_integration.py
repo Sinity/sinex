@@ -15,8 +15,9 @@ import pytest
 import psycopg2
 from click.testing import CliRunner
 
-# Add parent directory to path so we can import the CLI
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'cli'))
+# Add CLI directory to path so we can import exo
+cli_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'cli')
+sys.path.insert(0, cli_dir)
 import exo
 
 
@@ -301,7 +302,7 @@ class TestCLIWithSubprocess:
     
     def setup_method(self):
         """Set up test environment."""
-        self.cli_path = Path(__file__).parent.parent.parent / 'cli' / 'exo.py'
+        self.cli_path = Path(__file__).parent.parent.parent.parent / 'cli' / 'exo.py'
         assert self.cli_path.exists(), f"CLI script not found at {self.cli_path}"
     
     def run_cli(self, args):

@@ -72,7 +72,7 @@ async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
 async fn test_json_payload_constraints(_ctx: TestContext) -> TestResult {
     // Test various JSON payload structures that should be valid
     let valid_payloads = vec![
-        json!({"event_type": "filesystem", "path": "/tmp/test"}),
+        json!({"event_type": "fs", "path": "/tmp/test"}),
         json!({"event_type": "terminal", "command": "ls", "exit_code": 0}),
         json!({"event_type": "window", "title": "Editor", "geometry": {"x": 0, "y": 0}}),
         json!({"timestamp": 1234567890, "data": [1, 2, 3]}),

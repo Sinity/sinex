@@ -25,6 +25,7 @@ pub use heartbeat::{
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
+pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 
 // Common type aliases for event handling (defined after RawEvent struct)
 
@@ -225,12 +226,17 @@ pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 /// Common event sources
 pub mod sources {
     pub const SINEX: &str = "sinex";
-    pub const FILESYSTEM: &str = "filesystem";
-    pub const TERMINAL_KITTY: &str = "terminal.kitty";
-    pub const HYPRLAND: &str = "hyprland";
-    pub const WINDOW_MANAGER_HYPRLAND: &str = "window_manager.hyprland";
-    pub const ATUIN_DB_READER: &str = "ingestor.atuin_db_reader";
+    pub const FS: &str = "fs";
+    pub const SHELL_KITTY: &str = "shell.kitty";
+    pub const SHELL_ATUIN: &str = "shell.atuin";
+    pub const SHELL_HISTORY: &str = "shell.history";
+    pub const SHELL_RECORDING: &str = "shell.recording";
+    pub const SHELL_SCROLLBACK: &str = "shell.scrollback";
+    pub const WM_HYPRLAND: &str = "wm.hyprland";
     pub const CLIPBOARD: &str = "clipboard";
+    pub const DBUS: &str = "dbus";
+    pub const JOURNALD: &str = "journald";
+    
 }
 
 /// Common event type constants
@@ -247,34 +253,58 @@ pub mod event_type_constants {
         pub const FILE_CREATED: &str = "file.created";
         pub const FILE_MODIFIED: &str = "file.modified";
         pub const FILE_DELETED: &str = "file.deleted";
-        pub const FILE_RENAMED: &str = "file.renamed";
+        pub const FILE_MOVED: &str = "file.moved";
+        pub const DIR_CREATED: &str = "dir.created";
+        pub const DIR_DELETED: &str = "dir.deleted";
     }
 
-    pub mod terminal {
+    pub mod shell {
         pub const COMMAND_EXECUTED: &str = "command.executed";
+        pub const COMMAND_FAILED: &str = "command.failed";
+        pub const SESSION_STARTED: &str = "session.started";
+        pub const SESSION_ENDED: &str = "session.ended";
+        pub const COMMAND_IMPORTED: &str = "command.imported";
+        pub const RECORDING_STARTED: &str = "recording.started";
+        pub const RECORDING_ENDED: &str = "recording.ended";
+        pub const OUTPUT_CAPTURED: &str = "output.captured";
     }
 
     pub mod window_manager {
-        // Window events
-        pub const WINDOW_FOCUSED: &str = "window.focused";
         pub const WINDOW_OPENED: &str = "window.opened";
         pub const WINDOW_CLOSED: &str = "window.closed";
+        pub const WINDOW_FOCUSED: &str = "window.focused";
         pub const WINDOW_MOVED: &str = "window.moved";
-        pub const WINDOW_TITLE_CHANGED: &str = "window.title_changed";
-        pub const WINDOW_URGENT: &str = "window.urgent";
-
-        // Workspace events
-        pub const WORKSPACE_CHANGED: &str = "workspace.changed";
+        pub const WINDOW_RESIZED: &str = "window.resized";
+        pub const WORKSPACE_SWITCHED: &str = "workspace.switched";
         pub const WORKSPACE_CREATED: &str = "workspace.created";
         pub const WORKSPACE_DESTROYED: &str = "workspace.destroyed";
-
-        // Monitor events
+        pub const DISPLAY_CONNECTED: &str = "display.connected";
+        pub const DISPLAY_DISCONNECTED: &str = "display.disconnected";
         pub const MONITOR_FOCUSED: &str = "monitor.focused";
-        pub const MONITOR_ADDED: &str = "monitor.added";
-        pub const MONITOR_REMOVED: &str = "monitor.removed";
+        pub const STATE_CAPTURED: &str = "state.captured";
+        
+    }
 
-        // State dumps (periodic)
-        pub const STATE_SNAPSHOT: &str = "state.snapshot";
+    pub mod clipboard {
+        pub const COPIED: &str = "copied";
+        pub const SELECTED: &str = "selected";
+    }
+
+    pub mod dbus {
+        pub const SIGNAL_RECEIVED: &str = "signal.received";
+        pub const METHOD_CALLED: &str = "method.called";
+        pub const NOTIFICATION_SENT: &str = "notification.sent";
+        pub const DEVICE_CONNECTED: &str = "device.connected";
+        pub const DEVICE_DISCONNECTED: &str = "device.disconnected";
+        pub const MEDIA_STATE_CHANGED: &str = "media.state_changed";
+        pub const POWER_STATE_CHANGED: &str = "power.state_changed";
+        pub const NETWORK_STATE_CHANGED: &str = "network.state_changed";
+        pub const BLUETOOTH_DEVICE_CHANGED: &str = "bluetooth.device_changed";
+        pub const MOUNT_CHANGED: &str = "mount.changed";
+    }
+
+    pub mod journald {
+        pub const ENTRY_WRITTEN: &str = "entry.written";
     }
 }
 

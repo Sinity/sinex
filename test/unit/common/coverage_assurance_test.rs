@@ -58,10 +58,10 @@ async fn test_coverage_assertion_ensures_minimum_coverage(_ctx: TestContext) -> 
 
 fn simulate_comprehensive_test_suite() {
     // Track various test scenarios
-    CoverageTracker::record_event_type_tested("filesystem", "file.created");
-    CoverageTracker::record_event_type_tested("filesystem", "file.modified");
-    CoverageTracker::record_event_type_tested("terminal_kitty", "command.executed");
-    CoverageTracker::record_event_type_tested("hyprland", "window.focus");
+    CoverageTracker::record_event_type_tested("fs", "file.created");
+    CoverageTracker::record_event_type_tested("fs", "file.modified");
+    CoverageTracker::record_event_type_tested("shell.kitty", "command.executed");
+    CoverageTracker::record_event_type_tested("wm.hyprland", "window.focus");
 
     // Track validation rules
     CoverageTracker::record_validation_rule("non_empty_source");
@@ -172,7 +172,7 @@ async fn test_coverage_tracking_macro(_ctx: TestContext) -> TestResult {
     CoverageTracker::reset();
 
     // Use tracking macro
-    track_test_coverage!(event_type: "filesystem", "file.created");
+    track_test_coverage!(event_type: "fs", "file.created");
     track_test_coverage!(validation_rule: "path_validation");
     track_test_coverage!(error_condition: "invalid_path");
     track_test_coverage!(concurrency: "parallel_worker_execution");

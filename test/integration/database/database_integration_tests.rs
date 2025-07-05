@@ -77,11 +77,11 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     assertions::assert_event_inserted(ctx.pool(), &term_event).await?;
 
     // Query using our helper function
-    let filesystem_events = common::get_events_by_source(ctx.pool(), "filesystem", 10).await?;
+    let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(filesystem_events.len() >= 2);
 
     for event in &filesystem_events {
-        pretty_assertions::assert_eq!(event.source, "filesystem");
+        pretty_assertions::assert_eq!(event.source, "fs");
     }
 
     Ok(())

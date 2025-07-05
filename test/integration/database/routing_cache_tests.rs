@@ -75,7 +75,7 @@ async fn test_routing_cache_auto_refresh_on_agent_change(ctx: TestContext) -> Te
     // Create an agent with specific event subscriptions
     let agent_name = "test-router-agent";
     let subscriptions = json!({
-        "filesystem": ["file_created", "file_modified"],
+        "fs": ["file_created", "file_modified"],
         "terminal": ["command_executed"]
     });
 

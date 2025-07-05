@@ -55,7 +55,7 @@ async fn test_event_validator_invalid_empty_source(_ctx: TestContext) -> TestRes
 #[sinex_test]
 async fn test_event_validator_invalid_empty_event_type(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "", // Empty event type
         json!({"path": "/test/file.txt"}),
     )
@@ -70,7 +70,7 @@ async fn test_event_validator_invalid_null_payload(_ctx: TestContext) -> TestRes
     let validator = EventValidator::new();
 
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!(null), // Null payload
     )
@@ -89,7 +89,7 @@ async fn test_event_validator_filesystem_missing_path(_ctx: TestContext) -> Test
     let validator = EventValidator::new();
 
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "size": 1024,
@@ -121,7 +121,7 @@ async fn test_event_validator_filesystem_invalid_path(_ctx: TestContext) -> Test
 
     for invalid_path in invalid_paths {
         let event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": invalid_path,
@@ -146,7 +146,7 @@ async fn test_event_validator_terminal_invalid_exit_code(_ctx: TestContext) -> T
     let validator = EventValidator::new();
 
     let event = RawEventBuilder::new(
-        "terminal_kitty",
+        "shell.kitty",
         "command.executed",
         json!({
             "command": "test command",
@@ -170,7 +170,7 @@ async fn test_event_validator_large_payload(_ctx: TestContext) -> TestResult {
     let large_data = "x".repeat(1_000_000); // 1MB of data
 
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/large_file.txt",
@@ -197,7 +197,7 @@ async fn test_event_validator_deeply_nested_payload(_ctx: TestContext) -> TestRe
     }
 
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/nested.txt",
@@ -216,7 +216,7 @@ async fn test_event_validator_unicode_content(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
 
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/home/用户/文档/测试文件.txt",
@@ -247,7 +247,7 @@ async fn test_event_validator_concurrent_validation(_ctx: TestContext) -> TestRe
         let validator_clone = Arc::clone(&validator);
         let handle = thread::spawn(move || {
             let event = RawEventBuilder::new(
-                "filesystem",
+                "fs",
                 "file.created",
                 json!({
                     "path": format!("/test/concurrent_{}.txt", i),
@@ -294,21 +294,21 @@ async fn test_event_validator_hardcoded_rules(_ctx: TestContext) -> TestResult {
     let test_cases = [
         // Valid cases
         (
-            "filesystem",
+            "fs",
             "file.created",
             json!({"path": "/valid/path.txt"}),
             true,
         ),
         (
-            "terminal_kitty",
+            "shell.kitty",
             "command.executed",
             json!({"command": "ls"}),
             true,
         ),
-        ("hyprland", "window.focus", json!({"window_id": 123}), true),
+        ("wm.hyprland", "window.focus", json!({"window_id": 123}), true),
         // Invalid cases (if hardcoded rules exist)
-        ("filesystem", "file.created", json!({}), false), // Missing path
-        ("terminal_kitty", "command.executed", json!({}), false), // Missing command
+        ("fs", "file.created", json!({}), false), // Missing path
+        ("shell.kitty", "command.executed", json!({}), false), // Missing command
     ];
 
     for (source, event_type, payload, should_pass) in test_cases {

@@ -24,7 +24,7 @@ async fn test_system_resources_verification(_ctx: TestContext) -> TestResult {
     assert!(details.get("memory").is_some());
     assert!(details.get("disk").is_some());
     assert!(details.get("cpu").is_some());
-    assert!(details.get("filesystem").is_some());
+    assert!(details.get("fs").is_some());
 
     assert!(!messages.is_empty());
 
@@ -98,7 +98,7 @@ async fn test_cpu_capacity_check(_ctx: TestContext) -> TestResult {
 async fn test_filesystem_permissions_check(_ctx: TestContext) -> TestResult {
     let (status, details, _) = verify_system_resources().await?;
 
-    let filesystem_info = details.get("filesystem").unwrap();
+    let filesystem_info = details.get("fs").unwrap();
     let directories = filesystem_info.get("directories").unwrap().as_object().unwrap();
 
     // Should have checked some directories

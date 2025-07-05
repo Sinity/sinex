@@ -7,7 +7,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestRe
     // Step 1: Simulate event capture by inserting events
     let events = vec![
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": "/test/document.txt",
@@ -17,7 +17,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestRe
         )
         .build(),
         RawEventBuilder::new(
-            "terminal_kitty",
+            "shell.kitty",
             "command.executed",
             json!({
                 "command": "ls -la /home",
@@ -27,7 +27,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestRe
         )
         .build(),
         RawEventBuilder::new(
-            "hyprland",
+            "wm.hyprland",
             "window.focus",
             json!({
                 "window_id": 123456,
@@ -60,22 +60,22 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestRe
     // Verify we can find our test events
     let fs_found = recent_events
         .iter()
-        .any(|e| e.source == "filesystem" && e.event_type == "file.created");
+        .any(|e| e.source == "fs" && e.event_type == "file.created");
     let terminal_found = recent_events
         .iter()
-        .any(|e| e.source == "terminal_kitty" && e.event_type == "command.executed");
+        .any(|e| e.source == "shell.kitty" && e.event_type == "command.executed");
     let wm_found = recent_events
         .iter()
-        .any(|e| e.source == "hyprland" && e.event_type == "window.focus");
+        .any(|e| e.source == "wm.hyprland" && e.event_type == "window.focus");
 
     assert!(fs_found, "Filesystem event should be queryable");
     assert!(terminal_found, "Terminal event should be queryable");
     assert!(wm_found, "Window manager event should be queryable");
 
     // Step 4: Test filtered queries
-    let fs_events = crate::common::get_events_by_source(ctx.pool(), "filesystem", 10).await?;
+    let fs_events = crate::common::get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(!fs_events.is_empty());
-    assert!(fs_events.iter().all(|e| e.source == "filesystem"));
+    assert!(fs_events.iter().all(|e| e.source == "fs"));
 
     let file_created_events =
         crate::common::get_events_by_type(ctx.pool(), "file.created", 10).await?;
@@ -94,7 +94,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> TestResult {
     // Insert test events
     let test_events = vec![
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": "/test/cli_test.txt",
@@ -103,7 +103,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> TestResult {
         )
         .build(),
         RawEventBuilder::new(
-            "terminal_kitty",
+            "shell.kitty",
             "command.executed",
             json!({
                 "command": "echo 'CLI test'",
@@ -145,7 +145,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> TestResult {
 
     // Verify output contains our test events
     assert!(
-        stdout.contains("filesystem") || stdout.contains("terminal_kitty"),
+        stdout.contains("fs") || stdout.contains("shell.kitty"),
         "CLI output should contain event data: {}",
         stdout
     );
@@ -165,7 +165,7 @@ async fn test_system_real_filesystem_simulation(ctx: TestContext) -> TestResult 
     let fs_events = vec![
         // File creation
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": test_file_path.to_string_lossy(),
@@ -177,7 +177,7 @@ async fn test_system_real_filesystem_simulation(ctx: TestContext) -> TestResult 
         .build(),
         // File modification
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.modified",
             json!({
                 "path": test_file_path.to_string_lossy(),
@@ -236,7 +236,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
     let correlated_events = vec![
         // Terminal command
         RawEventBuilder::new(
-            "terminal_kitty",
+            "shell.kitty",
             "command.executed",
             json!({
                 "command": "vim /home/user/document.txt",
@@ -248,7 +248,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
         .build(),
         // Window focus (vim opens)
         RawEventBuilder::new(
-            "hyprland",
+            "wm.hyprland",
             "window.focus",
             json!({
                 "window_title": "vim /home/user/document.txt",
@@ -260,7 +260,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
         .build(),
         // File modification (user editing)
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.modified",
             json!({
                 "path": "/home/user/document.txt",
@@ -271,7 +271,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
         .build(),
         // File save
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.modified",
             json!({
                 "path": "/home/user/document.txt",
@@ -294,25 +294,25 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
     let window_events = queries::get_events_in_time_range(ctx.pool(), start_time, end_time).await?;
 
     // Verify we can find correlated events
-    let terminal_events: Vec<_> = window_events
+    let shell_events: Vec<_> = window_events
         .iter()
-        .filter(|e| e.source == "terminal_kitty")
+        .filter(|e| e.source == "shell.kitty")
         .collect();
     let wm_events: Vec<_> = window_events
         .iter()
-        .filter(|e| e.source == "hyprland")
+        .filter(|e| e.source == "wm.hyprland")
         .collect();
     let fs_events: Vec<_> = window_events
         .iter()
-        .filter(|e| e.source == "filesystem")
+        .filter(|e| e.source == "fs")
         .collect();
 
-    assert!(!terminal_events.is_empty(), "Should find terminal events");
+    assert!(!shell_events.is_empty(), "Should find terminal events");
     assert!(!wm_events.is_empty(), "Should find window manager events");
     assert!(!fs_events.is_empty(), "Should find filesystem events");
 
     // Verify events contain related information
-    let terminal_event = &terminal_events[0];
+    let terminal_event = &shell_events[0];
     assert!(terminal_event.payload["command"]
         .as_str()
         .unwrap()
@@ -341,7 +341,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
     let edge_case_events = vec![
         // Very large payload
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": "/test/large_file.txt",
@@ -352,7 +352,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
         .build(),
         // Unicode content
         RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": "/home/用户/文档/测试文件.txt",
@@ -385,7 +385,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
 
     // Verify system is still operational after edge cases
     let normal_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/test/normal_file.txt",
@@ -413,7 +413,7 @@ async fn test_system_performance_baseline(ctx: TestContext) -> TestResult {
     // Insert events rapidly
     for i in 0..event_count {
         let event = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             "file.created",
             json!({
                 "path": format!("/test/perf_test_{}.txt", i),

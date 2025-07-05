@@ -39,7 +39,7 @@ async fn test_event_registry_get_event_type(_ctx: TestContext) -> TestResult {
     );
     pretty_assertions::assert_eq!(
         source.unwrap(),
-        "filesystem",
+        "fs",
         "file.created should map to filesystem source"
     );
 
@@ -57,7 +57,7 @@ async fn test_event_registry_get_source_events(_ctx: TestContext) -> TestResult 
     let registry = create_registry();
 
     // Test filesystem source
-    let fs_events = registry.events_for_source("filesystem");
+    let fs_events = registry.events_for_source("fs");
     assert!(
         !fs_events.is_empty(),
         "Filesystem source should have events"
@@ -76,13 +76,13 @@ async fn test_event_registry_get_source_events(_ctx: TestContext) -> TestResult 
     );
 
     // Test terminal source
-    let terminal_events = registry.events_for_source("terminal.kitty");
+    let shell_events = registry.events_for_source("shell.kitty");
     assert!(
-        !terminal_events.is_empty(),
+        !shell_events.is_empty(),
         "Terminal source should have events"
     );
     assert!(
-        terminal_events.contains(&"command.executed"),
+        shell_events.contains(&"command.executed"),
         "Terminal should contain command.executed event"
     );
 
@@ -112,16 +112,16 @@ async fn test_event_registry_all_sources(_ctx: TestContext) -> TestResult {
 
     // Verify expected sources are present
     assert!(
-        sources.contains(&"filesystem"),
+        sources.contains(&"fs"),
         "Should contain filesystem source"
     );
     assert!(
-        sources.contains(&"terminal.kitty"),
-        "Should contain terminal.kitty source"
+        sources.contains(&"shell.kitty"),
+        "Should contain shell.kitty source"
     );
     assert!(
-        sources.contains(&"window_manager.hyprland"),
-        "Should contain window_manager.hyprland source"
+        sources.contains(&"wm.hyprland"),
+        "Should contain wm.hyprland source"
     );
     assert!(
         sources.contains(&"clipboard"),
@@ -139,7 +139,7 @@ async fn test_event_registry_event_type_properties(_ctx: TestContext) -> TestRes
     assert!(source.is_some(), "Should find source for file.created");
     pretty_assertions::assert_eq!(
         source.unwrap(),
-        "filesystem",
+        "fs",
         "file.created should map to filesystem"
     );
 
@@ -155,8 +155,8 @@ async fn test_event_registry_event_type_properties(_ctx: TestContext) -> TestRes
     );
     pretty_assertions::assert_eq!(
         cmd_source.unwrap(),
-        "terminal.kitty",
-        "command.executed should map to terminal.kitty"
+        "shell.kitty",
+        "command.executed should map to shell.kitty"
     );
     Ok(())
 }
@@ -230,27 +230,27 @@ async fn test_event_registry_event_source_mapping(_ctx: TestContext) -> TestResu
     let registry = create_registry();
 
     // Test that events are properly mapped to sources
-    let fs_events = registry.events_for_source("filesystem");
-    let terminal_events = registry.events_for_source("terminal_kitty");
+    let fs_events = registry.events_for_source("fs");
+    let shell_events = registry.events_for_source("shell.kitty");
 
     // Verify filesystem events are mapped to filesystem source
     for event in &fs_events {
         let source = registry.source_for_event(event);
         pretty_assertions::assert_eq!(
             source,
-            Some("filesystem"),
+            Some("fs"),
             "Filesystem event {} should map to filesystem source",
             event
         );
     }
 
     // Verify terminal events are mapped to terminal source
-    for event in &terminal_events {
+    for event in &shell_events {
         let source = registry.source_for_event(event);
         pretty_assertions::assert_eq!(
             source,
-            Some("terminal_kitty"),
-            "Terminal event {} should map to terminal_kitty source",
+            Some("shell.kitty"),
+            "Terminal event {} should map to shell.kitty source",
             event
         );
     }
@@ -289,8 +289,8 @@ async fn test_event_registry_concurrent_access(_ctx: TestContext) -> TestResult 
     for handle in handles {
         let result = handle.join().unwrap();
         assert!(
-            result == "filesystem" || result == "terminal.kitty",
-            "Source should be filesystem or terminal.kitty, got: {}",
+            result == "fs" || result == "shell.kitty",
+            "Source should be filesystem or shell.kitty, got: {}",
             result
         );
     }
@@ -316,22 +316,22 @@ async fn test_event_registry_with_real_events(_ctx: TestContext) -> TestResult {
         if source.is_some() {
             pretty_assertions::assert_eq!(
                 source.unwrap(),
-                "filesystem",
+                "fs",
                 "Filesystem event {} should map to filesystem source",
                 event_name
             );
         }
     }
 
-    let terminal_events = ["command.executed", "session.started", "session.ended"];
+    let shell_events = ["command.executed", "session.started", "session.ended"];
 
-    for event_name in terminal_events {
+    for event_name in shell_events {
         let source = registry.source_for_event(event_name);
         if source.is_some() {
             pretty_assertions::assert_eq!(
                 source.unwrap(),
-                "terminal.kitty",
-                "Terminal event {} should map to terminal.kitty source",
+                "shell.kitty",
+                "Terminal event {} should map to shell.kitty source",
                 event_name
             );
         }

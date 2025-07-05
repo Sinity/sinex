@@ -4,3 +4,4 @@
 //! under various failure modes and stress conditions.
 
 pub mod enhanced_connection_resilience_test;
+pub mod runtime_diagnostics;

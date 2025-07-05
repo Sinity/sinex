@@ -36,7 +36,7 @@ pub struct CommandExecuted;
 impl EventType for CommandExecuted {
     type Payload = CommandExecutedPayload;
     type SourceImpl = KittySocketListener;
-    const EVENT_NAME: &'static str = event_type_constants::terminal::COMMAND_EXECUTED;
+    const EVENT_NAME: &'static str = event_type_constants::shell::COMMAND_EXECUTED;
 }
 
 // ============================================================================
@@ -82,7 +82,7 @@ impl EventSourceBase for KittySocketListener {}
 impl EventSource for KittySocketListener {
     type Config = KittyConfig;
 
-    const SOURCE_NAME: &'static str = sources::TERMINAL_KITTY;
+    const SOURCE_NAME: &'static str = sources::SHELL_KITTY;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing
@@ -167,7 +167,7 @@ impl KittySocketListener {
                             );
 
                             let event = self.create_event(
-                                event_type_constants::terminal::COMMAND_EXECUTED,
+                                event_type_constants::shell::COMMAND_EXECUTED,
                                 serde_json::to_value(cmd)?,
                             );
 

@@ -6,7 +6,7 @@ use sinex_core::{event_type_constants, sources, RawEventBuilder};
 async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
     // Test 1: Valid event should work
     let valid_event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         event_type_constants::filesystem::FILE_CREATED,
         json!({
             "path": "/test/valid.txt",
@@ -49,7 +49,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResu
 async fn test_event_type_validation(ctx: TestContext) -> TestResult {
     // Valid event type should work
     let valid_event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         event_type_constants::filesystem::FILE_MODIFIED,
         json!({
             "path": "/test/modified.txt",
@@ -84,8 +84,8 @@ async fn test_event_type_validation(ctx: TestContext) -> TestResult {
 async fn test_payload_validation(ctx: TestContext) -> TestResult {
     // Valid JSON payload should work
     let valid_event = RawEventBuilder::new(
-        sources::TERMINAL_KITTY,
-        event_type_constants::terminal::COMMAND_EXECUTED,
+        sources::SHELL_KITTY,
+        event_type_constants::shell::COMMAND_EXECUTED,
         json!({
             "command": "ls -la",
             "exit_code": 0,
@@ -99,7 +99,7 @@ async fn test_payload_validation(ctx: TestContext) -> TestResult {
 
     // Complex nested payload should also work
     let complex_event = RawEventBuilder::new(
-        sources::HYPRLAND,
+        sources::WM_HYPRLAND,
         "workspace.changed",
         json!({
             "old_workspace": {

@@ -4,6 +4,8 @@
 //! including work queue management, worker lifecycle simulation, and assertion helpers.
 
 use crate::common::prelude::*;
+#[allow(unused_imports)]
+use sinex_db::query_helpers::uuid_to_ulid;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_work_queue_count, wait_for_work_queue_status_count,
 };
@@ -30,25 +32,31 @@ pub async fn setup_test_worker(
 ) -> Result<Vec<Ulid>> {
     let mut queue_ids = Vec::new();
 
-    // Create test work queue items
+    // Create agent manifest for the worker first
+    let agent_name = format!("{}_agent", worker_name);
+    crate::common::create_test_agent(pool, &agent_name).await?;
+
+    // Create test work queue items with corresponding raw events
     for i in 0..item_count {
-        let queue_id = Ulid::new();
-        let raw_event_id = Ulid::new();
+        // First create a raw event to reference
+        let event = crate::common::events::generic_adversarial_event(
+            "test_source",
+            "test.event",
+            json!({"test": true, "worker": worker_name, "index": i}),
+            Some("test_1.0"),
+        );
 
-        sqlx::query!(
-            r#"
-            INSERT INTO sinex_schemas.work_queue
-            (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
-            VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 'pending', 0, 3, NOW())
-            "#,
-            queue_id.to_uuid(),
-            raw_event_id.to_uuid(),
-            format!("{}_item_{}", worker_name, i)
-        )
-        .execute(pool)
-        .await?;
+        // Insert the raw event first
+        let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
 
-        queue_ids.push(queue_id);
+        // Now insert the work queue item using the real query function with the proper agent name
+        let work_item = sinex_db::queries::insert_work_queue_item(
+            pool, 
+            inserted_event.id, 
+            &agent_name  // Use the agent name that has a manifest
+        ).await?;
+        
+        queue_ids.push(work_item.queue_id);
     }
 
     Ok(queue_ids)
@@ -56,8 +64,10 @@ pub async fn setup_test_worker(
 
 /// Insert a test work item (simplified version for tests)
 pub async fn insert_test_work_item(pool: &DbPool, target_agent: &str) -> Result<Ulid> {
+    // Create agent manifest first
+    crate::common::create_test_agent(pool, target_agent).await?;
+
     // First create a raw event to reference
-    let raw_event_id = Ulid::new();
     let event = crate::common::events::generic_adversarial_event(
         "test_source",
         "test.event",
@@ -66,11 +76,11 @@ pub async fn insert_test_work_item(pool: &DbPool, target_agent: &str) -> Result<
     );
 
     // Insert the raw event first
-    sinex_db::queries::insert_event(pool, &event).await?;
+    let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
 
     // Now insert the work queue item using the real query function
     let work_item =
-        sinex_db::queries::insert_work_queue_item(pool, raw_event_id, target_agent).await?;
+        sinex_db::queries::insert_work_queue_item(pool, inserted_event.id, target_agent).await?;
     Ok(work_item.queue_id)
 }
 
@@ -80,17 +90,30 @@ pub async fn create_test_work_item(
     target_agent: &str,
     status: &str,
 ) -> Result<Ulid> {
-    let queue_id = Ulid::new();
-    let raw_event_id = Ulid::new();
+    // Create agent manifest first
+    crate::common::create_test_agent(pool, target_agent).await?;
 
+    // First create a raw event to reference
+    let event = crate::common::events::generic_adversarial_event(
+        "test_source",
+        "test.event",
+        json!({"test": true, "agent": target_agent, "status": status}),
+        Some("test_1.0"),
+    );
+
+    // Insert the raw event first
+    let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
+
+    // Create work queue item with specific status
+    let queue_id = Ulid::new();
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.work_queue
         (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
-        VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4, 0, 3, NOW())
+        VALUES ($1::uuid, $2::uuid, $3, $4, 0, 3, NOW())
         "#,
         queue_id.to_uuid(),
-        raw_event_id.to_uuid(),
+        inserted_event.id.to_uuid(),
         target_agent,
         status
     )
@@ -230,7 +253,7 @@ pub async fn simulate_worker_processing(
             r#"
             UPDATE sinex_schemas.work_queue
             SET status = 'processing',
-                processing_worker_id = $1::uuid::ulid,
+                processing_worker_id = $1,
                 last_attempt_ts = NOW()
             WHERE queue_id = (
                 SELECT queue_id
@@ -242,7 +265,7 @@ pub async fn simulate_worker_processing(
             )
             RETURNING queue_id::uuid
             "#,
-            worker_id.to_uuid()
+            worker_id.to_string()
         )
         .fetch_optional(pool)
         .await?;
@@ -254,9 +277,9 @@ pub async fn simulate_worker_processing(
                 UPDATE sinex_schemas.work_queue
                 SET status = 'succeeded',
                     processed_at = NOW()
-                WHERE queue_id = $1::uuid::ulid
+                WHERE queue_id::uuid = $1
                 "#,
-                row.queue_id
+                row.queue_id.expect("queue_id should exist")
             )
             .execute(pool)
             .await?;
@@ -319,8 +342,8 @@ pub mod lifecycle {
                 UPDATE sinex_schemas.work_queue
                 SET status = 'succeeded',
                     processed_at = NOW(),
-                    processing_worker_id = $1::uuid::ulid
-                WHERE queue_id = $2::uuid::ulid AND status = 'processing'
+                    processing_worker_id = $1::uuid
+                WHERE queue_id::uuid = $2 AND status = 'processing'
                 "#,
                 self.worker_id.to_uuid(),
                 queue_id.to_uuid()
@@ -344,9 +367,9 @@ pub mod lifecycle {
                 UPDATE sinex_schemas.work_queue
                 SET status = 'failed',
                     processed_at = NOW(),
-                    processing_worker_id = $1::uuid::ulid,
+                    processing_worker_id = $1::uuid,
                     attempts = attempts + 1
-                WHERE queue_id = $2::uuid::ulid AND status = 'processing'
+                WHERE queue_id::uuid = $2 AND status = 'processing'
                 "#,
                 self.worker_id.to_uuid(),
                 queue_id.to_uuid()

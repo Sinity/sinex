@@ -18,7 +18,7 @@ async fn test_validation_with_parameterized_helper(_ctx: TestContext) -> TestRes
     ];
 
     parameterized::test_validation_pairs(test_cases, |payload| {
-        RawEventBuilder::new("filesystem", "file.created", payload).build()
+        RawEventBuilder::new("fs", "file.created", payload).build()
     }).await;
     Ok(())
 }
@@ -105,9 +105,9 @@ async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> TestRe
     use crate::common::validation_test_utils;
 
     let event_creators = vec![
-        ("filesystem", |p| RawEventBuilder::new("filesystem", "file.created", p).build()),
-        ("terminal", |p| RawEventBuilder::new("terminal_kitty", "command.executed", p).build()),
-        ("window", |p| RawEventBuilder::new("hyprland", "window.focus", p).build()),
+        ("fs", |p| RawEventBuilder::new("fs", "file.created", p).build()),
+        ("terminal", |p| RawEventBuilder::new("shell.kitty", "command.executed", p).build()),
+        ("window", |p| RawEventBuilder::new("wm.hyprland", "window.focus", p).build()),
     ];
 
     for (name, creator) in event_creators {
@@ -115,7 +115,7 @@ async fn test_multiple_validation_rules_streamlined(_ctx: TestContext) -> TestRe
 
         // Valid event
         let valid_event = match name {
-            "filesystem" => creator(json!({"path": "/test.txt", "size": 1024})),
+            "fs" => creator(json!({"path": "/test.txt", "size": 1024})),
             "terminal" => creator(json!({"command": "ls", "exit_code": 0})),
             "window" => creator(json!({"window_id": 123, "title": "Test"})),
             _ => unreachable!(),
@@ -145,7 +145,7 @@ async fn test_concurrent_operations_streamlined(ctx: TestContext) -> TestResult 
             let pool_inner = pool_clone.clone();
             async move {
                 let event = RawEventBuilder::new(
-                    "filesystem",
+                    "fs",
                     "file.created",
                     json!({"path": format!("/test_{}.txt", i), "size": i * 1024})
                 ).build();

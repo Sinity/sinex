@@ -11,8 +11,8 @@ use tracing::{debug, error, info};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue, Result,
-    Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp,
 };
 
 // ============================================================================
@@ -52,14 +52,14 @@ pub struct TerminalScrollbackCaptured;
 impl EventType for TerminalScrollbackCaptured {
     type Payload = TerminalScrollbackCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "terminal.scrollback.captured";
+    const EVENT_NAME: &'static str = "output.captured";
 }
 
 pub struct CommandOutputCaptured;
 impl EventType for CommandOutputCaptured {
     type Payload = CommandOutputCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "terminal.command_output.captured";
+    const EVENT_NAME: &'static str = "output.captured";
 }
 
 // ============================================================================
@@ -137,7 +137,7 @@ struct CommandExecutedEvent {
 impl EventSource for ScrollbackCapture {
     type Config = ScrollbackConfig;
 
-    const SOURCE_NAME: &'static str = "ingestor.scrollback_capture";
+    const SOURCE_NAME: &'static str = sources::SHELL_SCROLLBACK;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {

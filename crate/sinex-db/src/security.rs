@@ -49,33 +49,27 @@ impl SecurityValidator {
         let check_str = double_decoded.to_lowercase();
         for pattern in &dangerous_patterns {
             if check_str.contains(pattern) {
-                // Instead of rejecting, sanitize by removing traversal attempts
-                let mut cleaned = double_decoded
-                    .replace("..", "")
-                    .replace("\\", "/");
-                
-                // Replace multiple slashes with single slash
-                while cleaned.contains("//") {
-                    cleaned = cleaned.replace("//", "/");
-                }
-                
-                // Further sanitize sensitive paths
-                cleaned = cleaned
-                    .replace("/etc/passwd", "/sanitized/path")
-                    .replace("/windows/system32", "/sanitized/path")
-                    .replace("windows/system32", "sanitized/path");
-                
-                return Ok(Cow::Owned(cleaned));
+                return Err(SecurityError::PathTraversal(format!(
+                    "Path contains dangerous traversal sequence: {}",
+                    pattern
+                )));
             }
         }
         
-        // Normalize the path
+        // Normalize the path and ensure it's not trying to escape root
         let path = Path::new(double_decoded.as_ref());
         
         // Convert to string, replacing any remaining backslashes
         let normalized = path
             .to_string_lossy()
             .replace('\\', "/");
+        
+        // Final check for any remaining ".." after normalization
+        if normalized.contains("..") {
+            return Err(SecurityError::PathTraversal(
+                "Path contains dangerous traversal sequence after normalization".to_string(),
+            ));
+        }
         
         Ok(Cow::Owned(normalized))
     }
@@ -179,7 +173,7 @@ impl SecurityValidator {
             "`cat ",
             "$(cat",
             "../../../etc/passwd",
-            "\\x00",
+            "\x00",
         ];
         
         for pattern in &dangerous_patterns {
@@ -197,8 +191,59 @@ impl SecurityValidator {
                 "Potentially catastrophic regex pattern detected".to_string()
             ));
         }
+
+        // Check for TOML bomb (deeply nested keys)
+        if content.lines().filter(|line| line.starts_with("[")).count() > 50 {
+            return Err(SecurityError::ResourceLimit(
+                "Excessive TOML nesting detected (potential TOML bomb)".to_string()
+            ));
+        }
+
+        // Check for dangerous unicode characters
+        let dangerous_unicode_patterns = [
+            '\u{0000}', // Null byte
+            '\u{0001}', // Start of Heading
+            '\u{0002}', // Start of Text
+            '\u{FEFF}', // Zero Width No-Break Space (BOM)
+        ];
+        for &c in &dangerous_unicode_patterns {
+            if content.contains(c) {
+                return Err(SecurityError::NullByteInjection);
+            }
+        }
         
         Ok(())
+    }
+    
+    /// Sanitize configuration values that might be used in shell commands or paths
+    pub fn sanitize_config_value(value: &str) -> String {
+        // Remove shell metacharacters and potential command injection vectors
+        value
+            .chars()
+            .filter(|&c| {
+                // Allow alphanumeric, common punctuation, and spaces
+                c.is_alphanumeric() 
+                    || c == ' ' || c == '-' || c == '_' || c == '.' 
+                    || c == '/' || c == ':' || c == '=' || c == ','
+            })
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+    
+    /// Validate and sanitize a path from configuration
+    pub fn sanitize_config_path(path: &str) -> SecurityResult<String> {
+        // First sanitize the path string
+        let sanitized = Self::sanitize_path(path)?;
+        
+        // Additional checks for config paths
+        if sanitized.contains("..") {
+            return Err(SecurityError::PathTraversal(
+                "Config paths cannot contain '..'".to_string()
+            ));
+        }
+        
+        Ok(sanitized.into_owned())
     }
 }
 
@@ -208,29 +253,23 @@ mod tests {
     
     #[test]
     fn test_path_sanitization() {
-        // Basic traversal
+        // Valid paths should work
         assert_eq!(
-            SecurityValidator::sanitize_path("../../../etc/passwd").unwrap(),
-            "/etc/passwd"
+            SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
+            "/home/user/file.txt"
         );
         
-        // Windows style
-        assert_eq!(
-            SecurityValidator::sanitize_path("..\\..\\windows\\system32").unwrap(),
-            "/windows/system32"
-        );
+        // Basic traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("../../../etc/passwd").is_err());
         
-        // URL encoded
-        assert_eq!(
-            SecurityValidator::sanitize_path("%2e%2e%2f%2e%2e%2fetc%2fpasswd").unwrap(),
-            "/etc/passwd"
-        );
+        // Windows style should be rejected
+        assert!(SecurityValidator::sanitize_path("..\\..\\windows\\system32").is_err());
         
-        // Double encoded
-        assert_eq!(
-            SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").unwrap(),
-            "/etc/passwd"
-        );
+        // URL encoded traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("%2e%2e%2f%2e%2e%2fetc%2fpasswd").is_err());
+        
+        // Double encoded traversal should be rejected
+        assert!(SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").is_err());
     }
     
     #[test]

@@ -80,3 +80,6 @@ mod property;
 
 #[cfg(test)]
 mod adversarial;
+
+#[cfg(test)]
+mod stress_test;

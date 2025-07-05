@@ -40,6 +40,26 @@ pub struct FileDeletedPayload {
     pub deleted_at: Timestamp,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FileMovedPayload {
+    pub path: PathBuf,
+    pub old_path: Option<PathBuf>,
+    pub moved_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DirCreatedPayload {
+    pub path: PathBuf,
+    pub created_at: Timestamp,
+    pub permissions: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DirDeletedPayload {
+    pub path: PathBuf,
+    pub deleted_at: Timestamp,
+}
+
 // ============================================================================
 // Event Types
 // ============================================================================
@@ -63,6 +83,27 @@ impl EventType for FileDeleted {
     type Payload = FileDeletedPayload;
     type SourceImpl = FilesystemWatcher;
     const EVENT_NAME: &'static str = event_type_constants::filesystem::FILE_DELETED;
+}
+
+pub struct FileMoved;
+impl EventType for FileMoved {
+    type Payload = FileMovedPayload;
+    type SourceImpl = FilesystemWatcher;
+    const EVENT_NAME: &'static str = event_type_constants::filesystem::FILE_MOVED;
+}
+
+pub struct DirCreated;
+impl EventType for DirCreated {
+    type Payload = DirCreatedPayload;
+    type SourceImpl = FilesystemWatcher;
+    const EVENT_NAME: &'static str = event_type_constants::filesystem::DIR_CREATED;
+}
+
+pub struct DirDeleted;
+impl EventType for DirDeleted {
+    type Payload = DirDeletedPayload;
+    type SourceImpl = FilesystemWatcher;
+    const EVENT_NAME: &'static str = event_type_constants::filesystem::DIR_DELETED;
 }
 
 // ============================================================================
@@ -95,6 +136,7 @@ impl Default for FilesystemConfig {
 /// File system monitor using the notify crate (inotify on Linux)
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
+    watch_roots: Vec<PathBuf>,
 }
 
 // Legacy alias for compatibility
@@ -102,25 +144,35 @@ pub type FilesystemWatcher = FilesystemMonitor;
 
 impl FilesystemMonitor {
     async fn new(config: FilesystemConfig) -> Result<Self> {
-        Ok(Self { config })
+        Ok(Self { 
+            config,
+            watch_roots: Vec::new(),
+        })
     }
 
     fn process_notify_event(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
+        watch_roots: &[PathBuf],
     ) -> Option<RawEvent> {
         let path = event.paths.first()?;
         let path_str = path.to_string_lossy().to_string();
 
-        // Validate path for security issues
-        match sinex_core::validation::validate_path(&path_str) {
-            Ok(_) => {
-                // Path is safe, continue processing
+        // Validate path stays within watch roots
+        let mut path_valid = false;
+        for root in watch_roots {
+            match sinex_core::validation::validate_path_within_root(&path_str, &root.to_string_lossy()) {
+                Ok(_) => {
+                    path_valid = true;
+                    break;
+                }
+                Err(_) => continue,
             }
-            Err(e) => {
-                error!("Path validation failed: {} - path: {}", e, path_str);
-                return None;
-            }
+        }
+        
+        if !path_valid {
+            error!("Path validation failed: path '{}' escapes all watch roots", path_str);
+            return None;
         }
 
         // Check if path matches any watch pattern
@@ -187,50 +239,168 @@ impl FilesystemMonitor {
 
         // Determine event type and create payload
         let (event_type, payload) = match event.kind {
-            notify::EventKind::Create(_) => {
-                let metadata = std::fs::metadata(path).ok()?;
-                let payload = FileCreatedPayload {
-                    path: path.to_path_buf(),
-                    size: metadata.len(),
-                    created_at: Utc::now(),
-                    permissions: {
-                        #[cfg(unix)]
-                        {
-                            Some(metadata.permissions().mode())
+            notify::EventKind::Create(create_kind) => {
+                match create_kind {
+                    notify::event::CreateKind::File | notify::event::CreateKind::Any => {
+                        let metadata = std::fs::metadata(path).ok()?;
+                        let payload = FileCreatedPayload {
+                            path: path.to_path_buf(),
+                            size: metadata.len(),
+                            created_at: Utc::now(),
+                            permissions: {
+                                #[cfg(unix)]
+                                {
+                                    Some(metadata.permissions().mode())
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    None
+                                }
+                            },
+                        };
+                        (
+                            event_type_constants::filesystem::FILE_CREATED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                    notify::event::CreateKind::Folder => {
+                        let payload = DirCreatedPayload {
+                            path: path.to_path_buf(),
+                            created_at: Utc::now(),
+                            permissions: {
+                                #[cfg(unix)]
+                                {
+                                    if let Ok(metadata) = std::fs::metadata(path) {
+                                        Some(metadata.permissions().mode())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    None
+                                }
+                            },
+                        };
+                        (
+                            event_type_constants::filesystem::DIR_CREATED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                    notify::event::CreateKind::Other => {
+                        // For other types, try to determine if it's a file or directory
+                        if path.is_dir() {
+                            let payload = DirCreatedPayload {
+                                path: path.to_path_buf(),
+                                created_at: Utc::now(),
+                                permissions: {
+                                    #[cfg(unix)]
+                                    {
+                                        if let Ok(metadata) = std::fs::metadata(path) {
+                                            Some(metadata.permissions().mode())
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    #[cfg(not(unix))]
+                                    {
+                                        None
+                                    }
+                                },
+                            };
+                            (
+                                event_type_constants::filesystem::DIR_CREATED,
+                                serde_json::to_value(payload).ok()?,
+                            )
+                        } else {
+                            let metadata = std::fs::metadata(path).ok()?;
+                            let payload = FileCreatedPayload {
+                                path: path.to_path_buf(),
+                                size: metadata.len(),
+                                created_at: Utc::now(),
+                                permissions: {
+                                    #[cfg(unix)]
+                                    {
+                                        Some(metadata.permissions().mode())
+                                    }
+                                    #[cfg(not(unix))]
+                                    {
+                                        None
+                                    }
+                                },
+                            };
+                            (
+                                event_type_constants::filesystem::FILE_CREATED,
+                                serde_json::to_value(payload).ok()?,
+                            )
                         }
-                        #[cfg(not(unix))]
-                        {
-                            None
-                        }
-                    },
-                };
-                (
-                    event_type_constants::filesystem::FILE_CREATED,
-                    serde_json::to_value(payload).ok()?,
-                )
+                    }
+                }
             }
-            notify::EventKind::Modify(_) => {
-                let metadata = std::fs::metadata(path).ok()?;
-                let payload = FileModifiedPayload {
-                    path: path.to_path_buf(),
-                    size: metadata.len(),
-                    modified_at: Utc::now(),
-                    modification_type: "content".to_string(),
-                };
-                (
-                    event_type_constants::filesystem::FILE_MODIFIED,
-                    serde_json::to_value(payload).ok()?,
-                )
+            notify::EventKind::Modify(modify_kind) => {
+                match modify_kind {
+                    notify::event::ModifyKind::Name(_) => {
+                        // This is a move/rename operation
+                        let payload = FileMovedPayload {
+                            path: path.to_path_buf(),
+                            old_path: None, // notify doesn't provide the old path in all cases
+                            moved_at: Utc::now(),
+                        };
+                        (
+                            event_type_constants::filesystem::FILE_MOVED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                    _ => {
+                        // Regular modification
+                        let metadata = std::fs::metadata(path).ok()?;
+                        let payload = FileModifiedPayload {
+                            path: path.to_path_buf(),
+                            size: metadata.len(),
+                            modified_at: Utc::now(),
+                            modification_type: "content".to_string(),
+                        };
+                        (
+                            event_type_constants::filesystem::FILE_MODIFIED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                }
             }
-            notify::EventKind::Remove(_) => {
-                let payload = FileDeletedPayload {
-                    path: path.to_path_buf(),
-                    deleted_at: Utc::now(),
-                };
-                (
-                    event_type_constants::filesystem::FILE_DELETED,
-                    serde_json::to_value(payload).ok()?,
-                )
+            notify::EventKind::Remove(remove_kind) => {
+                match remove_kind {
+                    notify::event::RemoveKind::File | notify::event::RemoveKind::Any => {
+                        let payload = FileDeletedPayload {
+                            path: path.to_path_buf(),
+                            deleted_at: Utc::now(),
+                        };
+                        (
+                            event_type_constants::filesystem::FILE_DELETED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                    notify::event::RemoveKind::Folder => {
+                        let payload = DirDeletedPayload {
+                            path: path.to_path_buf(),
+                            deleted_at: Utc::now(),
+                        };
+                        (
+                            event_type_constants::filesystem::DIR_DELETED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                    notify::event::RemoveKind::Other => {
+                        // For other types, default to file deletion
+                        let payload = FileDeletedPayload {
+                            path: path.to_path_buf(),
+                            deleted_at: Utc::now(),
+                        };
+                        (
+                            event_type_constants::filesystem::FILE_DELETED,
+                            serde_json::to_value(payload).ok()?,
+                        )
+                    }
+                }
             }
             _ => return None,
         };
@@ -240,7 +410,7 @@ impl FilesystemMonitor {
         // and use the helper in stream_events instead
         Some(RawEvent {
             id: sinex_ulid::Ulid::new(),
-            source: sources::FILESYSTEM.to_string(),
+            source: sources::FS.to_string(),
             event_type: event_type.to_string(),
             ts_ingest: Utc::now(),
             ts_orig: Some(Utc::now()),
@@ -259,7 +429,7 @@ impl EventSourceBase for FilesystemMonitor {}
 impl EventSource for FilesystemMonitor {
     type Config = FilesystemConfig;
 
-    const SOURCE_NAME: &'static str = sources::FILESYSTEM;
+    const SOURCE_NAME: &'static str = sources::FS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing
@@ -296,6 +466,7 @@ impl EventSource for FilesystemMonitor {
 
         // Watch all matching paths
         let mut watched_paths = std::collections::HashSet::new();
+        self.watch_roots.clear();
 
         for pattern in &self.config.watch_patterns {
             // Expand home directory
@@ -347,19 +518,25 @@ impl EventSource for FilesystemMonitor {
                             .build()
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
+                
+                // Add to watch roots for validation
+                if let Ok(canonical) = base_path.canonicalize() {
+                    self.watch_roots.push(canonical);
+                }
             }
         }
 
         // Process events in a separate task
         let config = self.config.clone();
         let event_tx = tx.clone();
+        let watch_roots = self.watch_roots.clone();
 
         tokio::task::spawn_blocking(move || {
             for result in notify_rx {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(raw_event) = Self::process_notify_event(&event, &config) {
+                            if let Some(raw_event) = Self::process_notify_event(&event, &config, &watch_roots) {
                                 if let Err(e) = event_tx.blocking_send(raw_event) {
                                     error!("Failed to send event: {}", e);
                                     return;

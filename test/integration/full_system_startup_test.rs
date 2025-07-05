@@ -197,7 +197,7 @@ async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
         let source_name = event_type.split('.').next().unwrap_or("unknown");
 
         match source_name {
-            "filesystem" => {
+            "fs" => {
                 // Test filesystem source initialization
                 let ctx = EventSourceContext::for_test();
                 let fs_health = test_filesystem_source_health(ctx).await?;
@@ -212,7 +212,7 @@ async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
                     healthy_sources.store(false, Ordering::SeqCst);
                 }
             }
-            "hyprland" => {
+            "wm.hyprland" => {
                 // Test window manager source initialization
                 let wm_health = test_window_manager_source_health().await?;
                 if !wm_health {
@@ -461,7 +461,7 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
         let source_name = event_type.split('.').next().unwrap_or("unknown");
 
         match source_name {
-            "filesystem" | "terminal" => {
+            "fs" | "terminal" => {
                 successful_sources.store(true, Ordering::SeqCst);
             }
             "nonexistent" => {

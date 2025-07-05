@@ -12,8 +12,8 @@ use tracing::{debug, error, info, warn};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, DbPoolRef, EventSender, EventSource, EventSourceBase, EventSourceContext,
-    EventType, Result, Timestamp,
+    sources, ChannelSenderExt, DbPoolRef, EventSender, EventSource, EventSourceBase,
+    EventSourceContext, EventType, Result, Timestamp,
 };
 use sinex_db::DbPool;
 
@@ -44,7 +44,7 @@ pub struct CommandExecutedAtuin;
 impl EventType for CommandExecutedAtuin {
     type Payload = CommandExecutedAtuinPayload;
     type SourceImpl = AtuinDbReader;
-    const EVENT_NAME: &'static str = "shell.command.executed_atuin";
+    const EVENT_NAME: &'static str = "command.imported";
 }
 
 // ============================================================================
@@ -85,7 +85,7 @@ impl EventSourceBase for AtuinDbReader {}
 impl EventSource for AtuinDbReader {
     type Config = AtuinConfig;
 
-    const SOURCE_NAME: &'static str = "ingestor.atuin_db_reader";
+    const SOURCE_NAME: &'static str = sources::SHELL_ATUIN;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
@@ -194,7 +194,7 @@ impl AtuinDbReader {
                     MAX((payload->>'timestamp')::bigint) as last_timestamp,
                     COUNT(*) as total_count
                 FROM raw.events
-                WHERE event_type = 'shell.command.executed_atuin'
+                WHERE event_type = 'command.imported'
             )
             SELECT last_timestamp, total_count FROM stats
         "#;
