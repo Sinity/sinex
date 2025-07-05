@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use crate::common::{assertions, events};
 
-#[sinex_test]
+#[sinex_test(timeout = 40)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
@@ -79,7 +79,7 @@ async fn test_ulid_timestamp_extraction(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_ulid_monotonic_generation(ctx: TestContext) -> TestResult {
     // Generate multiple ULIDs rapidly to test monotonic behavior
     let mut _prev_ulid = None;

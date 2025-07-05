@@ -2,9 +2,14 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 70% (Socket discovery and basic window listing working, command extraction limited)
+**Implementation**: 70% → **PHASE 1 TARGET: 90%** (Critical blocker resolution in progress)
 **Dependencies**: kitty terminal, unix sockets, kitty @ remote control, EventSource trait
 **Blocks**: Rich terminal context, command completion tracking, pane-level monitoring
+
+## 🚨 CRITICAL BLOCKER STATUS
+**Risk Level**: HIGH - 30% of terminal activity not captured
+**Impact**: Major data loss in terminal domain
+**Phase 1 Resolution**: Week 1 Wednesday-Thursday priority
 
 ## MVP Specification
 - Kitty socket discovery and connection
@@ -25,10 +30,60 @@
 - [x] Remote control connection
 - [x] Window/tab listing
 - [x] Basic polling infrastructure
-- [ ] Command execution detection
-- [ ] Scrollback content access
+- [ ] **🚨 CRITICAL: Command execution detection** (Week 1 Wed-Thu)
+- [ ] **🚨 CRITICAL: Scrollback content access** (Week 1 Wed-Thu)
 - [ ] OSC sequence monitoring
 - [ ] Real-time event streaming
+
+## PHASE 1 CRITICAL IMPLEMENTATION PLAN
+
+### Week 1 Wednesday-Thursday: Command Detection & Scrollback
+```rust
+// sinex-events-terminal/src/kitty.rs
+impl KittyIntegration {
+    async fn capture_command_execution(&mut self) -> Result<()> {
+        // CRITICAL MISSING: Command detection via prompt parsing
+        let scrollback = self.get_scrollback_buffer().await?;
+        let commands = self.parse_shell_prompts(&scrollback)?;
+        
+        for cmd in commands {
+            self.emit_command_event(&cmd).await?;
+        }
+        Ok(())
+    }
+    
+    async fn capture_scrollback(&mut self) -> Result<()> {
+        // CRITICAL MISSING: Get scrollback via kitty remote control
+        let output = Command::new("kitty")
+            .args(["@", "get-text", "--extent=scrollback"])
+            .output()?;
+            
+        let content = String::from_utf8(output.stdout)?;
+        self.process_scrollback_content(&content).await?;
+        Ok(())
+    }
+    
+    fn parse_shell_prompts(&self, content: &str) -> Result<Vec<CommandExecution>> {
+        // CRITICAL MISSING: Prompt pattern recognition
+        // Detect bash/zsh/fish prompts and extract commands
+        let prompt_patterns = [
+            regex::Regex::new(r"^\$ (.+)$")?,  // Basic bash
+            regex::Regex::new(r"^❯ (.+)$")?,   // Starship
+            regex::Regex::new(r"^➜ .+ (.+)$")?, // Oh-my-zsh
+        ];
+        
+        // Parse command execution patterns
+        Ok(vec![]) // Implementation needed
+    }
+}
+```
+
+### Week 1 Implementation Components
+1. **Command Detection**: Shell prompt pattern recognition
+2. **Scrollback Access**: Remote control integration for buffer access
+3. **Command Exit Status**: Correlation with process monitoring
+4. **Buffer Management**: Efficient scrollback difference detection
+5. **Event Correlation**: Link with Atuin command history
 
 *   **Relevant ADR:** `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)` (Kitty RC is part of layered strategy)
 *   **Original UG Context:** Section 8.1

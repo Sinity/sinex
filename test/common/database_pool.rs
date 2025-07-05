@@ -95,7 +95,7 @@ impl DatabasePool {
         
         // Create admin connection
         let admin_pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(3)
+            .max_connections(10)  // Increased for parallel database creation
             .connect(&config.admin_url)
             .await?;
         
@@ -163,7 +163,8 @@ impl DatabasePool {
                 // Create connection pool
                 let url = base_url.replace("/sinex_dev", &format!("/{}", name));
                 let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(5)
+                    .max_connections(15)  // Increased from 5 for better test concurrency
+                    .acquire_timeout(Duration::from_secs(10))  // Increased timeout for parallel tests
                     .connect(&url)
                     .await?;
                 
@@ -385,11 +386,11 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
     
     let template_pool_future = async {
         let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(15)  // Increased for template database setup
             .min_connections(1)
             .max_lifetime(Duration::from_secs(300))
             .idle_timeout(Duration::from_secs(10))
-            .acquire_timeout(Duration::from_secs(5))
+            .acquire_timeout(Duration::from_secs(15))  // Increased for parallel template operations
             .connect(&template_url)
             .await?;
 

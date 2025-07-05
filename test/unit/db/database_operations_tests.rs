@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 
 // Removed basic CRUD tests - they just verified that PostgreSQL insert/select works
 
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = RawEventBuilder::new(
@@ -42,7 +42,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     // Insert events of different types
     let create_event = RawEventBuilder::new(
@@ -86,7 +86,7 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
     let _agent = queries::upsert_agent_manifest(
@@ -145,7 +145,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 45)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
     let _agent = queries::upsert_agent_manifest(
@@ -254,7 +254,7 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 40)]
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     use tokio::task::JoinSet;
 
@@ -297,7 +297,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
 

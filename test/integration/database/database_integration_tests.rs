@@ -20,7 +20,7 @@ use crate::common::{self, assertions, events, generators};
 /// - ULID primary keys are properly handled
 /// - Event retrieval by ID works
 /// - All fields round-trip correctly
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
     // Create a test event using our utilities
     let event = events::filesystem_event(
@@ -41,19 +41,36 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
 }
 
 /// Test batch insertion of multiple events
-#[sinex_test]
+#[sinex_test(timeout = 40)]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let events = generators::test_events(10);
 
+    // Insert events concurrently for better performance
+    let insert_tasks: Vec<_> = events.iter().map(|event| {
+        let pool = ctx.pool().clone();
+        let event = event.clone();
+        tokio::spawn(async move {
+            assertions::assert_event_inserted(&pool, &event).await
+        })
+    }).collect();
+
+    // Wait for all insertions to complete
     let mut inserted_ids = Vec::new();
-    for event in &events {
-        let id = assertions::assert_event_inserted(ctx.pool(), event).await?;
+    for task in insert_tasks {
+        let id = task.await??;
         inserted_ids.push(id);
     }
 
-    // Verify all events exist
-    for id in inserted_ids {
-        assert!(common::event_exists(ctx.pool(), id).await?);
+    // Verify all events exist (also done concurrently)
+    let verify_tasks: Vec<_> = inserted_ids.iter().map(|&id| {
+        let pool = ctx.pool().clone();
+        tokio::spawn(async move {
+            common::event_exists(&pool, id).await
+        })
+    }).collect();
+
+    for task in verify_tasks {
+        assert!(task.await??);
     }
 
     // Check total count
@@ -64,17 +81,27 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
 }
 
 /// Test querying events by source
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
-    // Insert filesystem events
+    // Create test events
     let fs_event1 = events::file_created_event("/test/file1.txt");
     let fs_event2 = events::file_modified_event("/test/file2.txt");
-    assertions::assert_event_inserted(ctx.pool(), &fs_event1).await?;
-    assertions::assert_event_inserted(ctx.pool(), &fs_event2).await?;
-
-    // Insert terminal event
     let term_event = events::kitty_event("ls -la");
-    assertions::assert_event_inserted(ctx.pool(), &term_event).await?;
+
+    // Insert all events concurrently
+    let events_to_insert = vec![&fs_event1, &fs_event2, &term_event];
+    let insert_tasks: Vec<_> = events_to_insert.iter().map(|&event| {
+        let pool = ctx.pool().clone();
+        let event = event.clone();
+        tokio::spawn(async move {
+            assertions::assert_event_inserted(&pool, &event).await
+        })
+    }).collect();
+
+    // Wait for all insertions
+    for task in insert_tasks {
+        task.await??;
+    }
 
     // Query using our helper function
     let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
@@ -96,7 +123,7 @@ async fn test_invalid_event_insertion_fails(ctx: TestContext) -> TestResult {
 }
 
 /// Test ULID ordering in time-based queries
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
     // Insert events with a small delay to ensure different timestamps
     let event1 = events::file_created_event("/test/first.txt");

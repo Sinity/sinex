@@ -35,8 +35,8 @@ pub mod test_context;
 // Unified event builder hierarchy
 pub mod event_builders;
 
-// Re-export the procedural macros from sinex-test-macros crate
-use crate::common::prelude::*;
+// Re-export the procedural macros from sinex-test-macros crate and make them public
+pub use crate::common::prelude::*;
 use sinex_core::{event_type_constants, sources, RawEventBuilder};
 
 /// Get test database URL with fallback

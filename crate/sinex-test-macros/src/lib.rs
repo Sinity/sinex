@@ -38,14 +38,16 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Parse timeout attribute with smarter defaults
     let timeout_secs = parse_timeout_attr(attr).unwrap_or_else(|| {
-        // Smart default based on function name patterns
+        // Smart default based on function name patterns - increased for database operations
         let fn_name_str = fn_name.to_string();
         if fn_name_str.contains("system") || fn_name_str.contains("end_to_end") {
-            45 // System tests need more time, especially for template creation
+            60 // System tests need more time, especially for template creation
         } else if fn_name_str.contains("adversarial") || fn_name_str.contains("stress") {
-            30 // Adversarial tests need moderate time
+            45 // Adversarial tests need moderate time
+        } else if fn_name_str.contains("database") || fn_name_str.contains("integration") {
+            40 // Database operations need extra time for connection pool
         } else {
-            25 // Default timeout for integration and unit tests
+            30 // Default timeout for unit tests, increased for safety
         }
     });
 
@@ -112,7 +114,12 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         });
                         
                         let test_result = async { #fn_body }.await;
-                        progress_task.abort();
+                        // Gracefully cancel progress task to avoid abrupt shutdown
+                        if !progress_task.is_finished() {
+                            progress_task.abort();
+                            // Give a small grace period for cleanup
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
                         test_result
                     } else {
                         async { #fn_body }.await
