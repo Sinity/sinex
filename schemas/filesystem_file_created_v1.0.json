@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.local/schemas/filesystem/file_created_v1.0.json",
+  "title": "Filesystem File Created Event",
+  "description": "Schema for filesystem file creation events",
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "format": "path",
+      "description": "Full path to the created file",
+      "minLength": 1
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "File size in bytes"
+    },
+    "permissions": {
+      "type": "string",
+      "pattern": "^[0-7]{3,4}$",
+      "description": "File permissions in octal notation"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "File creation timestamp"
+    },
+    "content_type": {
+      "type": "string",
+      "description": "MIME type of the created file"
+    },
+    "checksum": {
+      "type": "object",
+      "properties": {
+        "blake3": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "BLAKE3 hash of file content"
+        }
+      },
+      "required": ["blake3"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["path", "size", "created_at"],
+  "additionalProperties": false
+}
