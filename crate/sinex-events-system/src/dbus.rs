@@ -7,8 +7,8 @@ use tracing::{error, info};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue, Result,
-    Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp,
 };
 
 // ============================================================================
@@ -186,84 +186,84 @@ pub struct DbusSignal;
 impl EventType for DbusSignal {
     type Payload = DbusSignalPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "dbus.signal";
+    const EVENT_NAME: &'static str = "signal.received";
 }
 
 pub struct DbusMethodCall;
 impl EventType for DbusMethodCall {
     type Payload = DbusMethodCallPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "dbus.method_call";
+    const EVENT_NAME: &'static str = "method.called";
 }
 
 pub struct SystemNotification;
 impl EventType for SystemNotification {
     type Payload = NotificationPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "system.notification";
+    const EVENT_NAME: &'static str = "notification.sent";
 }
 
 pub struct MediaPlaybackChanged;
 impl EventType for MediaPlaybackChanged {
     type Payload = MediaPlaybackPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "media.playback.changed";
+    const EVENT_NAME: &'static str = "media.state_changed";
 }
 
 pub struct PowerEvent;
 impl EventType for PowerEvent {
     type Payload = PowerEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "system.power.event";
+    const EVENT_NAME: &'static str = "power.state_changed";
 }
 
 pub struct HardwareEvent;
 impl EventType for HardwareEvent {
     type Payload = HardwareEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "hardware.device.event";
+    const EVENT_NAME: &'static str = "device.connected";
 }
 
 pub struct SessionEvent;
 impl EventType for SessionEvent {
     type Payload = SessionEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "session.state.changed";
+    const EVENT_NAME: &'static str = "session.state_changed";
 }
 
 pub struct PolicyKitEvent;
 impl EventType for PolicyKitEvent {
     type Payload = PolicyKitEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "security.policykit.authorization";
+    const EVENT_NAME: &'static str = "security.authorization";
 }
 
 pub struct BluetoothEvent;
 impl EventType for BluetoothEvent {
     type Payload = BluetoothEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "bluetooth.device.event";
+    const EVENT_NAME: &'static str = "bluetooth.device_changed";
 }
 
 pub struct NetworkEvent;
 impl EventType for NetworkEvent {
     type Payload = NetworkEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "network.connection.event";
+    const EVENT_NAME: &'static str = "network.state_changed";
 }
 
 pub struct ScreenSaverEvent;
 impl EventType for ScreenSaverEvent {
     type Payload = ScreenSaverEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "screen.saver.event";
+    const EVENT_NAME: &'static str = "screensaver.state_changed";
 }
 
 pub struct MountEvent;
 impl EventType for MountEvent {
     type Payload = MountEventPayload;
     type SourceImpl = DbusMonitor;
-    const EVENT_NAME: &'static str = "storage.mount.event";
+    const EVENT_NAME: &'static str = "mount.changed";
 }
 
 // ============================================================================
@@ -331,7 +331,7 @@ pub struct DbusMonitor {
 impl EventSource for DbusMonitor {
     type Config = DbusConfig;
 
-    const SOURCE_NAME: &'static str = "dbus.monitor";
+    const SOURCE_NAME: &'static str = sources::DBUS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {

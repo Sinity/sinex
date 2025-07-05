@@ -254,12 +254,15 @@ impl ConfigValidator {
         let path = path.to_string();
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
-                // Check for path traversal attempts
-                if path_str.contains("..") || path_str.contains("\0") {
-                    return Err(CoreError::Configuration(format!(
-                        "Path at '{}' contains dangerous content (path traversal or null bytes)",
-                        path
-                    )));
+                // Use the core validation function for consistency
+                match crate::validation::validate_path(path_str) {
+                    Err(_) => {
+                        return Err(CoreError::Configuration(format!(
+                            "Path at '{}' contains dangerous content",
+                            path
+                        )));
+                    }
+                    Ok(_) => {}
                 }
                 
                 if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
@@ -280,12 +283,15 @@ impl ConfigValidator {
         let path = path.to_string();
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
-                // Check for path traversal attempts
-                if path_str.contains("..") || path_str.contains("\0") {
-                    return Err(CoreError::Configuration(format!(
-                        "Path at '{}' contains dangerous content (path traversal or null bytes)",
-                        path
-                    )));
+                // Use the core validation function for consistency
+                match crate::validation::validate_path(path_str) {
+                    Err(_) => {
+                        return Err(CoreError::Configuration(format!(
+                            "Path at '{}' contains dangerous content",
+                            path
+                        )));
+                    }
+                    Ok(_) => {}
                 }
                 
                 if !Path::new(path_str).is_absolute() {
@@ -326,25 +332,28 @@ impl ConfigValidator {
             if let Ok(array) = config.require_array(&path) {
                 for (i, element) in array.iter().enumerate() {
                     if let Some(path_str) = element.as_str() {
-                        // Check for path traversal attempts
-                        if path_str.contains("..") || path_str.contains("\0") {
-                            return Err(CoreError::Configuration(format!(
-                                "Path pattern at '{}[{}]' ('{}') contains dangerous content (path traversal or null bytes)", 
-                                path, i, path_str
-                            )));
+                        // Use the core validation function and check for shell metacharacters
+                        match crate::validation::validate_path(path_str) {
+                            Err(_) => {
+                                return Err(CoreError::Configuration(format!(
+                                    "Path pattern at '{}[{}]' ('{}') contains dangerous content", 
+                                    path, i, path_str
+                                )));
+                            }
+                            Ok(_) => {}
                         }
                         
                         // Check for command injection patterns
-                        if path_str.contains(';') || path_str.contains('|') || path_str.contains('&') {
+                        if crate::validation::contains_shell_metacharacters(path_str) {
                             return Err(CoreError::Configuration(format!(
                                 "Path pattern at '{}[{}]' ('{}') contains shell metacharacters", 
                                 path, i, path_str
                             )));
                         }
                         
-                        if !path_str.starts_with('/') && !path_str.starts_with("~/") {
+                        if !path_str.starts_with('/') && !path_str.starts_with("~/") && !path_str.contains('*') {
                             return Err(CoreError::Configuration(format!(
-                                "Path pattern at '{}[{}]' ('{}') should be an absolute path or start with ~/", 
+                                "Path pattern at '{}[{}]' ('{}') should be an absolute path, start with ~/, or contain wildcards", 
                                 path, i, path_str
                             )));
                         }
@@ -371,6 +380,24 @@ impl ConfigValidator {
                     return Err(CoreError::Configuration(format!(
                         "Value at '{}' must be greater than 0, got {}",
                         path, value
+                    )));
+                }
+            }
+            Ok(())
+        });
+        self.validators.push(validator);
+        self
+    }
+
+    /// Validate that string fields don't contain shell metacharacters
+    pub fn validate_no_shell_metacharacters(mut self, path: &str) -> Self {
+        let path = path.to_string();
+        let validator = Box::new(move |config: &ConfigValue| {
+            if let Some(value) = config.optional_str(&path) {
+                if crate::validation::contains_shell_metacharacters(value) {
+                    return Err(CoreError::Configuration(format!(
+                        "Value at '{}' contains shell metacharacters",
+                        path
                     )));
                 }
             }
@@ -755,7 +782,7 @@ mod tests {
         // Valid array with good paths
         let valid_config: ConfigValue = toml::from_str(
             r#"
-            watch_patterns = ["/home/user/docs", "~/Downloads/**/*"]
+            watch_patterns = ["/home/user/docs", "/home/user/Downloads"]
         "#,
         )
         .unwrap();

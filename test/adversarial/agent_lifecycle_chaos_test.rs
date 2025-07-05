@@ -26,7 +26,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 description: Some(format!("Chaos agent instance {}", instance_id)),
                 version: format!("1.0.{}", instance_id), // Slightly different versions
                 status: "running".to_string(),
-                agent_type: "filesystem".to_string(),
+                agent_type: "fs".to_string(),
                 config_template_json: Some(json!({
                     "type": "object",
                     "properties": {
@@ -191,7 +191,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
         description: Some("Version chaos test agent v2".to_string()),
         version: "2.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "filesystem".to_string(),
+        agent_type: "fs".to_string(),
         config_template_json: Some(json!({
             "type": "object",
             "properties": {
@@ -238,7 +238,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
         description: Some("Version chaos test agent v1".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "filesystem".to_string(),
+        agent_type: "fs".to_string(),
         config_template_json: Some(json!({
             "type": "object",
             "properties": {
@@ -320,7 +320,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
         description: Some("Status chaos test agent".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "filesystem".to_string(),
+        agent_type: "fs".to_string(),
         config_template_json: None,
         produces_event_types: Some(json!(["file.created"])),
         subscribes_to_event_types: None,
@@ -425,7 +425,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
         description: Some("Zombie test agent".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "filesystem".to_string(),
+        agent_type: "fs".to_string(),
         config_template_json: None,
         produces_event_types: Some(json!(["file.created"])),
         subscribes_to_event_types: None,
@@ -460,7 +460,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
         description: Some("Zombie test agent (recovered)".to_string()),
         version: "1.0.1".to_string(), // Slightly newer
         status: "running".to_string(),
-        agent_type: "filesystem".to_string(),
+        agent_type: "fs".to_string(),
         config_template_json: None,
         produces_event_types: Some(json!(["file.created"])),
         subscribes_to_event_types: None,

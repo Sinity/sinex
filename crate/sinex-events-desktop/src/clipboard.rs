@@ -7,8 +7,8 @@ use tracing::{debug, error, info};
 
 use sinex_annex::{AnnexConfig, BlobManager, BlobMetadata, GitAnnex};
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType,
-    JsonValue, Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext,
+    EventType, JsonValue, Result, Timestamp,
 };
 use sinex_db::DbPool;
 
@@ -80,14 +80,14 @@ pub struct ClipboardChanged;
 impl EventType for ClipboardChanged {
     type Payload = ClipboardChangedPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "clipboard.content.changed";
+    const EVENT_NAME: &'static str = "copied";
 }
 
 pub struct ClipboardSelection;
 impl EventType for ClipboardSelection {
     type Payload = ClipboardSelectionPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "clipboard.selection.changed";
+    const EVENT_NAME: &'static str = "selected";
 }
 
 // ============================================================================
@@ -166,7 +166,7 @@ impl EventSourceBase for ClipboardMonitor {}
 impl EventSource for ClipboardMonitor {
     type Config = ClipboardConfig;
 
-    const SOURCE_NAME: &'static str = "clipboard.monitor";
+    const SOURCE_NAME: &'static str = sources::CLIPBOARD;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing

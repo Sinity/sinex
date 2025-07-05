@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
-    unified_collector::{create_registry, EventRegistry, EventSource},
+    unified_collector::{create_registry, EventRegistry, EventRegistryBuilder, EventSource},
     ConfigValue, EventSender, EventSourceContext, JsonValue,
 };
 use sinex_db::validation::EventValidator;
@@ -23,6 +23,7 @@ use sinex_events_terminal::{
     terminal::{KittyConfig, KittySocketListener},
 };
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -30,7 +31,44 @@ use tracing::{error, info};
 use crate::config::CollectorConfig;
 use crate::metrics::CollectorMetrics;
 use crate::OutputConfig;
-use std::sync::Arc;
+
+/// Create an EventRegistry with auto-registration from event crates
+/// This demonstrates the pattern for eliminating manual registry maintenance
+///
+/// # Auto-Registration Pattern
+/// 
+/// Each event crate provides a `register_events(builder: &mut EventRegistryBuilder)` function
+/// that automatically registers all its event types with proper schemas. This eliminates:
+/// 
+/// - Manual maintenance of event type lists
+/// - Risk of forgetting to register new event types
+/// - Schema/payload drift when types are updated
+/// 
+/// # Usage
+/// 
+/// ```rust
+/// let registry = create_registry_with_auto_registration();
+/// ```
+/// 
+/// # Implementation Status
+/// 
+/// - ✅ sinex-events-fs: Implemented auto-registration
+/// - ⏳ sinex-events-desktop: TODO - add register_events() function  
+/// - ⏳ sinex-events-terminal: TODO - add register_events() function
+/// - ⏳ sinex-events-system: TODO - add register_events() function
+pub fn create_registry_with_auto_registration() -> EventRegistry {
+    let mut builder = EventRegistryBuilder::new();
+    
+    // Auto-register event types from each event crate
+    sinex_events_fs::register_events(&mut builder);
+    
+    // TODO: Add other event crates when they implement register_events:
+    // sinex_events_desktop::register_events(&mut builder);
+    // sinex_events_terminal::register_events(&mut builder);
+    // sinex_events_system::register_events(&mut builder);
+    
+    builder.build()
+}
 
 /// Convert TOML value to JSON value
 fn toml_to_json(toml_val: ConfigValue) -> JsonValue {

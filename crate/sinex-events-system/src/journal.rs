@@ -8,7 +8,7 @@ use tracing::{debug, error, info};
 
 use sinex_core::RawEvent;
 use sinex_core::{
-    ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
     OptionalTimestamp, Result, Timestamp,
 };
 
@@ -80,14 +80,14 @@ pub struct JournalEntry;
 impl EventType for JournalEntry {
     type Payload = JournalEntryPayload;
     type SourceImpl = JournalMonitor;
-    const EVENT_NAME: &'static str = "system.journal.entry";
+    const EVENT_NAME: &'static str = "entry.written";
 }
 
 pub struct JournalSync;
 impl EventType for JournalSync {
     type Payload = JournalSyncPayload;
     type SourceImpl = JournalMonitor;
-    const EVENT_NAME: &'static str = "system.journal.sync";
+    const EVENT_NAME: &'static str = "sync.completed";
 }
 
 // ============================================================================
@@ -153,7 +153,7 @@ pub struct JournalMonitor {
 impl EventSource for JournalMonitor {
     type Config = JournalConfig;
 
-    const SOURCE_NAME: &'static str = "journal.monitor";
+    const SOURCE_NAME: &'static str = sources::JOURNALD;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {

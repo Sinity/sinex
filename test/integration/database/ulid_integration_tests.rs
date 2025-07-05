@@ -18,7 +18,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
 
     // Query filesystem events to verify ordering
     let filesystem_events =
-        crate::common::get_events_by_source(ctx.pool(), "filesystem", 5).await?;
+        crate::common::get_events_by_source(ctx.pool(), "fs", 5).await?;
     let retrieved_ulids: Vec<Ulid> = filesystem_events.iter().map(|e| e.id).collect();
 
     // Verify strict ordering by comparing ULIDs directly

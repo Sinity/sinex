@@ -244,7 +244,7 @@ async fn test_configuration_validation(ctx: TestContext) -> TestResult {
         event_batch_size: 1000,
         _batch_timeout_ms: 500,
         channel_buffer_size: 10_000,
-        sources: vec!["filesystem".to_string()],
+        sources: vec!["fs".to_string()],
         ..Default::default()
     };
 

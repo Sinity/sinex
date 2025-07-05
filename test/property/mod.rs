@@ -63,9 +63,9 @@ pub mod strategies {
     /// Strategy for generating event source names
     pub fn event_sources() -> impl Strategy<Value = &'static str> {
         prop_oneof![
-            Just("filesystem"),
-            Just("terminal.kitty"),
-            Just("hyprland"),
+            Just("fs"),
+            Just("shell.kitty"),
+            Just("wm.hyprland"),
             Just("clipboard"),
             Just("shell_history"),
         ]

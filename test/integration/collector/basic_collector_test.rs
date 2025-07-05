@@ -6,7 +6,7 @@ use sinex_db::validation::EventValidator;
 #[sinex_test]
 async fn test_collector_creation(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
-        enabled_events: vec!["filesystem".to_string()],
+        enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
         annex_repo_path: None,
@@ -28,7 +28,7 @@ async fn test_collector_creation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_output_config_database(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
-        enabled_events: vec!["filesystem".to_string()],
+        enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
         annex_repo_path: None,
@@ -102,7 +102,7 @@ async fn test_collector_config_loading(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_event_filtering(_ctx: TestContext) -> TestResult {
     let mut config = CollectorConfig {
-        enabled_events: vec!["filesystem".to_string()],
+        enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
         annex_repo_path: None,
@@ -127,7 +127,7 @@ async fn test_event_filtering(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_collector_file_output(_ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
-        enabled_events: vec!["filesystem".to_string()],
+        enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
         annex_repo_path: None,
@@ -151,7 +151,7 @@ async fn test_collector_file_output(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_collector_with_validator(ctx: TestContext) -> TestResult {
     let config = CollectorConfig {
-        enabled_events: vec!["filesystem".to_string()],
+        enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
         flat_config: HashMap::new(),
         annex_repo_path: None,

@@ -41,7 +41,7 @@ async fn test_event_source_context_large_config(_ctx: TestContext) -> TestResult
     }
 
     let config = json!({
-        "filesystem": {
+        "fs": {
             "watch_paths": large_paths,
             "recursive": true,
             "ignore_patterns": [
@@ -63,18 +63,18 @@ async fn test_event_source_context_large_config(_ctx: TestContext) -> TestResult
 
     // Verify large arrays are handled correctly
     pretty_assertions::assert_eq!(
-        context.config["filesystem"]["watch_paths"]
+        context.config["fs"]["watch_paths"]
             .as_array()
             .unwrap()
             .len(),
         100
     );
     pretty_assertions::assert_eq!(
-        context.config["filesystem"]["watch_paths"][50],
+        context.config["fs"]["watch_paths"][50],
         "/path/to/directory/50"
     );
     pretty_assertions::assert_eq!(
-        context.config["filesystem"]["ignore_patterns"]
+        context.config["fs"]["ignore_patterns"]
             .as_array()
             .unwrap()
             .len(),

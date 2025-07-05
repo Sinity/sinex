@@ -16,8 +16,9 @@ from click.testing import CliRunner
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# Add parent directory to path so we can import the CLI
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'cli'))
+# Add CLI directory to path so we can import exo
+cli_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'cli')
+sys.path.insert(0, cli_dir)
 import exo
 
 

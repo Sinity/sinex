@@ -23,17 +23,11 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
-// NEW: Unified database access
+// Unified database access
 pub mod database;
 
-// Universal database pool system
+// Pre-initialized database pool with clean-before-use
 pub mod database_pool;
-
-// Cleanup hook for test infrastructure
-pub mod cleanup_hook;
-
-// Test database isolation (kept for migration)
-pub mod test_database;
 
 // Unified test context for all tests
 pub mod test_context;
@@ -72,7 +66,7 @@ pub mod events {
     /// Create a test filesystem event
     pub fn filesystem_event(event_type: &str, path: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
-            sources::FILESYSTEM,
+            sources::FS,
             event_type,
             json!({
                 "path": path,
@@ -86,8 +80,8 @@ pub mod events {
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         RawEventBuilder::new(
-            sources::TERMINAL_KITTY,
-            event_type_constants::terminal::COMMAND_EXECUTED,
+            sources::SHELL_KITTY,
+            event_type_constants::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -99,7 +93,7 @@ pub mod events {
 
     /// Create a test hyprland event
     pub fn hyprland_event(event_type: &str, data: Value) -> sinex_db::RawEvent {
-        RawEventBuilder::new(sources::HYPRLAND, event_type, data).build()
+        RawEventBuilder::new(sources::WM_HYPRLAND, event_type, data).build()
     }
 
     /// Create a test sinex agent event
@@ -253,7 +247,7 @@ pub mod events {
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
         let mut builder = RawEventBuilder::new(
-            "filesystem",
+            "fs",
             event_type,
             json!({
                 "path": path,
@@ -453,7 +447,7 @@ pub mod generators {
     }
 
     /// Generate realistic terminal command events
-    pub fn realistic_terminal_events(count: usize) -> Vec<sinex_db::RawEvent> {
+    pub fn realistic_shell_events(count: usize) -> Vec<sinex_db::RawEvent> {
         let realistic_commands = vec![
             "git status",
             "cargo build --release",
@@ -519,7 +513,7 @@ pub mod generators {
                 _ => json!({"binary_data": "a".repeat(1000)}), // Very large payload
             };
             test_event_with_payload(
-                sources::FILESYSTEM,
+                sources::FS,
                 event_type_constants::filesystem::FILE_MODIFIED,
                 payload
             )
@@ -566,7 +560,7 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     let exists = sqlx::query!(
         r#"
         SELECT EXISTS(
-            SELECT 1 FROM raw.events WHERE id = $1::uuid::ulid
+            SELECT 1 FROM raw.events WHERE id::uuid = $1
         ) as "exists!"
         "#,
         event_id.to_uuid()
@@ -898,6 +892,10 @@ pub mod timing_optimization;
 
 /// Validation test utilities
 pub mod validation_test_utils;
+
+// Re-export the final pool as the default
+#[allow(unused_imports)]
+pub use database_pool::acquire_test_database;
 
 /// Schema test utilities
 pub mod schema_test_utils;

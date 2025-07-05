@@ -236,7 +236,7 @@ impl FilesystemEventBuilder {
         }
 
         let mut builder =
-            RawEventBuilder::new(sources::FILESYSTEM, operation.as_event_type(), payload);
+            RawEventBuilder::new(sources::FS, operation.as_event_type(), payload);
 
         if let Some(ts) = self.timestamp {
             builder = builder.with_orig_timestamp(ts);
@@ -338,7 +338,7 @@ impl TerminalEventBuilder {
         }
 
         let mut builder =
-            RawEventBuilder::new(sources::TERMINAL_KITTY, "command.executed", payload);
+            RawEventBuilder::new(sources::SHELL_KITTY, "command.executed", payload);
 
         if let Some(ts) = self.timestamp {
             builder = builder.with_orig_timestamp(ts);
@@ -612,7 +612,7 @@ impl HyprlandEventBuilder {
             }
         }
 
-        let mut builder = RawEventBuilder::new(sources::HYPRLAND, event_type.as_str(), payload);
+        let mut builder = RawEventBuilder::new(sources::WM_HYPRLAND, event_type.as_str(), payload);
 
         if let Some(ts) = self.timestamp {
             builder = builder.with_orig_timestamp(ts);
@@ -1018,7 +1018,7 @@ mod tests {
             .permissions(0o644)
             .build();
 
-        pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+        pretty_assertions::assert_eq!(event.source, sources::FS);
         pretty_assertions::assert_eq!(event.event_type, "file.created");
         pretty_assertions::assert_eq!(event.payload["path"], "/home/user/test.txt");
         pretty_assertions::assert_eq!(event.payload["size"], 1024);
@@ -1034,7 +1034,7 @@ mod tests {
             .working_dir("/home/user")
             .build();
 
-        pretty_assertions::assert_eq!(event.source, sources::TERMINAL_KITTY);
+        pretty_assertions::assert_eq!(event.source, sources::SHELL_KITTY);
         pretty_assertions::assert_eq!(event.event_type, "command.executed");
         pretty_assertions::assert_eq!(event.payload["command"], "ls -la");
         pretty_assertions::assert_eq!(event.payload["exit_code"], 0);

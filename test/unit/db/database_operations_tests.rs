@@ -6,38 +6,38 @@ use crate::common::prelude::*;
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({"path": "/test/fs_file.txt"}),
     )
     .build();
 
     let terminal_event = RawEventBuilder::new(
-        "terminal_kitty",
+        "shell.kitty",
         "command.executed",
         json!({"command": "ls"}),
     )
     .build();
 
     let wm_event =
-        RawEventBuilder::new("hyprland", "window.focus", json!({"window_id": 123})).build();
+        RawEventBuilder::new("wm.hyprland", "window.focus", json!({"window_id": 123})).build();
 
     queries::insert_event(ctx.pool(), &fs_event).await?;
     queries::insert_event(ctx.pool(), &terminal_event).await?;
     queries::insert_event(ctx.pool(), &wm_event).await?;
 
     // Query events by source
-    let fs_events = queries::get_events_by_source(ctx.pool(), "filesystem", 10).await?;
+    let fs_events = queries::get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(!fs_events.is_empty());
-    assert!(fs_events.iter().all(|e| e.source == "filesystem"));
+    assert!(fs_events.iter().all(|e| e.source == "fs"));
 
-    let terminal_events = queries::get_events_by_source(ctx.pool(), "terminal_kitty", 10).await?;
-    assert!(!terminal_events.is_empty());
-    assert!(terminal_events.iter().all(|e| e.source == "terminal_kitty"));
+    let shell_events = queries::get_events_by_source(ctx.pool(), "shell.kitty", 10).await?;
+    assert!(!shell_events.is_empty());
+    assert!(shell_events.iter().all(|e| e.source == "shell.kitty"));
 
-    let wm_events = queries::get_events_by_source(ctx.pool(), "hyprland", 10).await?;
+    let wm_events = queries::get_events_by_source(ctx.pool(), "wm.hyprland", 10).await?;
     assert!(!wm_events.is_empty());
-    assert!(wm_events.iter().all(|e| e.source == "hyprland"));
+    assert!(wm_events.iter().all(|e| e.source == "wm.hyprland"));
 
     Ok(())
 }
@@ -46,21 +46,21 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     // Insert events of different types
     let create_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({"path": "/test/created.txt"}),
     )
     .build();
 
     let modify_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.modified",
         json!({"path": "/test/modified.txt"}),
     )
     .build();
 
     let delete_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.deleted",
         json!({"path": "/test/deleted.txt"}),
     )
@@ -103,7 +103,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 
     // Insert a raw event first
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({"path": "/test/work_queue_test.txt"}),
     )
@@ -162,7 +162,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
 
     // Insert a raw event
     let event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({"path": "/test/retry_test.txt", "size": 1024}),
     )
@@ -221,7 +221,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
 async fn test_event_validation(ctx: TestContext) -> TestResult {
     // Test with valid event
     let valid_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "path": "/valid/path.txt",
@@ -237,7 +237,7 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
     // Test with event that has invalid payload structure
     // (This depends on whether validation is enforced at database level)
     let invalid_event = RawEventBuilder::new(
-        "filesystem",
+        "fs",
         "file.created",
         json!({
             "invalid_field": "this should not be here",
@@ -266,7 +266,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
         let pool_clone = Arc::new(ctx.pool().clone());
         join_set.spawn(async move {
             let event = RawEventBuilder::new(
-                "filesystem",
+                "fs",
                 "file.created",
                 json!({
                     "path": format!("/test/concurrent_{}.txt", i),
@@ -304,7 +304,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     // Insert events with small delays to ensure ULID ordering
     for i in 0..5 {
         let event =
-            RawEventBuilder::new("filesystem", "file.created", json!({"sequence": i})).build();
+            RawEventBuilder::new("fs", "file.created", json!({"sequence": i})).build();
 
         let inserted = queries::insert_event(ctx.pool(), &event).await?;
         events.push(inserted);

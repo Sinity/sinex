@@ -27,6 +27,8 @@ console = Console()
 def get_db_connection():
     """Get database connection using environment variable or default."""
     db_url = os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex')
+    # Debug: print the URL being used
+    # print(f"Using DB URL: {db_url}")
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 
@@ -128,7 +130,7 @@ def query(source: Optional[str], event_type: Optional[str], since: Optional[str]
             if last:
                 time_delta = parse_time_delta(last)
                 conditions.append("ts_ingest > %s")
-                params.append(datetime.utcnow() - time_delta)
+                params.append(datetime.now(datetime.timezone.utc) - time_delta)
             
             if conditions:
                 query_parts.append("WHERE " + " AND ".join(conditions))
@@ -294,7 +296,7 @@ def agent_list(status: Optional[str]):
         with conn.cursor() as cur:
             query_parts = [
                 "SELECT agent_name, description, version, status, "
-                "produces_event_types, last_seen_heartbeat, registered_at "
+                "produces_event_types, last_heartbeat_ts, registered_at "
                 "FROM sinex_schemas.agent_manifests"
             ]
             params = []
@@ -321,10 +323,10 @@ def agent_list(status: Optional[str]):
     table.add_column("Description", style="white")
     
     for agent in agents:
-        last_heartbeat = agent['last_seen_heartbeat']
+        last_heartbeat = agent['last_heartbeat_ts']
         if last_heartbeat:
             # Check if heartbeat is recent (within 5 minutes)
-            age = datetime.utcnow() - last_heartbeat.replace(tzinfo=None)
+            age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
             if age.total_seconds() < 300:
                 heartbeat_style = "green"
                 heartbeat_text = "🟢 " + last_heartbeat.strftime('%H:%M:%S')
@@ -384,13 +386,16 @@ def agent_status(agent_name: str):
             """, (agent_name,))
             errors = cur.fetchall()
             
-            # Get DLQ count
+            # Get DLQ count from actual DLQ table
             cur.execute("""
-                SELECT COUNT(*) as dlq_count FROM raw.events
-                WHERE source = 'sinex' AND event_type = 'agent.dlq_event_written'
-                AND payload->>'agent_name' = %s
+                SELECT 
+                    COUNT(*) as total_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_dlq
+                FROM sinex_schemas.dlq_events
+                WHERE agent_name = %s
             """, (agent_name,))
-            dlq_count = cur.fetchone()['dlq_count']
+            dlq_counts = cur.fetchone()
     
     # Display agent information
     panel_content = []
@@ -399,7 +404,9 @@ def agent_status(agent_name: str):
     panel_content.append(f"[bold]Status:[/bold] {agent['status']}")
     panel_content.append(f"[bold]Description:[/bold] {agent['description'] or 'N/A'}")
     panel_content.append(f"[bold]Registered:[/bold] {agent['registered_at']}")
-    panel_content.append(f"[bold]DLQ Events:[/bold] {dlq_count}")
+    panel_content.append(f"[bold]DLQ Total:[/bold] {dlq_counts['total_dlq']}")
+    panel_content.append(f"[bold]DLQ Pending:[/bold] {dlq_counts['pending_dlq']}")
+    panel_content.append(f"[bold]DLQ Resolved:[/bold] {dlq_counts['resolved_dlq']}")
     
     console.print(Panel("\n".join(panel_content), title=f"Agent Status: {agent_name}"))
     
@@ -973,6 +980,553 @@ def blob_verify(annex_repo: str, fast: bool):
             console.print(e.stderr)
 
 
+@cli.group()
+def dlq():
+    """Dead Letter Queue management commands."""
+    pass
+
+
+@dlq.command('list')
+@click.option('--agent', '-a', help='Filter by agent name')
+@click.option('--source', '-s', help='Filter by event source')
+@click.option('--event-type', '-t', help='Filter by event type')
+@click.option('--category', '-c', 
+              type=click.Choice(['retryable', 'permanent', 'system', 'user']),
+              help='Filter by error category')
+@click.option('--limit', '-n', default=50, help='Maximum number of DLQ entries to show')
+@click.option('--include-resolved', is_flag=True, help='Include resolved entries')
+@click.option('--output-format', type=click.Choice(['table', 'json', 'csv']), 
+              default='table', help='Output format')
+def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[str], 
+             category: Optional[str], limit: int, include_resolved: bool, output_format: str):
+    """List DLQ entries with filtering options."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Build dynamic query
+            query_parts = [
+                "SELECT dlq_id, agent_name, source, event_type, failure_reason, "
+                "error_category, retry_count, failed_at, last_retry_at, next_retry_at, "
+                "resolved_at, resolved_by, "
+                "EXTRACT(EPOCH FROM (now() - failed_at)) AS age_seconds "
+                "FROM sinex_schemas.dlq_events"
+            ]
+            conditions = []
+            params = []
+            
+            if not include_resolved:
+                conditions.append("resolved_at IS NULL")
+            
+            if agent:
+                conditions.append("agent_name = %s")
+                params.append(agent)
+            
+            if source:
+                conditions.append("source = %s")
+                params.append(source)
+            
+            if event_type:
+                conditions.append("event_type = %s")
+                params.append(event_type)
+            
+            if category:
+                conditions.append("error_category = %s")
+                params.append(category)
+            
+            if conditions:
+                query_parts.append("WHERE " + " AND ".join(conditions))
+            
+            query_parts.append("ORDER BY failed_at DESC")
+            query_parts.append(f"LIMIT {limit}")
+            
+            query_sql = " ".join(query_parts)
+            cur.execute(query_sql, params)
+            dlq_entries = cur.fetchall()
+    
+    if not dlq_entries:
+        console.print("[yellow]No DLQ entries found.[/yellow]")
+        return
+    
+    if output_format == 'json':
+        # Convert datetime and decimal objects for JSON serialization
+        import decimal
+        for entry in dlq_entries:
+            for key, value in entry.items():
+                if hasattr(value, 'isoformat'):
+                    entry[key] = value.isoformat()
+                elif isinstance(value, decimal.Decimal):
+                    entry[key] = float(value)
+        click.echo(json.dumps(list(dlq_entries), indent=2))
+    elif output_format == 'csv':
+        import csv
+        import io
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=dlq_entries[0].keys())
+        writer.writeheader()
+        for entry in dlq_entries:
+            row = {}
+            for key, value in entry.items():
+                if hasattr(value, 'isoformat'):
+                    row[key] = value.isoformat()
+                else:
+                    row[key] = str(value)
+            writer.writerow(row)
+        click.echo(output.getvalue())
+    else:
+        # Table format
+        table = Table(title=f"DLQ Entries ({len(dlq_entries)} shown)")
+        table.add_column("DLQ ID", style="cyan")
+        table.add_column("Agent", style="green")
+        table.add_column("Source", style="yellow")
+        table.add_column("Event Type", style="blue")
+        table.add_column("Category", style="magenta")
+        table.add_column("Retries", justify="right", style="white")
+        table.add_column("Age", justify="right", style="dim")
+        table.add_column("Status", style="red")
+        table.add_column("Failure Reason", style="white")
+        
+        for entry in dlq_entries:
+            age_seconds = int(entry['age_seconds']) if entry['age_seconds'] else 0
+            age_str = format_duration(age_seconds)
+            
+            status = "Resolved" if entry['resolved_at'] else "Pending"
+            if entry['resolved_by']:
+                status += f" ({entry['resolved_by']})"
+            
+            # Truncate failure reason for display
+            reason = entry['failure_reason'][:60] + "..." if len(entry['failure_reason']) > 60 else entry['failure_reason']
+            
+            table.add_row(
+                str(entry['dlq_id'])[:8],  # Truncated DLQ ID
+                entry['agent_name'],
+                entry['source'],
+                entry['event_type'],
+                entry['error_category'],
+                str(entry['retry_count']),
+                age_str,
+                status,
+                reason
+            )
+        
+        console.print(table)
+
+
+@dlq.command('show')
+@click.argument('dlq_id')
+def dlq_show(dlq_id: str):
+    """Show detailed information about a specific DLQ entry."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Handle partial DLQ ID matching
+            if len(dlq_id) < 26:  # Partial ULID
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id::text LIKE %s
+                """, (f"{dlq_id}%",))
+            else:
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id = %s
+                """, (dlq_id,))
+            
+            entry = cur.fetchone()
+    
+    if not entry:
+        console.print(f"[red]DLQ entry not found: {dlq_id}[/red]")
+        return
+    
+    # Display DLQ entry details
+    panel_content = []
+    panel_content.append(f"[bold]DLQ ID:[/bold] {entry['dlq_id']}")
+    panel_content.append(f"[bold]Failed Event ID:[/bold] {entry['failed_event_id']}")
+    panel_content.append(f"[bold]Agent:[/bold] {entry['agent_name']}")
+    panel_content.append(f"[bold]Source:[/bold] {entry['source']}")
+    panel_content.append(f"[bold]Event Type:[/bold] {entry['event_type']}")
+    panel_content.append(f"[bold]Error Category:[/bold] {entry['error_category']}")
+    panel_content.append(f"[bold]Retry Count:[/bold] {entry['retry_count']}")
+    panel_content.append(f"[bold]Failed At:[/bold] {entry['failed_at']}")
+    
+    if entry['last_retry_at']:
+        panel_content.append(f"[bold]Last Retry:[/bold] {entry['last_retry_at']}")
+    if entry['next_retry_at']:
+        panel_content.append(f"[bold]Next Retry:[/bold] {entry['next_retry_at']}")
+    
+    age_seconds = int((datetime.now(datetime.timezone.utc) - entry['failed_at'].replace(tzinfo=None)).total_seconds())
+    panel_content.append(f"[bold]Age:[/bold] {format_duration(age_seconds)}")
+    
+    if entry['resolved_at']:
+        panel_content.append(f"[bold]Resolved At:[/bold] {entry['resolved_at']}")
+        panel_content.append(f"[bold]Resolved By:[/bold] {entry['resolved_by']}")
+    
+    console.print(Panel("\n".join(panel_content), title="DLQ Entry Details"))
+    
+    # Display failure reason
+    console.print(f"\n[bold]Failure Reason:[/bold]")
+    console.print(Panel(entry['failure_reason'], title="Error Details"))
+    
+    # Display original event payload
+    console.print(f"\n[bold]Original Event Payload:[/bold]")
+    console.print(JSON.from_data(entry['original_event_payload'], indent=2))
+    
+    # Display additional metadata if present
+    if entry['additional_metadata']:
+        console.print(f"\n[bold]Additional Metadata:[/bold]")
+        console.print(JSON.from_data(entry['additional_metadata'], indent=2))
+
+
+@dlq.command('retry')
+@click.argument('dlq_id')
+@click.option('--dry-run', is_flag=True, help='Show what would be retried without actually doing it')
+def dlq_retry(dlq_id: str, dry_run: bool):
+    """Retry a specific DLQ entry."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Find the DLQ entry
+            if len(dlq_id) < 26:  # Partial ULID
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
+                """, (f"{dlq_id}%",))
+            else:
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id = %s AND resolved_at IS NULL
+                """, (dlq_id,))
+            
+            entry = cur.fetchone()
+    
+    if not entry:
+        console.print(f"[red]Unresolved DLQ entry not found: {dlq_id}[/red]")
+        return
+    
+    console.print(f"[bold]Retrying DLQ entry:[/bold] {entry['dlq_id']}")
+    console.print(f"Agent: {entry['agent_name']}")
+    console.print(f"Source: {entry['source']}")
+    console.print(f"Event Type: {entry['event_type']}")
+    console.print(f"Current Retry Count: {entry['retry_count']}")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN: Would retry this entry[/yellow]")
+        return
+    
+    # Update retry information
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Calculate next retry time with exponential backoff
+            next_retry_seconds = min(300 * (2 ** entry['retry_count']), 3600)  # Cap at 1 hour
+            next_retry_at = datetime.now(datetime.timezone.utc) + timedelta(seconds=next_retry_seconds)
+            
+            cur.execute("""
+                UPDATE sinex_schemas.dlq_events 
+                SET retry_count = retry_count + 1,
+                    last_retry_at = now(),
+                    next_retry_at = %s
+                WHERE dlq_id = %s
+            """, (next_retry_at, entry['dlq_id']))
+            
+            conn.commit()
+    
+    console.print(f"[green]✅ DLQ entry marked for retry[/green]")
+    console.print(f"Next retry scheduled for: {next_retry_at}")
+    console.print(f"New retry count: {entry['retry_count'] + 1}")
+
+
+@dlq.command('resolve')
+@click.argument('dlq_id')
+@click.option('--resolution', type=click.Choice(['manual', 'purged']), 
+              default='manual', help='How the entry was resolved')
+@click.option('--dry-run', is_flag=True, help='Show what would be resolved without actually doing it')
+def dlq_resolve(dlq_id: str, resolution: str, dry_run: bool):
+    """Manually resolve a DLQ entry."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Find the DLQ entry
+            if len(dlq_id) < 26:  # Partial ULID
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
+                """, (f"{dlq_id}%",))
+            else:
+                cur.execute("""
+                    SELECT * FROM sinex_schemas.dlq_events 
+                    WHERE dlq_id = %s AND resolved_at IS NULL
+                """, (dlq_id,))
+            
+            entry = cur.fetchone()
+    
+    if not entry:
+        console.print(f"[red]Unresolved DLQ entry not found: {dlq_id}[/red]")
+        return
+    
+    console.print(f"[bold]Resolving DLQ entry:[/bold] {entry['dlq_id']}")
+    console.print(f"Agent: {entry['agent_name']}")
+    console.print(f"Source: {entry['source']}")
+    console.print(f"Event Type: {entry['event_type']}")
+    console.print(f"Resolution: {resolution}")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN: Would resolve this entry[/yellow]")
+        return
+    
+    # Mark as resolved
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE sinex_schemas.dlq_events 
+                SET resolved_at = now(),
+                    resolved_by = %s
+                WHERE dlq_id = %s
+            """, (resolution, entry['dlq_id']))
+            
+            conn.commit()
+    
+    console.print(f"[green]✅ DLQ entry resolved as: {resolution}[/green]")
+
+
+@dlq.command('stats')
+@click.option('--agent', '-a', help='Filter stats by agent name')
+@click.option('--days', '-d', default=7, help='Number of days to analyze')
+def dlq_stats(agent: Optional[str], days: int):
+    """Show DLQ statistics and trends."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Build base query conditions
+            where_clause = "WHERE failed_at > now() - interval '%s days'"
+            params = [days]
+            
+            if agent:
+                where_clause += " AND agent_name = %s"
+                params.append(agent)
+            
+            # Total DLQ entries
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved,
+                    COUNT(*) FILTER (WHERE error_category = 'retryable') as retryable,
+                    COUNT(*) FILTER (WHERE error_category = 'permanent') as permanent,
+                    COUNT(*) FILTER (WHERE error_category = 'system') as system,
+                    COUNT(*) FILTER (WHERE error_category = 'user') as user
+                FROM sinex_schemas.dlq_events
+                {where_clause}
+            """, params)
+            totals = cur.fetchone()
+            
+            # DLQ by agent
+            cur.execute(f"""
+                SELECT 
+                    agent_name,
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                    AVG(retry_count) as avg_retries
+                FROM sinex_schemas.dlq_events
+                {where_clause}
+                GROUP BY agent_name
+                ORDER BY total DESC
+            """, params)
+            by_agent = cur.fetchall()
+            
+            # DLQ by error category
+            cur.execute(f"""
+                SELECT 
+                    error_category,
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                    AVG(retry_count) as avg_retries
+                FROM sinex_schemas.dlq_events
+                {where_clause}
+                GROUP BY error_category
+                ORDER BY total DESC
+            """, params)
+            by_category = cur.fetchall()
+            
+            # DLQ trends by day
+            cur.execute(f"""
+                SELECT 
+                    DATE(failed_at) as day,
+                    COUNT(*) as count,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_count
+                FROM sinex_schemas.dlq_events
+                {where_clause}
+                GROUP BY DATE(failed_at)
+                ORDER BY day DESC
+            """, params)
+            daily_trends = cur.fetchall()
+    
+    # Display overall statistics
+    console.print(f"\n[bold]📊 DLQ Statistics (Last {days} days)[/bold]")
+    if agent:
+        console.print(f"[dim]Filtered by agent: {agent}[/dim]")
+    
+    console.print(f"\n[bold]Overall Summary:[/bold]")
+    console.print(f"Total DLQ Entries: {totals['total_dlq']:,}")
+    console.print(f"Pending: {totals['pending']:,}")
+    console.print(f"Resolved: {totals['resolved']:,}")
+    
+    console.print(f"\n[bold]By Error Category:[/bold]")
+    console.print(f"Retryable: {totals['retryable']:,}")
+    console.print(f"Permanent: {totals['permanent']:,}")
+    console.print(f"System: {totals['system']:,}")
+    console.print(f"User: {totals['user']:,}")
+    
+    # DLQ by agent
+    if by_agent:
+        console.print(f"\n[bold]By Agent:[/bold]")
+        agent_table = Table()
+        agent_table.add_column("Agent", style="cyan")
+        agent_table.add_column("Total", justify="right", style="white")
+        agent_table.add_column("Pending", justify="right", style="red")
+        agent_table.add_column("Avg Retries", justify="right", style="yellow")
+        
+        for row in by_agent:
+            agent_table.add_row(
+                row['agent_name'],
+                f"{row['total']:,}",
+                f"{row['pending']:,}",
+                f"{row['avg_retries']:.1f}" if row['avg_retries'] else "0"
+            )
+        
+        console.print(agent_table)
+    
+    # DLQ by category
+    if by_category:
+        console.print(f"\n[bold]By Category:[/bold]")
+        category_table = Table()
+        category_table.add_column("Category", style="cyan")
+        category_table.add_column("Total", justify="right", style="white")
+        category_table.add_column("Pending", justify="right", style="red")
+        category_table.add_column("Avg Retries", justify="right", style="yellow")
+        
+        for row in by_category:
+            category_table.add_row(
+                row['error_category'],
+                f"{row['total']:,}",
+                f"{row['pending']:,}",
+                f"{row['avg_retries']:.1f}" if row['avg_retries'] else "0"
+            )
+        
+        console.print(category_table)
+    
+    # Daily trends
+    if daily_trends:
+        console.print(f"\n[bold]Daily Trends:[/bold]")
+        for day in daily_trends:
+            resolved_pct = (day['resolved_count'] / day['count'] * 100) if day['count'] > 0 else 0
+            console.print(f"{day['day']}: {day['count']:,} failures, {day['resolved_count']:,} resolved ({resolved_pct:.1f}%)")
+
+
+@dlq.command('purge')
+@click.option('--agent', '-a', help='Purge entries for specific agent')
+@click.option('--category', '-c', 
+              type=click.Choice(['retryable', 'permanent', 'system', 'user']),
+              help='Purge entries by category')
+@click.option('--older-than', help='Purge entries older than N days (e.g., 30d)')
+@click.option('--resolved-only', is_flag=True, help='Only purge resolved entries')
+@click.option('--dry-run', is_flag=True, help='Show what would be purged without actually doing it')
+@click.option('--force', is_flag=True, help='Skip confirmation prompt')
+def dlq_purge(agent: Optional[str], category: Optional[str], older_than: Optional[str], 
+              resolved_only: bool, dry_run: bool, force: bool):
+    """Purge DLQ entries based on criteria."""
+    
+    # Build query conditions
+    conditions = []
+    params = []
+    
+    if agent:
+        conditions.append("agent_name = %s")
+        params.append(agent)
+    
+    if category:
+        conditions.append("error_category = %s")
+        params.append(category)
+    
+    if older_than:
+        try:
+            days = int(older_than.rstrip('d'))
+            conditions.append("failed_at < now() - interval '%s days'")
+            params.append(days)
+        except ValueError:
+            console.print(f"[red]Invalid format for --older-than: {older_than}. Use format like '30d'[/red]")
+            return
+    
+    if resolved_only:
+        conditions.append("resolved_at IS NOT NULL")
+    
+    if not conditions:
+        console.print("[red]ERROR: You must specify at least one purge criterion[/red]")
+        console.print("Use --agent, --category, --older-than, or --resolved-only")
+        return
+    
+    # Check what would be purged
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            where_clause = "WHERE " + " AND ".join(conditions)
+            
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved
+                FROM sinex_schemas.dlq_events
+                {where_clause}
+            """, params)
+            
+            counts = cur.fetchone()
+    
+    if counts['total'] == 0:
+        console.print("[yellow]No DLQ entries match the purge criteria.[/yellow]")
+        return
+    
+    # Show what would be purged
+    console.print(f"[bold]Purge Preview:[/bold]")
+    console.print(f"Total entries to purge: {counts['total']:,}")
+    console.print(f"Pending entries: {counts['pending']:,}")
+    console.print(f"Resolved entries: {counts['resolved']:,}")
+    
+    if dry_run:
+        console.print("[yellow]DRY RUN: Would purge these entries[/yellow]")
+        return
+    
+    # Confirm purge
+    if not force:
+        if not click.confirm(f"Are you sure you want to purge {counts['total']} DLQ entries?"):
+            console.print("[yellow]Purge cancelled.[/yellow]")
+            return
+    
+    # Perform the purge
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM sinex_schemas.dlq_events
+                {where_clause}
+            """, params)
+            
+            deleted_count = cur.rowcount
+            conn.commit()
+    
+    console.print(f"[green]✅ Purged {deleted_count:,} DLQ entries[/green]")
+
+
+def format_duration(seconds: int) -> str:
+    """Format duration in seconds to human-readable format."""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes}m"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours}h"
+    else:
+        days = seconds // 86400
+        return f"{days}d"
+
+
 @cli.command()
 def stats():
     """Show enhanced database statistics."""
@@ -982,6 +1536,16 @@ def stats():
             # Total events
             cur.execute("SELECT COUNT(*) as total FROM raw.events")
             total = cur.fetchone()['total']
+            
+            # DLQ statistics
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as total_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_dlq
+                FROM sinex_schemas.dlq_events
+            """)
+            dlq_stats = cur.fetchone()
             
             # Events by day (last 7 days)
             cur.execute("""
@@ -1022,6 +1586,12 @@ def stats():
     
     console.print(f"\n[bold]📊 Total Events:[/bold] {total:,}")
     
+    # DLQ statistics
+    console.print(f"\n[bold]🚨 DLQ Statistics:[/bold]")
+    console.print(f"Total DLQ entries: {dlq_stats['total_dlq']:,}")
+    console.print(f"Pending: {dlq_stats['pending_dlq']:,}")
+    console.print(f"Resolved: {dlq_stats['resolved_dlq']:,}")
+    
     # Daily activity
     console.print("\n[bold]📅 Daily Activity (last 7 days):[/bold]")
     for day in daily_counts:
@@ -1054,7 +1624,7 @@ def stats():
         for agent in agent_health:
             last_hb = agent['last_heartbeat']
             if last_hb:
-                age = datetime.utcnow() - last_hb.replace(tzinfo=None)
+                age = datetime.now(datetime.timezone.utc) - last_hb.replace(tzinfo=None)
                 if age.total_seconds() < 300:  # 5 minutes
                     status_icon = "🟢"
                 elif age.total_seconds() < 3600:  # 1 hour

@@ -21,7 +21,7 @@ async fn test_unicode_path_normalization_bypass(ctx: TestContext) -> TestResult 
             "size": 1024
         });
 
-        let result = validator.validate_with_rules("filesystem", "file.created", &event);
+        let result = validator.validate_with_rules("fs", "file.created", &event);
         println!(
             "Path '{}' validation: {:?} (bytes: {:?})",
             path,
@@ -53,7 +53,7 @@ async fn test_null_byte_injection_paths(ctx: TestContext) -> TestResult {
             "size": 1024
         });
 
-        match validator.validate_with_rules("filesystem", "file.created", &event) {
+        match validator.validate_with_rules("fs", "file.created", &event) {
             Ok(_) => println!("VULNERABILITY: Null byte path accepted: {:?}", path),
             Err(e) => println!("Null byte path rejected (good): {:?} - {}", path, e),
         }
@@ -151,7 +151,7 @@ async fn test_path_case_confusion_attacks(ctx: TestContext) -> TestResult {
             "size": 1024
         });
 
-        let result = validator.validate_with_rules("filesystem", "file.created", &event);
+        let result = validator.validate_with_rules("fs", "file.created", &event);
         println!(
             "Path '{}' (canonical: '{}'): {:?}",
             variant,

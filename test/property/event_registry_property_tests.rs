@@ -33,9 +33,9 @@ fn arb_event_type() -> impl Strategy<Value = String> {
 fn arb_source_name() -> impl Strategy<Value = String> {
     prop_oneof![
         // Known source names from registry
-        Just("filesystem".to_string()),
-        Just("terminal_kitty".to_string()),
-        Just("hyprland".to_string()),
+        Just("fs".to_string()),
+        Just("shell.kitty".to_string()),
+        Just("wm.hyprland".to_string()),
         Just("shell_history".to_string()),
         Just("dbus".to_string()),
         // Unknown source names
@@ -324,7 +324,7 @@ mod stress_tests {
                         let _ = registry.has_event("window.focused");
                     }
                     2 => {
-                        let _ = registry.events_for_source("filesystem");
+                        let _ = registry.events_for_source("fs");
                     }
                     3 => {
                         let _ = registry.all_sources();

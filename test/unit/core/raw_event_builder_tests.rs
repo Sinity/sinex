@@ -5,13 +5,13 @@ use sinex_core::{event_type_constants, sources, RawEventBuilder};
 #[sinex_test]
 async fn test_raw_event_builder_basic_creation(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt", "size": 1024}),
     )
     .build();
 
-    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
         event.event_type,
         event_type_constants::filesystem::FILE_CREATED
@@ -50,7 +50,7 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult
     });
 
     let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         "file.metadata_changed",
         complex_payload.clone(),
     )
@@ -126,7 +126,7 @@ async fn test_raw_event_builder_all_fields_set(_ctx: TestContext) -> TestResult 
     let schema_id = sinex_ulid::Ulid::new();
 
     let event = RawEventBuilder::new(
-        sources::FILESYSTEM,
+        sources::FS,
         event_type_constants::filesystem::FILE_MODIFIED,
         json!({"path": "/test/file.txt", "size": 2048}),
     )
@@ -137,7 +137,7 @@ async fn test_raw_event_builder_all_fields_set(_ctx: TestContext) -> TestResult 
 
     // Verify all fields are properly set
     assert!(!event.id.to_string().is_empty());
-    pretty_assertions::assert_eq!(event.source, sources::FILESYSTEM);
+    pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
         event.event_type,
         event_type_constants::filesystem::FILE_MODIFIED

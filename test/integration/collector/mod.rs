@@ -52,15 +52,15 @@ pub mod utils {
 
         for source in sources {
             match *source {
-                "filesystem" => {
-                    event_sources["filesystem"] = json!({
+                "fs" => {
+                    event_sources["fs"] = json!({
                         "enabled": true,
                         "watch_patterns": ["/tmp/test/**/*"],
                         "ignore_patterns": ["*.tmp"]
                     });
                 }
                 "terminal" => {
-                    event_sources["terminal_kitty"] = json!({
+                    event_sources["shell.kitty"] = json!({
                         "enabled": true,
                         "socket_path": "/tmp/test_terminal.sock"
                     });
