@@ -329,4 +329,229 @@ mod tests {
         let error_str = result.unwrap_err().to_string();
         assert!(error_str.contains("Failed to read configuration file"));
     }
+
+    #[test]
+    fn test_error_context_chaining() {
+        // Create an initial error
+        let initial_error = CoreError::Database("Primary key violation".to_string());
+        
+        // Chain additional context
+        let chained_error = initial_error.context()
+            .with_context("table", "raw_events")
+            .with_context("operation", "INSERT")
+            .with_source("UNIQUE constraint failed")
+            .with_source("Transaction aborted")
+            .build();
+
+        let error_str = chained_error.to_string();
+        assert!(error_str.contains("Primary key violation"));
+        assert!(error_str.contains("table: raw_events"));
+        assert!(error_str.contains("operation: INSERT"));
+        assert!(error_str.contains("UNIQUE constraint failed"));
+        assert!(error_str.contains("Transaction aborted"));
+        assert!(error_str.contains("Caused by:"));
+    }
+
+    #[test]
+    fn test_all_error_types_creation() {
+        // Test each error type factory method
+        let db_error = CoreError::database("DB connection lost").build();
+        assert!(db_error.to_string().contains("DB connection lost"));
+        assert!(matches!(db_error, CoreError::Database(_)));
+
+        let validation_error = CoreError::validation("Invalid format").build();
+        assert!(validation_error.to_string().contains("Invalid format"));
+        assert!(matches!(validation_error, CoreError::Validation(_)));
+
+        let config_error = CoreError::configuration("Missing config").build();
+        assert!(config_error.to_string().contains("Missing config"));
+        assert!(matches!(config_error, CoreError::Configuration(_)));
+
+        let serial_error = CoreError::serialization("JSON parse error").build();
+        assert!(serial_error.to_string().contains("JSON parse error"));
+        assert!(matches!(serial_error, CoreError::Serialization(_)));
+
+        let io_error = CoreError::io_error("/tmp/test.txt").build();
+        assert!(io_error.to_string().contains("/tmp/test.txt"));
+        assert!(matches!(io_error, CoreError::Io(_)));
+
+        let process_error = CoreError::processing_failed().build();
+        assert!(process_error.to_string().contains("Processing failed"));
+        assert!(matches!(process_error, CoreError::Other(_)));
+    }
+
+    #[test]
+    fn test_context_key_detection() {
+        let error = CoreError::database("Connection failed")
+            .with_context("host", "localhost")
+            .with_context("port", 5432)
+            .build();
+
+        assert!(error.has_context_key("host"));
+        assert!(error.has_context_key("port"));
+        assert!(!error.has_context_key("database"));
+        assert!(!error.has_context_key("nonexistent"));
+    }
+
+    #[test]
+    fn test_complex_context_building() {
+        let event_id = Ulid::new();
+        let timestamp = Utc::now();
+        use std::path::Path;
+
+        let error = CoreError::validation("Schema validation failed")
+            .with_event_id(event_id)
+            .with_timestamp(timestamp)
+            .with_path(Path::new("/data/events/invalid.json"))
+            .with_operation("validate_event_payload")
+            .with_field("event_type", "unknown")
+            .with_field("source", "invalid_source")
+            .with_source("Schema mismatch: expected object, got array")
+            .with_source("Field 'timestamp' is required but missing")
+            .build();
+
+        let error_str = error.to_string();
+        
+        // Check all context is included
+        assert!(error_str.contains(&event_id.to_string()));
+        assert!(error_str.contains("/data/events/invalid.json"));
+        assert!(error_str.contains("operation: validate_event_payload"));
+        assert!(error_str.contains("field_event_type: unknown"));
+        assert!(error_str.contains("field_source: invalid_source"));
+        assert!(error_str.contains("Schema mismatch"));
+        assert!(error_str.contains("Field 'timestamp' is required"));
+        assert!(error_str.contains("Caused by:"));
+    }
+
+    #[test]
+    fn test_empty_context_and_sources() {
+        // Test error with no additional context
+        let error = CoreError::database("Simple error").build();
+        let error_str = error.to_string();
+        
+        assert_eq!(error_str, "Database error: Simple error");
+        assert!(!error_str.contains("("));
+        assert!(!error_str.contains("Caused by:"));
+    }
+
+    #[test]
+    fn test_context_only_no_sources() {
+        let error = CoreError::validation("Validation error")
+            .with_context("field", "username")
+            .with_context("value", "too_short")
+            .build();
+
+        let error_str = error.to_string();
+        assert!(error_str.contains("Validation error"));
+        assert!(error_str.contains("field: username"));
+        assert!(error_str.contains("value: too_short"));
+        assert!(!error_str.contains("Caused by:"));
+    }
+
+    #[test]
+    fn test_sources_only_no_context() {
+        let error = CoreError::io_error("/dev/null")
+            .with_source("Permission denied")
+            .with_source("File system read-only")
+            .build();
+
+        let error_str = error.to_string();
+        assert!(error_str.contains("IO error"));
+        assert!(error_str.contains("/dev/null"));
+        assert!(error_str.contains("Caused by:"));
+        assert!(error_str.contains("1: Permission denied"));
+        assert!(error_str.contains("2: File system read-only"));
+    }
+
+    #[test]
+    fn test_error_info_complete_structure() {
+        let error_context = CoreError::configuration("Database URL not found")
+            .with_context("config_file", "/etc/sinex/config.toml")
+            .with_context("section", "database")
+            .with_source("Environment variable DATABASE_URL not set")
+            .with_source("Config file missing database section");
+
+        let error_info = error_context.to_error_info();
+
+        // Verify all fields are populated correctly
+        assert_eq!(error_info.error_type, "Configuration");
+        assert_eq!(error_info.message, "Database URL not found");
+        
+        assert_eq!(error_info.context.len(), 2);
+        assert_eq!(error_info.context.get("config_file"), Some(&"/etc/sinex/config.toml".to_string()));
+        assert_eq!(error_info.context.get("section"), Some(&"database".to_string()));
+        
+        assert_eq!(error_info.source_chain.len(), 2);
+        assert_eq!(error_info.source_chain[0], "Environment variable DATABASE_URL not set");
+        assert_eq!(error_info.source_chain[1], "Config file missing database section");
+        
+        // Stack trace should be None in this implementation
+        assert!(error_info.stack_trace.is_none());
+    }
+
+    #[test]
+    fn test_result_ext_with_context_closure() {
+        fn failing_db_operation() -> Result<String, sqlx::Error> {
+            Err(sqlx::Error::RowNotFound)
+        }
+
+        let result: crate::Result<String> = failing_db_operation()
+            .with_context(|| {
+                CoreError::database("Failed to fetch user")
+                    .with_context("operation", "get_user_by_id")
+                    .with_context("user_id", 12345)
+            });
+
+        assert!(result.is_err());
+        let error_str = result.unwrap_err().to_string();
+        assert!(error_str.contains("Failed to fetch user"));
+        assert!(error_str.contains("operation: get_user_by_id"));
+        assert!(error_str.contains("user_id: 12345"));
+    }
+
+    #[test]
+    fn test_path_display_formatting() {
+        use std::path::PathBuf;
+        
+        let path = PathBuf::from("/home/user/documents/file.txt");
+        let error = CoreError::io_error(&path)
+            .with_operation("read")
+            .build();
+
+        let error_str = error.to_string();
+        assert!(error_str.contains("/home/user/documents/file.txt"));
+        assert!(error_str.contains("operation: read"));
+        assert!(error_str.contains("path: /home/user/documents/file.txt"));
+    }
+
+    #[test]
+    fn test_ulid_and_timestamp_formatting() {
+        let event_id = Ulid::new();
+        let timestamp = Utc::now();
+        
+        let error = CoreError::processing_failed()
+            .with_event_id(event_id)
+            .with_timestamp(timestamp)
+            .build();
+
+        let error_str = error.to_string();
+        assert!(error_str.contains(&event_id.to_string()));
+        assert!(error_str.contains(&timestamp.to_rfc3339()));
+        assert!(error_str.contains("event_id:"));
+        assert!(error_str.contains("timestamp:"));
+    }
+
+    #[test]
+    fn test_field_context_formatting() {
+        let error = CoreError::validation("Multiple field errors")
+            .with_field("username", "")
+            .with_field("email", "invalid@")
+            .with_field("age", -5)
+            .build();
+
+        let error_str = error.to_string();
+        assert!(error_str.contains("field_username: "));
+        assert!(error_str.contains("field_email: invalid@"));
+        assert!(error_str.contains("field_age: -5"));
+    }
 }
