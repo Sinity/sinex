@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::{EventSender, OptionalTimestamp, RawEvent, Timestamp};
+use sinex_core::{EventSender, OptionalTimestamp, RawEvent, Timestamp, ErrorContext, CoreError};
 use sinex_db::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 /// Single second of metric data
 #[derive(Debug, Clone, Serialize)]
@@ -217,11 +217,13 @@ impl CollectorMetrics {
             (cpu, memory)
         };
 
-        // Get database pool stats
-        let (db_pool_size, db_pool_idle) = if let Some(pool) = db_pool {
-            (pool.size(), pool.num_idle() as u32)
+        // Get database pool stats and queue depth
+        let (db_pool_size, db_pool_idle, queue_depth) = if let Some(pool) = db_pool {
+            let queue_metrics = sinex_db::queries::calculate_queue_depth_metrics(pool).await.unwrap_or_default();
+            let total_queue_depth: i64 = queue_metrics.iter().map(|m| m.queue_depth).sum();
+            (pool.size(), pool.num_idle() as u32, total_queue_depth as u32)
         } else {
-            (0, 0)
+            (0, 0, 0)
         };
 
         // Get source count
@@ -237,7 +239,7 @@ impl CollectorMetrics {
             memory_mb,
             events_count: self.events_processed.load(Ordering::Relaxed),
             errors_count: self.errors_total.load(Ordering::Relaxed),
-            queue_depth: 0, // TODO: Get from actual queue
+            queue_depth: queue_depth as usize,
             active_sources,
             db_pool_size,
             db_pool_idle,
@@ -405,32 +407,218 @@ impl CollectorMetrics {
     }
 
     /// Increment event counter
-    pub fn record_event(&self, _source: &str) {
+    /// Record successful event processing with enhanced context
+    pub fn record_event(&self, source: &str) {
+        self.record_event_with_metrics(source, None)
+    }
+
+    /// Record event with additional metrics context
+    pub fn record_event_with_metrics(&self, source: &str, bytes_processed: Option<u64>) {
+        // Increment atomic counter
         self.events_processed.fetch_add(1, Ordering::Relaxed);
+        
+        // Update source-specific metrics asynchronously
+        let source_name = source.to_string();
+        let source_metrics = self.source_metrics.clone();
+        let timestamp = Utc::now();
+        
+        tokio::spawn(async move {
+            if let Ok(mut sources) = source_metrics.try_write() {
+                let metrics = sources
+                    .entry(source_name.clone())
+                    .or_insert_with(|| SourceMetrics {
+                        events_total: 0,
+                        errors_total: 0,
+                        bytes_processed: 0,
+                        last_event_time: None,
+                        custom: HashMap::new(),
+                    });
+                
+                metrics.events_total += 1;
+                metrics.last_event_time = Some(timestamp);
+                
+                if let Some(bytes) = bytes_processed {
+                    metrics.bytes_processed += bytes;
+                }
+
+                tracing::trace!(
+                    source = source_name,
+                    events_total = metrics.events_total,
+                    bytes_processed = metrics.bytes_processed,
+                    "Event recorded successfully"
+                );
+            }
+        });
     }
 
-    /// Increment error counter
-    pub fn record_error(&self, _source: &str) {
+    /// Increment error counter with basic tracking (legacy method)
+    pub fn record_error(&self, source: &str) {
+        self.record_error_with_context(source, None, None)
+    }
+
+    /// Enhanced error recording with rich context and categorization
+    pub fn record_error_with_context(
+        &self,
+        source: &str,
+        error_context: Option<&ErrorContext>,
+        operation: Option<&str>,
+    ) {
+        // Increment atomic counter
         self.errors_total.fetch_add(1, Ordering::Relaxed);
+        
+        // Extract rich context information for structured logging
+        let error_details = if let Some(ctx) = error_context {
+            let error_info = ctx.to_error_info();
+            json!({
+                "operation": operation.unwrap_or("unknown"),
+                "source": source,
+                "error_type": error_info.error_type,
+                "error_message": error_info.message,
+                "context_data": error_info.context,
+                "source_chain": error_info.source_chain,
+                "timestamp": Utc::now(),
+                "severity": "error"
+            })
+        } else {
+            json!({
+                "operation": operation.unwrap_or("unknown"),
+                "source": source,
+                "error_message": "Unknown error (no context provided)",
+                "timestamp": Utc::now(),
+                "severity": "error"
+            })
+        };
+
+        // Structured error logging with rich context
+        error!(
+            source = source,
+            operation = operation.unwrap_or("unknown"),
+            error_details = %serde_json::to_string(&error_details).unwrap_or_default(),
+            "Error recorded in metrics system"
+        );
+
+        // Update source-specific error tracking (async spawn to avoid blocking)
+        let source_name = source.to_string();
+        let source_metrics = self.source_metrics.clone();
+        tokio::spawn(async move {
+            if let Ok(mut sources) = source_metrics.try_write() {
+                let metrics = sources
+                    .entry(source_name)
+                    .or_insert_with(|| SourceMetrics {
+                        events_total: 0,
+                        errors_total: 0,
+                        bytes_processed: 0,
+                        last_event_time: None,
+                        custom: HashMap::new(),
+                    });
+                metrics.errors_total += 1;
+            }
+        });
     }
 
-    /// Update source-specific metrics
+    /// Record error from Core error type with automatic context extraction
+    pub fn record_core_error(&self, source: &str, error: &CoreError, operation: &str) {
+        // Create ErrorContext from CoreError if not already available
+        let error_context = match error {
+            CoreError::Validation(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("validation_error", msg),
+            CoreError::Database(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("database_error", msg),
+            CoreError::Io(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("io_error", msg),
+            CoreError::Configuration(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("config_error", msg),
+            CoreError::Serialization(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("serialization_error", msg),
+            CoreError::Other(msg) => ErrorContext::new(error.clone())
+                .with_operation(operation)
+                .with_context("source", source)
+                .with_context("other_error", msg),
+        };
+
+        self.record_error_with_context(source, Some(&error_context), Some(operation));
+    }
+
+    /// Update source-specific metrics with enhanced error context handling
     pub async fn update_source_metrics(
         &self,
         source: &str,
         update: impl FnOnce(&mut SourceMetrics),
     ) {
-        let mut sources = self.source_metrics.write().await;
-        let metrics = sources
-            .entry(source.to_string())
-            .or_insert_with(|| SourceMetrics {
-                events_total: 0,
-                errors_total: 0,
-                bytes_processed: 0,
-                last_event_time: None,
-                custom: HashMap::new(),
-            });
-        update(metrics);
+        // Enhanced metrics update with error handling and context
+        match self.source_metrics.write().await {
+            mut sources => {
+                let metrics = sources
+                    .entry(source.to_string())
+                    .or_insert_with(|| SourceMetrics {
+                        events_total: 0,
+                        errors_total: 0,
+                        bytes_processed: 0,
+                        last_event_time: None,
+                        custom: HashMap::new(),
+                    });
+                
+                // Apply the update function
+                update(metrics);
+                
+                // Log metrics update for observability
+                tracing::debug!(
+                    source = source,
+                    events_total = metrics.events_total,
+                    errors_total = metrics.errors_total,
+                    bytes_processed = metrics.bytes_processed,
+                    "Source metrics updated"
+                );
+            }
+        }
+    }
+
+    /// Get comprehensive error statistics with rich context
+    pub async fn get_error_statistics(&self) -> JsonValue {
+        let sources = self.source_metrics.read().await;
+        let total_errors = self.errors_total.load(Ordering::Relaxed);
+        let total_events = self.events_processed.load(Ordering::Relaxed);
+        
+        let error_rate = if total_events > 0 {
+            (total_errors as f64 / total_events as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut source_error_breakdown = HashMap::new();
+        for (source, metrics) in sources.iter() {
+            let source_error_rate = if metrics.events_total > 0 {
+                (metrics.errors_total as f64 / metrics.events_total as f64) * 100.0
+            } else {
+                0.0
+            };
+            
+            source_error_breakdown.insert(source.clone(), json!({
+                "errors_total": metrics.errors_total,
+                "events_total": metrics.events_total,
+                "error_rate_percent": source_error_rate,
+                "last_event_time": metrics.last_event_time
+            }));
+        }
+
+        json!({
+            "timestamp": Utc::now(),
+            "total_errors": total_errors,
+            "total_events": total_events,
+            "overall_error_rate_percent": error_rate,
+            "source_breakdown": source_error_breakdown,
+            "monitoring_period": "session"
+        })
     }
 }
 

@@ -1,6 +1,7 @@
 pub mod models;
 // Re-export RawEvent and RawEventBuilder from sinex-core for type unification
 pub use sinex_core::{RawEvent, RawEventBuilder};
+pub mod enhanced_queries;
 pub mod metrics;
 pub mod notifications;
 pub mod pool;
@@ -16,6 +17,15 @@ pub use queries::{
     complete_work_queue_item, fail_work_item, fail_work_queue_item, get_event_by_id,
     get_events_by_source, get_events_by_type, get_events_in_time_range, get_next_work_item,
     get_recent_events, insert_raw_event, refresh_routing_cache, run_batch_router, QueueDepthMetric,
+};
+
+
+// Re-export enhanced queries with error context
+pub use enhanced_queries::{
+    insert_event_with_context, get_event_by_id_with_context, claim_work_queue_items_with_context,
+    complete_work_queue_item_with_context, fail_work_queue_item_with_context,
+    update_agent_heartbeat_with_context, insert_dlq_event_with_context,
+    get_recent_events_with_context, database_health_check_with_context,
 };
 
 // Re-export query helpers for easier access
@@ -39,7 +49,7 @@ pub mod prelude {
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
     };
-    pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp};
+    pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp, PoolConfig};
     pub use anyhow::Result;
     pub use sinex_core::{RawEvent, RawEventBuilder};
     pub use sinex_ulid::Ulid;
@@ -48,9 +58,11 @@ pub mod prelude {
 
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
+use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
 use std::time::Duration;
-use tracing::info;
+use std::env;
+use tracing::{info, warn, error};
+use serde::{Deserialize, Serialize};
 
 // Common type aliases for database operations
 pub type DbPool = PgPool;
@@ -61,27 +73,174 @@ pub use sinex_ulid::Timestamp;
 pub type OptionalTimestamp = Option<Timestamp>;
 pub type JsonValue = serde_json::Value;
 
+/// Configuration for database connection pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolConfig {
+    pub max_connections: u32,
+    pub min_connections: u32,
+    pub acquire_timeout_secs: u64,
+    pub idle_timeout_secs: u64,
+    pub validate_against_postgres_max: bool,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 25, // Conservative default
+            min_connections: 5,
+            acquire_timeout_secs: 30,
+            idle_timeout_secs: 300, // 5 minutes
+            validate_against_postgres_max: true,
+        }
+    }
+}
+
 /// Create a database connection pool with default settings
 pub async fn create_pool(database_url: &str) -> Result<DbPool> {
+    let config = PoolConfig::default();
+    create_pool_with_config(database_url, &config).await
+}
+
+/// Create a database connection pool with custom configuration
+pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) -> Result<DbPool> {
+    // Validate configuration against PostgreSQL limits if requested
+    if config.validate_against_postgres_max {
+        if let Err(e) = validate_pool_config_against_postgres(database_url, config).await {
+            warn!("Pool configuration validation failed: {}", e);
+            warn!("Proceeding anyway - this may cause connection exhaustion in production");
+        }
+    }
+
     let pool = PgPoolOptions::new()
-        .max_connections(500) // Massive pool size
-        .min_connections(50)
-        .acquire_timeout(Duration::from_secs(120)) // Very long timeout
-        .idle_timeout(Duration::from_secs(1800))
+        .max_connections(config.max_connections)
+        .min_connections(config.min_connections)
+        .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
+        .idle_timeout(Duration::from_secs(config.idle_timeout_secs))
         .connect(database_url)
         .await?;
 
-    info!("Database pool created successfully");
+    info!(
+        max_connections = config.max_connections,
+        min_connections = config.min_connections,
+        acquire_timeout_secs = config.acquire_timeout_secs,
+        "Database pool created successfully"
+    );
     Ok(pool)
+}
+
+/// Try to get database URL from environment with helpful error messages
+pub fn get_database_url_with_fallbacks() -> Result<String> {
+    // Try DATABASE_URL first
+    if let Ok(url) = env::var("DATABASE_URL") {
+        return Ok(url);
+    }
+
+    // Try common development patterns
+    let fallback_urls = vec![
+        "postgresql:///sinex_dev?host=/run/postgresql",
+        "postgresql://localhost/sinex_dev",
+        "postgresql://postgres:postgres@localhost/sinex",
+    ];
+
+    for url in &fallback_urls {
+        if let Ok(_) = std::process::Command::new("pg_isready")
+            .arg("-d")
+            .arg(url)
+            .arg("-q")
+            .output()
+        {
+            warn!("DATABASE_URL not set, using fallback: {}", url);
+            warn!("For production, please set DATABASE_URL environment variable");
+            return Ok(url.to_string());
+        }
+    }
+
+    error!("DATABASE_URL environment variable is not set and no fallback database connection works");
+    error!("Please ensure PostgreSQL is running and set DATABASE_URL, for example:");
+    error!("  export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql");
+    error!("  export DATABASE_URL=postgresql://username:password@localhost/database_name");
+    
+    Err(anyhow::anyhow!(
+        "DATABASE_URL not set and no accessible PostgreSQL database found. \
+         Please set DATABASE_URL environment variable or ensure PostgreSQL is running \
+         with a database named 'sinex_dev' or 'sinex'."
+    ))
+}
+
+/// Create a database connection pool with graceful fallbacks
+pub async fn create_pool_with_fallbacks() -> Result<DbPool> {
+    let database_url = get_database_url_with_fallbacks()?;
+    create_pool(&database_url).await
+}
+
+/// Create a database connection pool with custom configuration and graceful fallbacks
+pub async fn create_pool_with_config_and_fallbacks(config: &PoolConfig) -> Result<DbPool> {
+    let database_url = get_database_url_with_fallbacks()?;
+    create_pool_with_config(&database_url, config).await
+}
+
+/// Validate pool configuration against PostgreSQL server limits
+async fn validate_pool_config_against_postgres(database_url: &str, config: &PoolConfig) -> Result<()> {
+    // Create a temporary minimal connection to check PostgreSQL settings
+    let temp_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+
+    // Query PostgreSQL max_connections setting
+    let max_connections_row = sqlx::query("SHOW max_connections")
+        .fetch_one(&temp_pool)
+        .await?;
+    
+    let postgres_max_connections: i32 = max_connections_row.try_get("max_connections")?;
+    
+    // Validate our pool size against PostgreSQL limits
+    if config.max_connections as i32 > postgres_max_connections {
+        return Err(anyhow::anyhow!(
+            "Pool max_connections ({}) exceeds PostgreSQL max_connections ({}). \
+             This will cause connection exhaustion. Consider reducing pool size or \
+             increasing PostgreSQL max_connections setting.",
+            config.max_connections,
+            postgres_max_connections
+        ));
+    }
+
+    // Warn if we're using more than 80% of available connections
+    let usage_percentage = (config.max_connections as f64 / postgres_max_connections as f64) * 100.0;
+    if usage_percentage > 80.0 {
+        warn!(
+            "Pool is configured to use {:.1}% of PostgreSQL max_connections. \
+             Consider leaving more headroom for other applications.",
+            usage_percentage
+        );
+    }
+
+    info!(
+        pool_max = config.max_connections,
+        postgres_max = postgres_max_connections,
+        usage_percent = format!("{:.1}%", usage_percentage),
+        "Pool configuration validated against PostgreSQL limits"
+    );
+
+    temp_pool.close().await;
+    Ok(())
 }
 
 /// Create a database connection pool optimized for testing with high concurrency
 pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
+    let test_config = PoolConfig {
+        max_connections: 100, // High concurrency for tests
+        min_connections: 10,
+        acquire_timeout_secs: 30,
+        idle_timeout_secs: 300,
+        validate_against_postgres_max: false, // Skip validation in tests
+    };
+
     let pool = PgPoolOptions::new()
-        .max_connections(100) // Reasonable limit to avoid exhausting PostgreSQL
-        .min_connections(10)
-        .acquire_timeout(Duration::from_secs(30)) // 30 second timeout
-        .idle_timeout(Duration::from_secs(300))
+        .max_connections(test_config.max_connections)
+        .min_connections(test_config.min_connections)
+        .acquire_timeout(Duration::from_secs(test_config.acquire_timeout_secs))
+        .idle_timeout(Duration::from_secs(test_config.idle_timeout_secs))
         .test_before_acquire(false) // Skip connection testing for speed
         .connect(database_url)
         .await?;
