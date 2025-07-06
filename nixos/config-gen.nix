@@ -47,66 +47,59 @@ rec {
     validateEnabledEvents = enabledEvents:
       let
         knownEventTypes = [
-          # Terminal/command events
-          "command.executed"
-          "shell.command.executed_atuin"
-          "shell.history.command"
+          # Terminal/command events (matching Rust EVENT_NAME constants)
+          "command.executed"         # KittyCommandExecuted
+          "command.completed"        # KittyCommandCompleted  
+          "command.failed"           # KittyCommandFailed
+          "command.imported"         # AtuinCommandImported, ShellHistoryCommandImported
+          "session.started"          # ShellSessionStarted
+          "session.ended"            # ShellSessionEnded
           
-          # Terminal recording
-          "terminal.asciinema.session_started"
-          "terminal.asciinema.session_ended"
-          "terminal.scrollback.captured"
-          "terminal.command_output.captured"
+          # Terminal recording (matching Rust EVENT_NAME constants)
+          "recording.started"        # AsciinemaSessionStarted
+          "recording.ended"          # AsciinemaSessionEnded
+          "output.captured"          # ScrollbackCaptured
           
-          # File events
-          "file.created"
-          "file.modified"
-          "file.deleted"
-          "file.moved"
-          "file.renamed"
+          # Filesystem events (matching Rust EVENT_NAME constants)
+          "file.created"             # FileCreated
+          "file.modified"            # FileModified
+          "file.deleted"             # FileDeleted
+          "file.moved"               # FileMoved
+          "dir.created"              # DirCreated
+          "dir.deleted"              # DirDeleted
           
-          # Window manager events
-          "window.focused"
-          "window.unfocused"
-          "window.opened"
-          "window.closed"
-          "window.moved"
-          "window.title_changed"
-          "window.urgent"
-          "workspace.changed"
-          "workspace.created"
-          "workspace.destroyed"
-          "monitor.focused"
-          "monitor.added"
-          "monitor.removed"
+          # Window manager events (matching Rust EVENT_NAME constants)
+          "window.opened"            # WindowOpened
+          "window.closed"            # WindowClosed
+          "window.focused"           # WindowFocused
+          "window.moved"             # WindowMoved
+          "window.resized"           # WindowResized
+          "workspace.switched"       # WorkspaceSwitched
+          "workspace.created"        # WorkspaceCreated
+          "workspace.destroyed"      # WorkspaceDestroyed
+          "display.connected"        # DisplayConnected
+          "display.disconnected"     # DisplayDisconnected
+          "monitor.focused"          # MonitorFocused
+          "state.captured"           # StateCapture
           
-          # D-Bus and system events
-          "dbus.signal"
-          "dbus.method_call"
-          "system.notification"
-          "media.playback.changed"
-          "system.power.event"
-          "hardware.device.event"
+          # D-Bus events (matching Rust EVENT_NAME constants)
+          "signal.received"          # DbusSignalReceived
+          "method.called"            # DbusMethodCalled
+          "notification.sent"        # DbusNotificationSent
+          "device.connected"         # DbusDeviceConnected
+          "device.disconnected"      # DbusDeviceDisconnected
+          "media.state_changed"      # DbusMediaStateChanged
+          "power.state_changed"      # DbusPowerStateChanged
+          "network.state_changed"    # DbusNetworkStateChanged
+          "bluetooth.device_changed" # DbusBluetoothDeviceChanged
+          "mount.changed"            # DbusMountChanged
           
-          # Clipboard events
-          "clipboard.changed"
-          "clipboard.selection"
-          "clipboard.primary"
+          # Clipboard events (matching Rust EVENT_NAME constants)
+          "copied"                   # ClipboardCopied
+          "selected"                 # ClipboardSelected
           
-          # Periodic events
-          "state.snapshot"
-          
-          # System journal
-          "system.journal.entry"
-          "system.journal.sync"
-          "session.state.changed"
-          "security.policykit.authorization"
-          "bluetooth.device.event"
-          "network.connection.event"
-          "screen.saver.event"
-          "storage.mount.event"
-          "clipboard.content.changed"
-          "clipboard.selection.changed"
+          # System journal (matching Rust EVENT_NAME constants)
+          "entry.written"            # JournaldEntryWritten
         ];
         invalidEvents = lib.filter (e: !(lib.elem e knownEventTypes)) enabledEvents;
         malformedEvents = lib.filter (e: !(validation.validateEventType e)) enabledEvents;
@@ -197,45 +190,48 @@ rec {
         recommendations = recommendations;
       };
   };
-  # Helper to generate collector configuration
+  # Helper to generate collector configuration with correct event names
   mkCollectorConfig = cfg: fullCfg: let
     enabledEvents = lib.flatten [
-      (lib.optional (cfg.sources.atuin.enable or false) "shell.command.executed_atuin")
-      (lib.optional (cfg.sources.shellHistory.enable or false) "shell.history.command")
+      (lib.optional (cfg.sources.atuin.enable or false) "command.imported")  # Matches Rust EventType
+      (lib.optional (cfg.sources.shellHistory.enable or false) "command.imported")  # Same for shell history
       (lib.optional (cfg.sources.asciinema.enable or false) [
-        "terminal.asciinema.session_started"
-        "terminal.asciinema.session_ended"
+        "recording.started"    # Matches AsciinemaSessionStarted::EVENT_NAME  
+        "recording.ended"      # Matches AsciinemaSessionEnded::EVENT_NAME
       ])
       (lib.optional (cfg.sources.kittyScrollback.enable or false) [
-        "terminal.scrollback.captured"
-        "terminal.command_output.captured"
+        "command.executed"     # Matches KittyCommandExecuted::EVENT_NAME
+        "command.completed"    # Matches KittyCommandCompleted::EVENT_NAME
+        "output.captured"      # Matches KittyScrollbackCaptured::EVENT_NAME
       ])
       (lib.optional (cfg.sources.filesystem.enable or false) [
-        "file.created"
-        "file.modified"
-        "file.deleted"
+        "file.created"         # Matches FileCreated::EVENT_NAME
+        "file.modified"        # Matches FileModified::EVENT_NAME
+        "file.deleted"         # Matches FileDeleted::EVENT_NAME
+        "file.moved"           # Matches FileMoved::EVENT_NAME
+        "dir.created"          # Matches DirCreated::EVENT_NAME
+        "dir.deleted"          # Matches DirDeleted::EVENT_NAME
       ])
       (lib.optional (cfg.sources.dbus.enable or false) [
-        "dbus.signal"
-        "dbus.method_call" 
-        "system.notification"
-        "media.playback.changed"
-        "system.power.event"
-        "hardware.device.event"
-        "session.state.changed"
-        "security.policykit.authorization"
-        "bluetooth.device.event"
-        "network.connection.event"
-        "screen.saver.event"
-        "storage.mount.event"
+        "signal.received"      # Matches DbusSignalReceived::EVENT_NAME
+        "method.called"        # Matches DbusMethodCalled::EVENT_NAME
+        "notification.sent"    # Matches DbusNotificationSent::EVENT_NAME
+        "device.connected"     # Matches DbusDeviceConnected::EVENT_NAME
+        "device.disconnected"  # Matches DbusDeviceDisconnected::EVENT_NAME
+        "media.state_changed"  # Matches DbusMediaStateChanged::EVENT_NAME
+        "power.state_changed"  # Matches DbusPowerStateChanged::EVENT_NAME
+        "network.state_changed" # Matches DbusNetworkStateChanged::EVENT_NAME
+        "bluetooth.device_changed" # Matches DbusBluetoothDeviceChanged::EVENT_NAME
+        "mount.changed"        # Matches DbusMountChanged::EVENT_NAME
+        "entry.written"        # Matches JournaldEntryWritten::EVENT_NAME
       ])
       (lib.optional (cfg.sources.clipboard.enable or false) [
-        "clipboard.content.changed"
-        "clipboard.selection.changed"
+        "copied"               # Matches ClipboardCopied::EVENT_NAME
+        "selected"             # Matches ClipboardSelected::EVENT_NAME
       ])
     ];
 
-    # Build event configuration sections with resolved paths
+    # Build event configuration sections with resolved paths and correct field names
     eventConfig = lib.optionalAttrs (cfg.sources.atuin.enable or false) {
       "event.shell_command_executed_atuin" = {
         db_path = pathUtils.resolvePath cfg.sources.atuin.databasePath;
@@ -253,32 +249,34 @@ rec {
         use_file_watch = true;
       };
     } // lib.optionalAttrs (cfg.sources.asciinema.enable or false) {
-      "event.terminal_asciinema" = {
+      "event.recording_started" = {  # Matches Rust EVENT_NAME
         recordings_dir = pathUtils.resolvePath cfg.sources.asciinema.path;
         auto_start_recording = cfg.sources.asciinema.autoRecord;
+        file_pattern = "*.cast";
         polling_interval_secs = 5;
+        record_command = "asciinema rec --quiet --overwrite";
         git_annex_repo = fullCfg.blobStorage.repositoryPath;
         auto_annex = cfg.sources.asciinema.autoAnnex;
       };
     } // lib.optionalAttrs (cfg.sources.kittyScrollback.enable or false) {
-      "event.terminal_scrollback" = {
-        kitty_socket_path = cfg.sources.kittyScrollback.socketPath;  # Already absolute
-        capture_interval_secs = cfg.sources.kittyScrollback.captureInterval;
-        max_scrollback_lines = cfg.sources.kittyScrollback.maxScrollbackLines;
-        capture_command_output = true;
-        capture_on_command = cfg.sources.kittyScrollback.captureOnCommand;
-        command_capture_delay_ms = cfg.sources.kittyScrollback.commandCaptureDelay;
+      "event.command_executed" = {  # Matches Rust EVENT_NAME for Kitty
+        poll_interval_seconds = cfg.sources.kittyScrollback.captureInterval;  # Rust field name
+        socket_path = cfg.sources.kittyScrollback.socketPath;  # Rust field name
+        enabled = true;  # Rust field name
       };
     } // lib.optionalAttrs (cfg.sources.filesystem.enable or false) {
-      "event.files" = {
+      "event.file_created" = {  # Use specific event name, not generic "files"
         watch_patterns = lib.map (path: pathUtils.resolvePath path) cfg.sources.filesystem.watchPaths;
         ignore_patterns = cfg.sources.filesystem._allExcludePatterns or [];
+        debounce_ms = 500;  # Add Rust-only field with default
+        max_depth = null;   # Add Rust-only field with default
       };
     } // lib.optionalAttrs (cfg.sources.dbus.enable or false) {
-      "event.dbus" = {
+      "event.signal_received" = {  # Matches Rust EVENT_NAME  
         monitor_session = cfg.sources.dbus.monitorSession;
         monitor_system = cfg.sources.dbus.monitorSystem;
-        log_all_signals = cfg.sources.dbus.logAllSignals;
+        include_interfaces = [];  # Add Rust-only field
+        exclude_interfaces = [];  # Add Rust-only field
         extract_notifications = cfg.sources.dbus.extractNotifications;
         extract_media = cfg.sources.dbus.extractMedia;
         extract_power = cfg.sources.dbus.extractPower;
@@ -291,7 +289,7 @@ rec {
         extract_mounts = cfg.sources.dbus.extractMounts;
       };
     } // lib.optionalAttrs (cfg.sources.clipboard.enable or false) {
-      "event.clipboard" = {
+      "event.copied" = {  # Matches Rust EVENT_NAME instead of generic "clipboard"
         monitor_clipboard = cfg.sources.clipboard.monitorClipboard;
         monitor_primary = cfg.sources.clipboard.monitorPrimary;
         monitor_secondary = cfg.sources.clipboard.monitorSecondary;
@@ -301,6 +299,7 @@ rec {
         enable_history = cfg.sources.clipboard.enableHistory;
         max_history_entries = cfg.sources.clipboard.maxHistoryEntries;
         max_content_size = cfg.sources.clipboard.maxContentSize;
+        annex_repo_path = fullCfg.blobStorage.repositoryPath;  # Add Rust-only field
       };
     };
 

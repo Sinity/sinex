@@ -6,6 +6,7 @@ use sinex_db::security::SecurityValidator;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::env;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
@@ -33,7 +34,22 @@ impl CollectorConfig {
     }
 
     pub fn load_with_validation(validate: bool) -> Result<Self> {
-        // Try standard locations
+        // Try environment variable first
+        if let Ok(config_path) = env::var("SINEX_CONFIG_FILE") {
+            let path = PathBuf::from(config_path);
+            if path.exists() {
+                let config = Self::load_from_file(&path)?;
+                if validate {
+                    config.validate()?;
+                }
+                return Ok(config);
+            }
+        }
+
+        // Try standard locations with configurable system config directory
+        let system_config_dir = env::var("SINEX_SYSTEM_CONFIG_DIR")
+            .unwrap_or_else(|_| "/etc/sinex".to_string());
+        
         let paths = vec![
             Some(PathBuf::from("sinex-collector.toml")),
             Some(PathBuf::from("unified-collector.toml")), // Legacy compatibility
@@ -41,7 +57,7 @@ impl CollectorConfig {
                 p.push("sinex/collector.toml");
                 p
             }),
-            Some(PathBuf::from("/etc/sinex/collector.toml")),
+            Some(PathBuf::from(format!("{}/collector.toml", system_config_dir))),
         ];
 
         for path in paths.into_iter().flatten() {
@@ -239,14 +255,24 @@ impl CollectorConfig {
     fn validate_event_config(&self, event_name: &str, config: &ConfigValue) -> Result<()> {
         // Map the event key format to the actual event type
         let actual_event_name = match event_name {
-            "shell_command_executed_atuin" => "shell.command.executed_atuin",
-            "terminal_scrollback_captured" => "terminal.scrollback.captured",
-            "terminal_command_output_captured" => "terminal.command_output.captured",
+            "shell_command_executed_atuin" => "command.imported",  // Legacy mapping
+            "command_imported" => "command.imported",              // New mapping
+            "terminal_scrollback_captured" => "output.captured",   // Updated mapping
+            "terminal_command_output_captured" => "output.captured", // Updated mapping
+            "command_executed" => "command.executed",              // New mapping
+            "command_completed" => "command.completed",            // New mapping
             "file_created" => "file.created",
             "file_modified" => "file.modified",
             "file_deleted" => "file.deleted",
-            "clipboard_content_changed" => "clipboard.content.changed",
-            "clipboard_selection_changed" => "clipboard.selection.changed",
+            "file_moved" => "file.moved",                          // New mapping
+            "dir_created" => "dir.created",                        // New mapping
+            "dir_deleted" => "dir.deleted",                        // New mapping
+            "clipboard_content_changed" => "copied",               // Updated mapping
+            "clipboard_selection_changed" => "selected",           // Updated mapping
+            "copied" => "copied",                                   // New mapping
+            "selected" => "selected",                               // New mapping
+            "recording_started" => "recording.started",            // New mapping
+            "recording_ended" => "recording.ended",                // New mapping
             // Allow the actual event names as well
             other if other.contains('.') => other,
             _ => event_name,
@@ -377,7 +403,7 @@ impl CollectorConfig {
                         ));
                     }
                 }
-                "command.executed" | "command.completed" | "output.captured" => {
+                "command.executed" | "command.completed" => {
                     if event_config.get("socket_path").is_none() {
                         errors.push(format!("Event '{}' is enabled but missing required 'socket_path' configuration", event_type));
                     }
@@ -390,6 +416,12 @@ impl CollectorConfig {
                 "recording.started" | "recording.ended" => {
                     if event_config.get("recordings_dir").is_none() {
                         errors.push(format!("Event '{}' is enabled but missing required 'recordings_dir' configuration", event_type));
+                    }
+                }
+                "output.captured" => {
+                    // Scrollback capture should have git-annex configured for large content
+                    if event_config.get("git_annex_repo").is_none() {
+                        errors.push(format!("Event '{}' is enabled but missing recommended 'git_annex_repo' configuration", event_type));
                     }
                 }
                 _ => {} // No specific requirements for other event types
@@ -501,6 +533,39 @@ impl ValidationReport {
     }
 }
 
+/// Resolve path without home directory assumptions for system services
+fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_dir: &str) -> String {
+    // First try environment variable if provided
+    if let Some(var_name) = env_var {
+        if let Ok(path) = env::var(var_name) {
+            return path;
+        }
+    }
+    
+    // If path starts with ~, resolve to system-safe alternatives
+    if default_path.starts_with("~/") {
+        let relative_path = &default_path[2..]; // Remove ~/
+        
+        // Try XDG directories first (most appropriate for system services)
+        if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
+            return format!("{}/{}", data_dir, relative_path);
+        }
+        
+        // Try HOME as last resort
+        if let Ok(home) = env::var("HOME") {
+            warn!("Using HOME directory for system service - consider setting XDG_DATA_HOME");
+            return format!("{}/.local/share/{}", home, relative_path);
+        }
+        
+        // Fall back to /var/lib or /tmp for system services
+        warn!("No HOME or XDG_DATA_HOME available, using fallback: {}/{}", fallback_dir, relative_path);
+        return format!("{}/{}", fallback_dir, relative_path);
+    }
+    
+    // Return path as-is if not home directory based
+    default_path.to_string()
+}
+
 impl Default for CollectorConfig {
     fn default() -> Self {
         // Create a minimal default configuration that is valid
@@ -514,8 +579,8 @@ impl Default for CollectorConfig {
                 table.insert(
                     "watch_patterns".to_string(),
                     ConfigValue::Array(vec![
-                        ConfigValue::String("~/Documents/**/*".to_string()),
-                        ConfigValue::String("~/Code/**/*".to_string()),
+                        ConfigValue::String(resolve_system_safe_path("~/Documents/**/*", Some("SINEX_DOCUMENTS_DIR"), "/var/lib/sinex/documents")),
+                        ConfigValue::String(resolve_system_safe_path("~/Code/**/*", Some("SINEX_CODE_DIR"), "/var/lib/sinex/code")),
                     ]),
                 );
                 table.insert(
@@ -536,7 +601,7 @@ impl Default for CollectorConfig {
                 let mut table = toml::map::Map::new();
                 table.insert(
                     "db_path".to_string(),
-                    ConfigValue::String("~/.local/share/atuin/history.db".to_string()),
+                    ConfigValue::String(resolve_system_safe_path("~/.local/share/atuin/history.db", Some("ATUIN_DB_PATH"), "/var/lib/sinex/atuin")),
                 );
                 table.insert(
                     "polling_interval_secs".to_string(),
@@ -552,7 +617,10 @@ impl Default for CollectorConfig {
                 let mut table = toml::map::Map::new();
                 table.insert(
                     "socket_path".to_string(),
-                    ConfigValue::String("/tmp/kitty".to_string()),
+                    ConfigValue::String(
+                        env::var("KITTY_SOCKET_PATH")
+                            .unwrap_or_else(|_| "/tmp/kitty".to_string())
+                    ),
                 );
                 table.insert("poll_interval_seconds".to_string(), ConfigValue::Integer(2));  // Use correct Rust field name
                 table.insert("enabled".to_string(), ConfigValue::Boolean(true));  // Add Rust field

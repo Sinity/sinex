@@ -190,6 +190,55 @@ in
       '';
     };
 
+    # Resource limits configuration
+    resources = {
+      unifiedCollector = {
+        memoryMax = mkOption {
+          type = types.str;
+          description = "Maximum memory for unified collector service";
+        };
+
+        cpuQuota = mkOption {
+          type = types.str;
+          description = "CPU quota for unified collector service";
+        };
+
+        tasksMax = mkOption {
+          type = types.int;
+          description = "Maximum number of tasks for unified collector service";
+        };
+
+        ioWeight = mkOption {
+          type = types.int;
+          default = 100;
+          description = "IO weight for unified collector service (10-1000)";
+        };
+      };
+
+      promoWorker = {
+        memoryMax = mkOption {
+          type = types.str;
+          description = "Maximum memory for promotion worker service";
+        };
+
+        cpuQuota = mkOption {
+          type = types.str;
+          description = "CPU quota for promotion worker service";
+        };
+
+        tasksMax = mkOption {
+          type = types.int;
+          description = "Maximum number of tasks for promotion worker service";
+        };
+
+        ioWeight = mkOption {
+          type = types.int;
+          default = 100;
+          description = "IO weight for promotion worker service (10-1000)";
+        };
+      };
+    };
+
     # Update configuration
     update = {
       enable = mkOption {
@@ -378,6 +427,45 @@ in
       })
     ];
 
+    # Set resource limits based on preset
+    services.sinex.resources = {
+      unifiedCollector = mkMerge [
+        (mkIf (cfg.preset == "lite") {
+          memoryMax = mkDefault "512M";
+          cpuQuota = mkDefault "100%";
+          tasksMax = mkDefault 500;
+        })
+        (mkIf (cfg.preset == "normal") {
+          memoryMax = mkDefault "1G";
+          cpuQuota = mkDefault "200%";
+          tasksMax = mkDefault 1000;
+        })
+        (mkIf (cfg.preset == "max") {
+          memoryMax = mkDefault "2G";
+          cpuQuota = mkDefault "400%";
+          tasksMax = mkDefault 2000;
+        })
+      ];
+      
+      promoWorker = mkMerge [
+        (mkIf (cfg.preset == "lite") {
+          memoryMax = mkDefault "256M";
+          cpuQuota = mkDefault "50%";
+          tasksMax = mkDefault 250;
+        })
+        (mkIf (cfg.preset == "normal") {
+          memoryMax = mkDefault "512M";
+          cpuQuota = mkDefault "100%";
+          tasksMax = mkDefault 500;
+        })
+        (mkIf (cfg.preset == "max") {
+          memoryMax = mkDefault "1G";
+          cpuQuota = mkDefault "200%";
+          tasksMax = mkDefault 1000;
+        })
+      ];
+    };
+
     # System integration (simplified from original)
     systemd.services = {
       sinex-unified-collector = {
@@ -402,13 +490,21 @@ in
               # Setup database URL
               export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
               
-              # Wait for PostgreSQL
+              # Wait for PostgreSQL with exponential backoff
               echo "Waiting for PostgreSQL..."
+              check_interval=1
+              max_interval=5
               for i in {1..30}; do
                 if ${pkgs.postgresql}/bin/pg_isready -h ${cfg.database.host} -p ${toString cfg.database.port} -U ${cfg.database.user} -d ${cfg.database.name}; then
+                  echo "✓ PostgreSQL ready (attempt $i)"
                   break
                 fi
-                sleep 1
+                echo "  PostgreSQL not ready, waiting ${check_interval}s... (attempt $i/30)"
+                sleep $check_interval
+                # Exponential backoff capped at 5s
+                if [ $check_interval -lt $max_interval ]; then
+                  check_interval=$((check_interval * 2))
+                fi
               done
               
               # Ensure extensions exist
@@ -452,17 +548,25 @@ in
             
             echo "Validating Sinex collector startup..."
             
-            # Wait for service to be ready (systemd notify)
+            # Wait for service to be ready with adaptive timing
+            echo "Waiting for service to reach running state..."
+            check_interval=1
+            max_interval=3
             for i in {1..30}; do
               if systemctl show -p SubState --value sinex-unified-collector | grep -q "running"; then
-                echo "✓ Service is running"
+                echo "✓ Service is running (attempt $i)"
                 break
               fi
               if [ $i -eq 30 ]; then
                 echo "ERROR: Service failed to reach running state" >&2
                 exit 1
               fi
-              sleep 1
+              echo "  Service not ready, waiting ${check_interval}s... (attempt $i/30)"
+              sleep $check_interval
+              # Exponential backoff capped at 3s
+              if [ $check_interval -lt $max_interval ]; then
+                check_interval=$((check_interval * 2))
+              fi
             done
             
             # Check database connectivity from the service
@@ -481,21 +585,28 @@ in
               exit 1
             fi
             
-            # Wait for heartbeat to appear
+            # Wait for heartbeat to appear with adaptive timing
             echo "Waiting for heartbeat..."
+            check_interval=1
+            max_interval=3
             for i in {1..10}; do
               if ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
                 SELECT COUNT(*) FROM component_heartbeats 
                 WHERE component_name = 'unified-collector' 
                 AND timestamp > NOW() - INTERVAL '1 minute'
               " | grep -q "[1-9]"; then
-                echo "✓ Heartbeat detected"
+                echo "✓ Heartbeat detected (attempt $i)"
                 break
               fi
               if [ $i -eq 10 ]; then
                 echo "WARNING: No heartbeat detected (non-fatal)" >&2
               fi
-              sleep 1
+              echo "  Waiting for heartbeat, checking again in ${check_interval}s... (attempt $i/10)"
+              sleep $check_interval
+              # Exponential backoff capped at 3s
+              if [ $check_interval -lt $max_interval ]; then
+                check_interval=$((check_interval * 2))
+              fi
             done
             
             echo "Collector startup validation completed successfully"
@@ -513,10 +624,10 @@ in
           TimeoutStopSec = 30;  # Give time for graceful shutdown
           
           # Resource limits
-          MemoryMax = "1G";
-          CPUQuota = "200%";
-          TasksMax = 1000;
-          IOWeight = 100;
+          MemoryMax = cfg.resources.unifiedCollector.memoryMax;
+          CPUQuota = cfg.resources.unifiedCollector.cpuQuota;
+          TasksMax = cfg.resources.unifiedCollector.tasksMax;
+          IOWeight = cfg.resources.unifiedCollector.ioWeight;
           
           # Security hardening
           PrivateTmp = true;
@@ -589,10 +700,10 @@ in
           StartLimitBurst = 3;
           
           # Resource limits
-          MemoryMax = "512M";
-          CPUQuota = "100%";
-          TasksMax = 500;
-          IOWeight = 100;
+          MemoryMax = cfg.resources.promoWorker.memoryMax;
+          CPUQuota = cfg.resources.promoWorker.cpuQuota;
+          TasksMax = cfg.resources.promoWorker.tasksMax;
+          IOWeight = cfg.resources.promoWorker.ioWeight;
           
           # Security hardening
           PrivateTmp = true;
@@ -740,6 +851,72 @@ in
             return 0
           }
           
+          # Wait for service to reach ready state with exponential backoff
+          wait_for_service_ready() {
+            local service_name=$1
+            local max_wait_seconds=''${2:-60}
+            local check_interval=1
+            local max_interval=8
+            local elapsed=0
+            
+            echo "Waiting for $service_name to become ready..."
+            
+            while [ $elapsed -lt $max_wait_seconds ]; do
+              if check_health "$service_name"; then
+                echo "✓ $service_name is ready (took ${elapsed}s)"
+                return 0
+              fi
+              
+              echo "  $service_name not ready yet, waiting ${check_interval}s... ($elapsed/${max_wait_seconds}s)"
+              sleep $check_interval
+              elapsed=$((elapsed + check_interval))
+              
+              # Exponential backoff (1s, 2s, 4s, 8s, 8s...)
+              if [ $check_interval -lt $max_interval ]; then
+                check_interval=$((check_interval * 2))
+              fi
+            done
+            
+            echo "ERROR: $service_name failed to become ready within ${max_wait_seconds}s"
+            return 1
+          }
+          
+          # Wait for worker to finish processing with active monitoring
+          wait_for_worker_idle() {
+            local max_wait_seconds=''${1:-30}
+            local elapsed=0
+            
+            echo "Waiting for worker to finish processing..."
+            
+            if ! systemctl is-active sinex-promo-worker >/dev/null 2>&1; then
+              echo "Worker is not running, no need to wait"
+              return 0
+            fi
+            
+            export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+            
+            while [ $elapsed -lt $max_wait_seconds ]; do
+              # Check if worker is processing items
+              local processing_count=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
+                SELECT COUNT(*) FROM work_queue 
+                WHERE status = 'processing' 
+                AND claimed_by IS NOT NULL
+              " 2>/dev/null || echo "0")
+              
+              if [ "$processing_count" -eq 0 ]; then
+                echo "✓ Worker is idle (no items being processed)"
+                return 0
+              fi
+              
+              echo "  Worker processing $processing_count items, waiting... ($elapsed/${max_wait_seconds}s)"
+              sleep 2
+              elapsed=$((elapsed + 2))
+            done
+            
+            echo "WARNING: Worker still processing after ${max_wait_seconds}s, proceeding anyway"
+            return 0
+          }
+          
           # Save current state
           echo "Saving current state..."
           COLLECTOR_WAS_ACTIVE=false
@@ -769,8 +946,8 @@ in
             systemctl stop sinex-promo-worker
           fi
           
-          # Give worker time to finish processing
-          sleep 5
+          # Wait for worker to finish processing
+          wait_for_worker_idle 30
           
           # Stop collector
           if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
@@ -795,7 +972,7 @@ in
             fi
             
             # Wait for collector to be ready
-            sleep 5
+            wait_for_service_ready sinex-unified-collector 60
           fi
           
           if [ "$WORKER_WAS_ACTIVE" = "true" ]; then
@@ -840,7 +1017,7 @@ in
             fi
             
             echo "Waiting for services to become healthy... ($ELAPSED/${toString cfg.update.healthCheckTimeout}s)"
-            sleep 5
+            sleep 3  # Shorter interval for health checks
           done
           
           # Handle rollback if needed

@@ -129,7 +129,7 @@ in
       };
     };
     
-    # User script for manual configuration
+    # User script for manual configuration and kitty package
     environment.systemPackages = [
       (pkgs.writeShellScriptBin "sinex-configure-kitty" ''
         echo "Configuring Kitty shell integration for Sinex..."
@@ -140,10 +140,7 @@ in
         echo "Removing Kitty shell integration configuration..."
         sudo -u ${cfg.targetUser} ${removeKittyConfigScript}
       '')
-    ];
-    
-    # Add kitty to system packages if auto-configuring
-    environment.systemPackages = mkIf (cfg.enable) [ pkgs.kitty ];
+    ] ++ lib.optionals (cfg.enable) [ pkgs.kitty ];
     
     # Validation warning if targetUser is not set
     warnings = optional (cfg.targetUser == null) ''
