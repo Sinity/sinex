@@ -107,7 +107,7 @@ impl UnifiedCollector {
         validator: Option<EventValidator>,
     ) -> Self {
         let enabled_events: HashSet<_> = config.enabled_events.iter().cloned().collect();
-        let registry = create_registry();
+        let registry = create_registry_with_auto_registration();
 
         Self {
             config,
