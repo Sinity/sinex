@@ -42,11 +42,12 @@ pub use serde_json::{json, Value};
 // ===== Sinex Core Types =====
 pub use sinex_core::{
     event_type_constants, parse_duration, sources,
-    unified_collector::{create_registry, EventRegistry},
+    unified_collector::{EventRegistry},
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
     ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator,
     RawEventBuilder, ResultExt, ValidationChain,
 };
+pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
     prelude::{AgentManifest, QueueStatus, WorkQueueItem},
     queries, run_migrations, DbPool, RawEvent,
