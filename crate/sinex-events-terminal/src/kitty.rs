@@ -29,7 +29,17 @@ impl Default for KittyConfig {
     }
 }
 
-/// Kitty terminal command execution event
+/// Kitty terminal command completion event (command + output)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyCommandCompleted;
+
+impl EventType for KittyCommandCompleted {
+    type Payload = KittyCommandCompletedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "command.completed";
+}
+
+/// Legacy command execution event (kept for backward compatibility)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KittyCommandExecuted;
 
@@ -37,6 +47,31 @@ impl EventType for KittyCommandExecuted {
     type Payload = KittyCommandExecutedPayload;
     type SourceImpl = KittyEventSource;
     const EVENT_NAME: &'static str = "command.executed";
+}
+
+/// Kitty scrollback captured event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyScrollbackCaptured;
+
+impl EventType for KittyScrollbackCaptured {
+    type Payload = KittyScrollbackCapturedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "scrollback.full";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyCommandCompletedPayload {
+    pub command: String,
+    pub command_output: String,
+    pub working_directory: Option<String>,
+    pub kitty_window_id: String,
+    pub kitty_tab_id: String,
+    pub exit_status: Option<i32>,
+    pub execution_time_ms: Option<u64>,
+    pub output_size_bytes: u64,
+    pub output_line_count: u32,
+    pub shell_integration_used: bool,
+    pub completion_timestamp: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -51,15 +86,16 @@ pub struct KittyCommandExecutedPayload {
     pub scrollback_hash: Option<String>,
 }
 
-/// Kitty scrollback buffer capture event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KittyScrollbackCaptured;
-
-impl EventType for KittyScrollbackCaptured {
-    type Payload = KittyScrollbackCapturedPayload;
-    type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "scrollback.captured";
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyScrollbackCapturedPayload {
+    pub kitty_window_id: String,
+    pub content_hash: String,
+    pub line_count: u32,
+    pub scrollback_size_bytes: u64,
+    pub capture_timestamp: String,
+    pub content_preview: String,
 }
+
 
 /// Kitty tab created event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,15 +147,6 @@ impl EventType for KittyConfigChanged {
     const EVENT_NAME: &'static str = "config.changed";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct KittyScrollbackCapturedPayload {
-    pub kitty_window_id: String,
-    pub content_hash: String,
-    pub line_count: u32,
-    pub scrollback_size_bytes: u64,
-    pub capture_timestamp: String,
-    pub content_preview: String, // First 200 chars for debugging
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyTabCreatedPayload {
@@ -377,10 +404,22 @@ impl KittyEventSource {
     }
 
     async fn get_scrollback_content(&self, window_id: &str) -> Result<String> {
+        self.get_kitty_text(window_id, "scrollback").await
+    }
+
+    async fn get_last_command_output(&self, window_id: &str) -> Result<String> {
+        self.get_kitty_text(window_id, "last_cmd_output").await
+    }
+
+    async fn get_last_non_empty_output(&self, window_id: &str) -> Result<String> {
+        self.get_kitty_text(window_id, "last_non_empty_output").await
+    }
+
+    async fn get_kitty_text(&self, window_id: &str, extent: &str) -> Result<String> {
         let get_text_command = serde_json::json!({
             "cmd": "get-text",
             "match": format!("id:{}", window_id),
-            "extent": "scrollback"
+            "extent": extent
         });
 
         let response = self.send_kitty_command(get_text_command).await?;
@@ -388,7 +427,7 @@ impl KittyEventSource {
         if let Some(text) = response.get("text").and_then(|t| t.as_str()) {
             Ok(text.to_string())
         } else {
-            Err(sinex_core::CoreError::Other("No text content in Kitty response".to_string()))
+            Err(sinex_core::CoreError::Other(format!("No text content in Kitty response for extent: {}", extent)))
         }
     }
 
@@ -454,86 +493,112 @@ impl KittyEventSource {
             }
         }
         
-        // Get scrollback content
-        let scrollback = self.get_scrollback_content(&window_id).await?;
-        
-        // Calculate content hash
-        let content_hash = blake3::hash(scrollback.as_bytes()).to_hex().to_string();
-        
-        // Check if scrollback changed
-        let scrollback_changed = self.last_scrollback_hashes
-            .get(&window_id)
-            .map(|hash| hash != &content_hash)
-            .unwrap_or(true);
-        
-        if scrollback_changed {
-            // Emit scrollback capture event
-            let scrollback_payload = KittyScrollbackCapturedPayload {
-                kitty_window_id: window_id.clone(),
-                content_hash: content_hash.clone(),
-                line_count: scrollback.lines().count() as u32,
-                scrollback_size_bytes: scrollback.len() as u64,
-                capture_timestamp: chrono::Utc::now().to_rfc3339(),
-                content_preview: scrollback.chars().take(200).collect(),
-            };
-
-            let scrollback_event = RawEventBuilder::new(
-                "terminal.kitty",
-                "scrollback.captured",
-                serde_json::to_value(scrollback_payload)?,
-            ).build();
-
-            tx.send(scrollback_event).await
-                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send scrollback capture event: {}", e)))?;
-
-            // Update stored hash
-            self.last_scrollback_hashes.insert(window_id.clone(), content_hash.clone());
-        }
-
-        // Parse commands from scrollback
-        let commands = self.parse_commands_from_scrollback(&scrollback);
-        
-        // Get or create window state
-        let window_state = self.window_states
-            .entry(window_id.clone())
-            .or_insert_with(|| KittyWindowState {
-                window_id: window_id.clone(),
-                tab_id: "0".to_string(), // Would need to get actual tab ID
-                last_command: None,
-                working_directory: window.cwd.clone(),
-                last_prompt_time: None,
-                command_start_time: None,
-            });
-
-        // Check for new commands
-        for command in commands {
-            if window_state.last_command.as_ref() != Some(&command) {
-                // New command detected
-                let command_payload = KittyCommandExecutedPayload {
-                    command: command.clone(),
-                    working_directory: window.cwd.clone(),
-                    kitty_window_id: window_id.clone(),
-                    kitty_tab_id: window_state.tab_id.clone(),
-                    exit_status: None, // Would need process monitoring for this
-                    execution_time_ms: None,
-                    prompt_detected: true,
-                    scrollback_hash: Some(content_hash.clone()),
-                };
-
-                let command_event = RawEventBuilder::new(
-                    "terminal.kitty",
-                    "command.executed",
-                    serde_json::to_value(command_payload)?,
-                ).build();
-
-                tx.send(command_event).await
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send command execution event: {}", e)))?;
-
-                // Update window state
-                window_state.last_command = Some(command);
-                window_state.last_prompt_time = Some(SystemTime::now());
+        // Try to get last command output using shell integration
+        if let Ok(last_output) = self.get_last_command_output(&window_id).await {
+            if !last_output.trim().is_empty() {
+                // Calculate output hash to detect new commands
+                let output_hash = blake3::hash(last_output.as_bytes()).to_hex().to_string();
+                
+                let window_state = self.window_states
+                    .entry(window_id.clone())
+                    .or_insert_with(|| KittyWindowState {
+                        window_id: window_id.clone(),
+                        tab_id: "0".to_string(),
+                        last_command: None,
+                        working_directory: window.cwd.clone(),
+                        last_prompt_time: None,
+                        command_start_time: None,
+                    });
+                
+                // Check if this is a new command output (by comparing hash)
+                let is_new_output = self.last_scrollback_hashes
+                    .get(&window_id)
+                    .map(|hash| hash != &output_hash)
+                    .unwrap_or(true);
+                    
+                if is_new_output {
+                    // Try to extract command from the output (look for prompt patterns)
+                    let extracted_command = KittyEventSource::extract_command_from_output(&self.prompt_patterns, &last_output);
+                    
+                    if let Some(command_text) = extracted_command {
+                        // Create command completion event with both command and output
+                        let completion_payload = KittyCommandCompletedPayload {
+                            command: command_text.clone(),
+                            command_output: last_output.clone(),
+                            working_directory: window.cwd.clone(),
+                            kitty_window_id: window_id.clone(),
+                            kitty_tab_id: window_state.tab_id.clone(),
+                            exit_status: None, // TODO: Extract from shell integration if available
+                            execution_time_ms: None, // TODO: Calculate if we track command start
+                            output_size_bytes: last_output.len() as u64,
+                            output_line_count: last_output.lines().count() as u32,
+                            shell_integration_used: true,
+                            completion_timestamp: chrono::Utc::now().to_rfc3339(),
+                        };
+                        
+                        let completion_event = RawEventBuilder::new(
+                            "terminal.kitty",
+                            "command.completed",
+                            serde_json::to_value(completion_payload)?,
+                        ).build();
+                        
+                        tx.send(completion_event).await
+                            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send command completion event: {}", e)))?;
+                        
+                        // Update state
+                        window_state.last_command = Some(command_text);
+                        window_state.last_prompt_time = Some(SystemTime::now());
+                        self.last_scrollback_hashes.insert(window_id.clone(), output_hash);
+                    }
+                }
             }
         }
+        
+        Ok(())
+    }
+    
+    fn extract_command_from_output(prompt_patterns: &[Regex], output: &str) -> Option<String> {
+        // Look for the last prompt line in the output to extract command
+        let lines: Vec<&str> = output.lines().collect();
+        
+        // Search from the end for a prompt pattern
+        for line in lines.iter().rev() {
+            for pattern in prompt_patterns {
+                if let Some(captures) = pattern.captures(line) {
+                    if let Some(command) = captures.get(1) {
+                        let cmd = command.as_str().trim();
+                        if !cmd.is_empty() {
+                            return Some(cmd.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+
+    async fn capture_full_scrollback(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
+        let window_id = window.id.to_string();
+        let scrollback = self.get_scrollback_content(&window_id).await?;
+        
+        let scrollback_payload = KittyScrollbackCapturedPayload {
+            kitty_window_id: window_id.clone(),
+            content_hash: blake3::hash(scrollback.as_bytes()).to_hex().to_string(),
+            line_count: scrollback.lines().count() as u32,
+            scrollback_size_bytes: scrollback.len() as u64,
+            capture_timestamp: chrono::Utc::now().to_rfc3339(),
+            content_preview: scrollback.chars().take(200).collect(),
+        };
+
+        let scrollback_event = RawEventBuilder::new(
+            "terminal.kitty",
+            "scrollback.full",
+            serde_json::to_value(scrollback_payload)?,
+        ).build();
+
+        tx.send(scrollback_event).await
+            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send full scrollback event: {}", e)))?;
 
         Ok(())
     }
@@ -566,13 +631,29 @@ impl EventSource for KittyEventSource {
             return Ok(());
         }
 
+        let mut last_scrollback_capture = SystemTime::now();
+        let scrollback_interval = Duration::from_secs(60); // 60 second intervals for full scrollback
+
         loop {
             match self.get_kitty_windows().await {
                 Ok(windows) => {
                     for window in windows {
+                        // Process command completions (real-time with shell integration)
                         if let Err(e) = self.process_window_commands(&window, &tx).await {
                             tracing::error!("Failed to process window {}: {}", window.id, e);
                         }
+                        
+                        // Capture full scrollback periodically (safety net)
+                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
+                            if let Err(e) = self.capture_full_scrollback(&window, &tx).await {
+                                tracing::error!("Failed to capture full scrollback for window {}: {}", window.id, e);
+                            }
+                        }
+                    }
+                    
+                    // Update scrollback capture timestamp
+                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
+                        last_scrollback_capture = SystemTime::now();
                     }
                 }
                 Err(e) => {

@@ -11,7 +11,7 @@ use chrono::Utc;
 fn test_scrollback_config_default() {
     let config = ScrollbackConfig::default();
     
-    assert_eq!(config.capture_interval_secs, 300);
+    assert_eq!(config.capture_interval_secs, 60);
     assert_eq!(config.max_scrollback_lines, 10000);
     assert_eq!(config.include_ansi_codes, false);
     assert_eq!(config.capture_command_output, true);
@@ -160,8 +160,8 @@ fn test_chunking_threshold_logic() {
 
 #[test]
 fn test_event_type_constants() {
-    assert_eq!(TerminalScrollbackCaptured::EVENT_NAME, "output.captured");
-    assert_eq!(CommandOutputCaptured::EVENT_NAME, "output.captured");
+    assert_eq!(TerminalScrollbackCaptured::EVENT_NAME, "scrollback.full");
+    assert_eq!(CommandOutputCaptured::EVENT_NAME, "command.output");
     assert_eq!(ScrollbackCapture::SOURCE_NAME, "shell.scrollback");
 }
 

@@ -1,7 +1,7 @@
 use sinex_events_terminal::kitty::{
-    KittyEventSource, KittyConfig, KittyCommandExecuted, KittyScrollbackCaptured,
+    KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackCaptured,
     KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged, KittyConfigChanged,
-    KittyCommandExecutedPayload, KittyScrollbackCapturedPayload, KittyTabCreatedPayload,
+    KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackCapturedPayload, KittyTabCreatedPayload,
     KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
     KittyConfigChangedPayload, KittyProcessInfo,
 };
@@ -38,7 +38,8 @@ fn test_kitty_config_serialization() {
 fn test_kitty_event_types() {
     // Verify event type constants
     assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.executed");
-    assert_eq!(KittyScrollbackCaptured::EVENT_NAME, "scrollback.captured");
+    assert_eq!(KittyCommandCompleted::EVENT_NAME, "command.completed");
+    assert_eq!(KittyScrollbackCaptured::EVENT_NAME, "scrollback.full");
     assert_eq!(KittyTabCreated::EVENT_NAME, "tab.created");
     assert_eq!(KittyTabFocused::EVENT_NAME, "tab.focused");
     assert_eq!(KittyTabClosed::EVENT_NAME, "tab.closed");
@@ -128,4 +129,36 @@ fn test_kitty_config_changed_payload() {
     assert_eq!(config_payload.previous_value, deserialized.previous_value);
     assert_eq!(config_payload.current_value, deserialized.current_value);
     assert_eq!(config_payload.affected_windows.len(), deserialized.affected_windows.len());
+}
+
+#[test]
+fn test_kitty_command_completed_payload() {
+    let completion_payload = KittyCommandCompletedPayload {
+        command: "git status".to_string(),
+        command_output: "On branch main\nnothing to commit, working tree clean".to_string(),
+        working_directory: Some("/home/user/project".to_string()),
+        kitty_window_id: "win123".to_string(),
+        kitty_tab_id: "tab456".to_string(),
+        exit_status: Some(0),
+        execution_time_ms: Some(150),
+        output_size_bytes: 42,
+        output_line_count: 2,
+        shell_integration_used: true,
+        completion_timestamp: "2024-01-01T12:00:00Z".to_string(),
+    };
+    
+    let serialized = serde_json::to_string(&completion_payload).expect("Should serialize");
+    let deserialized: KittyCommandCompletedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    
+    assert_eq!(completion_payload.command, deserialized.command);
+    assert_eq!(completion_payload.command_output, deserialized.command_output);
+    assert_eq!(completion_payload.working_directory, deserialized.working_directory);
+    assert_eq!(completion_payload.kitty_window_id, deserialized.kitty_window_id);
+    assert_eq!(completion_payload.kitty_tab_id, deserialized.kitty_tab_id);
+    assert_eq!(completion_payload.exit_status, deserialized.exit_status);
+    assert_eq!(completion_payload.execution_time_ms, deserialized.execution_time_ms);
+    assert_eq!(completion_payload.output_size_bytes, deserialized.output_size_bytes);
+    assert_eq!(completion_payload.output_line_count, deserialized.output_line_count);
+    assert_eq!(completion_payload.shell_integration_used, deserialized.shell_integration_used);
+    assert_eq!(completion_payload.completion_timestamp, deserialized.completion_timestamp);
 }

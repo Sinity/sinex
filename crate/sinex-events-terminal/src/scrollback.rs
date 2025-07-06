@@ -58,14 +58,14 @@ pub struct TerminalScrollbackCaptured;
 impl EventType for TerminalScrollbackCaptured {
     type Payload = TerminalScrollbackCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "output.captured";
+    const EVENT_NAME: &'static str = "scrollback.full";
 }
 
 pub struct CommandOutputCaptured;
 impl EventType for CommandOutputCaptured {
     type Payload = CommandOutputCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "output.captured";
+    const EVENT_NAME: &'static str = "command.output";
 }
 
 // ============================================================================
@@ -119,7 +119,7 @@ impl Default for ScrollbackConfig {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
         Self {
             kitty_socket_path: "/tmp/kitty".to_string(),
-            capture_interval_secs: 300, // 5 minutes
+            capture_interval_secs: 60, // 60 seconds (1 minute) for safety net
             max_scrollback_lines: 10000,
             include_ansi_codes: false,
             capture_command_output: true,
@@ -322,7 +322,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );
-                tx.send_or_log(event, "scrollback_captured").await?;
+                tx.send_or_log(event, "scrollback_full").await?;
 
                 // Save to file if configured
                 if self.config.save_to_files {
@@ -348,7 +348,7 @@ impl ScrollbackCapture {
                                 CommandOutputCaptured::EVENT_NAME,
                                 serde_json::to_value(payload)?,
                             );
-                            tx.send_or_log(event, "scrollback_command_output").await?;
+                            tx.send_or_log(event, "command_output").await?;
                         }
                     }
                 }
@@ -617,7 +617,7 @@ impl ScrollbackCapture {
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );
-                tx.send_or_log(event, "scrollback_incremental").await?;
+                tx.send_or_log(event, "scrollback_full").await?;
 
                 // Save to file if configured
                 if self.config.save_to_files {

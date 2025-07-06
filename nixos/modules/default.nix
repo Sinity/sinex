@@ -23,6 +23,7 @@ in
     ./blob-storage.nix
     ./monitoring.nix
     ./preflight-verification.nix
+    ./kitty-shell-integration.nix
   ];
 
   options.services.sinex = {
