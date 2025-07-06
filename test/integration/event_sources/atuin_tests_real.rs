@@ -189,7 +189,7 @@ async fn test_atuin_event_capture(ctx: TestContext) -> TestResult {
 
     // Check event structure
     for event in &events {
-        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.event_type, "command.executed");
         pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
 
         let payload: CommandExecutedAtuinPayload =
@@ -354,7 +354,7 @@ async fn test_real_atuin_integration(ctx: TestContext) -> TestResult {
     // Verify events have expected structure
     for (i, event) in events.iter().enumerate() {
         pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
-        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.event_type, "command.executed");
 
         let payload: CommandExecutedAtuinPayload =
             serde_json::from_value(event.payload.clone()).unwrap();
@@ -538,7 +538,7 @@ mod test_helpers {
     /// Helper to verify event payload structure
     #[allow(dead_code)]
     pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
-        pretty_assertions::assert_eq!(event.event_type, "shell.command.executed_atuin");
+        pretty_assertions::assert_eq!(event.event_type, "command.executed");
         pretty_assertions::assert_eq!(event.source, "ingestor.atuin_db_reader");
 
         let payload: CommandExecutedAtuinPayload = serde_json::from_value(event.payload.clone())?;

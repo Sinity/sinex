@@ -1,11 +1,11 @@
 use sinex_events_terminal::kitty::{
-    KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackCaptured,
+    KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackIncremental,
     KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged,
-    KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackCapturedPayload, KittyTabCreatedPayload,
-    KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
+    KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
+    KittyTabCreatedPayload, KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
     KittyProcessInfo,
 };
-use sinex_core::{EventSource, EventSourceContext, EventType, event_type_constants};
+use sinex_core::{EventSource, EventSourceContext, EventType};
 
 #[tokio::test]
 async fn test_kitty_event_source_creation() {
@@ -37,9 +37,9 @@ fn test_kitty_config_serialization() {
 #[test]
 fn test_kitty_event_types() {
     // Verify event type constants
-    assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.executed");
+    assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.started");
     assert_eq!(KittyCommandCompleted::EVENT_NAME, "command.completed");
-    assert_eq!(KittyScrollbackCaptured::EVENT_NAME, "scrollback.full");
+    assert_eq!(KittyScrollbackIncremental::EVENT_NAME, "content.streamed");
     assert_eq!(KittyTabCreated::EVENT_NAME, "tab.created");
     assert_eq!(KittyTabFocused::EVENT_NAME, "tab.focused");
     assert_eq!(KittyTabClosed::EVENT_NAME, "tab.closed");

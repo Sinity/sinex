@@ -147,11 +147,21 @@ EOF
         )
         return int(result.strip())
     
-    def get_kitty_events():
+    def get_kitty_events(event_type=None):
+        if event_type:
+            where_clause = f"WHERE source = 'terminal.kitty' AND event_type = '{event_type}'"
+        else:
+            where_clause = "WHERE source = 'terminal.kitty'"
         result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT payload FROM raw.events WHERE source = '\"'\"'shell.kitty'\"'\"' ORDER BY ts_ingest DESC LIMIT 5;\"'"
+            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM raw.events {where_clause} ORDER BY ts_ingest DESC LIMIT 10;\"'"
         )
         return result.strip()
+    
+    def get_kitty_event_count(event_type):
+        result = machine.succeed(
+            f"su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events WHERE source = '\"'\"'terminal.kitty'\"'\"' AND event_type = '\"'\"'{event_type}'\"'\"';\"'"
+        )
+        return int(result.strip())
     
     # System initialization
     with subtest("System initialization"):
@@ -263,6 +273,114 @@ EOF
                 
         except Exception as e:
             print(f"Scrollback test failed: {e}")
+
+    # Test tab focus and process changes
+    with subtest("Tab focus and process tracking"):
+        try:
+            initial_tab_events = get_kitty_event_count('tab.focused')
+            initial_process_events = get_kitty_event_count('process.changed')
+            
+            # Create multiple tabs to test tab focus events
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test new-tab'"
+            )
+            machine.sleep(2)
+            
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test new-tab'"
+            )
+            machine.sleep(2)
+            
+            # Switch between tabs to generate focus events
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test focus-tab --match index:0'"
+            )
+            machine.sleep(2)
+            
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test focus-tab --match index:1'"
+            )
+            machine.sleep(2)
+            
+            # Run different processes to generate process change events
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"sleep 5 &\\n\"'"
+            )
+            machine.sleep(2)
+            
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"echo \\\"process test\\\"\\n\"'"
+            )
+            machine.sleep(2)
+            
+            # Check for tab and process events
+            final_tab_events = get_kitty_event_count('tab.focused')
+            final_process_events = get_kitty_event_count('process.changed')
+            
+            new_tab_events = final_tab_events - initial_tab_events
+            new_process_events = final_process_events - initial_process_events
+            
+            print(f"New tab focus events: {new_tab_events}")
+            print(f"New process change events: {new_process_events}")
+            
+            if new_tab_events > 0:
+                print("✓ Tab focus tracking working")
+                tab_event_details = get_kitty_events('tab.focused')
+                print(f"Tab event details:\n{tab_event_details}")
+            else:
+                print("! No tab focus events captured")
+            
+            if new_process_events > 0:
+                print("✓ Process change tracking working")
+                process_event_details = get_kitty_events('process.changed')
+                print(f"Process event details:\n{process_event_details}")
+            else:
+                print("! No process change events captured")
+                
+        except Exception as e:
+            print(f"Tab/process tracking test failed: {e}")
+
+    # Test command completion with exit status
+    with subtest("Command completion with exit status"):
+        try:
+            initial_completed = get_kitty_event_count('command.completed')
+            
+            # Run commands with different exit statuses
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"echo \\\"success command\\\"\\n\"'"
+            )
+            machine.sleep(2)
+            
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"false\\n\"'"  # Exit status 1
+            )
+            machine.sleep(2)
+            
+            machine.succeed(
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"exit 42\\n\"'"  # Exit status 42
+            )
+            machine.sleep(2)
+            
+            final_completed = get_kitty_event_count('command.completed')
+            new_completed = final_completed - initial_completed
+            
+            print(f"New command.completed events: {new_completed}")
+            
+            if new_completed > 0:
+                print("✓ Command completion tracking working")
+                completed_events = get_kitty_events('command.completed')
+                print(f"Command completion details:\n{completed_events}")
+                
+                # Check for exit status capture
+                if 'exit_status' in completed_events:
+                    print("✓ Exit status capture working")
+                else:
+                    print("! Exit status not captured in events")
+            else:
+                print("! No command completion events captured")
+                
+        except Exception as e:
+            print(f"Command completion test failed: {e}")
 
     # Test EventSource error handling
     with subtest("EventSource resilience"):

@@ -74,7 +74,7 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
         Just("file.deleted".to_string()),
         // Terminal events
         Just("command.executed".to_string()),
-        Just("shell.command.executed_atuin".to_string()),
+        Just("command.executed".to_string()),
         // Window events
         Just("window.focused".to_string()),
         Just("window.opened".to_string()),

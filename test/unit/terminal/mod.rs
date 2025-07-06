@@ -24,5 +24,6 @@
 //! - **Data integrity**: Verify chunking preserves content
 //! - **Edge cases**: Threshold boundaries, malformed data
 
+pub mod asciinema_auto_recording_test;
 pub mod kitty_integration_test;
 pub mod scrollback_chunking_test;

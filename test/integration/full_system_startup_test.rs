@@ -409,7 +409,7 @@ async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> TestResu
     let mut incomplete_config = CollectorConfig::default();
     incomplete_config
         .enabled_events
-        .push("shell.command.executed_atuin".to_string());
+        .push("command.executed".to_string());
     // Don't provide required atuin configuration
 
     let cross_validation = incomplete_config.cross_validate();

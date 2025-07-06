@@ -309,7 +309,6 @@ fn security_scenarios() -> Vec<SecurityScenario> {
 
 /// Test all security scenarios comprehensively
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet - TODO: implement proper sanitization"]
 async fn test_comprehensive_security_scenarios(ctx: TestContext) -> TestResult {
     let scenarios = security_scenarios();
 
@@ -410,7 +409,6 @@ async fn test_comprehensive_security_scenarios(ctx: TestContext) -> TestResult {
 
 /// Test path traversal attacks specifically
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_path_traversal_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -422,7 +420,6 @@ async fn test_path_traversal_attacks(ctx: TestContext) -> TestResult {
 
 /// Test SQL injection attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_sql_injection_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -434,7 +431,6 @@ async fn test_sql_injection_attacks(ctx: TestContext) -> TestResult {
 
 /// Test command injection attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_command_injection_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -446,7 +442,6 @@ async fn test_command_injection_attacks(ctx: TestContext) -> TestResult {
 
 /// Test XSS injection attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_xss_injection_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -458,7 +453,6 @@ async fn test_xss_injection_attacks(ctx: TestContext) -> TestResult {
 
 /// Test JSON attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_json_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -470,7 +464,6 @@ async fn test_json_attacks(ctx: TestContext) -> TestResult {
 
 /// Test unicode exploits
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_unicode_exploits(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -482,7 +475,6 @@ async fn test_unicode_exploits(ctx: TestContext) -> TestResult {
 
 /// Test resource exhaustion attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_resource_exhaustion_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -494,7 +486,6 @@ async fn test_resource_exhaustion_attacks(ctx: TestContext) -> TestResult {
 
 /// Test prototype pollution attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_prototype_pollution_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -506,7 +497,6 @@ async fn test_prototype_pollution_attacks(ctx: TestContext) -> TestResult {
 
 /// Test format string attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_format_string_attacks(ctx: TestContext) -> TestResult {
     let scenarios: Vec<SecurityScenario> = security_scenarios()
         .into_iter()
@@ -635,7 +625,6 @@ async fn run_security_test_batch(
 
 /// Test filesystem path traversal attacks specifically
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet - TODO: implement proper path sanitization"]
 async fn test_filesystem_path_traversal_comprehensive(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
@@ -766,7 +755,6 @@ async fn test_hash_collision_dos(_ctx: TestContext) -> TestResult {
 
 /// Test JSON parser differential attacks
 #[sinex_test]
-#[ignore = "Security validation not fully implemented yet"]
 async fn test_json_parser_differential(_ctx: TestContext) -> TestResult {
     let tricky_json_strings = vec![
         (
