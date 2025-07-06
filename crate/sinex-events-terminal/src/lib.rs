@@ -22,17 +22,26 @@ use sinex_core::register_events;
 
 // Register all terminal event types using the macro
 register_events! {
-    "recording.started" => (shell.recording, AsciinemaSessionStartedPayload),
-    "recording.ended" => (shell.recording, AsciinemaSessionEndedPayload),
-    "command.imported" => (shell.atuin, CommandExecutedAtuinPayload),
-    "command.executed" => (shell.kitty, KittyCommandExecutedPayload),
+    // Terminal recording sessions
+    "session.started" => (shell.recording, AsciinemaSessionStartedPayload),
+    "session.ended" => (shell.recording, AsciinemaSessionEndedPayload),
+    
+    // Command execution (rich metadata from Atuin)
+    "command.executed" => (shell.atuin, CommandExecutedAtuinPayload),
+    
+    // Command execution (discovered from history files)
+    "command.executed" => (shell.history, ShellHistoryCommandPayload),
+    
+    // Real-time terminal events from Kitty
+    "command.started" => (shell.kitty, KittyCommandExecutedPayload),
     "command.completed" => (shell.kitty, KittyCommandCompletedPayload),
-    "scrollback.incremental" => (shell.kitty, KittyScrollbackIncrementalPayload),
     "tab.created" => (shell.kitty, KittyTabCreatedPayload),
     "tab.focused" => (shell.kitty, KittyTabFocusedPayload),
     "tab.closed" => (shell.kitty, KittyTabClosedPayload),
     "process.changed" => (shell.kitty, KittyProcessChangedPayload),
-    "command.output" => (shell.scrollback, CommandOutputCapturedPayload),
-    "scrollback.full" => (shell.scrollback, TerminalScrollbackCapturedPayload),
-    "command.imported" => (shell.history, ShellHistoryCommandPayload),
+    "content.streamed" => (shell.kitty, KittyScrollbackIncrementalPayload),
+    
+    // Terminal content capture
+    "output.captured" => (shell.scrollback, CommandOutputCapturedPayload),
+    "content.captured" => (shell.scrollback, TerminalScrollbackCapturedPayload),
 }

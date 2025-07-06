@@ -3,13 +3,13 @@ name: Schema Validation Pipeline
 on:
   push:
     paths:
-      - 'schemas/**'
       - 'migrations/**'
+      - 'crate/*/src/**'
       - '.github/workflows/schema-validation.yml'
   pull_request:
     paths:
-      - 'schemas/**'
       - 'migrations/**'
+      - 'crate/*/src/**'
       - '.github/workflows/schema-validation.yml'
 
 env:
@@ -43,9 +43,6 @@ jobs:
       - name: Setup Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@v7
       
-      - name: Install ajv-cli for JSON Schema validation
-        run: npm install -g ajv-cli
-      
       - name: Install PostgreSQL extensions
         run: |
           sudo apt-get update
@@ -64,23 +61,6 @@ jobs:
             CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
             CREATE EXTENSION IF NOT EXISTS pgvector CASCADE;
           " || echo "Extensions installation completed with warnings"
-      
-      - name: Validate JSON Schema syntax
-        run: |
-          if [ -d "schemas/" ]; then
-            echo "Validating JSON Schema files..."
-            find schemas/ -name "*.json" -type f | while read -r file; do
-              echo "Validating $file"
-              ajv validate -s schemas/meta/meta-schema.json -d "$file" 2>/dev/null || \
-              ajv compile -s "$file" || {
-                echo "❌ Schema validation failed for $file"
-                exit 1
-              }
-            done
-            echo "✅ All schema files are valid"
-          else
-            echo "ℹ️  No schemas directory found, skipping schema validation"
-          fi
       
       - name: Run database migrations
         run: |
@@ -114,9 +94,10 @@ jobs:
             WHERE event_source = 'test.source';
           "
       
-      - name: Check backward compatibility
+      - name: Test auto-registration system
         run: |
-          ./scripts/schema-compatibility-check.sh || echo "Compatibility check completed"
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
+          nix develop -c cargo test test_auto_registration_completeness -- --test-threads=1
       
       - name: Validate with existing codebase
         run: |
@@ -136,8 +117,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Deploy schemas to staging
+      - name: Auto-registration deployment note
         run: |
-          echo "🚀 Deploying schemas to staging environment"
-          # This would deploy to a staging database in a real setup
-          echo "✅ Schema deployment to staging completed"
+          echo "📋 Schema auto-registration system is active"
+          echo "🚀 Schemas are automatically generated from Rust types via #[derive(JsonSchema)]"
+          echo "✅ No manual deployment needed - schemas are embedded in the application"

@@ -16,7 +16,8 @@ use tokio::time;
 use tracing::{debug, error, info};
 
 use sinex_core::{
-    event_type_constants, sources, EventSource, EventSourceContext, EventType, RawEvent, Result,
+    event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType, RawEvent, Result,
+    EventFactory, ErrorContext, CoreError, BackoffHelper,
 };
 
 // ============================================================================
@@ -83,42 +84,42 @@ pub struct StateSnapshotPayload {
 pub struct WindowFocused;
 impl EventType for WindowFocused {
     type Payload = WindowFocusedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::WINDOW_FOCUSED;
 }
 
 pub struct WindowOpened;
 impl EventType for WindowOpened {
     type Payload = WindowOpenedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::WINDOW_OPENED;
 }
 
 pub struct WindowClosed;
 impl EventType for WindowClosed {
     type Payload = WindowClosedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::WINDOW_CLOSED;
 }
 
 pub struct WindowMoved;
 impl EventType for WindowMoved {
     type Payload = WindowMovedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::WINDOW_MOVED;
 }
 
 pub struct WorkspaceChanged;
 impl EventType for WorkspaceChanged {
     type Payload = WorkspaceChangedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::WORKSPACE_SWITCHED;
 }
 
 pub struct MonitorFocused;
 impl EventType for MonitorFocused {
     type Payload = MonitorFocusedPayload;
-    type SourceImpl = HyprlandListener;
+    type SourceImpl = HyprlandIPCMonitor;
     const EVENT_NAME: &'static str = event_type_constants::window_manager::MONITOR_FOCUSED;
 }
 
@@ -194,6 +195,8 @@ pub struct HyprlandIPCMonitor {
     socket_path: PathBuf,
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
     focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
+    event_factory: EventFactory,
+    connection_backoff: BackoffHelper,
 }
 
 /// Config for state snapshotter
@@ -213,10 +216,12 @@ impl Default for SnapshotterConfig {
 /// Periodic state snapshotter using hyprctl
 pub struct HyprlandStateSnapshotter {
     interval_secs: u64,
+    event_factory: EventFactory,
 }
 
-// Legacy alias for compatibility
-pub type HyprlandListener = HyprlandIPCMonitor;
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for HyprlandIPCMonitor {}
 
 #[async_trait]
 impl EventSource for HyprlandIPCMonitor {
@@ -225,20 +230,24 @@ impl EventSource for HyprlandIPCMonitor {
     const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         // Get Hyprland instance signature
-        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
-            sinex_core::CoreError::Other(
-                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
-            )
-        })?;
+        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| 
+            ErrorContext::new(CoreError::Configuration("HYPRLAND_INSTANCE_SIGNATURE not set".to_string()))
+                .with_operation("initialize_hyprland_monitor")
+                .with_context("env_var", "HYPRLAND_INSTANCE_SIGNATURE")
+                .with_context("suggestion", "Is Hyprland running?")
+                .build()
+        )?;
 
         // Build socket path
         let xdg_runtime = env::var("XDG_RUNTIME_DIR")
-            .map_err(|_| sinex_core::CoreError::Other("XDG_RUNTIME_DIR not set".to_string()))?;
+            .map_err(|_| 
+                ErrorContext::new(CoreError::Configuration("XDG_RUNTIME_DIR not set".to_string()))
+                    .with_operation("initialize_hyprland_monitor")
+                    .with_context("env_var", "XDG_RUNTIME_DIR")
+                    .build())?;
         let socket_path = PathBuf::from(xdg_runtime)
             .join("hypr")
             .join(&hyprland_instance_sig)
@@ -256,6 +265,11 @@ impl EventSource for HyprlandIPCMonitor {
             socket_path,
             hyprctl_cache: Arc::new(Mutex::new(HashMap::new())),
             focus_history: Arc::new(Mutex::new(VecDeque::new())),
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
+            connection_backoff: BackoffHelper::new()
+                .with_initial_delay(Duration::from_secs(1))
+                .with_max_delay(Duration::from_secs(300))
+                .with_multiplier(2),
         })
     }
 
@@ -282,21 +296,23 @@ impl EventSource for HyprlandIPCMonitor {
 
 impl HyprlandIPCMonitor {
     /// Listen to socket2 events
-    async fn listen_socket_events(&self, event_tx: EventSender) -> Result<()> {
+    async fn listen_socket_events(&mut self, event_tx: EventSender) -> Result<()> {
         loop {
             match UnixStream::connect(&self.socket_path).await {
                 Ok(stream) => {
                     info!("Connected to Hyprland socket2");
+                    self.connection_backoff.reset(); // Reset backoff on successful connection
                     if let Err(e) = self.process_event_stream(stream, &event_tx).await {
                         error!("Event stream processing error: {}", e);
-                        // Reconnect after a short delay
+                        // Reconnect after a short delay for stream processing errors
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
                 Err(e) => {
-                    error!("Failed to connect to Hyprland socket: {}", e);
-                    // Retry connection after delay
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    error!("Failed to connect to Hyprland socket (current backoff: {:?}): {}", 
+                           self.connection_backoff.current_delay(), e);
+                    // Use exponential backoff for connection failures
+                    self.connection_backoff.wait().await;
                 }
             }
         }
@@ -338,17 +354,7 @@ impl HyprlandIPCMonitor {
                 };
 
                 // Build raw event
-                let raw_event = RawEvent {
-                    id: sinex_ulid::Ulid::new(),
-                    source: sources::WM_HYPRLAND.to_string(),
-                    event_type: event_type.to_string(),
-                    ts_ingest: Utc::now(),
-                    ts_orig: Some(Utc::now()),
-                    host: gethostname::gethostname().to_string_lossy().to_string(),
-                    ingestor_version: Some("0.1.0".to_string()),
-                    payload_schema_id: None,
-                    payload,
-                };
+                let raw_event = self.event_factory.create_event(event_type, payload);
 
                 // Send event
                 event_tx
@@ -502,20 +508,27 @@ impl HyprlandIPCMonitor {
             .arg(command)
             .arg("-j")
             .output()
-            .map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to execute hyprctl: {}", e))
-            })?;
+            .map_err(|e| 
+                ErrorContext::new(CoreError::Io(format!("Failed to execute hyprctl: {}", e)))
+                    .with_operation("get_hyprctl_data")
+                    .with_context("command", command)
+                    .build())?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!(
-                "hyprctl failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            return Err(ErrorContext::new(CoreError::Io("hyprctl failed".to_string()))
+                .with_operation("get_hyprctl_data")
+                .with_context("command", command)
+                .with_context("exit_status", &output.status.to_string())
+                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .build());
         }
 
-        let data: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to parse hyprctl output: {}", e))
-        })?;
+        let data: Value = serde_json::from_slice(&output.stdout).map_err(|e| 
+            ErrorContext::new(CoreError::Serialization(format!("Failed to parse hyprctl output: {}", e)))
+                .with_operation("get_hyprctl_data")
+                .with_context("command", command)
+                .with_context("output_size", &output.stdout.len().to_string())
+                .build())?;
 
         // Update cache
         {
@@ -579,6 +592,9 @@ impl HyprlandIPCMonitor {
     }
 }
 
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for HyprlandStateSnapshotter {}
+
 #[async_trait]
 impl EventSource for HyprlandStateSnapshotter {
     type Config = SnapshotterConfig;
@@ -586,9 +602,7 @@ impl EventSource for HyprlandStateSnapshotter {
     const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!(
             interval_secs = config.interval_secs,
@@ -596,6 +610,7 @@ impl EventSource for HyprlandStateSnapshotter {
         );
         Ok(Self {
             interval_secs: config.interval_secs,
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
     }
 
@@ -627,17 +642,10 @@ impl EventSource for HyprlandStateSnapshotter {
                 }
             };
 
-            let event = RawEvent {
-                id: sinex_ulid::Ulid::new(),
-                source: Self::SOURCE_NAME.to_string(),
-                event_type: event_type_constants::window_manager::STATE_CAPTURED.to_string(),
-                ts_ingest: Utc::now(),
-                ts_orig: Some(Utc::now()),
-                host: gethostname::gethostname().to_string_lossy().to_string(),
-                ingestor_version: Some("0.1.0".to_string()),
-                payload_schema_id: None,
-                payload: snapshot,
-            };
+            let event = self.event_factory.create_event(
+                event_type_constants::window_manager::STATE_CAPTURED,
+                snapshot,
+            );
 
             tx.send_or_log(event, "window_manager_snapshot").await?;
         }

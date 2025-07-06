@@ -5,10 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{error, info};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
 };
 
 // ============================================================================
@@ -325,7 +324,11 @@ impl Default for DbusConfig {
 
 pub struct DbusMonitor {
     config: DbusConfig,
+    event_factory: EventFactory,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for DbusMonitor {}
 
 #[async_trait]
 impl EventSource for DbusMonitor {
@@ -334,12 +337,13 @@ impl EventSource for DbusMonitor {
     const SOURCE_NAME: &'static str = sources::DBUS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing D-Bus monitor");
-        Ok(Self { config })
+        Ok(Self { 
+            config,
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
+        })
     }
 
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
@@ -384,13 +388,19 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
     info!("Connecting to {} bus", bus_type);
 
     let (resource, conn) = if bus_type == "session" {
-        connection::new_session_sync().map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to connect to session bus: {}", e))
-        })?
+        connection::new_session_sync().map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to connect to session bus: {}", e)))
+                .with_operation("monitor_dbus")
+                .with_context("bus_type", "session")
+                .build()
+        )?
     } else {
-        connection::new_system_sync().map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to connect to system bus: {}", e))
-        })?
+        connection::new_system_sync().map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to connect to system bus: {}", e)))
+                .with_operation("monitor_dbus")
+                .with_context("bus_type", "system")
+                .build()
+        )?
     };
 
     // Spawn the connection resource
@@ -402,14 +412,22 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
 
     // Add match rules for all message types we want to capture
     let signal_rule = MatchRule::new().with_type(dbus::message::MessageType::Signal);
-    conn.add_match(signal_rule).await.map_err(|e| {
-        sinex_core::CoreError::Other(format!("Failed to add signal match rule: {}", e))
-    })?;
+    conn.add_match(signal_rule).await.map_err(|e| 
+        ErrorContext::new(CoreError::Configuration(format!("Failed to add signal match rule: {}", e)))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", bus_type)
+            .with_context("rule_type", "signal")
+            .build()
+    )?;
 
     let method_rule = MatchRule::new().with_type(dbus::message::MessageType::MethodCall);
-    conn.add_match(method_rule).await.map_err(|e| {
-        sinex_core::CoreError::Other(format!("Failed to add method call match rule: {}", e))
-    })?;
+    conn.add_match(method_rule).await.map_err(|e| 
+        ErrorContext::new(CoreError::Configuration(format!("Failed to add method call match rule: {}", e)))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", bus_type)
+            .with_context("rule_type", "method_call")
+            .build()
+    )?;
 
     // Clone values we need for the async context
     let bus_type = bus_type.to_string();
@@ -1115,16 +1133,14 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
 }
 
 
-fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: DbusMonitor::SOURCE_NAME.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now()),
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload,
+impl DbusMonitor {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
+        self.event_factory.create_event(event_type, payload)
     }
+}
+
+// Helper function that creates events using EventFactory pattern
+fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
+    let event_factory = EventFactory::new(DbusMonitor::SOURCE_NAME);
+    event_factory.create_event(event_type, payload)
 }

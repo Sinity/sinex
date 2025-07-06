@@ -8,6 +8,7 @@ authors.workspace = true
 sinex-core = { path = "../sinex-core" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
+sinex-annex = { path = "../sinex-annex" }
 schemars = { version = "0.8", features = ["chrono"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -26,3 +27,4 @@ glob = "0.3"
 blake3 = "1.5"
 whoami = "1.4"
 nix = "0.27"
+libc = "0.2"

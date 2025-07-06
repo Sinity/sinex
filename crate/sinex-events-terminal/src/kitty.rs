@@ -3,7 +3,8 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{
-    EventType, EventSource, EventSourceContext, EventSender, RawEventBuilder, Result,
+    EventType, EventSource, EventSourceBase, EventSourceContext, EventSender, 
+    Result, EventFactory, ErrorContext, CoreError, BackoffHelper,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -46,7 +47,7 @@ pub struct KittyCommandExecuted;
 impl EventType for KittyCommandExecuted {
     type Payload = KittyCommandExecutedPayload;
     type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "command.executed";
+    const EVENT_NAME: &'static str = "command.started";
 }
 
 
@@ -177,7 +178,7 @@ pub struct KittyScrollbackIncremental;
 impl EventType for KittyScrollbackIncremental {
     type Payload = KittyScrollbackIncrementalPayload;
     type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "scrollback.incremental";
+    const EVENT_NAME: &'static str = "content.streamed";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -203,6 +204,8 @@ pub struct KittyEventSource {
     last_scrollback_line_counts: HashMap<String, u32>,  // Track line count per window
     last_focused_tab: Option<String>,
     process_states: HashMap<String, KittyProcessInfo>,
+    event_factory: EventFactory,
+    operation_backoff: BackoffHelper,
 }
 
 #[derive(Debug, Clone)]
@@ -239,6 +242,11 @@ impl KittyEventSource {
             last_scrollback_line_counts: HashMap::new(),
             last_focused_tab: None,
             process_states: HashMap::new(),
+            event_factory: EventFactory::new("terminal.kitty"),
+            operation_backoff: BackoffHelper::new()
+                .with_initial_delay(Duration::from_millis(500))
+                .with_max_delay(Duration::from_secs(60))
+                .with_multiplier(2),
         }
     }
 
@@ -264,35 +272,45 @@ impl KittyEventSource {
     }
 
     async fn discover_kitty_socket(&mut self) -> Result<String> {
-        // Try common socket locations
+        // Try common socket locations with configurable tmp directory
+        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let current_uid = unsafe { libc::getuid() };
         let socket_candidates = vec![
-            format!("/tmp/kitty_socket_{}", std::process::id()),
-            format!("/tmp/kitty-{}.sock", whoami::username()),
-            "/run/user/1000/kitty.sock".to_string(), // Common UID for main user
-            "/tmp/kitty.sock".to_string(),
+            format!("{}/kitty_socket_{}", tmp_dir, std::process::id()),
+            format!("{}/kitty-{}.sock", tmp_dir, whoami::username()),
+            format!("/run/user/{}/kitty.sock", current_uid),
+            format!("{}/kitty.sock", tmp_dir),
         ];
 
-        for candidate in socket_candidates {
+        for candidate in &socket_candidates {
             if Path::new(&candidate).exists() {
                 // Test connection
                 if let Ok(_) = UnixStream::connect(&candidate).await {
                     self.socket_path = Some(candidate.clone());
-                    return Ok(candidate);
+                    return Ok(candidate.clone());
                 }
             }
         }
 
-        Err(sinex_core::CoreError::Other("No accessible Kitty socket found".to_string()))
+        Err(ErrorContext::new(CoreError::Io("No accessible Kitty socket found".to_string()))
+            .with_operation("discover_kitty_socket")
+            .with_context("attempted_paths", &format!("{:?}", socket_candidates))
+            .build())
     }
 
     async fn send_kitty_command(&self, command: serde_json::Value) -> Result<serde_json::Value> {
         let socket_path = self.socket_path
             .as_ref()
-            .ok_or_else(|| sinex_core::CoreError::Other("No Kitty socket configured".to_string()))?;
+            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("No Kitty socket configured".to_string()))
+                .with_operation("send_kitty_command")
+                .build())?;
 
         let mut stream = UnixStream::connect(socket_path)
             .await
-            .map_err(|e| sinex_core::CoreError::Io(format!("Failed to connect to Kitty socket: {}", e)))?;
+            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to connect to socket: {}", e)))
+                .with_operation("send_kitty_command")
+                .with_context("socket_path", socket_path)
+                .build())?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
@@ -305,8 +323,12 @@ impl KittyEventSource {
         let mut response_buffer = Vec::new();
         stream.read_to_end(&mut response_buffer).await?;
 
+        let response_buffer_len = response_buffer.len();
         let response_str = String::from_utf8(response_buffer)
-            .map_err(|e| sinex_core::CoreError::Other(format!("Invalid UTF-8 in Kitty response: {}", e)))?;
+            .map_err(|e| ErrorContext::new(CoreError::Serialization(format!("Invalid UTF-8 in response: {}", e)))
+                .with_operation("send_kitty_command")
+                .with_context("response_length", &response_buffer_len.to_string())
+                .build())?;
 
         // Extract JSON from framed response
         if let Some(start) = response_str.find('{') {
@@ -316,7 +338,10 @@ impl KittyEventSource {
             }
         }
 
-        Err(sinex_core::CoreError::Other(format!("Could not parse Kitty response: {}", response_str)))
+        Err(ErrorContext::new(CoreError::Serialization("Could not parse Kitty response as JSON".to_string()))
+            .with_operation("send_kitty_command")
+            .with_context("response_preview", &response_str.chars().take(100).collect::<String>())
+            .build())
     }
 
 
@@ -430,14 +455,17 @@ impl KittyEventSource {
                     working_directory: window.cwd.clone(),
                 };
                 
-                let process_event = RawEventBuilder::new(
-                    "terminal.kitty",
+                let process_event = self.event_factory.create_event(
                     "process.changed",
                     serde_json::to_value(process_payload)?,
-                ).build();
+                );
                 
                 tx.send(process_event).await
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send process change event: {}", e)))?;
+                    .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
+                        .with_operation("process_window_commands")
+                        .with_context("event_type", "process.changed")
+                        .with_context("window_id", &window_id)
+                        .build())?;
                 
                 // Update stored process state
                 self.process_states.insert(window_id.clone(), current_process_info);
@@ -469,21 +497,25 @@ impl KittyEventSource {
                             kitty_window_id: window_id.clone(),
                             kitty_tab_id: window_state.tab_id.clone(),
                             exit_status: window.last_cmd_exit_status,
-                            execution_time_ms: None, // TODO: Calculate if we track command start
+                            execution_time_ms: None, // Requires tracking command start times - not implemented
                             output_size_bytes: last_output.len() as u64,
                             output_line_count: last_output.lines().count() as u32,
                             shell_integration_used: true,
                             completion_timestamp: chrono::Utc::now().to_rfc3339(),
                         };
                         
-                        let completion_event = RawEventBuilder::new(
-                            "terminal.kitty",
+                        let completion_event = self.event_factory.create_event(
                             "command.completed",
                             serde_json::to_value(completion_payload)?,
-                        ).build();
+                        );
                         
                         tx.send(completion_event).await
-                            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send command completion event: {}", e)))?;
+                            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
+                                .with_operation("process_window_commands")
+                                .with_context("event_type", "command.completed")
+                                .with_context("window_id", &window_id)
+                                .with_context("command", &command_text)
+                                .build())?;
                         
                         // Update state
                         window_state.last_command = Some(command_text);
@@ -537,14 +569,17 @@ impl KittyEventSource {
                     focus_timestamp: timestamp,
                 };
                 
-                let tab_focused_event = RawEventBuilder::new(
-                    "terminal.kitty",
+                let tab_focused_event = self.event_factory.create_event(
                     "tab.focused",
                     serde_json::to_value(tab_focused_payload)?,
-                ).build();
+                );
                 
                 tx.send(tab_focused_event).await
-                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send tab focused event: {}", e)))?;
+                    .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
+                        .with_operation("process_tab_focus_changes")
+                        .with_context("event_type", "tab.focused")
+                        .with_context("tab_id", &focused_tab_id)
+                        .build())?;
                 
                 // Update last focused tab
                 self.last_focused_tab = Some(focused_tab_id.clone());
@@ -583,14 +618,18 @@ impl KittyEventSource {
                 capture_timestamp: chrono::Utc::now().to_rfc3339(),
             };
 
-            let scrollback_event = RawEventBuilder::new(
-                "terminal.kitty",
+            let scrollback_event = self.event_factory.create_event(
                 "scrollback.incremental",
                 serde_json::to_value(incremental_payload)?,
-            ).build();
+            );
 
             tx.send(scrollback_event).await
-                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send incremental scrollback event: {}", e)))?;
+                .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
+                    .with_operation("capture_incremental_scrollback")
+                    .with_context("event_type", "scrollback.incremental")
+                    .with_context("window_id", &window_id)
+                    .with_context("line_count", &current_line_count.to_string())
+                    .build())?;
             
             tracing::debug!("Captured {} new lines for window {}", current_line_count - previous_line_count, window_id);
         }
@@ -601,6 +640,9 @@ impl KittyEventSource {
         Ok(())
     }
 }
+
+// Implement EventSourceBase for common functionality
+impl EventSourceBase for KittyEventSource {}
 
 #[async_trait]
 impl EventSource for KittyEventSource {
@@ -662,15 +704,22 @@ impl EventSource for KittyEventSource {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to get Kitty windows: {}", e);
+                    tracing::error!("Failed to get Kitty windows (current backoff: {:?}): {}", 
+                                   self.operation_backoff.current_delay(), e);
                     
                     // Try to rediscover socket
                     if let Err(rediscover_err) = self.discover_kitty_socket().await {
                         tracing::warn!("Failed to rediscover Kitty socket: {}", rediscover_err);
                     }
+                    
+                    // Use exponential backoff for failures
+                    self.operation_backoff.wait().await;
+                    continue; // Skip the normal sleep
                 }
             }
 
+            // Reset backoff on successful operation
+            self.operation_backoff.reset();
             sleep(self.poll_interval).await;
         }
     }

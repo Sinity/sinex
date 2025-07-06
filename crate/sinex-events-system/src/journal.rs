@@ -6,10 +6,9 @@ use std::collections::HashMap;
 use tokio::process::Command;
 use tracing::{debug, error, info};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    OptionalTimestamp, Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
+    OptionalTimestamp, Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
 };
 
 // ============================================================================
@@ -147,7 +146,11 @@ impl Default for JournalConfig {
 pub struct JournalMonitor {
     config: JournalConfig,
     last_cursor: Option<String>,
+    event_factory: EventFactory,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for JournalMonitor {}
 
 #[async_trait]
 impl EventSource for JournalMonitor {
@@ -156,9 +159,7 @@ impl EventSource for JournalMonitor {
     const SOURCE_NAME: &'static str = sources::JOURNALD;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing journal monitor");
 
@@ -167,12 +168,19 @@ impl EventSource for JournalMonitor {
             .arg("--version")
             .output()
             .await
-            .map_err(|e| sinex_core::CoreError::Other(format!("journalctl not found: {}", e)))?;
+            .map_err(|e| 
+                ErrorContext::new(CoreError::Configuration(format!("journalctl not found: {}", e)))
+                    .with_operation("initialize_journal_monitor")
+                    .with_context("tool", "journalctl")
+                    .with_context("command", "--version")
+                    .build())?;
 
         if !check.status.success() {
-            return Err(sinex_core::CoreError::Other(
-                "journalctl command failed".to_string(),
-            ));
+            return Err(ErrorContext::new(CoreError::Configuration("journalctl command failed".to_string()))
+                .with_operation("initialize_journal_monitor")
+                .with_context("tool", "journalctl")
+                .with_context("exit_status", &check.status.to_string())
+                .build());
         }
 
         // Load last cursor if cursor file exists
@@ -193,6 +201,7 @@ impl EventSource for JournalMonitor {
         Ok(Self {
             config,
             last_cursor,
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
     }
 
@@ -252,15 +261,19 @@ impl JournalMonitor {
             .args(&args)
             .output()
             .await
-            .map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to run journalctl: {}", e))
-            })?;
+            .map_err(|e| 
+                ErrorContext::new(CoreError::Io(format!("Failed to run journalctl: {}", e)))
+                    .with_operation("import_historical")
+                    .with_context("args", &format!("{:?}", args))
+                    .build())?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!(
-                "journalctl failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            return Err(ErrorContext::new(CoreError::Io("journalctl failed".to_string()))
+                .with_operation("import_historical")
+                .with_context("exit_status", &output.status.to_string())
+                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .with_context("args", &format!("{:?}", args))
+                .build());
         }
 
         let mut entries_count = 0u64;
@@ -374,14 +387,20 @@ impl JournalMonitor {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to spawn journalctl: {}", e))
-            })?;
+            .map_err(|e| 
+                ErrorContext::new(CoreError::Io(format!("Failed to spawn journalctl: {}", e)))
+                    .with_operation("follow_journal")
+                    .with_context("args", &format!("{:?}", args))
+                    .build())?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| sinex_core::CoreError::Other("No stdout".to_string()))?;
+            .ok_or_else(|| 
+                ErrorContext::new(CoreError::Io("No stdout".to_string()))
+                    .with_operation("follow_journal")
+                    .with_context("process", "journalctl")
+                    .build())?;
 
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout);
@@ -429,19 +448,31 @@ impl JournalMonitor {
     fn parse_journal_entry(&self, entry: &JsonValue) -> Result<Option<RawEvent>> {
         let obj = entry
             .as_object()
-            .ok_or_else(|| sinex_core::CoreError::Other("Invalid journal entry".to_string()))?;
+            .ok_or_else(|| 
+                ErrorContext::new(CoreError::Serialization("Invalid journal entry".to_string()))
+                    .with_operation("parse_journal_entry")
+                    .with_context("entry_type", "not_object")
+                    .build())?;
 
         // Extract required fields
         let cursor = obj
             .get("__CURSOR")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| sinex_core::CoreError::Other("Missing cursor".to_string()))?;
+            .ok_or_else(|| 
+                ErrorContext::new(CoreError::Validation("Missing cursor".to_string()))
+                    .with_operation("parse_journal_entry")
+                    .with_context("field", "__CURSOR")
+                    .build())?;
 
         let timestamp_us = obj
             .get("__REALTIME_TIMESTAMP")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<i64>().ok())
-            .ok_or_else(|| sinex_core::CoreError::Other("Missing timestamp".to_string()))?;
+            .ok_or_else(|| 
+                ErrorContext::new(CoreError::Validation("Missing timestamp".to_string()))
+                    .with_operation("parse_journal_entry")
+                    .with_context("field", "__REALTIME_TIMESTAMP")
+                    .build())?;
 
         let message = obj
             .get("MESSAGE")
@@ -451,7 +482,11 @@ impl JournalMonitor {
 
         // Parse timestamp
         let timestamp = DateTime::from_timestamp_micros(timestamp_us)
-            .ok_or_else(|| sinex_core::CoreError::Other("Invalid timestamp".to_string()))?;
+            .ok_or_else(|| 
+                ErrorContext::new(CoreError::Validation("Invalid timestamp".to_string()))
+                    .with_operation("parse_journal_entry")
+                    .with_context("timestamp_us", &timestamp_us.to_string())
+                    .build())?;
 
         // Extract optional fields
         let hostname = obj
@@ -574,24 +609,17 @@ impl JournalMonitor {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
 
-            tokio::fs::write(cursor_file, cursor).await.map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to save cursor: {}", e))
-            })?;
+            tokio::fs::write(cursor_file, cursor).await.map_err(|e| 
+                ErrorContext::new(CoreError::Io(format!("Failed to save cursor: {}", e)))
+                    .with_operation("save_cursor")
+                    .with_context("cursor_file", cursor_file)
+                    .with_context("cursor", cursor)
+                    .build())?;
         }
         Ok(())
     }
 
     fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: Self::SOURCE_NAME.to_string(),
-            event_type: event_type.to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: Some(Utc::now()),
-            host: gethostname::gethostname().to_string_lossy().to_string(),
-            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            payload_schema_id: None,
-            payload,
-        }
+        self.event_factory.create_event(event_type, payload)
     }
 }

@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use notify::Watcher;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,7 @@ use tracing::{debug, error, info};
 
 use sinex_core::{
     event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType,
-    RawEvent, Result,
+    RawEvent, Result, EventFactory,
 };
 
 // ============================================================================
@@ -137,6 +136,7 @@ impl Default for FilesystemConfig {
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
     watch_roots: Vec<PathBuf>,
+    event_factory: EventFactory,
 }
 
 // Legacy alias for compatibility
@@ -147,13 +147,17 @@ impl FilesystemMonitor {
         Ok(Self { 
             config,
             watch_roots: Vec::new(),
+            event_factory: EventFactory::new(sources::FS),
         })
     }
 
-    fn process_notify_event(
+
+    // Static version for use in spawn_blocking closure
+    fn process_notify_event_static(
         event: &notify_debouncer_full::DebouncedEvent,
         config: &FilesystemConfig,
         watch_roots: &[PathBuf],
+        event_factory: &EventFactory,
     ) -> Option<RawEvent> {
         let path = event.paths.first()?;
         let path_str = path.to_string_lossy().to_string();
@@ -237,102 +241,65 @@ impl FilesystemMonitor {
             }
         }
 
-        // Determine event type and create payload
-        let (event_type, payload) = match event.kind {
+        // Create event using EventFactory
+        let raw_event = match event.kind {
             notify::EventKind::Create(create_kind) => {
                 match create_kind {
                     notify::event::CreateKind::File | notify::event::CreateKind::Any => {
                         let metadata = std::fs::metadata(path).ok()?;
-                        let payload = FileCreatedPayload {
-                            path: path.to_path_buf(),
-                            size: metadata.len(),
-                            created_at: Utc::now(),
-                            permissions: {
-                                #[cfg(unix)]
-                                {
-                                    Some(metadata.permissions().mode())
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    None
-                                }
-                            },
-                        };
-                        (
-                            event_type_constants::filesystem::FILE_CREATED,
-                            serde_json::to_value(payload).ok()?,
-                        )
+                        let mut builder = event_factory.filesystem()
+                            .path(path.to_string_lossy())
+                            .created()
+                            .size(metadata.len());
+
+                        #[cfg(unix)]
+                        {
+                            builder = builder.permissions(metadata.permissions().mode());
+                        }
+
+                        builder.build()
                     }
                     notify::event::CreateKind::Folder => {
-                        let payload = DirCreatedPayload {
-                            path: path.to_path_buf(),
-                            created_at: Utc::now(),
-                            permissions: {
-                                #[cfg(unix)]
-                                {
-                                    if let Ok(metadata) = std::fs::metadata(path) {
-                                        Some(metadata.permissions().mode())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    None
-                                }
-                            },
-                        };
-                        (
-                            event_type_constants::filesystem::DIR_CREATED,
-                            serde_json::to_value(payload).ok()?,
-                        )
+                        let mut builder = event_factory.filesystem()
+                            .path(path.to_string_lossy())
+                            .created();
+
+                        #[cfg(unix)]
+                        {
+                            if let Ok(metadata) = std::fs::metadata(path) {
+                                builder = builder.permissions(metadata.permissions().mode());
+                            }
+                        }
+
+                        builder.build()
                     }
                     notify::event::CreateKind::Other => {
-                        // For other types, try to determine if it's a file or directory
                         if path.is_dir() {
-                            let payload = DirCreatedPayload {
-                                path: path.to_path_buf(),
-                                created_at: Utc::now(),
-                                permissions: {
-                                    #[cfg(unix)]
-                                    {
-                                        if let Ok(metadata) = std::fs::metadata(path) {
-                                            Some(metadata.permissions().mode())
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    #[cfg(not(unix))]
-                                    {
-                                        None
-                                    }
-                                },
-                            };
-                            (
-                                event_type_constants::filesystem::DIR_CREATED,
-                                serde_json::to_value(payload).ok()?,
-                            )
+                            let mut builder = event_factory.filesystem()
+                                .path(path.to_string_lossy())
+                                .created();
+
+                            #[cfg(unix)]
+                            {
+                                if let Ok(metadata) = std::fs::metadata(path) {
+                                    builder = builder.permissions(metadata.permissions().mode());
+                                }
+                            }
+
+                            builder.build()
                         } else {
                             let metadata = std::fs::metadata(path).ok()?;
-                            let payload = FileCreatedPayload {
-                                path: path.to_path_buf(),
-                                size: metadata.len(),
-                                created_at: Utc::now(),
-                                permissions: {
-                                    #[cfg(unix)]
-                                    {
-                                        Some(metadata.permissions().mode())
-                                    }
-                                    #[cfg(not(unix))]
-                                    {
-                                        None
-                                    }
-                                },
-                            };
-                            (
-                                event_type_constants::filesystem::FILE_CREATED,
-                                serde_json::to_value(payload).ok()?,
-                            )
+                            let mut builder = event_factory.filesystem()
+                                .path(path.to_string_lossy())
+                                .created()
+                                .size(metadata.len());
+
+                            #[cfg(unix)]
+                            {
+                                builder = builder.permissions(metadata.permissions().mode());
+                            }
+
+                            builder.build()
                         }
                     }
                 }
@@ -341,84 +308,39 @@ impl FilesystemMonitor {
                 match modify_kind {
                     notify::event::ModifyKind::Name(_) => {
                         // This is a move/rename operation
-                        let payload = FileMovedPayload {
-                            path: path.to_path_buf(),
-                            old_path: None, // notify doesn't provide the old path in all cases
-                            moved_at: Utc::now(),
-                        };
-                        (
-                            event_type_constants::filesystem::FILE_MOVED,
-                            serde_json::to_value(payload).ok()?,
-                        )
+                        event_factory.filesystem()
+                            .path(path.to_string_lossy())
+                            .moved_from("unknown") // notify doesn't provide the old path in all cases
+                            .build()
                     }
                     _ => {
                         // Regular modification
-                        let metadata = std::fs::metadata(path).ok()?;
-                        let payload = FileModifiedPayload {
-                            path: path.to_path_buf(),
-                            size: metadata.len(),
-                            modified_at: Utc::now(),
-                            modification_type: "content".to_string(),
-                        };
-                        (
-                            event_type_constants::filesystem::FILE_MODIFIED,
-                            serde_json::to_value(payload).ok()?,
-                        )
+                        if let Ok(metadata) = std::fs::metadata(path) {
+                            event_factory.filesystem()
+                                .path(path.to_string_lossy())
+                                .modified()
+                                .size(metadata.len())
+                                .build()
+                        } else {
+                            event_factory.filesystem()
+                                .path(path.to_string_lossy())
+                                .modified()
+                                .build()
+                        }
                     }
                 }
             }
-            notify::EventKind::Remove(remove_kind) => {
-                match remove_kind {
-                    notify::event::RemoveKind::File | notify::event::RemoveKind::Any => {
-                        let payload = FileDeletedPayload {
-                            path: path.to_path_buf(),
-                            deleted_at: Utc::now(),
-                        };
-                        (
-                            event_type_constants::filesystem::FILE_DELETED,
-                            serde_json::to_value(payload).ok()?,
-                        )
-                    }
-                    notify::event::RemoveKind::Folder => {
-                        let payload = DirDeletedPayload {
-                            path: path.to_path_buf(),
-                            deleted_at: Utc::now(),
-                        };
-                        (
-                            event_type_constants::filesystem::DIR_DELETED,
-                            serde_json::to_value(payload).ok()?,
-                        )
-                    }
-                    notify::event::RemoveKind::Other => {
-                        // For other types, default to file deletion
-                        let payload = FileDeletedPayload {
-                            path: path.to_path_buf(),
-                            deleted_at: Utc::now(),
-                        };
-                        (
-                            event_type_constants::filesystem::FILE_DELETED,
-                            serde_json::to_value(payload).ok()?,
-                        )
-                    }
-                }
+            notify::EventKind::Remove(_remove_kind) => {
+                // For all remove types, create a deleted event
+                event_factory.filesystem()
+                    .path(path.to_string_lossy())
+                    .deleted()
+                    .build()
             }
             _ => return None,
         };
 
-        // Create event using helper - but we need 'self' for this
-        // Since this is a static method, we'll keep the manual creation for now
-        // and use the helper in stream_events instead
-        Some(RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: sources::FS.to_string(),
-            event_type: event_type.to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: Some(Utc::now()),
-            host: gethostname::gethostname().to_string_lossy().to_string(),
-            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            payload_schema_id: None,
-            payload,
-        })
+        Some(raw_event)
     }
 }
 
@@ -530,13 +452,14 @@ impl EventSource for FilesystemMonitor {
         let config = self.config.clone();
         let event_tx = tx.clone();
         let watch_roots = self.watch_roots.clone();
+        let event_factory = EventFactory::new(sources::FS);
 
         tokio::task::spawn_blocking(move || {
             for result in notify_rx {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(raw_event) = Self::process_notify_event(&event, &config, &watch_roots) {
+                            if let Some(raw_event) = Self::process_notify_event_static(&event, &config, &watch_roots, &event_factory) {
                                 if let Err(e) = event_tx.blocking_send(raw_event) {
                                     error!("Failed to send event: {}", e);
                                     return;

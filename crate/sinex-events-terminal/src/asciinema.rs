@@ -9,10 +9,9 @@ use std::time::Duration;
 use tokio::time;
 use tracing::{error, info, warn};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
 };
 
 // ============================================================================
@@ -126,7 +125,11 @@ pub struct AsciinemaRecorder {
     config: AsciinemaConfig,
     active_sessions: Arc<Mutex<HashMap<PathBuf, RecordingSession>>>,
     processed_files: Arc<Mutex<Vec<PathBuf>>>,
+    event_factory: EventFactory,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for AsciinemaRecorder {}
 
 #[async_trait]
 impl EventSource for AsciinemaRecorder {
@@ -135,9 +138,7 @@ impl EventSource for AsciinemaRecorder {
     const SOURCE_NAME: &'static str = sources::SHELL_RECORDING;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing asciinema recorder");
 
@@ -145,18 +146,18 @@ impl EventSource for AsciinemaRecorder {
         if !config.recordings_dir.exists() {
             tokio::fs::create_dir_all(&config.recordings_dir)
                 .await
-                .map_err(|e| {
-                    sinex_core::CoreError::Other(format!(
-                        "Failed to create recordings directory: {}",
-                        e
-                    ))
-                })?;
+                .map_err(|e| 
+                    ErrorContext::new(CoreError::Io(format!("Failed to create recordings directory: {}", e)))
+                        .with_operation("initialize_asciinema_recorder")
+                        .with_context("recordings_dir", &config.recordings_dir.display().to_string())
+                        .build())?;
         }
 
         let recorder = Self {
             config,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
             processed_files: Arc::new(Mutex::new(Vec::new())),
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
         };
 
         // Set up auto-recording if enabled (one-time setup)
@@ -556,7 +557,10 @@ end
                     .build()
             })
         } else {
-            Err(sinex_core::CoreError::Other("No header found".to_string()))
+            Err(ErrorContext::new(CoreError::Validation("No header found".to_string()))
+                .with_operation("parse_asciinema_header")
+                .with_context("file_path", &path.display().to_string())
+                .build())
         }
     }
 
@@ -642,10 +646,12 @@ end
             })?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!(
-                "git-annex add failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            return Err(ErrorContext::new(CoreError::Io("git-annex add failed".to_string()))
+                .with_operation("move_to_git_annex")
+                .with_context("file_path", &dest_path.display().to_string())
+                .with_context("exit_status", &output.status.to_string())
+                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .build());
         }
 
         // Commit the addition
@@ -708,15 +714,6 @@ end
 }
 
 fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: AsciinemaRecorder::SOURCE_NAME.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now()),
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload,
-    }
+    let event_factory = EventFactory::new(AsciinemaRecorder::SOURCE_NAME);
+    event_factory.create_event(event_type, payload)
 }
