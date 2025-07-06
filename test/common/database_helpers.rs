@@ -102,7 +102,7 @@ pub async fn setup_test_workload(
 
 /// Create a simple test event
 pub async fn create_test_event(source: &str, event_type: &str) -> RawEvent {
-    RawEventBuilder::new(source, event_type, json!({"test": true})).build()
+    EventFactory::new(source).create_event(event_type, json!({"test": true}))
 }
 
 /// Create a test agent with minimal fields

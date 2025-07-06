@@ -7,7 +7,7 @@
 //! # Key Modules
 //! - `prelude` - Common imports for all test files
 //! - `test_context` - Unified test context with database and timing helpers
-//! - `event_builders` - Fluent API for creating test events
+//! - Event creation using production `EventFactory`
 //! - `database` - Database pool management and cleanup
 //! - `timing_optimization` - Deterministic wait utilities
 //! - `validation_test_utils` - Event validation testing
@@ -32,12 +32,10 @@ pub mod database_pool;
 // Unified test context for all tests
 pub mod test_context;
 
-// Unified event builder hierarchy
-pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core::{event_type_constants, sources, RawEventBuilder};
+use sinex_core::{event_type_constants, sources, EventFactory};
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -65,8 +63,7 @@ pub mod events {
 
     /// Create a test filesystem event
     pub fn filesystem_event(event_type: &str, path: &str) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            sources::FS,
+        EventFactory::new(sources::FS).create_event(
             event_type,
             json!({
                 "path": path,
@@ -74,13 +71,11 @@ pub mod events {
                 "modified_time": "2025-01-01T00:00:00Z"
             }),
         )
-        .build()
     }
 
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            sources::SHELL_KITTY,
+        EventFactory::new(sources::SHELL_KITTY).create_event(
             event_type_constants::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
@@ -88,18 +83,16 @@ pub mod events {
                 "duration_ms": 100
             }),
         )
-        .build()
     }
 
     /// Create a test hyprland event
     pub fn hyprland_event(event_type: &str, data: Value) -> sinex_db::RawEvent {
-        RawEventBuilder::new(sources::WM_HYPRLAND, event_type, data).build()
+        EventFactory::new(sources::WM_HYPRLAND).create_event(event_type, data)
     }
 
     /// Create a test sinex agent event
     pub fn agent_event(event_type: &str, agent_name: &str) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            sources::SINEX,
+        EventFactory::new(sources::SINEX).create_event(
             event_type,
             json!({
                 "agent_name": agent_name,
@@ -111,7 +104,6 @@ pub mod events {
                 "dlq_size": 0
             }),
         )
-        .build()
     }
 
     /// Create an invalid event for error testing
@@ -147,7 +139,7 @@ pub mod events {
 
     /// Create a test event for race condition testing
     pub fn race_test_event(target: &str) -> sinex_db::RawEvent {
-        RawEventBuilder::new("test", "race.test", json!({"target": target})).build()
+        EventFactory::new("test").create_event("race.test", json!({"target": target}))
     }
 
     /// Create a test event with minimal fields for adversarial testing
@@ -155,7 +147,7 @@ pub mod events {
         event_type: &str,
         payload: serde_json::Value,
     ) -> sinex_db::RawEvent {
-        RawEventBuilder::new("test", event_type, payload).build()
+        EventFactory::new("test").create_event(event_type, payload)
     }
 
     /// Create a batch of test events efficiently
@@ -164,14 +156,13 @@ pub mod events {
         event_type: &str,
         count: usize,
     ) -> Vec<sinex_db::RawEvent> {
+        let factory = EventFactory::new(source);
         (0..count)
             .map(|i| {
-                RawEventBuilder::new(
-                    source,
+                factory.create_event(
                     event_type,
                     json!({"sequence": i, "batch": true, "timestamp": chrono::Utc::now()}),
                 )
-                .build()
             })
             .collect()
     }
@@ -188,8 +179,7 @@ pub mod events {
 
     /// Create test events for timing and ordering tests
     pub fn timing_test_event(sequence: u32, delay_ms: u64) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            "timing_test",
+        EventFactory::new("timing_test").create_event(
             "sequence.event",
             json!({
                 "sequence": sequence,
@@ -197,14 +187,12 @@ pub mod events {
                 "created_at": chrono::Utc::now()
             }),
         )
-        .build()
     }
 
     /// Create test events for performance testing
     pub fn performance_test_event(payload_size_kb: usize) -> sinex_db::RawEvent {
         let large_data = "x".repeat(payload_size_kb * 1024);
-        RawEventBuilder::new(
-            "performance_test",
+        EventFactory::new("performance_test").create_event(
             "large.payload",
             json!({
                 "size_kb": payload_size_kb,
@@ -215,7 +203,6 @@ pub mod events {
                 }
             }),
         )
-        .build()
     }
 
     /// Create agent heartbeat event for chaos testing
@@ -223,8 +210,7 @@ pub mod events {
         agent_name: &str,
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
-        let mut builder = RawEventBuilder::new(
-            "agent",
+        let mut event = EventFactory::new("agent").create_event(
             "agent.heartbeat",
             json!({
                 "agent_name": agent_name,
@@ -234,10 +220,10 @@ pub mod events {
         );
 
         if let Some(v) = version {
-            builder = builder.with_ingestor_version(v);
+            event.ingestor_version = Some(v.to_string());
         }
 
-        builder.build()
+        event
     }
 
     /// Create filesystem event for chaos testing
@@ -246,8 +232,7 @@ pub mod events {
         path: &str,
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
-        let mut builder = RawEventBuilder::new(
-            "fs",
+        let mut event = EventFactory::new("fs").create_event(
             event_type,
             json!({
                 "path": path,
@@ -256,17 +241,16 @@ pub mod events {
         );
 
         if let Some(v) = version {
-            builder = builder.with_ingestor_version(v);
+            event.ingestor_version = Some(v.to_string());
         }
 
-        builder.build()
+        event
     }
 
     /// Create large payload event for boundary testing
     pub fn large_payload_test_event(data_size: usize) -> sinex_db::RawEvent {
         let large_data = "x".repeat(data_size);
-        RawEventBuilder::new(
-            "test",
+        EventFactory::new("test").create_event(
             "large.payload",
             json!({
                 "data": large_data,
@@ -274,7 +258,6 @@ pub mod events {
                 "test_type": "boundary"
             }),
         )
-        .build()
     }
 
     /// Create indexed test event for database boundary testing
@@ -282,17 +265,16 @@ pub mod events {
         index: i64,
         event_time: chrono::DateTime<chrono::Utc>,
     ) -> sinex_db::RawEvent {
-        RawEventBuilder::new(
-            "btree_test",
+        let mut event = EventFactory::new("btree_test").create_event(
             "index.split",
             json!({
                 "index": index,
                 "timestamp": event_time,
                 "test_type": "btree_boundary"
             }),
-        )
-        .with_orig_timestamp(event_time)
-        .build()
+        );
+        event.ts_orig = Some(event_time);
+        event
     }
 
     /// Generic adversarial event with customizable source and type
@@ -302,13 +284,13 @@ pub mod events {
         payload: serde_json::Value,
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
-        let mut builder = RawEventBuilder::new(source, event_type, payload);
+        let mut event = EventFactory::new(source).create_event(event_type, payload);
 
         if let Some(v) = version {
-            builder = builder.with_ingestor_version(v);
+            event.ingestor_version = Some(v.to_string());
         }
 
-        builder.build()
+        event
     }
 
     /// Create a raw event with specified timestamp (for comprehensive tests)
@@ -318,9 +300,9 @@ pub mod events {
         payload: serde_json::Value,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> sinex_db::RawEvent {
-        RawEventBuilder::new(source, event_type, payload)
-            .with_orig_timestamp(timestamp)
-            .build()
+        let mut event = EventFactory::new(source).create_event(event_type, payload);
+        event.ts_orig = Some(timestamp);
+        event
     }
 }
 
@@ -628,7 +610,7 @@ pub fn test_event_with_payload(
     event_type: &str,
     payload: Value,
 ) -> sinex_db::RawEvent {
-    RawEventBuilder::new(source, event_type, payload).build()
+    EventFactory::new(source).create_event(event_type, payload)
 }
 
 /// Legacy compatibility alias
@@ -642,7 +624,7 @@ pub fn create_test_event_with_payload(
 
 /// Create a simple test event with source and type (legacy compatibility)
 pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
-    RawEventBuilder::new(source, event_type, json!({"test": true})).build()
+    EventFactory::new(source).create_event(event_type, json!({"test": true}))
 }
 
 /// Helper for creating a test agent with default settings
@@ -665,7 +647,7 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
 /// Quick test event insertion - creates minimal event
 #[allow(dead_code)]
 pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> Result<Ulid> {
-    let event = RawEventBuilder::new(source, event_type, json!({"test": true})).build();
+    let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     insert_event(&pool, &event).await
 }
 

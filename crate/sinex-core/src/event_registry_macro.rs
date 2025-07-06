@@ -53,7 +53,7 @@ mod tests {
             "test.event" => (test_source, TestPayload),
         }
         
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
         let registry = builder.build();
         // Registry should contain our test event
@@ -66,7 +66,7 @@ mod tests {
             "test.event" => (terminal.kitty, TestPayload),
         }
         
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
         let registry = builder.build();
         // Should handle dotted source names correctly

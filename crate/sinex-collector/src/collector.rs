@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
-    unified_collector::{create_registry, EventRegistry, EventRegistryBuilder, EventSource},
+    unified_collector::{EventRegistry, EventRegistryBuilder, EventSource},
     ConfigValue, EventSender, EventSourceContext, JsonValue,
 };
 use sinex_db::validation::EventValidator;

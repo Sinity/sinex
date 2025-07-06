@@ -1,4 +1,4 @@
-use crate::{DbPool, DbPoolRef, JsonValue, Timestamp};
+use crate::{DbPool, DbPoolRef, JsonValue, Timestamp, ErrorContext, CoreError, ValidationChain};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,15 +36,90 @@ pub enum HeartbeatError {
     SystemMetrics(String),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("Core error: {0}")]
+    Core(#[from] CoreError),
+}
+
+/// Configurable health check conditions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckConditions {
+    pub memory_thresholds: MemoryThresholds,
+    pub cpu_thresholds: CpuThresholds,
+    pub error_thresholds: ErrorThresholds,
+    pub uptime_requirements: UptimeRequirements,
+    pub component_specific: JsonValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryThresholds {
+    pub healthy_max_mb: u32,
+    pub degraded_max_mb: u32,
+    pub failed_max_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuThresholds {
+    pub healthy_max_percent: f32,
+    pub degraded_max_percent: f32,
+    pub failed_max_percent: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorThresholds {
+    pub healthy_max_per_hour: u32,
+    pub degraded_max_per_hour: u32,
+    pub failed_max_per_hour: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UptimeRequirements {
+    pub minimum_uptime_seconds: u64,
+    pub require_stable_uptime: bool,
+}
+
+impl Default for HealthCheckConditions {
+    fn default() -> Self {
+        Self {
+            memory_thresholds: MemoryThresholds {
+                healthy_max_mb: 300,
+                degraded_max_mb: 400,
+                failed_max_mb: 500,
+            },
+            cpu_thresholds: CpuThresholds {
+                healthy_max_percent: 70.0,
+                degraded_max_percent: 85.0,
+                failed_max_percent: 95.0,
+            },
+            error_thresholds: ErrorThresholds {
+                healthy_max_per_hour: 3,
+                degraded_max_per_hour: 10,
+                failed_max_per_hour: 25,
+            },
+            uptime_requirements: UptimeRequirements {
+                minimum_uptime_seconds: 30,
+                require_stable_uptime: false,
+            },
+            component_specific: serde_json::json!({}),
+        }
+    }
 }
 
 impl ComponentHeartbeat {
-    /// Collect system metrics and emit heartbeat to database
+    /// Collect system metrics and emit heartbeat to database with enhanced validation
     pub async fn collect_and_emit(
         pool: DbPoolRef<'_>,
         component_name: &str,
     ) -> Result<(), HeartbeatError> {
-        let heartbeat = Self::collect_metrics(component_name).await?;
+        Self::collect_and_emit_with_conditions(pool, component_name, &HealthCheckConditions::default()).await
+    }
+
+    /// Collect and emit heartbeat with custom health check conditions
+    pub async fn collect_and_emit_with_conditions(
+        pool: DbPoolRef<'_>,
+        component_name: &str,
+        conditions: &HealthCheckConditions,
+    ) -> Result<(), HeartbeatError> {
+        let heartbeat = Self::collect_metrics_with_conditions(component_name, conditions).await?;
 
         sqlx::query!(
             r#"
@@ -77,10 +152,24 @@ impl ComponentHeartbeat {
 
     /// Collect current system metrics for this component
     async fn collect_metrics(component_name: &str) -> Result<Self, HeartbeatError> {
+        Self::collect_metrics_with_conditions(component_name, &HealthCheckConditions::default()).await
+    }
+
+    /// Collect current system metrics with enhanced condition-based validation
+    async fn collect_metrics_with_conditions(
+        component_name: &str,
+        conditions: &HealthCheckConditions,
+    ) -> Result<Self, HeartbeatError> {
+        // Validate component name first
+        ValidationChain::validate(component_name.to_string(), "component_name")
+            .not_empty()
+            .min_length(2)
+            .into_result()
+            .map_err(|e| HeartbeatError::Core(e))?;
         let timestamp = Utc::now();
 
-        // Get basic system metrics
-        let (memory_usage_mb, cpu_usage_percent) = Self::get_system_metrics()?;
+        // Get basic system metrics with enhanced error context
+        let (memory_usage_mb, cpu_usage_percent) = Self::get_system_metrics_enhanced(component_name)?;
 
         // Calculate uptime (simplified - from process start time)
         let uptime_seconds = SystemTime::now()
@@ -95,9 +184,14 @@ impl ComponentHeartbeat {
         let (events_processed, errors_count, last_error) =
             Self::get_component_metrics(component_name).await;
 
-        // Determine health status based on metrics
-        let status =
-            Self::determine_health_status(memory_usage_mb, cpu_usage_percent, errors_count);
+        // Determine health status using condition-based logic
+        let status = Self::determine_health_status_with_conditions(
+            memory_usage_mb,
+            cpu_usage_percent,
+            errors_count,
+            uptime_seconds,
+            conditions,
+        )?;
 
         Ok(ComponentHeartbeat {
             component_name: component_name.to_string(),
@@ -118,32 +212,79 @@ impl ComponentHeartbeat {
 
     /// Get basic system metrics (memory, CPU)
     fn get_system_metrics() -> Result<(u32, f32), HeartbeatError> {
-        // Try to get process memory usage
-        let memory_usage_mb = Self::get_memory_usage().unwrap_or(0);
+        Self::get_system_metrics_enhanced("unknown")
+    }
+
+    /// Get system metrics with enhanced error context and validation
+    fn get_system_metrics_enhanced(component_name: &str) -> Result<(u32, f32), HeartbeatError> {
+        // Try to get process memory usage with enhanced error reporting
+        let memory_usage_mb = Self::get_memory_usage_enhanced(component_name)?;
 
         // CPU usage is more complex to measure accurately, start with 0
         let cpu_usage_percent = 0.0;
+
+        // Validate memory usage is reasonable
+        if memory_usage_mb > 2048 {
+            return Err(HeartbeatError::Core(
+                ErrorContext::new(CoreError::Configuration("Memory usage exceeds reasonable limits".to_string()))
+                    .with_operation("collect_system_metrics")
+                    .with_context("component_name", component_name)
+                    .with_context("memory_usage_mb", &memory_usage_mb.to_string())
+                    .with_context("limit_mb", "2048")
+                    .build()
+            ));
+        }
 
         Ok((memory_usage_mb, cpu_usage_percent))
     }
 
     /// Get current process memory usage in MB
     fn get_memory_usage() -> Option<u32> {
+        Self::get_memory_usage_enhanced("unknown").ok()
+    }
+
+    /// Get current process memory usage with enhanced error context
+    fn get_memory_usage_enhanced(component_name: &str) -> Result<u32, HeartbeatError> {
         // Read from /proc/self/status on Linux
-        if let Ok(contents) = std::fs::read_to_string("/proc/self/status") {
-            for line in contents.lines() {
-                if line.starts_with("VmRSS:") {
-                    // Parse "VmRSS: 12345 kB"
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        if let Ok(kb) = parts[1].parse::<u32>() {
-                            return Some(kb / 1024); // Convert KB to MB
-                        }
-                    }
+        let proc_status_path = "/proc/self/status";
+        
+        let contents = std::fs::read_to_string(proc_status_path)
+            .map_err(|e| HeartbeatError::Core(
+                ErrorContext::new(CoreError::Io(format!("Failed to read process status: {}", e)))
+                    .with_operation("get_memory_usage")
+                    .with_context("component_name", component_name)
+                    .with_context("proc_path", proc_status_path)
+                    .with_context("suggestion", "Is /proc filesystem available?")
+                    .build()
+            ))?;
+        
+        for line in contents.lines() {
+            if line.starts_with("VmRSS:") {
+                // Parse "VmRSS: 12345 kB"
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let kb = parts[1].parse::<u32>()
+                        .map_err(|e| HeartbeatError::Core(
+                            ErrorContext::new(CoreError::Serialization(format!("Failed to parse memory value: {}", e)))
+                                .with_operation("get_memory_usage")
+                                .with_context("component_name", component_name)
+                                .with_context("raw_line", line)
+                                .with_context("memory_value", parts[1])
+                                .build()
+                        ))?;
+                    return Ok(kb / 1024); // Convert KB to MB
                 }
             }
         }
-        None
+        
+        Err(HeartbeatError::Core(
+            ErrorContext::new(CoreError::Configuration("VmRSS line not found in /proc/self/status".to_string()))
+                .with_operation("get_memory_usage")
+                .with_context("component_name", component_name)
+                .with_context("proc_path", proc_status_path)
+                .with_context("content_lines", &contents.lines().count().to_string())
+                .build()
+        ))
     }
 
     /// Get version information from build-time constants
@@ -188,20 +329,109 @@ impl ComponentHeartbeat {
         (0, 0, None)
     }
 
-    /// Determine health status based on current metrics
+    /// Determine health status based on current metrics (legacy method)
     fn determine_health_status(
         memory_usage_mb: u32,
         cpu_usage_percent: f32,
         errors_last_hour: u32,
     ) -> HealthStatus {
-        // Simple health determination logic
-        // These thresholds should be configurable in production
-        if memory_usage_mb > 400 || cpu_usage_percent > 90.0 || errors_last_hour > 10 {
-            HealthStatus::Failed
-        } else if memory_usage_mb > 300 || cpu_usage_percent > 70.0 || errors_last_hour > 3 {
-            HealthStatus::Degraded
+        let conditions = HealthCheckConditions::default();
+        Self::determine_health_status_with_conditions(
+            memory_usage_mb,
+            cpu_usage_percent,
+            errors_last_hour,
+            0, // uptime not considered in legacy method
+            &conditions,
+        ).unwrap_or(HealthStatus::Failed)
+    }
+
+    /// Determine health status using condition-based logic with comprehensive validation
+    fn determine_health_status_with_conditions(
+        memory_usage_mb: u32,
+        cpu_usage_percent: f32,
+        errors_last_hour: u32,
+        uptime_seconds: u64,
+        conditions: &HealthCheckConditions,
+    ) -> Result<HealthStatus, HeartbeatError> {
+        // Validate inputs first
+        ValidationChain::validate(memory_usage_mb, "memory_usage_mb")
+            .max(4096) // 4GB reasonable maximum
+            .into_result()
+            .map_err(|e| HeartbeatError::Core(e))?;
+
+        ValidationChain::validate(cpu_usage_percent, "cpu_usage_percent")
+            .min(0.0)
+            .max(100.0)
+            .into_result()
+            .map_err(|e| HeartbeatError::Core(e))?;
+
+        // Check uptime requirements
+        if conditions.uptime_requirements.require_stable_uptime 
+            && uptime_seconds < conditions.uptime_requirements.minimum_uptime_seconds {
+            return Ok(HealthStatus::Degraded); // Not enough uptime for stable status
+        }
+
+        // Multi-condition health determination
+        let mut failed_conditions = Vec::new();
+        let mut degraded_conditions = Vec::new();
+
+        // Memory condition checks
+        if memory_usage_mb > conditions.memory_thresholds.failed_max_mb {
+            failed_conditions.push(format!("Memory usage {}MB exceeds failed threshold {}MB", 
+                memory_usage_mb, conditions.memory_thresholds.failed_max_mb));
+        } else if memory_usage_mb > conditions.memory_thresholds.degraded_max_mb {
+            degraded_conditions.push(format!("Memory usage {}MB exceeds degraded threshold {}MB", 
+                memory_usage_mb, conditions.memory_thresholds.degraded_max_mb));
+        }
+
+        // CPU condition checks
+        if cpu_usage_percent > conditions.cpu_thresholds.failed_max_percent {
+            failed_conditions.push(format!("CPU usage {:.1}% exceeds failed threshold {:.1}%", 
+                cpu_usage_percent, conditions.cpu_thresholds.failed_max_percent));
+        } else if cpu_usage_percent > conditions.cpu_thresholds.degraded_max_percent {
+            degraded_conditions.push(format!("CPU usage {:.1}% exceeds degraded threshold {:.1}%", 
+                cpu_usage_percent, conditions.cpu_thresholds.degraded_max_percent));
+        }
+
+        // Error condition checks
+        if errors_last_hour > conditions.error_thresholds.failed_max_per_hour {
+            failed_conditions.push(format!("Error count {} exceeds failed threshold {}", 
+                errors_last_hour, conditions.error_thresholds.failed_max_per_hour));
+        } else if errors_last_hour > conditions.error_thresholds.degraded_max_per_hour {
+            degraded_conditions.push(format!("Error count {} exceeds degraded threshold {}", 
+                errors_last_hour, conditions.error_thresholds.degraded_max_per_hour));
+        }
+
+        // Determine final status based on condition violations
+        if !failed_conditions.is_empty() {
+            tracing::warn!(
+                memory_mb = memory_usage_mb,
+                cpu_percent = cpu_usage_percent,
+                errors_per_hour = errors_last_hour,
+                uptime_seconds = uptime_seconds,
+                failed_conditions = ?failed_conditions,
+                "Component health status: FAILED"
+            );
+            Ok(HealthStatus::Failed)
+        } else if !degraded_conditions.is_empty() {
+            tracing::warn!(
+                memory_mb = memory_usage_mb,
+                cpu_percent = cpu_usage_percent,
+                errors_per_hour = errors_last_hour,
+                uptime_seconds = uptime_seconds,
+                degraded_conditions = ?degraded_conditions,
+                "Component health status: DEGRADED"
+            );
+            Ok(HealthStatus::Degraded)
         } else {
-            HealthStatus::Healthy
+            tracing::debug!(
+                memory_mb = memory_usage_mb,
+                cpu_percent = cpu_usage_percent,
+                errors_per_hour = errors_last_hour,
+                uptime_seconds = uptime_seconds,
+                "Component health status: HEALTHY"
+            );
+            Ok(HealthStatus::Healthy)
         }
     }
 
@@ -360,7 +590,15 @@ impl HeartbeatEmitter {
 
     /// Collect metrics and emit heartbeat using the optional metrics provider
     async fn collect_and_emit_with_provider(&self) -> Result<(), HeartbeatError> {
-        let mut heartbeat = ComponentHeartbeat::collect_metrics(&self.component_name).await?;
+        let mut heartbeat = ComponentHeartbeat::collect_metrics(&self.component_name).await
+            .map_err(|e| {
+                tracing::error!(
+                    component_name = %self.component_name,
+                    error = %e,
+                    "Failed to collect metrics for heartbeat"
+                );
+                e
+            })?;
 
         // Override component-specific metrics if provider is available
         if let Some(ref provider) = self.metrics_provider {

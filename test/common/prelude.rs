@@ -6,7 +6,7 @@
 //! ## Core Features
 //! - **Unified Test Infrastructure**: `#[sinex_test]` and `TestContext`
 //! - **Database Operations**: Shared pool access and common queries
-//! - **Event Creation**: `RawEventBuilder` and test event utilities
+//! - **Event Creation**: `EventFactory` and test event utilities
 //! - **Timing & Synchronization**: Smart waiting and concurrency primitives
 //! - **Assertions**: Enhanced assertion macros with better error output
 //!
@@ -16,7 +16,7 @@
 //!
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> TestResult {
-//!     let event = RawEventBuilder::new("source", "type", json!({})).build();
+//!     let event = EventFactory::new("source").create_event("type", json!({}));
 //!     insert_event(ctx.pool(), &event).await?;
 //!     ctx.wait_for_event_count(1).await?;
 //!     Ok(())
@@ -45,7 +45,7 @@ pub use sinex_core::{
     unified_collector::{EventRegistry},
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
     ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator,
-    RawEventBuilder, ResultExt, ValidationChain,
+    EventFactory, ResultExt, ValidationChain,
 };
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
@@ -63,9 +63,10 @@ pub use futures::future::join_all;
 pub use tempfile::{NamedTempFile, TempDir};
 // ===== Test Infrastructure =====
 // Common modules
-pub use crate::common::{database_helpers, event_builders::EventBuilder, event_sources, events};
+pub use crate::common::{database_helpers, event_sources, events};
 // Test context - THE way to write tests
-// Event builders - THE way to create events
+// Event factory - THE way to create events
+pub use sinex_core::EventFactory;
 // Database helpers
 // NEW: Unified database access
 // pub use crate::common::create_test_db_pool;
