@@ -3,6 +3,7 @@ pub mod chunking;
 pub mod config_extractors;
 pub mod error_context;
 pub mod event;
+pub mod event_registry_macro;
 pub mod event_source_base;
 pub mod event_source_context;
 pub mod heartbeat;

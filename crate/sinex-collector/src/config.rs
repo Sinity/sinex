@@ -168,36 +168,61 @@ impl CollectorConfig {
             }
         }
 
-        // Check against known event types
+        // Check against known event types (matching actual Rust EVENT_NAME constants)
         let known_events = [
-            "shell.command.executed_atuin",
-            "shell.history.command",
-            "terminal.asciinema.session_started",
-            "terminal.asciinema.session_ended",
-            "terminal.scrollback.captured",
-            "terminal.command_output.captured",
-            "file.created",
-            "file.modified",
-            "file.deleted",
-            "dbus.signal",
-            "dbus.method_call",
-            "system.notification",
-            "media.playback.changed",
-            "system.power.event",
-            "hardware.device.event",
-            "session.state.changed",
-            "security.policykit.authorization",
-            "bluetooth.device.event",
-            "network.connection.event",
-            "screen.saver.event",
-            "storage.mount.event",
-            "clipboard.content.changed",
-            "clipboard.selection.changed",
-            "window.focused",
-            "window.opened",
-            "window.closed",
-            "workspace.changed",
-            "command.executed",
+            // Terminal/command events
+            "command.executed",         // KittyCommandExecuted
+            "command.completed",        // KittyCommandCompleted  
+            "command.failed",           // KittyCommandFailed
+            "command.imported",         // AtuinCommandImported, ShellHistoryCommandImported
+            "session.started",          // ShellSessionStarted
+            "session.ended",            // ShellSessionEnded
+            
+            // Terminal recording
+            "recording.started",        // AsciinemaSessionStarted
+            "recording.ended",          // AsciinemaSessionEnded
+            "output.captured",          // ScrollbackCaptured
+            
+            // Filesystem events
+            "file.created",             // FileCreated
+            "file.modified",            // FileModified
+            "file.deleted",             // FileDeleted
+            "file.moved",               // FileMoved
+            "dir.created",              // DirCreated
+            "dir.deleted",              // DirDeleted
+            
+            // Window manager events
+            "window.opened",            // WindowOpened
+            "window.closed",            // WindowClosed
+            "window.focused",           // WindowFocused
+            "window.moved",             // WindowMoved
+            "window.resized",           // WindowResized
+            "workspace.switched",       // WorkspaceSwitched
+            "workspace.created",        // WorkspaceCreated
+            "workspace.destroyed",      // WorkspaceDestroyed
+            "display.connected",        // DisplayConnected
+            "display.disconnected",     // DisplayDisconnected
+            "monitor.focused",          // MonitorFocused
+            "state.captured",           // StateCapture
+            
+            // D-Bus events
+            "signal.received",          // DbusSignalReceived
+            "method.called",            // DbusMethodCalled
+            "notification.sent",        // DbusNotificationSent
+            "device.connected",         // DbusDeviceConnected
+            "device.disconnected",      // DbusDeviceDisconnected
+            "media.state_changed",      // DbusMediaStateChanged
+            "power.state_changed",      // DbusPowerStateChanged
+            "network.state_changed",    // DbusNetworkStateChanged
+            "bluetooth.device_changed", // DbusBluetoothDeviceChanged
+            "mount.changed",            // DbusMountChanged
+            
+            // Clipboard events
+            "copied",                   // ClipboardCopied
+            "selected",                 // ClipboardSelected
+            
+            // System journal
+            "entry.written",            // JournaldEntryWritten
         ];
 
         if !known_events.contains(&event_type) {
@@ -228,15 +253,18 @@ impl CollectorConfig {
         };
 
         match actual_event_name {
-            "shell.command.executed_atuin" => self.validate_atuin_config(config),
-            "terminal.scrollback.captured" | "terminal.command_output.captured" => {
+            "command.imported" => self.validate_atuin_config(config),
+            "command.executed" | "command.completed" | "output.captured" => {
                 self.validate_kitty_config(config)
             }
-            "file.created" | "file.modified" | "file.deleted" => {
+            "file.created" | "file.modified" | "file.deleted" | "file.moved" | "dir.created" | "dir.deleted" => {
                 self.validate_filesystem_config(config)
             }
-            "clipboard.content.changed" | "clipboard.selection.changed" => {
+            "copied" | "selected" => {
                 self.validate_clipboard_config(config)
+            }
+            "recording.started" | "recording.ended" => {
+                self.validate_asciinema_config(config)
             }
             _ => {
                 // For unknown events, just validate that it's a valid TOML table
@@ -322,6 +350,15 @@ impl CollectorConfig {
         .map_err(|e| anyhow!("{}", e))
     }
 
+    /// Validate asciinema recording configuration
+    fn validate_asciinema_config(&self, config: &ConfigValue) -> Result<()> {
+        ConfigValidator::new()
+            .validate_path_format("recordings_dir")
+            .validate_range("polling_interval_secs", 1..=300)
+            .build()(config)
+        .map_err(|e| anyhow!("{}", e))
+    }
+
     /// Perform cross-validation checks
     pub fn cross_validate(&self) -> Result<()> {
         let mut errors = Vec::new();
@@ -332,7 +369,7 @@ impl CollectorConfig {
 
             // Check that required configurations are present for enabled events
             match event_type.as_str() {
-                "shell.command.executed_atuin" => {
+                "command.imported" => {
                     if event_config.get("db_path").is_none() {
                         errors.push(format!(
                             "Event '{}' is enabled but missing required 'db_path' configuration",
@@ -340,14 +377,19 @@ impl CollectorConfig {
                         ));
                     }
                 }
-                "terminal.scrollback.captured" | "terminal.command_output.captured" => {
-                    if event_config.get("kitty_socket_path").is_none() {
-                        errors.push(format!("Event '{}' is enabled but missing required 'kitty_socket_path' configuration", event_type));
+                "command.executed" | "command.completed" | "output.captured" => {
+                    if event_config.get("socket_path").is_none() {
+                        errors.push(format!("Event '{}' is enabled but missing required 'socket_path' configuration", event_type));
                     }
                 }
-                "file.created" | "file.modified" | "file.deleted" => {
+                "file.created" | "file.modified" | "file.deleted" | "file.moved" | "dir.created" | "dir.deleted" => {
                     if event_config.get("watch_patterns").is_none() {
                         errors.push(format!("Event '{}' is enabled but missing required 'watch_patterns' configuration", event_type));
+                    }
+                }
+                "recording.started" | "recording.ended" => {
+                    if event_config.get("recordings_dir").is_none() {
+                        errors.push(format!("Event '{}' is enabled but missing required 'recordings_dir' configuration", event_type));
                     }
                 }
                 _ => {} // No specific requirements for other event types
@@ -489,7 +531,7 @@ impl Default for CollectorConfig {
         );
 
         flat_config.insert(
-            "event.shell_command_executed_atuin".to_string(),
+            "event.command_imported".to_string(),  // Updated event name
             ConfigValue::Table({
                 let mut table = toml::map::Map::new();
                 table.insert(
@@ -512,7 +554,8 @@ impl Default for CollectorConfig {
                     "socket_path".to_string(),
                     ConfigValue::String("/tmp/kitty".to_string()),
                 );
-                table.insert("polling_interval_secs".to_string(), ConfigValue::Integer(2));
+                table.insert("poll_interval_seconds".to_string(), ConfigValue::Integer(2));  // Use correct Rust field name
+                table.insert("enabled".to_string(), ConfigValue::Boolean(true));  // Add Rust field
                 table
             }),
         );
@@ -523,9 +566,9 @@ impl Default for CollectorConfig {
                 "file.modified".to_string(),
                 "file.deleted".to_string(),
                 "command.executed".to_string(),
-                "shell.command.executed_atuin".to_string(),
+                "command.imported".to_string(),  // Updated from shell.command.executed_atuin
                 "window.focused".to_string(),
-                "workspace.changed".to_string(),
+                "workspace.switched".to_string(),  // Updated from workspace.changed
             ],
             event: HashMap::new(),
             flat_config,

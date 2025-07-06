@@ -78,7 +78,7 @@ pub enum NotificationMessage {
 /// PostgreSQL LISTEN/NOTIFY service for real-time event processing
 pub struct NotificationService {
     pool: PgPool,
-    listeners: HashMap<String, PgListener>,
+    _listeners: HashMap<String, PgListener>,
     sender: mpsc::UnboundedSender<NotificationMessage>,
 }
 
@@ -89,7 +89,7 @@ impl NotificationService {
         
         let service = Self {
             pool,
-            listeners: HashMap::new(),
+            _listeners: HashMap::new(),
             sender,
         };
         
@@ -239,7 +239,6 @@ impl NotificationService {
 
 /// Helper functions for database triggers to send notifications
 pub mod triggers {
-    use super::*;
 
     /// SQL function for triggering event_inserted notifications
     pub const CREATE_EVENT_NOTIFICATION_FUNCTION: &str = r#"

@@ -53,19 +53,17 @@ use crate::OutputConfig;
 /// # Implementation Status
 /// 
 /// - ✅ sinex-events-fs: Implemented auto-registration
-/// - ⏳ sinex-events-desktop: TODO - add register_events() function  
-/// - ⏳ sinex-events-terminal: TODO - add register_events() function
-/// - ⏳ sinex-events-system: TODO - add register_events() function
+/// - ✅ sinex-events-desktop: Implemented auto-registration
+/// - ✅ sinex-events-terminal: Implemented auto-registration
+/// - ✅ sinex-events-system: Implemented auto-registration
 pub fn create_registry_with_auto_registration() -> EventRegistry {
     let mut builder = EventRegistryBuilder::new();
     
     // Auto-register event types from each event crate
     sinex_events_fs::register_events(&mut builder);
-    
-    // TODO: Add other event crates when they implement register_events:
-    // sinex_events_desktop::register_events(&mut builder);
-    // sinex_events_terminal::register_events(&mut builder);
-    // sinex_events_system::register_events(&mut builder);
+    sinex_events_desktop::register_events(&mut builder);
+    sinex_events_terminal::register_events(&mut builder);
+    sinex_events_system::register_events(&mut builder);
     
     builder.build()
 }

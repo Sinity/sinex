@@ -49,15 +49,6 @@ impl EventType for KittyCommandExecuted {
     const EVENT_NAME: &'static str = "command.executed";
 }
 
-/// Kitty scrollback captured event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KittyScrollbackCaptured;
-
-impl EventType for KittyScrollbackCaptured {
-    type Payload = KittyScrollbackCapturedPayload;
-    type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "scrollback.full";
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyCommandCompletedPayload {
@@ -86,15 +77,6 @@ pub struct KittyCommandExecutedPayload {
     pub scrollback_hash: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct KittyScrollbackCapturedPayload {
-    pub kitty_window_id: String,
-    pub content_hash: String,
-    pub line_count: u32,
-    pub scrollback_size_bytes: u64,
-    pub capture_timestamp: String,
-    pub content_preview: String,
-}
 
 
 /// Kitty tab created event
@@ -188,14 +170,37 @@ pub struct KittyProcessInfo {
     pub parent_pid: Option<u32>,
 }
 
+/// Kitty scrollback incremental capture event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyScrollbackIncremental;
+
+impl EventType for KittyScrollbackIncremental {
+    type Payload = KittyScrollbackIncrementalPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "scrollback.incremental";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyScrollbackIncrementalPayload {
+    pub kitty_window_id: String,
+    pub new_lines: Vec<String>,
+    pub line_start_offset: u32,
+    pub capture_timestamp: String,
+}
+
 /// Kitty event source for comprehensive terminal monitoring
+/// 
+/// Architecture:
+/// - Real-time command completion via shell integration (last_cmd_output)
+/// - Incremental scrollback capture (new lines only) as safety net
+/// - Tab focus change detection with real tab IDs
+/// - Process change monitoring per window
 pub struct KittyEventSource {
     socket_path: Option<String>,
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
     prompt_patterns: Vec<Regex>,
-    command_output_hashes: HashMap<String, String>,
-    scrollback_hashes: HashMap<String, String>,
+    last_scrollback_line_counts: HashMap<String, u32>,  // Track line count per window
     last_focused_tab: Option<String>,
     process_states: HashMap<String, KittyProcessInfo>,
 }
@@ -231,8 +236,7 @@ impl KittyEventSource {
             poll_interval: Duration::from_millis(500),
             window_states: HashMap::new(),
             prompt_patterns: Self::create_prompt_patterns(),
-            command_output_hashes: HashMap::new(),
-            scrollback_hashes: HashMap::new(),
+            last_scrollback_line_counts: HashMap::new(),
             last_focused_tab: None,
             process_states: HashMap::new(),
         }
@@ -376,9 +380,6 @@ impl KittyEventSource {
         Ok((tabs, windows))
     }
 
-    async fn get_scrollback_content(&self, window_id: &str) -> Result<String> {
-        self.get_kitty_text(window_id, "all").await
-    }
 
     async fn get_last_command_output(&self, window_id: &str) -> Result<String> {
         self.get_kitty_text(window_id, "last_cmd_output").await
@@ -446,9 +447,6 @@ impl KittyEventSource {
         // Try to get last command output using shell integration
         if let Ok(last_output) = self.get_last_command_output(&window_id).await {
             if !last_output.trim().is_empty() {
-                // Calculate output hash to detect new commands
-                let output_hash = blake3::hash(last_output.as_bytes()).to_hex().to_string();
-                
                 let window_state = self.window_states
                     .entry(window_id.clone())
                     .or_insert_with(|| KittyWindowState {
@@ -457,13 +455,8 @@ impl KittyEventSource {
                         last_prompt_time: None,
                     });
                 
-                // Check if this is a new command output (by comparing hash)
-                let is_new_output = self.command_output_hashes
-                    .get(&window_id)
-                    .map(|hash| hash != &output_hash)
-                    .unwrap_or(true);
-                    
-                if is_new_output {
+                // Always capture command output - no deduplication
+                if !last_output.trim().is_empty() {
                     // Try to extract command from the output (look for prompt patterns)
                     let extracted_command = KittyEventSource::extract_command_from_output(&self.prompt_patterns, &last_output);
                     
@@ -495,7 +488,6 @@ impl KittyEventSource {
                         // Update state
                         window_state.last_command = Some(command_text);
                         window_state.last_prompt_time = Some(SystemTime::now());
-                        self.command_output_hashes.insert(window_id.clone(), output_hash);
                     }
                 }
             }
@@ -525,41 +517,6 @@ impl KittyEventSource {
         None
     }
 
-    async fn capture_full_scrollback(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
-        let window_id = window.id.to_string();
-        let scrollback = self.get_scrollback_content(&window_id).await?;
-        let content_hash = blake3::hash(scrollback.as_bytes()).to_hex().to_string();
-        
-        // Only capture if content has changed (incremental approach)
-        let previous_hash = self.scrollback_hashes.get(&window_id);
-        if previous_hash.map(|h| h == &content_hash).unwrap_or(false) {
-            // Content unchanged, skip capture
-            return Ok(());
-        }
-        
-        let scrollback_payload = KittyScrollbackCapturedPayload {
-            kitty_window_id: window_id.clone(),
-            content_hash: content_hash.clone(),
-            line_count: scrollback.lines().count() as u32,
-            scrollback_size_bytes: scrollback.len() as u64,
-            capture_timestamp: chrono::Utc::now().to_rfc3339(),
-            content_preview: scrollback.chars().take(200).collect(),
-        };
-
-        let scrollback_event = RawEventBuilder::new(
-            "terminal.kitty",
-            "scrollback.full",
-            serde_json::to_value(scrollback_payload)?,
-        ).build();
-
-        tx.send(scrollback_event).await
-            .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send full scrollback event: {}", e)))?;
-
-        // Update stored hash for this window
-        self.scrollback_hashes.insert(window_id, content_hash);
-
-        Ok(())
-    }
 
     async fn process_tab_focus_changes(&mut self, tabs: Vec<(String, String, u32, bool)>, tx: &EventSender) -> Result<()> {
         let timestamp = chrono::Utc::now().to_rfc3339();
@@ -596,6 +553,53 @@ impl KittyEventSource {
         
         Ok(())
     }
+
+    async fn capture_incremental_scrollback(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
+        let window_id = window.id.to_string();
+        
+        // Get current scrollback content
+        let scrollback = self.get_kitty_text(&window_id, "all").await?;
+        let current_lines: Vec<&str> = scrollback.lines().collect();
+        let current_line_count = current_lines.len() as u32;
+        
+        // Get previous line count for this window
+        let previous_line_count = self.last_scrollback_line_counts
+            .get(&window_id)
+            .copied()
+            .unwrap_or(0);
+        
+        // Only capture if we have new lines
+        if current_line_count > previous_line_count {
+            let new_line_start = previous_line_count as usize;
+            let new_lines: Vec<String> = current_lines[new_line_start..]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            
+            let incremental_payload = KittyScrollbackIncrementalPayload {
+                kitty_window_id: window_id.clone(),
+                new_lines,
+                line_start_offset: previous_line_count,
+                capture_timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+
+            let scrollback_event = RawEventBuilder::new(
+                "terminal.kitty",
+                "scrollback.incremental",
+                serde_json::to_value(incremental_payload)?,
+            ).build();
+
+            tx.send(scrollback_event).await
+                .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send incremental scrollback event: {}", e)))?;
+            
+            tracing::debug!("Captured {} new lines for window {}", current_line_count - previous_line_count, window_id);
+        }
+        
+        // Update stored line count for this window
+        self.last_scrollback_line_counts.insert(window_id, current_line_count);
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -625,6 +629,7 @@ impl EventSource for KittyEventSource {
             return Ok(());
         }
 
+
         let mut last_scrollback_capture = SystemTime::now();
         let scrollback_interval = Duration::from_secs(180); // 3 minute intervals for incremental scrollback
 
@@ -636,16 +641,16 @@ impl EventSource for KittyEventSource {
                         tracing::error!("Failed to process tab focus changes: {}", e);
                     }
                     
-                    // Process windows as before
+                    // Process windows
                     for window in windows {
                         // Process command completions (real-time with shell integration)
                         if let Err(e) = self.process_window_commands(&window, &tx).await {
                             tracing::error!("Failed to process window {}: {}", window.id, e);
                         }
                         
-                        // Capture scrollback incrementally every 3 minutes (safety net)
+                        // Capture incremental scrollback every 3 minutes (safety net)
                         if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
-                            if let Err(e) = self.capture_full_scrollback(&window, &tx).await {
+                            if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await {
                                 tracing::error!("Failed to capture incremental scrollback for window {}: {}", window.id, e);
                             }
                         }

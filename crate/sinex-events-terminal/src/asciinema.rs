@@ -153,11 +153,18 @@ impl EventSource for AsciinemaRecorder {
                 })?;
         }
 
-        Ok(Self {
+        let recorder = Self {
             config,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
             processed_files: Arc::new(Mutex::new(Vec::new())),
-        })
+        };
+
+        // Set up auto-recording if enabled (one-time setup)
+        if recorder.config.auto_start_recording {
+            recorder.setup_auto_recording().await?;
+        }
+
+        Ok(recorder)
     }
 
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
@@ -184,10 +191,180 @@ impl EventSource for AsciinemaRecorder {
 
 impl AsciinemaRecorder {
     async fn setup_auto_recording(&self) -> Result<()> {
-        // This would set up shell integration to automatically start recording
-        // For example, by modifying .bashrc/.zshrc to run asciinema rec on new sessions
-        warn!("Auto-recording setup not yet implemented - requires shell configuration");
+        if !self.config.auto_start_recording {
+            return Ok(());
+        }
+
+        info!("Setting up automatic asciinema recording for shell sessions");
+
+        let home = std::env::var("HOME").map_err(|e| {
+            sinex_core::CoreError::configuration("HOME environment variable not set")
+                .with_source(e)
+                .build()
+        })?;
+
+        let home_path = PathBuf::from(&home);
+
+        // Create asciinema recordings directory if it doesn't exist
+        tokio::fs::create_dir_all(&self.config.recordings_dir).await.map_err(|e| {
+            sinex_core::CoreError::io_error(&self.config.recordings_dir)
+                .with_operation("create_recordings_dir")
+                .with_source(e)
+                .build()
+        })?;
+
+        // Setup shell integration for each supported shell
+        self.setup_bash_integration(&home_path).await?;
+        self.setup_zsh_integration(&home_path).await?;
+        self.setup_fish_integration(&home_path).await?;
+
+        info!("Auto-recording setup completed - new shell sessions will be automatically recorded");
         Ok(())
+    }
+
+    async fn setup_bash_integration(&self, home_path: &PathBuf) -> Result<()> {
+        let bashrc_path = home_path.join(".bashrc");
+        self.add_shell_integration(&bashrc_path, "bash").await
+    }
+
+    async fn setup_zsh_integration(&self, home_path: &PathBuf) -> Result<()> {
+        let zshrc_path = home_path.join(".zshrc");
+        self.add_shell_integration(&zshrc_path, "zsh").await
+    }
+
+    async fn setup_fish_integration(&self, home_path: &PathBuf) -> Result<()> {
+        let fish_config_dir = home_path.join(".config/fish");
+        tokio::fs::create_dir_all(&fish_config_dir).await.map_err(|e| {
+            sinex_core::CoreError::io_error(&fish_config_dir)
+                .with_operation("create_fish_config_dir")
+                .with_source(e)
+                .build()
+        })?;
+
+        let fish_config_path = fish_config_dir.join("config.fish");
+        self.add_shell_integration(&fish_config_path, "fish").await
+    }
+
+    async fn add_shell_integration(&self, shell_config_path: &PathBuf, shell_name: &str) -> Result<()> {
+        // Check if shell config exists
+        if !shell_config_path.exists() {
+            // Create minimal shell config if it doesn't exist
+            tokio::fs::write(shell_config_path, "").await.map_err(|e| {
+                sinex_core::CoreError::io_error(shell_config_path)
+                    .with_operation("create_shell_config")
+                    .with_source(e)
+                    .build()
+            })?;
+        }
+
+        // Read current config
+        let mut config_content = tokio::fs::read_to_string(shell_config_path).await.map_err(|e| {
+            sinex_core::CoreError::io_error(shell_config_path)
+                .with_operation("read_shell_config")
+                .with_source(e)
+                .build()
+        })?;
+
+        // Check if sinex integration is already present
+        if config_content.contains("# SINEX AUTO-RECORDING") {
+            info!("Sinex auto-recording already configured for {}", shell_name);
+            return Ok(());
+        }
+
+        // Generate shell integration code
+        let integration_code = self.generate_shell_integration_code(shell_name)?;
+
+        // Add integration code to shell config
+        config_content.push_str("\n\n");
+        config_content.push_str(&integration_code);
+
+        // Write updated config
+        tokio::fs::write(shell_config_path, config_content).await.map_err(|e| {
+            sinex_core::CoreError::io_error(shell_config_path)
+                .with_operation("write_shell_config")
+                .with_source(e)
+                .build()
+        })?;
+
+        info!("Added sinex auto-recording integration to {}", shell_config_path.display());
+        Ok(())
+    }
+
+    fn generate_shell_integration_code(&self, shell_name: &str) -> Result<String> {
+        let recordings_dir = self.config.recordings_dir.to_string_lossy();
+        let record_command = &self.config.record_command;
+
+        let integration_code = match shell_name {
+            "bash" | "zsh" => format!(
+                r#"# SINEX AUTO-RECORDING - Automatically record terminal sessions
+# Generated by sinex-events-terminal AsciinemaRecorder
+
+# Helper function to generate ULID-like ID (timestamp + randomness)
+_sinex_generate_session_ulid() {{
+    # Generate timestamp in milliseconds since epoch (ULID compatible)
+    local timestamp_ms=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
+    # Generate random suffix (10 characters, ULID uses base32)
+    local random_suffix=$(tr -dc 'A-Z0-9' < /dev/urandom | head -c 10 || echo "$(printf '%010d' $RANDOM$RANDOM)")
+    echo "${{timestamp_ms}}_${{random_suffix}}"
+}}
+
+# Only auto-record for interactive TTY sessions
+if [[ $- == *i* ]] && [[ -t 0 ]] && [[ -z "$SINEX_RECORDING_ACTIVE" ]]; then
+    # Generate unique session ULID
+    export SINEX_TERMINAL_SESSION_ULID=$(_sinex_generate_session_ulid)
+    export SINEX_RECORDING_ACTIVE=1
+    
+    # Create recording filename
+    SINEX_RECORDING_FILE="{recordings_dir}/${{SINEX_TERMINAL_SESSION_ULID}}.cast"
+    
+    # Ensure recordings directory exists
+    mkdir -p "{recordings_dir}"
+    
+    # Start asciinema recording
+    echo "🎬 Sinex: Auto-recording session $SINEX_TERMINAL_SESSION_ULID"
+    exec {record_command} --env SINEX_TERMINAL_SESSION_ULID "$SINEX_RECORDING_FILE" "$SHELL"
+fi
+"#,
+                recordings_dir = recordings_dir,
+                record_command = record_command
+            ),
+            "fish" => format!(
+                r#"# SINEX AUTO-RECORDING - Automatically record terminal sessions
+# Generated by sinex-events-terminal AsciinemaRecorder
+
+# Helper function to generate ULID-like ID
+function _sinex_generate_session_ulid
+    # Generate timestamp in milliseconds since epoch
+    set timestamp_ms (date +%s%3N 2>/dev/null; or echo (date +%s)"000")
+    # Generate random suffix
+    set random_suffix (tr -dc 'A-Z0-9' < /dev/urandom | head -c 10 2>/dev/null; or printf '%010d' (random)(random))
+    echo $timestamp_ms"_"$random_suffix
+end
+
+# Only auto-record for interactive TTY sessions
+if status is-interactive; and isatty stdin; and not set -q SINEX_RECORDING_ACTIVE
+    # Generate unique session ULID
+    set -gx SINEX_TERMINAL_SESSION_ULID (_sinex_generate_session_ulid)
+    set -gx SINEX_RECORDING_ACTIVE 1
+    
+    # Create recording filename
+    set SINEX_RECORDING_FILE "{recordings_dir}/$SINEX_TERMINAL_SESSION_ULID.cast"
+    
+    # Ensure recordings directory exists
+    mkdir -p "{recordings_dir}"
+    
+    # Start asciinema recording
+    echo "🎬 Sinex: Auto-recording session $SINEX_TERMINAL_SESSION_ULID"
+    exec {record_command} --env SINEX_TERMINAL_SESSION_ULID "$SINEX_RECORDING_FILE" (which fish)
+end
+"#,
+                recordings_dir = recordings_dir,
+                record_command = record_command
+            ),
+            _ => return Err(sinex_core::CoreError::configuration(&format!("Unsupported shell: {}", shell_name)).build())
+        };
+
+        Ok(integration_code)
     }
 
     async fn scan_recordings(&self, tx: &EventSender) -> Result<()> {
