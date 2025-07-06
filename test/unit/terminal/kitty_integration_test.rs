@@ -1,5 +1,11 @@
-use sinex_events_terminal::kitty::{KittyEventSource, KittyConfig, KittyCommandExecuted, KittyScrollbackCaptured};
-use sinex_core::{EventSource, EventSourceContext};
+use sinex_events_terminal::kitty::{
+    KittyEventSource, KittyConfig, KittyCommandExecuted, KittyScrollbackCaptured,
+    KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged, KittyConfigChanged,
+    KittyCommandExecutedPayload, KittyScrollbackCapturedPayload, KittyTabCreatedPayload,
+    KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
+    KittyConfigChangedPayload, KittyProcessInfo,
+};
+use sinex_core::{EventSource, EventSourceContext, EventType};
 
 #[tokio::test]
 async fn test_kitty_event_source_creation() {
@@ -33,5 +39,93 @@ fn test_kitty_event_types() {
     // Verify event type constants
     assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.executed");
     assert_eq!(KittyScrollbackCaptured::EVENT_NAME, "scrollback.captured");
+    assert_eq!(KittyTabCreated::EVENT_NAME, "tab.created");
+    assert_eq!(KittyTabFocused::EVENT_NAME, "tab.focused");
+    assert_eq!(KittyTabClosed::EVENT_NAME, "tab.closed");
+    assert_eq!(KittyProcessChanged::EVENT_NAME, "process.changed");
+    assert_eq!(KittyConfigChanged::EVENT_NAME, "config.changed");
     assert_eq!(KittyEventSource::SOURCE_NAME, "terminal.kitty");
+}
+
+#[test]
+fn test_kitty_payload_serialization() {
+    // Test KittyCommandExecutedPayload
+    let command_payload = KittyCommandExecutedPayload {
+        command: "ls -la".to_string(),
+        working_directory: Some("/home/user".to_string()),
+        kitty_window_id: "123".to_string(),
+        kitty_tab_id: "456".to_string(),
+        exit_status: Some(0),
+        execution_time_ms: Some(250),
+        prompt_detected: true,
+        scrollback_hash: Some("abc123".to_string()),
+    };
+    
+    let serialized = serde_json::to_string(&command_payload).expect("Should serialize");
+    let deserialized: KittyCommandExecutedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    
+    assert_eq!(command_payload.command, deserialized.command);
+    assert_eq!(command_payload.working_directory, deserialized.working_directory);
+    assert_eq!(command_payload.exit_status, deserialized.exit_status);
+    
+    // Test KittyTabCreatedPayload
+    let tab_payload = KittyTabCreatedPayload {
+        kitty_tab_id: "tab123".to_string(),
+        kitty_window_id: "win456".to_string(),
+        tab_title: "Terminal 1".to_string(),
+        tab_index: 0,
+        is_active: true,
+        creation_timestamp: "2024-01-01T12:00:00Z".to_string(),
+    };
+    
+    let serialized = serde_json::to_string(&tab_payload).expect("Should serialize");
+    let deserialized: KittyTabCreatedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    
+    assert_eq!(tab_payload.kitty_tab_id, deserialized.kitty_tab_id);
+    assert_eq!(tab_payload.tab_index, deserialized.tab_index);
+    assert_eq!(tab_payload.is_active, deserialized.is_active);
+    
+    // Test KittyProcessChangedPayload
+    let process_info = KittyProcessInfo {
+        pid: 1234,
+        name: "bash".to_string(),
+        cmdline: Some("/bin/bash".to_string()),
+        parent_pid: Some(5678),
+    };
+    
+    let process_payload = KittyProcessChangedPayload {
+        kitty_window_id: "win123".to_string(),
+        kitty_tab_id: "tab456".to_string(),
+        previous_process: None,
+        current_process: process_info.clone(),
+        change_timestamp: "2024-01-01T12:00:00Z".to_string(),
+        working_directory: Some("/home/user".to_string()),
+    };
+    
+    let serialized = serde_json::to_string(&process_payload).expect("Should serialize");
+    let deserialized: KittyProcessChangedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    
+    assert_eq!(process_payload.current_process.pid, deserialized.current_process.pid);
+    assert_eq!(process_payload.current_process.name, deserialized.current_process.name);
+}
+
+#[test]
+fn test_kitty_config_changed_payload() {
+    let config_payload = KittyConfigChangedPayload {
+        change_type: "font_size".to_string(),
+        setting_name: "font_size".to_string(),
+        previous_value: Some("12".to_string()),
+        current_value: "14".to_string(),
+        change_timestamp: "2024-01-01T12:00:00Z".to_string(),
+        affected_windows: vec!["win1".to_string(), "win2".to_string()],
+    };
+    
+    let serialized = serde_json::to_string(&config_payload).expect("Should serialize");
+    let deserialized: KittyConfigChangedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    
+    assert_eq!(config_payload.change_type, deserialized.change_type);
+    assert_eq!(config_payload.setting_name, deserialized.setting_name);
+    assert_eq!(config_payload.previous_value, deserialized.previous_value);
+    assert_eq!(config_payload.current_value, deserialized.current_value);
+    assert_eq!(config_payload.affected_windows.len(), deserialized.affected_windows.len());
 }

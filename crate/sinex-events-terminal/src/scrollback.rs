@@ -12,7 +12,7 @@ use tracing::{debug, error, info};
 use sinex_core::RawEvent;
 use sinex_core::{
     sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp,
+    Result, Timestamp, chunking::ChunkingService,
 };
 
 // ============================================================================
@@ -26,8 +26,14 @@ pub struct TerminalScrollbackCapturedPayload {
     pub terminal_type: String, // "kitty"
     pub cwd: String,
     pub window_title: String,
-    pub scrollback_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_text: Option<String>, // Only for small content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_chunks: Option<Vec<serde_json::Value>>, // For chunked large content
     pub scrollback_lines: usize,
+    pub scrollback_size_bytes: u64,
+    pub is_chunked: bool,
+    pub chunk_count: Option<u32>,
     pub includes_screen: bool,
     pub has_ansi_codes: bool,
     pub timestamp: Timestamp,
@@ -88,10 +94,24 @@ pub struct ScrollbackConfig {
     /// Delay after command before capturing (milliseconds)
     #[serde(default = "default_command_capture_delay")]
     pub command_capture_delay_ms: u64,
+    /// Enable chunking for large scrollback content (bytes threshold)
+    #[serde(default = "default_chunking_threshold")]
+    pub chunking_threshold_bytes: usize,
+    /// Enable chunking (FastCDC)
+    #[serde(default = "default_enable_chunking")]
+    pub enable_chunking: bool,
 }
 
 fn default_command_capture_delay() -> u64 {
     500 // 500ms delay after command to capture output
+}
+
+fn default_chunking_threshold() -> usize {
+    32_768 // 32KB threshold for chunking
+}
+
+fn default_enable_chunking() -> bool {
+    true // Enable FastCDC chunking by default
 }
 
 impl Default for ScrollbackConfig {
@@ -107,6 +127,8 @@ impl Default for ScrollbackConfig {
             scrollback_dir: PathBuf::from(&home).join(".local/share/sinex/scrollback"),
             capture_on_command: true,
             command_capture_delay_ms: default_command_capture_delay(),
+            chunking_threshold_bytes: default_chunking_threshold(),
+            enable_chunking: default_enable_chunking(),
         }
     }
 }
@@ -124,6 +146,7 @@ pub struct ScrollbackCapture {
     last_capture_times: HashMap<u32, Timestamp>,
     last_scrollback_hashes: HashMap<u32, u64>,
     command_event_rx: Option<mpsc::Receiver<CommandExecutedEvent>>,
+    chunking_service: Option<ChunkingService>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,11 +180,18 @@ impl EventSource for ScrollbackCapture {
                 })?;
         }
 
+        let chunking_service = if config.enable_chunking {
+            Some(ChunkingService::with_default_config())
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             last_capture_times: HashMap::new(),
             last_scrollback_hashes: HashMap::new(),
             command_event_rx: None,
+            chunking_service,
         })
     }
 
@@ -242,13 +272,47 @@ impl ScrollbackCapture {
         for window in &windows {
             // Capture full scrollback
             if let Ok(scrollback) = self.get_window_scrollback(window.id, true).await {
+                let scrollback_size_bytes = scrollback.text.len() as u64;
+                let should_chunk = self.config.enable_chunking && 
+                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                
+                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count) = if should_chunk {
+                    if let Some(ref chunking_service) = self.chunking_service {
+                        match chunking_service.chunk_string(&scrollback.text) {
+                            Ok(chunks) => {
+                                let chunk_count = chunks.len() as u32;
+                                let chunk_jsons: Vec<serde_json::Value> = chunks
+                                    .into_iter()
+                                    .map(|chunk| serde_json::to_value(chunk).unwrap_or(serde_json::Value::Null))
+                                    .collect();
+                                (None, Some(chunk_jsons), true, Some(chunk_count))
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to chunk scrollback for window {}: {}", window.id, e);
+                                // Fallback to storing as text if chunking fails
+                                (Some(scrollback.text.clone()), None, false, None)
+                            }
+                        }
+                    } else {
+                        // Chunking disabled, store as text
+                        (Some(scrollback.text.clone()), None, false, None)
+                    }
+                } else {
+                    // Below threshold, store as text
+                    (Some(scrollback.text.clone()), None, false, None)
+                };
+
                 let payload = TerminalScrollbackCapturedPayload {
                     window_id: window.id,
                     terminal_type: "kitty".to_string(),
                     cwd: window.cwd.clone(),
                     window_title: window.title.clone(),
-                    scrollback_text: scrollback.text.clone(),
+                    scrollback_text,
+                    scrollback_chunks,
                     scrollback_lines: scrollback.line_count,
+                    scrollback_size_bytes,
+                    is_chunked,
+                    chunk_count,
                     includes_screen: true,
                     has_ansi_codes: self.config.include_ansi_codes,
                     timestamp: Utc::now(),
@@ -503,13 +567,47 @@ impl ScrollbackCapture {
 
                 self.last_scrollback_hashes.insert(window_id, hash);
 
+                let scrollback_size_bytes = scrollback.text.len() as u64;
+                let should_chunk = self.config.enable_chunking && 
+                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                
+                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count) = if should_chunk {
+                    if let Some(ref chunking_service) = self.chunking_service {
+                        match chunking_service.chunk_string(&scrollback.text) {
+                            Ok(chunks) => {
+                                let chunk_count = chunks.len() as u32;
+                                let chunk_jsons: Vec<serde_json::Value> = chunks
+                                    .into_iter()
+                                    .map(|chunk| serde_json::to_value(chunk).unwrap_or(serde_json::Value::Null))
+                                    .collect();
+                                (None, Some(chunk_jsons), true, Some(chunk_count))
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to chunk scrollback for window {}: {}", window_id, e);
+                                // Fallback to storing as text if chunking fails
+                                (Some(scrollback.text.clone()), None, false, None)
+                            }
+                        }
+                    } else {
+                        // Chunking disabled, store as text
+                        (Some(scrollback.text.clone()), None, false, None)
+                    }
+                } else {
+                    // Below threshold, store as text
+                    (Some(scrollback.text.clone()), None, false, None)
+                };
+
                 let payload = TerminalScrollbackCapturedPayload {
                     window_id: window.id,
                     terminal_type: "kitty".to_string(),
                     cwd: window.cwd.clone(),
                     window_title: window.title.clone(),
-                    scrollback_text: scrollback.text.clone(),
+                    scrollback_text,
+                    scrollback_chunks,
                     scrollback_lines: scrollback.line_count,
+                    scrollback_size_bytes,
+                    is_chunked,
+                    chunk_count,
                     includes_screen: !incremental,
                     has_ansi_codes: self.config.include_ansi_codes,
                     timestamp: Utc::now(),

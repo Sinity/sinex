@@ -61,6 +61,56 @@ impl EventType for KittyScrollbackCaptured {
     const EVENT_NAME: &'static str = "scrollback.captured";
 }
 
+/// Kitty tab created event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyTabCreated;
+
+impl EventType for KittyTabCreated {
+    type Payload = KittyTabCreatedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "tab.created";
+}
+
+/// Kitty tab focused event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyTabFocused;
+
+impl EventType for KittyTabFocused {
+    type Payload = KittyTabFocusedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "tab.focused";
+}
+
+/// Kitty tab closed event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyTabClosed;
+
+impl EventType for KittyTabClosed {
+    type Payload = KittyTabClosedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "tab.closed";
+}
+
+/// Kitty process changed event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyProcessChanged;
+
+impl EventType for KittyProcessChanged {
+    type Payload = KittyProcessChangedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "process.changed";
+}
+
+/// Kitty configuration changed event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KittyConfigChanged;
+
+impl EventType for KittyConfigChanged {
+    type Payload = KittyConfigChangedPayload;
+    type SourceImpl = KittyEventSource;
+    const EVENT_NAME: &'static str = "config.changed";
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyScrollbackCapturedPayload {
     pub kitty_window_id: String,
@@ -71,13 +121,75 @@ pub struct KittyScrollbackCapturedPayload {
     pub content_preview: String, // First 200 chars for debugging
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyTabCreatedPayload {
+    pub kitty_tab_id: String,
+    pub kitty_window_id: String,
+    pub tab_title: String,
+    pub tab_index: u32,
+    pub is_active: bool,
+    pub creation_timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyTabFocusedPayload {
+    pub kitty_tab_id: String,
+    pub kitty_window_id: String,
+    pub tab_title: String,
+    pub tab_index: u32,
+    pub previous_tab_id: Option<String>,
+    pub focus_timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyTabClosedPayload {
+    pub kitty_tab_id: String,
+    pub kitty_window_id: String,
+    pub tab_title: String,
+    pub tab_index: u32,
+    pub was_active: bool,
+    pub closure_timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyProcessChangedPayload {
+    pub kitty_window_id: String,
+    pub kitty_tab_id: String,
+    pub previous_process: Option<KittyProcessInfo>,
+    pub current_process: KittyProcessInfo,
+    pub change_timestamp: String,
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyConfigChangedPayload {
+    pub change_type: String, // "font_size", "color_scheme", "opacity", "other"
+    pub setting_name: String,
+    pub previous_value: Option<String>,
+    pub current_value: String,
+    pub change_timestamp: String,
+    pub affected_windows: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KittyProcessInfo {
+    pub pid: u32,
+    pub name: String,
+    pub cmdline: Option<String>,
+    pub parent_pid: Option<u32>,
+}
+
 /// Kitty event source for comprehensive terminal monitoring
 pub struct KittyEventSource {
     socket_path: Option<String>,
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
+    tab_states: HashMap<String, KittyTabState>,
+    process_states: HashMap<String, KittyProcessInfo>,
     prompt_patterns: Vec<Regex>,
     last_scrollback_hashes: HashMap<String, String>,
+    last_focused_tab: Option<String>,
+    last_config_hash: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +200,17 @@ struct KittyWindowState {
     working_directory: Option<String>,
     last_prompt_time: Option<SystemTime>,
     command_start_time: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+struct KittyTabState {
+    tab_id: String,
+    window_id: String,
+    title: String,
+    index: u32,
+    is_active: bool,
+    creation_time: Option<SystemTime>,
+    last_focus_time: Option<SystemTime>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,8 +244,12 @@ impl KittyEventSource {
             socket_path: None,
             poll_interval: Duration::from_secs(2),
             window_states: HashMap::new(),
+            tab_states: HashMap::new(),
+            process_states: HashMap::new(),
             prompt_patterns: Self::create_prompt_patterns(),
             last_scrollback_hashes: HashMap::new(),
+            last_focused_tab: None,
+            last_config_hash: None,
         }
     }
 
@@ -218,11 +345,27 @@ impl KittyEventSource {
                             window.get("id").and_then(|i| i.as_i64()),
                             window.get("title").and_then(|t| t.as_str())
                         ) {
+                            // Extract foreground processes if available
+                            let mut foreground_processes = Vec::new();
+                            if let Some(processes) = window.get("foreground_processes").and_then(|p| p.as_array()) {
+                                for process in processes {
+                                    if let (Some(pid), Some(name)) = (
+                                        process.get("pid").and_then(|p| p.as_u64()),
+                                        process.get("name").and_then(|n| n.as_str())
+                                    ) {
+                                        foreground_processes.push(KittyProcess {
+                                            pid: pid as u32,
+                                            name: name.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                            
                             windows.push(KittyWindow {
                                 id,
                                 title: title.to_string(),
                                 cwd: window.get("cwd").and_then(|c| c.as_str()).map(String::from),
-                                foreground_processes: vec![], // Would need additional calls to get this
+                                foreground_processes,
                             });
                         }
                     }
@@ -270,6 +413,46 @@ impl KittyEventSource {
 
     async fn process_window_commands(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
         let window_id = window.id.to_string();
+        
+        // Process changed if foreground processes changed
+        if let Some(current_process) = window.foreground_processes.first() {
+            let current_process_info = KittyProcessInfo {
+                pid: current_process.pid,
+                name: current_process.name.clone(),
+                cmdline: None, // Would need additional call to get cmdline
+                parent_pid: None,
+            };
+            
+            let process_changed = self.process_states
+                .get(&window_id)
+                .map(|prev| prev.pid != current_process_info.pid || prev.name != current_process_info.name)
+                .unwrap_or(true);
+            
+            if process_changed {
+                let previous_process = self.process_states.get(&window_id).cloned();
+                
+                let process_payload = KittyProcessChangedPayload {
+                    kitty_window_id: window_id.clone(),
+                    kitty_tab_id: "0".to_string(), // Would need actual tab ID
+                    previous_process,
+                    current_process: current_process_info.clone(),
+                    change_timestamp: chrono::Utc::now().to_rfc3339(),
+                    working_directory: window.cwd.clone(),
+                };
+                
+                let process_event = RawEventBuilder::new(
+                    "terminal.kitty",
+                    "process.changed",
+                    serde_json::to_value(process_payload)?,
+                ).build();
+                
+                tx.send(process_event).await
+                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send process change event: {}", e)))?;
+                
+                // Update stored process state
+                self.process_states.insert(window_id.clone(), current_process_info);
+            }
+        }
         
         // Get scrollback content
         let scrollback = self.get_scrollback_content(&window_id).await?;

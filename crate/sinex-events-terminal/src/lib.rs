@@ -8,7 +8,7 @@ pub mod terminal;
 // Re-export terminal event types
 pub use asciinema::{AsciinemaSessionEnded, AsciinemaSessionStarted};
 pub use atuin::CommandExecutedAtuin;
-pub use kitty::{KittyCommandExecuted, KittyScrollbackCaptured};
+pub use kitty::{KittyCommandExecuted, KittyScrollbackCaptured, KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged, KittyConfigChanged};
 pub use scrollback::{CommandOutputCaptured, TerminalScrollbackCaptured};
 pub use shell_history::ShellHistoryCommand;
 pub use terminal::CommandExecuted;

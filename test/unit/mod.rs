@@ -94,3 +94,6 @@ pub mod model;
 
 /// Tests for event ingestion logic
 pub mod ingestor;
+
+/// Tests for terminal event sources
+pub mod terminal;
