@@ -137,15 +137,6 @@ impl EventType for KittyProcessChanged {
     const EVENT_NAME: &'static str = "process.changed";
 }
 
-/// Kitty configuration changed event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KittyConfigChanged;
-
-impl EventType for KittyConfigChanged {
-    type Payload = KittyConfigChangedPayload;
-    type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "config.changed";
-}
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -188,15 +179,6 @@ pub struct KittyProcessChangedPayload {
     pub working_directory: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct KittyConfigChangedPayload {
-    pub change_type: String, // "font_size", "color_scheme", "opacity", "other"
-    pub setting_name: String,
-    pub previous_value: Option<String>,
-    pub current_value: String,
-    pub change_timestamp: String,
-    pub affected_windows: Vec<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyProcessInfo {
@@ -211,52 +193,29 @@ pub struct KittyEventSource {
     socket_path: Option<String>,
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
-    tab_states: HashMap<String, KittyTabState>,
-    process_states: HashMap<String, KittyProcessInfo>,
     prompt_patterns: Vec<Regex>,
-    last_scrollback_hashes: HashMap<String, String>,
+    command_output_hashes: HashMap<String, String>,
+    scrollback_hashes: HashMap<String, String>,
     last_focused_tab: Option<String>,
-    last_config_hash: Option<String>,
+    process_states: HashMap<String, KittyProcessInfo>,
 }
 
 #[derive(Debug, Clone)]
 struct KittyWindowState {
-    window_id: String,
     tab_id: String,
     last_command: Option<String>,
-    working_directory: Option<String>,
     last_prompt_time: Option<SystemTime>,
-    command_start_time: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone)]
-struct KittyTabState {
-    tab_id: String,
-    window_id: String,
-    title: String,
-    index: u32,
-    is_active: bool,
-    creation_time: Option<SystemTime>,
-    last_focus_time: Option<SystemTime>,
-}
 
-#[derive(Debug, Deserialize)]
-struct KittyLsResponse {
-    tabs: Vec<KittyTab>,
-}
-
-#[derive(Debug, Deserialize)]
-struct KittyTab {
-    id: i64,
-    windows: Vec<KittyWindow>,
-}
 
 #[derive(Debug, Deserialize)]
 struct KittyWindow {
     id: i64,
-    title: String,
     cwd: Option<String>,
     foreground_processes: Vec<KittyProcess>,
+    last_cmd_exit_status: Option<i32>,
+    parent_tab_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,14 +228,13 @@ impl KittyEventSource {
     pub fn new() -> Self {
         Self {
             socket_path: None,
-            poll_interval: Duration::from_secs(2),
+            poll_interval: Duration::from_millis(500),
             window_states: HashMap::new(),
-            tab_states: HashMap::new(),
-            process_states: HashMap::new(),
             prompt_patterns: Self::create_prompt_patterns(),
-            last_scrollback_hashes: HashMap::new(),
+            command_output_hashes: HashMap::new(),
+            scrollback_hashes: HashMap::new(),
             last_focused_tab: None,
-            last_config_hash: None,
+            process_states: HashMap::new(),
         }
     }
 
@@ -357,62 +315,73 @@ impl KittyEventSource {
         Err(sinex_core::CoreError::Other(format!("Could not parse Kitty response: {}", response_str)))
     }
 
-    async fn get_kitty_windows(&self) -> Result<Vec<KittyWindow>> {
+
+    async fn get_kitty_tabs_and_windows(&self) -> Result<(Vec<(String, String, u32, bool)>, Vec<KittyWindow>)> {
         let ls_command = serde_json::json!({"cmd": "ls"});
         let response = self.send_kitty_command(ls_command).await?;
         
-        // Parse the response to extract window information
+        let mut tabs = Vec::new();
         let mut windows = Vec::new();
         
-        if let Some(tabs) = response.as_array() {
-            for tab in tabs {
-                if let Some(tab_windows) = tab.get("windows").and_then(|w| w.as_array()) {
-                    for window in tab_windows {
-                        if let (Some(id), Some(title)) = (
-                            window.get("id").and_then(|i| i.as_i64()),
-                            window.get("title").and_then(|t| t.as_str())
-                        ) {
-                            // Extract foreground processes if available
-                            let mut foreground_processes = Vec::new();
-                            if let Some(processes) = window.get("foreground_processes").and_then(|p| p.as_array()) {
-                                for process in processes {
-                                    if let (Some(pid), Some(name)) = (
-                                        process.get("pid").and_then(|p| p.as_u64()),
-                                        process.get("name").and_then(|n| n.as_str())
-                                    ) {
-                                        foreground_processes.push(KittyProcess {
-                                            pid: pid as u32,
-                                            name: name.to_string(),
-                                        });
+        if let Some(tabs_array) = response.as_array() {
+            for (tab_index, tab) in tabs_array.iter().enumerate() {
+                // Extract tab information
+                if let (Some(tab_id), Some(tab_title), Some(is_focused)) = (
+                    tab.get("id").and_then(|i| i.as_i64()),
+                    tab.get("title").and_then(|t| t.as_str()),
+                    tab.get("is_focused").and_then(|f| f.as_bool())
+                ) {
+                    let tab_id_str = tab_id.to_string();
+                    tabs.push((
+                        tab_id_str.clone(),
+                        tab_title.to_string(),
+                        tab_index as u32,
+                        is_focused
+                    ));
+                
+                    // Extract windows from this tab
+                    if let Some(tab_windows) = tab.get("windows").and_then(|w| w.as_array()) {
+                        for window in tab_windows {
+                            if let Some(id) = window.get("id").and_then(|i| i.as_i64()) {
+                                // Extract foreground processes if available
+                                let mut foreground_processes = Vec::new();
+                                if let Some(processes) = window.get("foreground_processes").and_then(|p| p.as_array()) {
+                                    for process in processes {
+                                        if let (Some(pid), Some(name)) = (
+                                            process.get("pid").and_then(|p| p.as_u64()),
+                                            process.get("name").and_then(|n| n.as_str())
+                                        ) {
+                                            foreground_processes.push(KittyProcess {
+                                                pid: pid as u32,
+                                                name: name.to_string(),
+                                            });
+                                        }
                                     }
                                 }
+                                
+                                windows.push(KittyWindow {
+                                    id,
+                                    cwd: window.get("cwd").and_then(|c| c.as_str()).map(String::from),
+                                    foreground_processes,
+                                    last_cmd_exit_status: window.get("last_cmd_exit_status").and_then(|s| s.as_i64()).map(|s| s as i32),
+                                    parent_tab_id: tab_id_str.clone(),
+                                });
                             }
-                            
-                            windows.push(KittyWindow {
-                                id,
-                                title: title.to_string(),
-                                cwd: window.get("cwd").and_then(|c| c.as_str()).map(String::from),
-                                foreground_processes,
-                            });
                         }
                     }
                 }
             }
         }
         
-        Ok(windows)
+        Ok((tabs, windows))
     }
 
     async fn get_scrollback_content(&self, window_id: &str) -> Result<String> {
-        self.get_kitty_text(window_id, "scrollback").await
+        self.get_kitty_text(window_id, "all").await
     }
 
     async fn get_last_command_output(&self, window_id: &str) -> Result<String> {
         self.get_kitty_text(window_id, "last_cmd_output").await
-    }
-
-    async fn get_last_non_empty_output(&self, window_id: &str) -> Result<String> {
-        self.get_kitty_text(window_id, "last_non_empty_output").await
     }
 
     async fn get_kitty_text(&self, window_id: &str, extent: &str) -> Result<String> {
@@ -429,25 +398,6 @@ impl KittyEventSource {
         } else {
             Err(sinex_core::CoreError::Other(format!("No text content in Kitty response for extent: {}", extent)))
         }
-    }
-
-    fn parse_commands_from_scrollback(&self, content: &str) -> Vec<String> {
-        let mut commands = Vec::new();
-        
-        for line in content.lines() {
-            for pattern in &self.prompt_patterns {
-                if let Some(captures) = pattern.captures(line) {
-                    if let Some(command) = captures.get(1) {
-                        let cmd = command.as_str().trim();
-                        if !cmd.is_empty() && !commands.contains(&cmd.to_string()) {
-                            commands.push(cmd.to_string());
-                        }
-                    }
-                }
-            }
-        }
-        
-        commands
     }
 
     async fn process_window_commands(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
@@ -472,7 +422,7 @@ impl KittyEventSource {
                 
                 let process_payload = KittyProcessChangedPayload {
                     kitty_window_id: window_id.clone(),
-                    kitty_tab_id: "0".to_string(), // Would need actual tab ID
+                    kitty_tab_id: window.parent_tab_id.clone(),
                     previous_process,
                     current_process: current_process_info.clone(),
                     change_timestamp: chrono::Utc::now().to_rfc3339(),
@@ -502,16 +452,13 @@ impl KittyEventSource {
                 let window_state = self.window_states
                     .entry(window_id.clone())
                     .or_insert_with(|| KittyWindowState {
-                        window_id: window_id.clone(),
-                        tab_id: "0".to_string(),
+                        tab_id: window.parent_tab_id.clone(),
                         last_command: None,
-                        working_directory: window.cwd.clone(),
                         last_prompt_time: None,
-                        command_start_time: None,
                     });
                 
                 // Check if this is a new command output (by comparing hash)
-                let is_new_output = self.last_scrollback_hashes
+                let is_new_output = self.command_output_hashes
                     .get(&window_id)
                     .map(|hash| hash != &output_hash)
                     .unwrap_or(true);
@@ -528,7 +475,7 @@ impl KittyEventSource {
                             working_directory: window.cwd.clone(),
                             kitty_window_id: window_id.clone(),
                             kitty_tab_id: window_state.tab_id.clone(),
-                            exit_status: None, // TODO: Extract from shell integration if available
+                            exit_status: window.last_cmd_exit_status,
                             execution_time_ms: None, // TODO: Calculate if we track command start
                             output_size_bytes: last_output.len() as u64,
                             output_line_count: last_output.lines().count() as u32,
@@ -548,7 +495,7 @@ impl KittyEventSource {
                         // Update state
                         window_state.last_command = Some(command_text);
                         window_state.last_prompt_time = Some(SystemTime::now());
-                        self.last_scrollback_hashes.insert(window_id.clone(), output_hash);
+                        self.command_output_hashes.insert(window_id.clone(), output_hash);
                     }
                 }
             }
@@ -581,10 +528,18 @@ impl KittyEventSource {
     async fn capture_full_scrollback(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
         let window_id = window.id.to_string();
         let scrollback = self.get_scrollback_content(&window_id).await?;
+        let content_hash = blake3::hash(scrollback.as_bytes()).to_hex().to_string();
+        
+        // Only capture if content has changed (incremental approach)
+        let previous_hash = self.scrollback_hashes.get(&window_id);
+        if previous_hash.map(|h| h == &content_hash).unwrap_or(false) {
+            // Content unchanged, skip capture
+            return Ok(());
+        }
         
         let scrollback_payload = KittyScrollbackCapturedPayload {
             kitty_window_id: window_id.clone(),
-            content_hash: blake3::hash(scrollback.as_bytes()).to_hex().to_string(),
+            content_hash: content_hash.clone(),
             line_count: scrollback.lines().count() as u32,
             scrollback_size_bytes: scrollback.len() as u64,
             capture_timestamp: chrono::Utc::now().to_rfc3339(),
@@ -600,6 +555,45 @@ impl KittyEventSource {
         tx.send(scrollback_event).await
             .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send full scrollback event: {}", e)))?;
 
+        // Update stored hash for this window
+        self.scrollback_hashes.insert(window_id, content_hash);
+
+        Ok(())
+    }
+
+    async fn process_tab_focus_changes(&mut self, tabs: Vec<(String, String, u32, bool)>, tx: &EventSender) -> Result<()> {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        
+        // Check for focus changes - just emit events when focus changes
+        let current_focused = tabs.iter().find(|(_, _, _, is_focused)| *is_focused);
+        if let Some((focused_tab_id, title, index, _)) = current_focused {
+            if self.last_focused_tab.as_ref() != Some(focused_tab_id) {
+                let previous_tab_id = self.last_focused_tab.clone();
+                
+                // Emit tab focused event
+                let tab_focused_payload = KittyTabFocusedPayload {
+                    kitty_tab_id: focused_tab_id.clone(),
+                    kitty_window_id: "unknown".to_string(),
+                    tab_title: title.clone(),
+                    tab_index: *index,
+                    previous_tab_id,
+                    focus_timestamp: timestamp,
+                };
+                
+                let tab_focused_event = RawEventBuilder::new(
+                    "terminal.kitty",
+                    "tab.focused",
+                    serde_json::to_value(tab_focused_payload)?,
+                ).build();
+                
+                tx.send(tab_focused_event).await
+                    .map_err(|e| sinex_core::CoreError::Other(format!("Failed to send tab focused event: {}", e)))?;
+                
+                // Update last focused tab
+                self.last_focused_tab = Some(focused_tab_id.clone());
+            }
+        }
+        
         Ok(())
     }
 }
@@ -632,21 +626,27 @@ impl EventSource for KittyEventSource {
         }
 
         let mut last_scrollback_capture = SystemTime::now();
-        let scrollback_interval = Duration::from_secs(60); // 60 second intervals for full scrollback
+        let scrollback_interval = Duration::from_secs(180); // 3 minute intervals for incremental scrollback
 
         loop {
-            match self.get_kitty_windows().await {
-                Ok(windows) => {
+            match self.get_kitty_tabs_and_windows().await {
+                Ok((tabs, windows)) => {
+                    // Process tab focus changes
+                    if let Err(e) = self.process_tab_focus_changes(tabs, &tx).await {
+                        tracing::error!("Failed to process tab focus changes: {}", e);
+                    }
+                    
+                    // Process windows as before
                     for window in windows {
                         // Process command completions (real-time with shell integration)
                         if let Err(e) = self.process_window_commands(&window, &tx).await {
                             tracing::error!("Failed to process window {}: {}", window.id, e);
                         }
                         
-                        // Capture full scrollback periodically (safety net)
+                        // Capture scrollback incrementally every 3 minutes (safety net)
                         if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
                             if let Err(e) = self.capture_full_scrollback(&window, &tx).await {
-                                tracing::error!("Failed to capture full scrollback for window {}: {}", window.id, e);
+                                tracing::error!("Failed to capture incremental scrollback for window {}: {}", window.id, e);
                             }
                         }
                     }

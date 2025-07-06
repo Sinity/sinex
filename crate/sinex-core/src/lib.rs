@@ -264,13 +264,20 @@ pub mod event_type_constants {
 
     pub mod shell {
         pub const COMMAND_EXECUTED: &str = "command.executed";
+        pub const COMMAND_COMPLETED: &str = "command.completed";
         pub const COMMAND_FAILED: &str = "command.failed";
         pub const SESSION_STARTED: &str = "session.started";
         pub const SESSION_ENDED: &str = "session.ended";
         pub const COMMAND_IMPORTED: &str = "command.imported";
         pub const RECORDING_STARTED: &str = "recording.started";
         pub const RECORDING_ENDED: &str = "recording.ended";
-        pub const OUTPUT_CAPTURED: &str = "output.captured";
+        pub const COMMAND_OUTPUT: &str = "command.output";
+        pub const SCROLLBACK_FULL: &str = "scrollback.full";
+        pub const TAB_CREATED: &str = "tab.created";
+        pub const TAB_FOCUSED: &str = "tab.focused";
+        pub const TAB_CLOSED: &str = "tab.closed";
+        pub const PROCESS_CHANGED: &str = "process.changed";
+        pub const CONFIG_CHANGED: &str = "config.changed";
     }
 
     pub mod window_manager {
@@ -290,8 +297,8 @@ pub mod event_type_constants {
     }
 
     pub mod clipboard {
-        pub const COPIED: &str = "copied";
-        pub const SELECTED: &str = "selected";
+        pub const COPIED: &str = "clipboard.copied";
+        pub const SELECTED: &str = "clipboard.selected";
     }
 
     pub mod dbus {
@@ -305,10 +312,14 @@ pub mod event_type_constants {
         pub const NETWORK_STATE_CHANGED: &str = "network.state_changed";
         pub const BLUETOOTH_DEVICE_CHANGED: &str = "bluetooth.device_changed";
         pub const MOUNT_CHANGED: &str = "mount.changed";
+        pub const SESSION_STATE_CHANGED: &str = "session.state_changed";
+        pub const SECURITY_AUTHORIZATION: &str = "security.authorization";
+        pub const SCREENSAVER_STATE_CHANGED: &str = "screensaver.state_changed";
     }
 
     pub mod journald {
         pub const ENTRY_WRITTEN: &str = "entry.written";
+        pub const SYNC_COMPLETED: &str = "sync.completed";
     }
 }
 

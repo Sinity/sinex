@@ -508,17 +508,7 @@ async fn process_extracted_message(
                 && interface == "org.freedesktop.Notifications"
                 && member == "Notify"
             {
-                let payload = NotificationPayload {
-                    app_name: "Unknown".to_string(),
-                    summary: args.to_string(),
-                    body: String::new(),
-                    urgency: 1,
-                    timeout: -1,
-                    actions: vec![],
-                    hints: HashMap::new(),
-                    timestamp: Utc::now(),
-                };
-
+                let payload = parse_notification_args(&args);
                 let event = create_event(
                     SystemNotification::EVENT_NAME,
                     serde_json::to_value(payload)?,
@@ -535,7 +525,7 @@ async fn process_extracted_message(
                     .and_then(|s| s.split('.').next_back())
                     .unwrap_or("unknown");
 
-                let payload = MediaPlaybackPayload {
+                let mut payload = parse_mpris_properties(&args).unwrap_or_else(|| MediaPlaybackPayload {
                     player: player.to_string(),
                     player_instance: sender.clone().unwrap_or_default(),
                     status: "Unknown".to_string(),
@@ -557,7 +547,11 @@ async fn process_extracted_message(
                     can_seek: false,
                     art_url: None,
                     timestamp: Utc::now(),
-                };
+                });
+                
+                // Set player info that we can extract from the sender
+                payload.player = player.to_string();
+                payload.player_instance = sender.clone().unwrap_or_default();
 
                 let event = create_event(
                     MediaPlaybackChanged::EVENT_NAME,
@@ -1034,10 +1028,221 @@ fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
 }
 
 fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
-    // For now, just return debug representation
-    // A full implementation would parse all D-Bus argument types
-    JsonValue::String(format!("{:?}", msg))
+    // For now, return simplified parsing - full D-Bus type parsing is complex
+    // and would require extensive type matching. Focus on getting structured data.
+    let mut args = Vec::new();
+    let mut iter = msg.iter_init();
+    
+    // Extract basic argument types we can handle
+    while iter.next() {
+        if let Some(s) = iter.get::<&str>() {
+            args.push(JsonValue::String(s.to_string()));
+        } else if let Some(i) = iter.get::<i32>() {
+            args.push(JsonValue::Number(serde_json::Number::from(i)));
+        } else if let Some(b) = iter.get::<bool>() {
+            args.push(JsonValue::Bool(b));
+        } else {
+            // For complex types, use debug representation
+            args.push(JsonValue::String(format!("Complex type: {:?}", iter.arg_type())));
+        }
+    }
+    
+    JsonValue::Array(args)
 }
+
+fn parse_notification_args(args: &JsonValue) -> NotificationPayload {
+    // Notification arguments: app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout
+    if let JsonValue::Array(arg_array) = args {
+        let app_name = arg_array.get(0)
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        
+        let summary = arg_array.get(3)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let body = arg_array.get(4)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let actions = arg_array.get(5)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect())
+            .unwrap_or_default();
+        
+        let hints = arg_array.get(6)
+            .and_then(|v| parse_notification_hints(v))
+            .unwrap_or_default();
+        
+        let timeout = arg_array.get(7)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1) as i32;
+        
+        let urgency = hints.get("urgency")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u8;
+        
+        NotificationPayload {
+            app_name,
+            summary,
+            body,
+            urgency,
+            timeout,
+            actions,
+            hints,
+            timestamp: Utc::now(),
+        }
+    } else {
+        NotificationPayload {
+            app_name: "Unknown".to_string(),
+            summary: "Failed to parse".to_string(),
+            body: String::new(),
+            urgency: 1,
+            timeout: -1,
+            actions: vec![],
+            hints: HashMap::new(),
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
+    // Hints are a dict of string -> variant
+    if let JsonValue::Array(dict_entries) = hints_value {
+        let mut hints = HashMap::new();
+        
+        // Process dict entries (each is a key-value pair)
+        for entry in dict_entries.chunks(2) {
+            if entry.len() == 2 {
+                if let (Some(key), Some(value)) = (entry[0].as_str(), entry.get(1)) {
+                    hints.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+        
+        Some(hints)
+    } else {
+        None
+    }
+}
+
+fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
+    // MPRIS PropertiesChanged args: interface_name, changed_properties, invalidated_properties
+    if let JsonValue::Array(arg_array) = args {
+        if let Some(changed_props) = arg_array.get(1) {
+            let mut payload = MediaPlaybackPayload {
+                player: "unknown".to_string(),
+                player_instance: String::new(),
+                status: "Unknown".to_string(),
+                track_id: None,
+                title: None,
+                artist: None,
+                album: None,
+                album_artist: None,
+                track_number: None,
+                length: None,
+                position: None,
+                volume: None,
+                loop_status: None,
+                shuffle: None,
+                can_go_next: false,
+                can_go_previous: false,
+                can_play: false,
+                can_pause: false,
+                can_seek: false,
+                art_url: None,
+                timestamp: Utc::now(),
+            };
+            
+            if let JsonValue::Array(props) = changed_props {
+                // Parse property changes
+                for prop_entry in props.chunks(2) {
+                    if prop_entry.len() == 2 {
+                        if let (Some(key), Some(value)) = (prop_entry[0].as_str(), prop_entry.get(1)) {
+                            match key {
+                                "PlaybackStatus" => {
+                                    payload.status = value.as_str().unwrap_or("Unknown").to_string();
+                                }
+                                "Metadata" => {
+                                    if let Some(metadata) = parse_mpris_metadata(value) {
+                                        payload.title = metadata.get("xesam:title").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        payload.artist = metadata.get("xesam:artist").and_then(|v| v.as_array()).map(|arr| 
+                                            arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()
+                                        );
+                                        payload.album = metadata.get("xesam:album").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        payload.track_number = metadata.get("xesam:trackNumber").and_then(|v| v.as_i64()).map(|i| i as i32);
+                                        payload.length = metadata.get("mpris:length").and_then(|v| v.as_i64());
+                                        payload.art_url = metadata.get("mpris:artUrl").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    }
+                                }
+                                "Volume" => {
+                                    payload.volume = value.as_f64();
+                                }
+                                "Position" => {
+                                    payload.position = value.as_i64();
+                                }
+                                "LoopStatus" => {
+                                    payload.loop_status = value.as_str().map(|s| s.to_string());
+                                }
+                                "Shuffle" => {
+                                    payload.shuffle = value.as_bool();
+                                }
+                                "CanGoNext" => {
+                                    payload.can_go_next = value.as_bool().unwrap_or(false);
+                                }
+                                "CanGoPrevious" => {
+                                    payload.can_go_previous = value.as_bool().unwrap_or(false);
+                                }
+                                "CanPlay" => {
+                                    payload.can_play = value.as_bool().unwrap_or(false);
+                                }
+                                "CanPause" => {
+                                    payload.can_pause = value.as_bool().unwrap_or(false);
+                                }
+                                "CanSeek" => {
+                                    payload.can_seek = value.as_bool().unwrap_or(false);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Some(payload)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
+    // Metadata is a dict of string -> variant
+    if let JsonValue::Array(dict_entries) = metadata_value {
+        let mut metadata = HashMap::new();
+        
+        for entry in dict_entries.chunks(2) {
+            if entry.len() == 2 {
+                if let (Some(key), Some(value)) = (entry[0].as_str(), entry.get(1)) {
+                    metadata.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+        
+        Some(metadata)
+    } else {
+        None
+    }
+}
+
 
 fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
     RawEvent {

@@ -1,13 +1,13 @@
 # Sinex Configuration: Direct Approach
 
-**Status**: ✅ Implemented - Ready for testing  
+**Status**: ✅ Confirmed - Preset system removed 2025-07-06  
 **Date**: 2025-06-27  
 **Impact**: Simple, clear configuration without over-engineering
 
 ## Problem with Previous Approach
 
 The initial configuration simplification was still over-engineered:
-- **Preset system**: Complex abstraction that users don't need
+- **Preset system**: Complex abstraction that users don't need (now removed)
 - **TOML handling**: Unnecessary when NixOS can generate config directly
 - **Environment variables**: Added complexity without value
 - **Retention limits**: Artificial constraints when data volumes are minimal

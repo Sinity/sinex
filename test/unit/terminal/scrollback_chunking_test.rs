@@ -3,7 +3,7 @@ use sinex_events_terminal::scrollback::{
     TerminalScrollbackCapturedPayload, CommandOutputCaptured,
     CommandOutputCapturedPayload,
 };
-use sinex_core::{EventSource, EventSourceContext, EventType, chunking::ChunkingService};
+use sinex_core::{EventSource, EventSourceContext, EventType, chunking::ChunkingService, event_type_constants};
 use std::path::PathBuf;
 use chrono::Utc;
 

@@ -80,14 +80,14 @@ pub struct ClipboardChanged;
 impl EventType for ClipboardChanged {
     type Payload = ClipboardChangedPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "copied";
+    const EVENT_NAME: &'static str = "clipboard.copied";
 }
 
 pub struct ClipboardSelection;
 impl EventType for ClipboardSelection {
     type Payload = ClipboardSelectionPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "selected";
+    const EVENT_NAME: &'static str = "clipboard.selected";
 }
 
 // ============================================================================

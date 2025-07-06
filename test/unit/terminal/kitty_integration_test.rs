@@ -1,11 +1,11 @@
 use sinex_events_terminal::kitty::{
     KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackCaptured,
-    KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged, KittyConfigChanged,
+    KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged,
     KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackCapturedPayload, KittyTabCreatedPayload,
     KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
-    KittyConfigChangedPayload, KittyProcessInfo,
+    KittyProcessInfo,
 };
-use sinex_core::{EventSource, EventSourceContext, EventType};
+use sinex_core::{EventSource, EventSourceContext, EventType, event_type_constants};
 
 #[tokio::test]
 async fn test_kitty_event_source_creation() {
@@ -44,7 +44,6 @@ fn test_kitty_event_types() {
     assert_eq!(KittyTabFocused::EVENT_NAME, "tab.focused");
     assert_eq!(KittyTabClosed::EVENT_NAME, "tab.closed");
     assert_eq!(KittyProcessChanged::EVENT_NAME, "process.changed");
-    assert_eq!(KittyConfigChanged::EVENT_NAME, "config.changed");
     assert_eq!(KittyEventSource::SOURCE_NAME, "terminal.kitty");
 }
 
@@ -110,26 +109,6 @@ fn test_kitty_payload_serialization() {
     assert_eq!(process_payload.current_process.name, deserialized.current_process.name);
 }
 
-#[test]
-fn test_kitty_config_changed_payload() {
-    let config_payload = KittyConfigChangedPayload {
-        change_type: "font_size".to_string(),
-        setting_name: "font_size".to_string(),
-        previous_value: Some("12".to_string()),
-        current_value: "14".to_string(),
-        change_timestamp: "2024-01-01T12:00:00Z".to_string(),
-        affected_windows: vec!["win1".to_string(), "win2".to_string()],
-    };
-    
-    let serialized = serde_json::to_string(&config_payload).expect("Should serialize");
-    let deserialized: KittyConfigChangedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
-    
-    assert_eq!(config_payload.change_type, deserialized.change_type);
-    assert_eq!(config_payload.setting_name, deserialized.setting_name);
-    assert_eq!(config_payload.previous_value, deserialized.previous_value);
-    assert_eq!(config_payload.current_value, deserialized.current_value);
-    assert_eq!(config_payload.affected_windows.len(), deserialized.affected_windows.len());
-}
 
 #[test]
 fn test_kitty_command_completed_payload() {
