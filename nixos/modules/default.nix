@@ -178,17 +178,6 @@ in
       };
     };
 
-    # Presets for real use cases
-    preset = mkOption {
-      type = types.enum [ "lite" "normal" "max" ];
-      default = "normal";
-      description = ''
-        Preset configuration for different capture levels:
-        - lite: Lightweight capture (core events, minimal resources)
-        - normal: Standard comprehensive capture (good default)
-        - max: Maximum data capture (everything, high frequency)
-      '';
-    };
 
     # Resource limits configuration
     resources = {
@@ -357,6 +346,19 @@ in
           maxAge = "3d";
           maxFiles = 1000;
         };
+        # Resource limits for lite preset
+        resources = {
+          unifiedCollector = {
+            memoryMax = mkDefault "512M";
+            cpuQuota = mkDefault "100%";
+            tasksMax = mkDefault 500;
+          };
+          promoWorker = {
+            memoryMax = mkDefault "256M";
+            cpuQuota = mkDefault "50%";
+            tasksMax = mkDefault 250;
+          };
+        };
       })
 
       # Normal preset - standard comprehensive capture
@@ -407,6 +409,19 @@ in
           observabilityStack.enable = true;
           dashboards.grafana.enable = true;
         };
+        # Resource limits for normal preset
+        resources = {
+          unifiedCollector = {
+            memoryMax = mkDefault "1G";
+            cpuQuota = mkDefault "200%";
+            tasksMax = mkDefault 1000;
+          };
+          promoWorker = {
+            memoryMax = mkDefault "512M";
+            cpuQuota = mkDefault "100%";
+            tasksMax = mkDefault 500;
+          };
+        };
       })
 
       # Max preset - maximum data capture at high frequency
@@ -456,47 +471,21 @@ in
           observabilityStack.enable = true;
           dashboards.grafana.enable = true;
         };
+        # Resource limits for max preset
+        resources = {
+          unifiedCollector = {
+            memoryMax = mkDefault "2G";
+            cpuQuota = mkDefault "400%";
+            tasksMax = mkDefault 2000;
+          };
+          promoWorker = {
+            memoryMax = mkDefault "1G";
+            cpuQuota = mkDefault "200%";
+            tasksMax = mkDefault 1000;
+          };
+        };
       })
     ];
-
-    # Set resource limits based on preset
-    services.sinex.resources = {
-      unifiedCollector = mkMerge [
-        (mkIf (cfg.preset == "lite") {
-          memoryMax = mkDefault "512M";
-          cpuQuota = mkDefault "100%";
-          tasksMax = mkDefault 500;
-        })
-        (mkIf (cfg.preset == "normal") {
-          memoryMax = mkDefault "1G";
-          cpuQuota = mkDefault "200%";
-          tasksMax = mkDefault 1000;
-        })
-        (mkIf (cfg.preset == "max") {
-          memoryMax = mkDefault "2G";
-          cpuQuota = mkDefault "400%";
-          tasksMax = mkDefault 2000;
-        })
-      ];
-      
-      promoWorker = mkMerge [
-        (mkIf (cfg.preset == "lite") {
-          memoryMax = mkDefault "256M";
-          cpuQuota = mkDefault "50%";
-          tasksMax = mkDefault 250;
-        })
-        (mkIf (cfg.preset == "normal") {
-          memoryMax = mkDefault "512M";
-          cpuQuota = mkDefault "100%";
-          tasksMax = mkDefault 500;
-        })
-        (mkIf (cfg.preset == "max") {
-          memoryMax = mkDefault "1G";
-          cpuQuota = mkDefault "200%";
-          tasksMax = mkDefault 1000;
-        })
-      ];
-    };
 
     # System integration (simplified from original)
     systemd.services = {

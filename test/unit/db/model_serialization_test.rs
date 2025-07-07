@@ -161,13 +161,12 @@ async fn test_ulid_json_string_format(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_optional_field_serialization(_ctx: TestContext) -> TestResult {
-    // Test with None values
-    let event = crate::common::events::generic_adversarial_event(
+    // Test with explicitly None values using RawEventBuilder
+    let event = sinex_core::RawEventBuilder::new(
         "test",
         "test.type",
         json!({"test": true}),
-        None,
-    );
+    ).build(); // Don't set optional fields
 
     let json_val = serde_json::to_value(&event)?;
 
