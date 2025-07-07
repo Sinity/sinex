@@ -240,6 +240,7 @@ impl DatabasePool {
 
 /// Clean a database for reuse
 async fn clean_database(pool: &DbPool) -> Result<()> {
+    
     // Clean in proper dependency order based on foreign key constraints
     // First clean tables that reference other tables
     let cleanup_queries = [
@@ -262,7 +263,36 @@ async fn clean_database(pool: &DbPool) -> Result<()> {
     ];
     
     for query in cleanup_queries {
-        let _ = sqlx::query(query).execute(pool).await;
+        let result = sqlx::query(query).execute(pool).await;
+        
+        // Log cleanup results for entities table specifically
+        if query.contains("core.entities") {
+            match &result {
+                Ok(done) => {
+                    let rows_affected = done.rows_affected();
+                    if rows_affected > 0 {
+                        eprintln!("  🧹 Cleaned {} entities from previous test", rows_affected);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  ⚠️  Failed to clean entities: {}", e);
+                }
+            }
+        }
+    }
+    
+    // Verify entities table is actually empty
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    
+    if count > 0 {
+        eprintln!("  ⚠️  WARNING: {} entities still exist after cleanup!", count);
+        // Try a more aggressive cleanup
+        let _ = sqlx::query("TRUNCATE TABLE core.entity_relations, core.entities CASCADE")
+            .execute(pool)
+            .await;
     }
     
     Ok(())
