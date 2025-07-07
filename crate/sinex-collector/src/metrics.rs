@@ -187,6 +187,52 @@ impl CollectorMetrics {
 
                     // Check adaptive sampling
                     emitter.update_adaptive_sampling().await;
+                    
+                    // Check for silent event sources (every 5 minutes)
+                    let silent_sources = emitter.check_silent_sources(5).await;
+                    if !silent_sources.is_empty() {
+                        // Create event for silent sources
+                        let silent_event = RawEvent {
+                            id: Ulid::new(),
+                            source: "sinex.monitoring.sources".to_string(),
+                            event_type: "sources_silent".to_string(),
+                            ts_ingest: Utc::now(),
+                            ts_orig: None,
+                            host: gethostname::gethostname().to_string_lossy().to_string(),
+                            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                            payload_schema_id: None,
+                            payload: json!({
+                                "silent_sources": silent_sources,
+                                "threshold_minutes": 5,
+                                "timestamp": Utc::now()
+                            }),
+                        };
+                        
+                        if let Err(e) = event_tx.send(silent_event).await {
+                            warn!("Failed to send silent sources event: {}", e);
+                        }
+                    }
+                    
+                    // Check resource exhaustion
+                    let resource_status = emitter.check_resource_exhaustion().await;
+                    if resource_status["status"] != "ok" {
+                        // Create event for resource exhaustion
+                        let resource_event = RawEvent {
+                            id: Ulid::new(),
+                            source: "sinex.monitoring.resources".to_string(),
+                            event_type: "resource_exhaustion".to_string(),
+                            ts_ingest: Utc::now(),
+                            ts_orig: None,
+                            host: gethostname::gethostname().to_string_lossy().to_string(),
+                            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                            payload_schema_id: None,
+                            payload: resource_status,
+                        };
+                        
+                        if let Err(e) = event_tx.send(resource_event).await {
+                            warn!("Failed to send resource exhaustion event: {}", e);
+                        }
+                    }
                 }
             }
         });
@@ -581,6 +627,129 @@ impl CollectorMetrics {
                 );
             }
         }
+    }
+
+    /// Check for silent event sources (sources that haven't produced events recently)
+    pub async fn check_silent_sources(&self, silence_threshold_minutes: u64) -> Vec<String> {
+        let threshold = Utc::now() - chrono::Duration::minutes(silence_threshold_minutes as i64);
+        let sources = self.source_metrics.read().await;
+        
+        let mut silent_sources = Vec::new();
+        for (source, metrics) in sources.iter() {
+            if let Some(last_event) = metrics.last_event_time {
+                if last_event < threshold {
+                    silent_sources.push(source.clone());
+                }
+            } else {
+                // Source has never produced events
+                silent_sources.push(source.clone());
+            }
+        }
+        
+        if !silent_sources.is_empty() {
+            warn!(
+                silent_sources = ?silent_sources,
+                threshold_minutes = silence_threshold_minutes,
+                "Silent event sources detected"
+            );
+        }
+        
+        silent_sources
+    }
+
+    /// Check for resource exhaustion conditions
+    pub async fn check_resource_exhaustion(&self) -> JsonValue {
+        let recent_metrics = {
+            let buffer = self.ring_buffer.read().await;
+            buffer.buffer.iter().rev().take(10).cloned().collect::<Vec<_>>()
+        };
+        
+        if recent_metrics.is_empty() {
+            return json!({"status": "no_data"});
+        }
+        
+        let avg_memory = recent_metrics.iter().map(|m| m.memory_mb).sum::<u64>() / recent_metrics.len() as u64;
+        let max_memory = recent_metrics.iter().map(|m| m.memory_mb).max().unwrap_or(0);
+        let avg_cpu = recent_metrics.iter().map(|m| m.cpu_percent).sum::<f32>() / recent_metrics.len() as f32;
+        let max_cpu = recent_metrics.iter().map(|m| m.cpu_percent).fold(0.0f32, |acc, x| acc.max(x));
+        let avg_queue_depth = recent_metrics.iter().map(|m| m.queue_depth).sum::<usize>() / recent_metrics.len();
+        let max_queue_depth = recent_metrics.iter().map(|m| m.queue_depth).max().unwrap_or(0);
+        
+        // Define warning thresholds
+        let memory_warning_mb = 1024; // 1GB
+        let memory_critical_mb = 2048; // 2GB
+        let cpu_warning_percent = 70.0;
+        let cpu_critical_percent = 90.0;
+        let queue_warning_depth = 1000;
+        let queue_critical_depth = 5000;
+        
+        let mut warnings = Vec::new();
+        let mut criticals = Vec::new();
+        
+        // Memory checks
+        if avg_memory > memory_critical_mb {
+            criticals.push(format!("Memory usage critical: {}MB average", avg_memory));
+        } else if avg_memory > memory_warning_mb {
+            warnings.push(format!("Memory usage high: {}MB average", avg_memory));
+        }
+        
+        // CPU checks
+        if avg_cpu > cpu_critical_percent {
+            criticals.push(format!("CPU usage critical: {:.1}% average", avg_cpu));
+        } else if avg_cpu > cpu_warning_percent {
+            warnings.push(format!("CPU usage high: {:.1}% average", avg_cpu));
+        }
+        
+        // Queue depth checks
+        if avg_queue_depth > queue_critical_depth {
+            criticals.push(format!("Queue depth critical: {} average", avg_queue_depth));
+        } else if avg_queue_depth > queue_warning_depth {
+            warnings.push(format!("Queue depth high: {} average", avg_queue_depth));
+        }
+        
+        let status = if !criticals.is_empty() {
+            "critical"
+        } else if !warnings.is_empty() {
+            "warning"
+        } else {
+            "ok"
+        };
+        
+        if !warnings.is_empty() || !criticals.is_empty() {
+            if !criticals.is_empty() {
+                error!(criticals = ?criticals, "Critical resource exhaustion conditions detected");
+            }
+            if !warnings.is_empty() {
+                warn!(warnings = ?warnings, "Resource exhaustion warnings detected");
+            }
+        }
+        
+        json!({
+            "status": status,
+            "timestamp": Utc::now(),
+            "metrics": {
+                "memory_mb": {
+                    "average": avg_memory,
+                    "maximum": max_memory,
+                    "warning_threshold": memory_warning_mb,
+                    "critical_threshold": memory_critical_mb
+                },
+                "cpu_percent": {
+                    "average": avg_cpu,
+                    "maximum": max_cpu,
+                    "warning_threshold": cpu_warning_percent,
+                    "critical_threshold": cpu_critical_percent
+                },
+                "queue_depth": {
+                    "average": avg_queue_depth,
+                    "maximum": max_queue_depth,
+                    "warning_threshold": queue_warning_depth,
+                    "critical_threshold": queue_critical_depth
+                }
+            },
+            "warnings": warnings,
+            "criticals": criticals
+        })
     }
 
     /// Get comprehensive error statistics with rich context

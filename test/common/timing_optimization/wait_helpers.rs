@@ -4,9 +4,7 @@
 
 // Re-export production wait helpers for backwards compatibility
 pub use sinex_core::wait_helpers::{
-    wait_for_database_ready, wait_for_database_ready_with_timeout, wait_for_event_count,
-    wait_for_worker_status, wait_for_work_queue_count, wait_for_work_queue_status_count,
-    wait_for_work_queue_empty, wait_for_agent_status, BackoffHelper
+    wait_for_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count
 };
 
 /// Test-compatible wait_for_condition that accepts anyhow::Result closures

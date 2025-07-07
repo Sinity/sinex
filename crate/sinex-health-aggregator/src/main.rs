@@ -240,6 +240,85 @@ async fn list_components(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonVal
     })))
 }
 
+/// Get monitoring alerts - silent sources and resource exhaustion
+async fn get_monitoring_alerts(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonValue>, StatusCode> {
+    // Look for recent silent source events
+    let silent_sources = match sqlx::query!(
+        r#"
+        SELECT payload
+        FROM raw.events
+        WHERE source = 'sinex.monitoring.sources'
+          AND event_type = 'sources_silent'
+          AND ts_ingest > NOW() - INTERVAL '1 hour'
+        ORDER BY ts_ingest DESC
+        LIMIT 10
+        "#
+    )
+    .fetch_all(pool.as_ref())
+    .await
+    {
+        Ok(events) => events,
+        Err(e) => {
+            error!("Failed to fetch silent source events: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // Look for recent resource exhaustion events
+    let resource_alerts = match sqlx::query!(
+        r#"
+        SELECT payload
+        FROM raw.events
+        WHERE source = 'sinex.monitoring.resources'
+          AND event_type = 'resource_exhaustion'
+          AND ts_ingest > NOW() - INTERVAL '1 hour'
+        ORDER BY ts_ingest DESC
+        LIMIT 10
+        "#
+    )
+    .fetch_all(pool.as_ref())
+    .await
+    {
+        Ok(events) => events,
+        Err(e) => {
+            error!("Failed to fetch resource exhaustion events: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // Look for schema validation failures
+    let schema_failures = match sqlx::query!(
+        r#"
+        SELECT COUNT(*) as failure_count,
+               array_agg(DISTINCT source) as failing_sources
+        FROM raw.events
+        WHERE source LIKE '%error%' OR event_type LIKE '%failed%' OR event_type LIKE '%error%'
+          AND ts_ingest > NOW() - INTERVAL '1 hour'
+        "#
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Failed to fetch schema failure events: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    Ok(Json(serde_json::json!({
+        "timestamp": Utc::now(),
+        "alerts": {
+            "silent_sources": silent_sources.into_iter().map(|e| e.payload).collect::<Vec<_>>(),
+            "resource_exhaustion": resource_alerts.into_iter().map(|e| e.payload).collect::<Vec<_>>(),
+            "schema_failures": {
+                "count_last_hour": schema_failures.failure_count.unwrap_or(0),
+                "failing_sources": schema_failures.failing_sources.unwrap_or_default()
+            }
+        }
+    })))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
@@ -268,6 +347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/system", get(get_system_health))
         .route("/components", get(list_components))
         .route("/components/:component_name", get(get_component_details))
+        .route("/alerts", get(get_monitoring_alerts))
         .layer(CorsLayer::permissive())
         .with_state(pool);
 
@@ -288,6 +368,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  GET /system          - Overall system health");
     info!("  GET /components      - List all components");
     info!("  GET /components/:name - Component details");
+    info!("  GET /alerts          - Monitoring alerts (silent sources, resource exhaustion)");
 
     // Start the server
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
