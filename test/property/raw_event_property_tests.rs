@@ -27,7 +27,7 @@ fn json_values_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Object(obj1), Value::Object(obj2)) => {
             obj1.len() == obj2.len() && obj1.iter().all(|(k, v)| {
-                obj2.get(k).map_or(false, |v2| json_values_equal(v, v2))
+                obj2.get(k).is_some_and(|v2| json_values_equal(v, v2))
             })
         }
         _ => a == b,

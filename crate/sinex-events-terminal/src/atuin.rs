@@ -99,7 +99,7 @@ impl EventSource for AtuinDbReader {
         if !config.db_path.exists() {
             return Err(ErrorContext::new(CoreError::Configuration("Atuin database not found".to_string()))
                 .with_operation("initialize_atuin_reader")
-                .with_context("db_path", &config.db_path.display().to_string())
+                .with_context("db_path", config.db_path.display().to_string())
                 .with_context("path_exists", "false")
                 .build());
         }
@@ -172,7 +172,7 @@ impl AtuinDbReader {
             .map_err(|e| 
                 ErrorContext::new(CoreError::Database(format!("Failed to open Atuin database: {}", e)))
                     .with_operation("get_atuin_total_count")
-                    .with_context("db_path", &db_path.display().to_string())
+                    .with_context("db_path", db_path.display().to_string())
                     .with_context("access_mode", "read_only")
                     .build())?;
 
@@ -186,7 +186,7 @@ impl AtuinDbReader {
         .map_err(|e| 
             ErrorContext::new(CoreError::Io(format!("Failed to get Atuin count: {}", e)))
                 .with_operation("get_atuin_total_count")
-                .with_context("db_path", &self.config.db_path.display().to_string())
+                .with_context("db_path", self.config.db_path.display().to_string())
                 .build())?
     }
 
@@ -246,7 +246,7 @@ impl AtuinDbReader {
         .map_err(|e| 
             ErrorContext::new(CoreError::Configuration(format!("Failed to create file watcher: {}", e)))
                 .with_operation("watch_mode")
-                .with_context("db_path", &self.config.db_path.display().to_string())
+                .with_context("db_path", self.config.db_path.display().to_string())
                 .build())?;
 
         watcher
@@ -254,7 +254,7 @@ impl AtuinDbReader {
             .map_err(|e| 
                 ErrorContext::new(CoreError::Configuration(format!("Failed to watch Atuin database: {}", e)))
                     .with_operation("watch_mode")
-                    .with_context("db_path", &self.config.db_path.display().to_string())
+                    .with_context("db_path", self.config.db_path.display().to_string())
                     .with_context("watch_mode", "NonRecursive")
                     .build())?;
 
@@ -315,7 +315,7 @@ impl AtuinDbReader {
             .map_err(|e| 
                 ErrorContext::new(CoreError::Database(format!("Failed to open Atuin database: {}", e)))
                     .with_operation("poll_atuin_history")
-                    .with_context("db_path", &db_path.display().to_string())
+                    .with_context("db_path", db_path.display().to_string())
                     .with_context("access_mode", "read_only")
                     .build())?;
 
@@ -361,7 +361,7 @@ impl AtuinDbReader {
             let mut stmt = conn.prepare(query).map_err(|e| 
                 ErrorContext::new(CoreError::Database(format!("Failed to prepare query: {}", e)))
                     .with_operation("poll_atuin_history")
-                    .with_context("db_path", &db_path.display().to_string())
+                    .with_context("db_path", db_path.display().to_string())
                     .with_context("query_type", if last_timestamp.is_some() { "incremental" } else { "initial" })
                     .build())?;
 
@@ -382,15 +382,15 @@ impl AtuinDbReader {
                     ErrorContext::new(CoreError::Database(format!("Failed to query history: {}", e)))
                         .with_operation("poll_atuin_history")
                         .with_context("query_type", "incremental")
-                        .with_context("last_timestamp", &last_ts.to_string())
-                        .with_context("batch_size", &batch_size.to_string())
+                        .with_context("last_timestamp", last_ts.to_string())
+                        .with_context("batch_size", batch_size.to_string())
                         .build())?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(|e| 
                     ErrorContext::new(CoreError::Database(format!("Failed to read history entry: {}", e)))
                         .with_operation("poll_atuin_history")
                         .with_context("query_type", "incremental")
-                        .with_context("last_timestamp", &last_ts.to_string())
+                        .with_context("last_timestamp", last_ts.to_string())
                         .build())?
             } else {
                 stmt.query_map(rusqlite::params![batch_size], |row| {
@@ -409,7 +409,7 @@ impl AtuinDbReader {
                     ErrorContext::new(CoreError::Database(format!("Failed to query history: {}", e)))
                         .with_operation("poll_atuin_history")
                         .with_context("query_type", "initial")
-                        .with_context("batch_size", &batch_size.to_string())
+                        .with_context("batch_size", batch_size.to_string())
                         .build())?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(|e| 
@@ -425,7 +425,7 @@ impl AtuinDbReader {
         .map_err(|e| 
             ErrorContext::new(CoreError::Io(format!("Failed to execute database query: {}", e)))
                 .with_operation("poll_atuin_history")
-                .with_context("db_path", &self.config.db_path.display().to_string())
+                .with_context("db_path", self.config.db_path.display().to_string())
                 .build())??;
 
         let mut max_timestamp = self.last_processed_timestamp;

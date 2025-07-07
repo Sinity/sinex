@@ -150,7 +150,7 @@ impl EventSource for AsciinemaRecorder {
                 .map_err(|e| 
                     ErrorContext::new(CoreError::Io(format!("Failed to create recordings directory: {}", e)))
                         .with_operation("initialize_asciinema_recorder")
-                        .with_context("recordings_dir", &config.recordings_dir.display().to_string())
+                        .with_context("recordings_dir", config.recordings_dir.display().to_string())
                         .build())?;
         }
 
@@ -224,17 +224,17 @@ impl AsciinemaRecorder {
         Ok(())
     }
 
-    async fn setup_bash_integration(&self, home_path: &PathBuf) -> Result<()> {
+    async fn setup_bash_integration(&self, home_path: &Path) -> Result<()> {
         let bashrc_path = home_path.join(".bashrc");
         self.add_shell_integration(&bashrc_path, "bash").await
     }
 
-    async fn setup_zsh_integration(&self, home_path: &PathBuf) -> Result<()> {
+    async fn setup_zsh_integration(&self, home_path: &Path) -> Result<()> {
         let zshrc_path = home_path.join(".zshrc");
         self.add_shell_integration(&zshrc_path, "zsh").await
     }
 
-    async fn setup_fish_integration(&self, home_path: &PathBuf) -> Result<()> {
+    async fn setup_fish_integration(&self, home_path: &Path) -> Result<()> {
         let fish_config_dir = home_path.join(".config/fish");
         tokio::fs::create_dir_all(&fish_config_dir).await.map_err(|e| {
             sinex_core::CoreError::io_error(&fish_config_dir)
@@ -363,7 +363,7 @@ end
                 recordings_dir = recordings_dir,
                 record_command = record_command
             ),
-            _ => return Err(sinex_core::CoreError::configuration(&format!("Unsupported shell: {}", shell_name)).build())
+            _ => return Err(sinex_core::CoreError::configuration(format!("Unsupported shell: {}", shell_name)).build())
         };
 
         Ok(integration_code)
@@ -560,7 +560,7 @@ end
         } else {
             Err(ErrorContext::new(CoreError::Validation("No header found".to_string()))
                 .with_operation("parse_asciinema_header")
-                .with_context("file_path", &path.display().to_string())
+                .with_context("file_path", path.display().to_string())
                 .build())
         }
     }
@@ -649,9 +649,9 @@ end
         if !output.status.success() {
             return Err(ErrorContext::new(CoreError::Io("git-annex add failed".to_string()))
                 .with_operation("move_to_git_annex")
-                .with_context("file_path", &dest_path.display().to_string())
-                .with_context("exit_status", &output.status.to_string())
-                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .with_context("file_path", dest_path.display().to_string())
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
                 .build());
         }
 

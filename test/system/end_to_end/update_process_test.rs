@@ -13,7 +13,7 @@ async fn test_database_migration_process(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test that migrations can be applied
-    let migration_result = run_migrations(&pool).await;
+    let migration_result = run_migrations(pool).await;
     assert!(
         migration_result.is_ok(),
         "Database migration failed: {:?}",

@@ -100,6 +100,4 @@ pub mod git_annex_full_integration_test;
 /// Deployment validation testing
 pub mod deployment_validation_test;
 
-/// FastCDC chunking and notification system integration testing
-pub mod chunking_notification_test;
 

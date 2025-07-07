@@ -51,7 +51,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        &pool,
+        pool,
         "source = $1",
         &["load_test"],
         target_events as i64,
@@ -143,7 +143,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        &pool,
+        pool,
         "source = $1",
         &["concurrent_load_test"],
         (num_workers * events_per_worker) as i64,

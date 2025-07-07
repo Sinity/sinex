@@ -435,7 +435,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         detected_deadlocks
     });
 
-    let _ = creator_handle.await?;
+    creator_handle.await?;
     let worker_results = join_all(worker_handles).await;
     let total_deadlocks_detected = deadlock_monitor.await?;
 

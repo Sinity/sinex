@@ -19,13 +19,13 @@ use sinex_core::{
 pub struct DbusSignalPayload {
     /// Bus type (session or system)
     pub bus: String,
-    /// Sender (e.g., :1.234 or org.freedesktop.Notifications)
+    /// Sender (e.g., :1.234 or org.mpris.MediaPlayer2.spotify)
     pub sender: String,
-    /// Object path (e.g., /org/freedesktop/Notifications)
+    /// Object path (e.g., /org/mpris/MediaPlayer2)
     pub path: String,
-    /// Interface (e.g., org.freedesktop.Notifications)
+    /// Interface (e.g., org.mpris.MediaPlayer2.Player)
     pub interface: String,
-    /// Signal name (e.g., NotificationClosed)
+    /// Signal name (e.g., PropertiesChanged)
     pub signal: String,
     /// Signal arguments as JSON
     pub args: JsonValue,
@@ -523,6 +523,7 @@ async fn process_extracted_message(
     match msg_type {
         MessageType::Signal => {
             // Extract specialized events based on interface
+
             if config.extract_notifications
                 && interface == "org.freedesktop.Notifications"
                 && member == "Notify"
@@ -825,7 +826,7 @@ fn parse_dbus_argument(iter: &mut dbus::arg::Iter) -> JsonValue {
         }
         ArgType::Double => {
             iter.get::<f64>()
-                .and_then(|f| serde_json::Number::from_f64(f))
+                .and_then(serde_json::Number::from_f64)
                 .map(JsonValue::Number)
                 .unwrap_or(JsonValue::Null)
         }
@@ -939,87 +940,7 @@ fn parse_dbus_struct(iter: &mut dbus::arg::Iter) -> JsonValue {
     JsonValue::Array(struct_values)
 }
 
-fn parse_notification_args(args: &JsonValue) -> NotificationPayload {
-    // Notification arguments: app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout
-    if let JsonValue::Array(arg_array) = args {
-        let app_name = arg_array.get(0)
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        
-        let summary = arg_array.get(3)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        let body = arg_array.get(4)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        let actions = arg_array.get(5)
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect())
-            .unwrap_or_default();
-        
-        let hints = arg_array.get(6)
-            .and_then(|v| parse_notification_hints(v))
-            .unwrap_or_default();
-        
-        let timeout = arg_array.get(7)
-            .and_then(|v| v.as_i64())
-            .unwrap_or(-1) as i32;
-        
-        let urgency = hints.get("urgency")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
-        
-        NotificationPayload {
-            app_name,
-            summary,
-            body,
-            urgency,
-            timeout,
-            actions,
-            hints,
-            timestamp: Utc::now(),
-        }
-    } else {
-        NotificationPayload {
-            app_name: "Unknown".to_string(),
-            summary: "Failed to parse".to_string(),
-            body: String::new(),
-            urgency: 1,
-            timeout: -1,
-            actions: vec![],
-            hints: HashMap::new(),
-            timestamp: Utc::now(),
-        }
-    }
-}
 
-fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
-    // With improved D-Bus parsing, hints are now a proper dictionary array
-    if let JsonValue::Array(dict_entries) = hints_value {
-        let mut hints = HashMap::new();
-        
-        // Each entry is now a dictionary object with key-value pairs
-        for entry in dict_entries {
-            if let JsonValue::Object(obj) = entry {
-                for (key, value) in obj {
-                    hints.insert(key.clone(), value.clone());
-                }
-            }
-        }
-        
-        Some(hints)
-    } else {
-        None
-    }
-}
 
 fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
     // MPRIS PropertiesChanged args: interface_name, changed_properties, invalidated_properties
@@ -1133,6 +1054,87 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
     }
 }
 
+fn parse_notification_args(args: &JsonValue) -> NotificationPayload {
+    // Notification arguments: app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout
+    if let JsonValue::Array(arg_array) = args {
+        let app_name = arg_array.first()
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        
+        let summary = arg_array.get(3)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let body = arg_array.get(4)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let actions = arg_array.get(5)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect())
+            .unwrap_or_default();
+        
+        let hints = arg_array.get(6)
+            .and_then(parse_notification_hints)
+            .unwrap_or_default();
+        
+        let timeout = arg_array.get(7)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1) as i32;
+        
+        let urgency = hints.get("urgency")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u8;
+        
+        NotificationPayload {
+            app_name,
+            summary,
+            body,
+            urgency,
+            timeout,
+            actions,
+            hints,
+            timestamp: Utc::now(),
+        }
+    } else {
+        NotificationPayload {
+            app_name: "Unknown".to_string(),
+            summary: "Failed to parse".to_string(),
+            body: String::new(),
+            urgency: 1,
+            timeout: -1,
+            actions: vec![],
+            hints: HashMap::new(),
+            timestamp: Utc::now(),
+        }
+    }
+}
+
+fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
+    // With improved D-Bus parsing, hints are now a proper dictionary array
+    if let JsonValue::Array(dict_entries) = hints_value {
+        let mut hints = HashMap::new();
+        
+        // Each entry is now a dictionary object with key-value pairs
+        for entry in dict_entries {
+            if let JsonValue::Object(obj) = entry {
+                for (key, value) in obj {
+                    hints.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        
+        Some(hints)
+    } else {
+        None
+    }
+}
 
 impl DbusMonitor {
     #[allow(dead_code)] // Helper method for future event creation

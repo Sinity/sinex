@@ -260,8 +260,6 @@ print(f"Scientific notation: {result:.25e}")
     }
 }
 
-/// Module containing the mathematical derivations and proofs
-/// This documents the theoretical foundation of our analysis
 mod mathematical_foundation {
     //! Mathematical Foundation for Entropy Analysis
     //!
@@ -318,7 +316,6 @@ Mathematical Constants Used:
 "#;
 }
 
-/// Module documenting lessons learned about numerical precision
 mod precision_lessons {
     //! Lessons Learned About Numerical Precision
     //!
@@ -360,7 +357,6 @@ IEEE 754 f64 gives us ~17 significant digits maximum.
 "#;
 }
 
-/// Module documenting physics comparison corrections
 mod physics_corrections {
     //! Physics Comparison Corrections
     //!

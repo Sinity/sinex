@@ -48,7 +48,7 @@ impl EventSource for TestEventSource {
             return Err(sinex_core::CoreError::Other("Test failure".to_string()));
         }
 
-        for _i in 0..self.config.events_to_generate {
+        for i in 0..self.config.events_to_generate {
             if self.should_error.load(Ordering::SeqCst) {
                 return Err(sinex_core::CoreError::Other(
                     "Test error during streaming".to_string(),
@@ -58,7 +58,7 @@ impl EventSource for TestEventSource {
             let event = RawEventBuilder::new(
                 Self::SOURCE_NAME,
                 "test_event",
-                json!({"test": true}),
+                json!({"test": true, "sequence": i}),
             ).build();
 
             if tx.send(event).await.is_err() {

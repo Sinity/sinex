@@ -11,7 +11,6 @@
 ///     "command.executed" => (terminal.kitty, KittyCommandExecutedPayload),
 /// }
 /// ```
-
 #[macro_export]
 macro_rules! register_events {
     ($($event_name:literal => ($source_name:ident $(. $source_segment:ident)*, $payload_type:ty)),* $(,)?) => {
@@ -38,7 +37,8 @@ macro_rules! register_events {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[allow(unused_imports)]
+    use crate::unified_collector::EventRegistryBuilder;
     use serde::{Serialize, Deserialize};
     use schemars::JsonSchema;
     
@@ -55,7 +55,7 @@ mod tests {
         
         let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
-        let registry = builder.build();
+        let _registry = builder.build();
         // Registry should contain our test event
         // This is a basic compilation test
     }
@@ -68,7 +68,7 @@ mod tests {
         
         let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
-        let registry = builder.build();
+        let _registry = builder.build();
         // Should handle dotted source names correctly
     }
 }

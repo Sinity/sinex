@@ -26,6 +26,7 @@ once_cell = { workspace = true }
 jsonschema = "0.17"
 gethostname = { workspace = true }
 urlencoding = "2.1"
+blake3 = "1.5"
 
 # No additional dependencies needed for declarative macros
 

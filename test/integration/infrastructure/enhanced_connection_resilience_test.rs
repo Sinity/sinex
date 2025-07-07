@@ -177,9 +177,9 @@ impl ResilientDbWorker {
         .execute(&self.pool)
         .await;
 
-        if setup_result.is_err() {
+        if let Err(e) = setup_result {
             self.metrics.remove_active_connection();
-            return Err(setup_result.unwrap_err().into());
+            return Err(e.into());
         }
 
         // Write operation
@@ -333,7 +333,7 @@ impl ResilientDbWorker {
 #[sinex_test]
 async fn test_connection_pool_under_sustained_pressure(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    run_migrations(&pool).await?;
+    run_migrations(pool).await?;
 
     let metrics = Arc::new(ConnectionMetrics::new());
     let test_duration = Duration::from_secs(10);

@@ -25,7 +25,7 @@ where
     sinex_core::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
         .await
         .map(|_| ())
-        .map_err(|e| anyhow::Error::new(e))
+        .map_err(anyhow::Error::new)
 }
 
 /// Test-compatible wait_for_condition_or_timeout that accepts anyhow::Result closures

@@ -222,7 +222,7 @@ impl ConfigExtraction {
                 .into_result()?;
             
             // Additional path validation
-            if let Err(_) = crate::validation::validate_path(path) {
+            if crate::validation::validate_path(path).is_err() {
                 return Err(CoreError::Configuration(format!(
                     "Invalid filesystem watch path: {}", path
                 )));

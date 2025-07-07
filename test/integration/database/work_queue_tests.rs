@@ -41,7 +41,7 @@ async fn test_work_queue_has_new_columns(ctx: TestContext) -> Result<(), anyhow:
 
     let column_names: Vec<String> = columns
         .iter()
-        .filter_map(|r| r.column_name.as_ref().map(|s| s.clone()))
+        .filter_map(|r| r.column_name.clone())
         .collect();
     assert!(
         column_names.contains(&"processed_at".to_string()),

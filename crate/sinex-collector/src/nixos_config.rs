@@ -680,8 +680,8 @@ fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_
     }
     
     // If path starts with ~, resolve to system-safe alternatives
-    if default_path.starts_with("~/") {
-        let relative_path = &default_path[2..]; // Remove ~/
+    if let Some(relative_path) = default_path.strip_prefix("~/") {
+        // Remove ~/
         
         // Try XDG directories first (most appropriate for system services)
         if let Ok(data_dir) = env::var("XDG_DATA_HOME") {

@@ -91,7 +91,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         // Insert some events
         for i in 0..10 {
             insert_raw_event(
-                &*pool,
+                &pool,
                 "startup.test",
                 "existing_data",
                 "localhost",
@@ -390,11 +390,11 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let pool = ctx.pool();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&*pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events = wait_for_filtered_event_count(
-                &*pool,
+                pool,
                 "source = $1",
                 &["interrupted.shutdown"],
                 0,
@@ -452,7 +452,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     sqlx::query!(
         "DELETE FROM raw.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
-    .execute(&*pool)
+    .execute(pool)
     .await
     .ok();
 
@@ -558,7 +558,7 @@ enabled = false
     }
 
     // Test 2: Invalid configuration detection
-    let invalid_configs = vec![
+    let invalid_configs = [
         // Missing required sections
         (
             r#"
@@ -792,7 +792,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         .fetch_all(&*pool)
         .await?
         .into_iter()
-        .filter_map(|s| s)
+        .flatten()
         .collect();
 
         let tables: Vec<String> = sqlx::query_scalar!(
@@ -802,7 +802,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         .fetch_all(&*pool)
         .await?
         .into_iter()
-        .filter_map(|t| t)
+        .flatten()
         .collect();
 
         let extensions: Vec<String> = sqlx::query_scalar!(
@@ -834,7 +834,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
                 "Should create 'sinex_schemas' schema"
             );
             assert!(tables.len() >= 4, "Should create minimum required tables");
-            assert!(extensions.len() >= 1, "Should have required extensions");
+            assert!(!extensions.is_empty(), "Should have required extensions");
         }
         Ok(Err(e)) => {
             println!("  Fresh migration failed: {}", e);
@@ -912,7 +912,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let test_events = 50;
         for i in 0..test_events {
             insert_raw_event(
-                &*pool,
+                &pool,
                 "migration.safety",
                 "data_preservation",
                 "localhost",
@@ -959,7 +959,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Use timing utility to ensure events are available after migration
         let final_event_count = wait_for_filtered_event_count(
-            &*pool,
+            &pool,
             "source = $1",
             &["migration.safety"],
             test_events,

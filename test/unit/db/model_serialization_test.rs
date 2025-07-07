@@ -48,7 +48,7 @@ async fn test_work_queue_status_serialization(_ctx: TestContext) -> TestResult {
 
     for status in statuses {
         // Serialize
-        let json_val = serde_json::to_value(&status)?;
+        let json_val = serde_json::to_value(status)?;
         assert!(json_val.is_string());
 
         // Deserialize

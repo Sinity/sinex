@@ -285,7 +285,7 @@ impl KittyEventSource {
         for candidate in &socket_candidates {
             if Path::new(&candidate).exists() {
                 // Test connection
-                if let Ok(_) = UnixStream::connect(&candidate).await {
+                if UnixStream::connect(&candidate).await.is_ok() {
                     self.socket_path = Some(candidate.clone());
                     return Ok(candidate.clone());
                 }
@@ -294,7 +294,7 @@ impl KittyEventSource {
 
         Err(ErrorContext::new(CoreError::Io("No accessible Kitty socket found".to_string()))
             .with_operation("discover_kitty_socket")
-            .with_context("attempted_paths", &format!("{:?}", socket_candidates))
+            .with_context("attempted_paths", format!("{:?}", socket_candidates))
             .build())
     }
 
@@ -327,7 +327,7 @@ impl KittyEventSource {
         let response_str = String::from_utf8(response_buffer)
             .map_err(|e| ErrorContext::new(CoreError::Serialization(format!("Invalid UTF-8 in response: {}", e)))
                 .with_operation("send_kitty_command")
-                .with_context("response_length", &response_buffer_len.to_string())
+                .with_context("response_length", response_buffer_len.to_string())
                 .build())?;
 
         // Extract JSON from framed response
@@ -340,7 +340,7 @@ impl KittyEventSource {
 
         Err(ErrorContext::new(CoreError::Serialization("Could not parse Kitty response as JSON".to_string()))
             .with_operation("send_kitty_command")
-            .with_context("response_preview", &response_str.chars().take(100).collect::<String>())
+            .with_context("response_preview", response_str.chars().take(100).collect::<String>())
             .build())
     }
 
@@ -578,7 +578,7 @@ impl KittyEventSource {
                     .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
                         .with_operation("process_tab_focus_changes")
                         .with_context("event_type", "tab.focused")
-                        .with_context("tab_id", &focused_tab_id)
+                        .with_context("tab_id", focused_tab_id)
                         .build())?;
                 
                 // Update last focused tab
@@ -628,7 +628,7 @@ impl KittyEventSource {
                     .with_operation("capture_incremental_scrollback")
                     .with_context("event_type", "scrollback.incremental")
                     .with_context("window_id", &window_id)
-                    .with_context("line_count", &current_line_count.to_string())
+                    .with_context("line_count", current_line_count.to_string())
                     .build())?;
             
             tracing::debug!("Captured {} new lines for window {}", current_line_count - previous_line_count, window_id);

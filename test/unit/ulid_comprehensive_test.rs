@@ -339,7 +339,7 @@ mod correctness {
             .unwrap()
             .as_millis() as u64;
 
-        let hour_ago = now.saturating_sub(3600_000);
+        let hour_ago = now.saturating_sub(3_600_000);
         let minute_future = now + 60_000;
 
         assert!(ulid_timestamp >= hour_ago && ulid_timestamp <= minute_future,

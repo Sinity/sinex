@@ -188,7 +188,7 @@ impl ShellHistoryReader {
                                 "Failed to watch directory: {}", e
                             )))
                                 .with_operation("setup_directory_watcher")
-                                .with_context("directory", &parent.display().to_string())
+                                .with_context("directory", parent.display().to_string())
                                 .build()
                         })?;
                 }

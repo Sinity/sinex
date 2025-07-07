@@ -18,7 +18,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
     ];
 
     for event in test_events {
-        assertions::assert_event_inserted(&ctx.pool(), &event)
+        assertions::assert_event_inserted(ctx.pool(), &event)
             .await
             .unwrap();
     }
@@ -105,7 +105,7 @@ async fn test_exo_cli_schema_commands(ctx: TestContext) -> sqlx::Result<()> {
 
     // Use schema test utilities to insert schema
     crate::common::schema_test_utils::database::insert_test_schema(
-        &ctx.pool(),
+        ctx.pool(),
         "test.filesystem",
         "file_event",
         "1.0.0",
@@ -161,7 +161,7 @@ async fn test_exo_cli_agent_commands(ctx: TestContext) -> TestResult {
     let mut manifest = generators::test_agent_manifest("test-collector");
     manifest.status = "active".to_string();
     manifest.produces_event_types = Some(json!(["fs", "terminal"]));
-    assertions::assert_manifest_registered(&pool, &manifest).await?;
+    assertions::assert_manifest_registered(pool, &manifest).await?;
 
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
 
@@ -268,7 +268,7 @@ async fn test_exo_cli_advanced_queries(ctx: TestContext) -> TestResult {
             Some(&(base_time - chrono::Duration::minutes(i + 1)).to_rfc3339()),
         );
 
-        sinex_db::queries::insert_event(&pool, &event)
+        sinex_db::queries::insert_event(pool, &event)
             .await
             .unwrap();
 
@@ -349,7 +349,7 @@ async fn test_exo_cli_output_formats(ctx: TestContext) -> TestResult {
         None,
     );
 
-    sinex_db::queries::insert_event(&pool, &event)
+    sinex_db::queries::insert_event(pool, &event)
         .await
         .unwrap();
 

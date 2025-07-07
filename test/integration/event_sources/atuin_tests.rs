@@ -812,8 +812,8 @@ async fn test_atuin_edge_cases(ctx: TestContext) -> TestResult {
         let payload: CommandExecutedAtuinPayload =
             serde_json::from_value(event.payload.clone()).unwrap();
         // Even empty commands should be captured
-        assert!(payload.atuin_history_id.len() > 0);
-        assert!(payload.cwd.len() > 0);
+        assert!(!payload.atuin_history_id.is_empty());
+        assert!(!payload.cwd.is_empty());
     }
     Ok(())
 }

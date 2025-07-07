@@ -99,7 +99,7 @@ polling_interval_secs = -1  # Should be positive
         );
     } else {
         // If TOML parsing itself fails, that's also a validation failure
-        assert!(true, "Invalid TOML should fail parsing");
+        // This is expected behavior for invalid TOML
     }
 
     Ok(())

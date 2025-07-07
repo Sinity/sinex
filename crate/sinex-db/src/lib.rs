@@ -3,13 +3,17 @@ pub mod models;
 pub use sinex_core::{RawEvent, RawEventBuilder};
 pub mod enhanced_queries;
 pub mod metrics;
-pub mod notifications;
 pub mod pool;
 pub mod queries;
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
 pub mod validation;
+
+// New API modules (correctly implemented)
+pub mod artifacts_correct;
+pub mod annotations_correct;
+pub mod knowledge_graph_correct;
 
 // Re-export commonly used types and query functions
 pub use queries::{
@@ -38,17 +42,20 @@ pub use query_helpers::{
 pub mod prelude {
     pub use crate::models::{
         AgentManifest, DlqErrorCategory, DlqEvent, EventPayloadSchema, QueueStatus, WorkQueueItem,
-    };
-    pub use crate::notifications::{
-        NotificationService, NotificationMessage, RealtimeEventProcessor,
-        EventInsertedNotification, WorkQueueNotification, SchemaChangedNotification,
-        WorkQueueAction, SchemaAction,
+        // New API models (temporarily disabled)
+        // Artifact, ArtifactContent, CreateArtifactInput, CreateArtifactContentInput,
+        // EventAnnotation, CreateAnnotationInput,
+        // Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
     };
     pub use crate::queries::*;
     pub use crate::query_helpers::{
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
     };
+    // New API services (temporarily disabled)
+    // pub use crate::artifacts::ArtifactsService;
+    // pub use crate::annotations::{AnnotationsService, AnnotationStats, AnnotationTypeCount};
+    // pub use crate::knowledge_graph::{KnowledgeGraphService, EntitySubgraph, GraphStats, EntityTypeCount};
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp, PoolConfig};
     pub use anyhow::Result;
     pub use sinex_core::{RawEvent, RawEventBuilder};
@@ -143,11 +150,11 @@ pub fn get_database_url_with_fallbacks() -> Result<String> {
     ];
 
     for url in &fallback_urls {
-        if let Ok(_) = std::process::Command::new("pg_isready")
+        if std::process::Command::new("pg_isready")
             .arg("-d")
             .arg(url)
             .arg("-q")
-            .output()
+            .output().is_ok()
         {
             warn!("DATABASE_URL not set, using fallback: {}", url);
             warn!("For production, please set DATABASE_URL environment variable");
@@ -513,7 +520,8 @@ mod tests {
 
         // Test that the functions exist and have the right signatures
         // Cannot actually call them without a database, but we can test they compile
-        assert!(true); // Placeholder assertion
+        // Test that the functions exist and have the right signatures
+        // Cannot actually call them without a database, but compilation success is the test
     }
 
     #[test]
@@ -522,6 +530,7 @@ mod tests {
         // We can't test the actual functionality without a database
 
         // This ensures the functions are callable and have the right basic structure
-        assert!(true); // Functions exist if this compiles
+        // This ensures the functions are callable and have the right basic structure
+        // Compilation success is the test - no runtime assertion needed
     }
 }

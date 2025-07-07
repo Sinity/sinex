@@ -55,7 +55,7 @@ pub async fn create_test_db_pool() -> Result<DbPool> {
 /// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
 pub async fn insert_event(pool: &DbPool, event: &sinex_db::RawEvent) -> Result<Ulid> {
-    let inserted = queries::insert_event(&pool, event).await?;
+    let inserted = queries::insert_event(pool, event).await?;
     Ok(inserted.id)
 }
 
@@ -326,7 +326,7 @@ pub mod assertions {
 
     /// Assert that an event was inserted successfully
     pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> Result<Ulid> {
-        let inserted = queries::insert_event(&pool, event).await?;
+        let inserted = queries::insert_event(pool, event).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
     }
@@ -336,7 +336,7 @@ pub mod assertions {
         pool: &DbPool,
         event: &RawEvent,
     ) -> Result<(), anyhow::Error> {
-        let result = queries::insert_event(&pool, event).await;
+        let result = queries::insert_event(pool, event).await;
         assert!(
             result.is_err(),
             "Expected event insertion to fail, but it succeeded"
@@ -350,9 +350,9 @@ pub mod assertions {
         manifest: &AgentManifest,
     ) -> Result<(), anyhow::Error> {
         let result = queries::upsert_agent_manifest(
-            &pool,
+            pool,
             &manifest.agent_name,
-            &manifest.description.as_deref().unwrap_or(""),
+            manifest.description.as_deref().unwrap_or(""),
             &manifest.version,
             &manifest.status,
             Some(&manifest.agent_type),
@@ -395,7 +395,7 @@ pub mod generators {
                 event_type_constants::filesystem::FILE_CREATED,
                 &file_path(&format!("file_{}", index)),
             ),
-            1 => events::kitty_event(&common_commands()[index % common_commands().len()]),
+            1 => events::kitty_event(common_commands()[index % common_commands().len()]),
             _ => events::hyprland_event("workspace", json!({"id": index})),
         }
     }
@@ -407,20 +407,16 @@ pub mod generators {
 
     /// Generate realistic filesystem events with proper paths
     pub fn realistic_filesystem_events(count: usize) -> Vec<sinex_db::RawEvent> {
-        let realistic_paths = vec![
-            "/home/user/Documents/report.pdf",
+        let realistic_paths = ["/home/user/Documents/report.pdf",
             "/home/user/Code/project/src/main.rs",
             "/tmp/cache/session_data.json",
             "/var/log/system.log",
             "/home/user/.config/app/settings.toml",
-            "/home/user/Downloads/image.png",
-        ];
+            "/home/user/Downloads/image.png"];
 
-        let event_types = vec![
-            event_type_constants::filesystem::FILE_CREATED,
+        let event_types = [event_type_constants::filesystem::FILE_CREATED,
             event_type_constants::filesystem::FILE_MODIFIED,
-            event_type_constants::filesystem::FILE_DELETED,
-        ];
+            event_type_constants::filesystem::FILE_DELETED];
 
         (0..count)
             .map(|i| {
@@ -433,8 +429,7 @@ pub mod generators {
 
     /// Generate realistic terminal command events
     pub fn realistic_shell_events(count: usize) -> Vec<sinex_db::RawEvent> {
-        let realistic_commands = vec![
-            "git status",
+        let realistic_commands = ["git status",
             "cargo build --release",
             "ls -la /home/user",
             "cd ~/Projects/sinex",
@@ -443,8 +438,7 @@ pub mod generators {
             "find . -name '*.rs' -exec wc -l {} +",
             "docker ps -a",
             "systemctl status postgresql",
-            "nix develop",
-        ];
+            "nix develop"];
 
         (0..count)
             .map(|i| {
@@ -563,7 +557,7 @@ macro_rules! test_event_insertion {
         #[sinex_test]
         async fn $test_name(pool: DbPool) -> TestResult {
             let event = $event_builder;
-            crate::common::assertions::assert_event_inserted(&pool, &event).await?;
+            $crate::common::assertions::assert_event_inserted(&pool, &event).await?;
             Ok(())
         }
     };
@@ -575,7 +569,7 @@ macro_rules! test_invalid_event_insertion {
         #[sinex_test]
         async fn $test_name(pool: DbPool) -> TestResult {
             let event = $event_builder;
-            crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
+            $crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
             Ok(())
         }
     };
@@ -634,7 +628,7 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -651,7 +645,7 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
 #[allow(dead_code)]
 pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> Result<Ulid> {
     let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
-    insert_event(&pool, &event).await
+    insert_event(pool, &event).await
 }
 
 /// Helper for creating agent with specific subscriptions
@@ -665,7 +659,7 @@ pub async fn create_agent_with_subscriptions(
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
     queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest.agent_name,
         manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
@@ -714,7 +708,7 @@ pub mod db_utils {
         let mut ids = Vec::new();
         for i in 0..count {
             let event = generators::indexed_event(i);
-            let id = insert_event(&pool, &event).await?;
+            let id = insert_event(pool, &event).await?;
             ids.push(id);
         }
         Ok(ids)

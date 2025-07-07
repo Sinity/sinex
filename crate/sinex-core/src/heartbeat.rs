@@ -165,7 +165,7 @@ impl ComponentHeartbeat {
             .not_empty()
             .min_length(2)
             .into_result()
-            .map_err(|e| HeartbeatError::Core(e))?;
+            .map_err(HeartbeatError::Core)?;
         let timestamp = Utc::now();
 
         // Get basic system metrics with enhanced error context
@@ -230,7 +230,7 @@ impl ComponentHeartbeat {
                 ErrorContext::new(CoreError::Configuration("Memory usage exceeds reasonable limits".to_string()))
                     .with_operation("collect_system_metrics")
                     .with_context("component_name", component_name)
-                    .with_context("memory_usage_mb", &memory_usage_mb.to_string())
+                    .with_context("memory_usage_mb", memory_usage_mb.to_string())
                     .with_context("limit_mb", "2048")
                     .build()
             ));
@@ -284,7 +284,7 @@ impl ComponentHeartbeat {
                 .with_operation("get_memory_usage")
                 .with_context("component_name", component_name)
                 .with_context("proc_path", proc_status_path)
-                .with_context("content_lines", &contents.lines().count().to_string())
+                .with_context("content_lines", contents.lines().count().to_string())
                 .build()
         ))
     }
@@ -360,13 +360,13 @@ impl ComponentHeartbeat {
         ValidationChain::validate(memory_usage_mb, "memory_usage_mb")
             .max(4096) // 4GB reasonable maximum
             .into_result()
-            .map_err(|e| HeartbeatError::Core(e))?;
+            .map_err(HeartbeatError::Core)?;
 
         ValidationChain::validate(cpu_usage_percent, "cpu_usage_percent")
             .min(0.0)
             .max(100.0)
             .into_result()
-            .map_err(|e| HeartbeatError::Core(e))?;
+            .map_err(HeartbeatError::Core)?;
 
         // Check uptime requirements
         if conditions.uptime_requirements.require_stable_uptime 
@@ -379,30 +379,39 @@ impl ComponentHeartbeat {
         let mut degraded_conditions = Vec::new();
 
         // Memory condition checks
-        if memory_usage_mb > conditions.memory_thresholds.failed_max_mb {
+        if memory_usage_mb >= conditions.memory_thresholds.failed_max_mb {
             failed_conditions.push(format!("Memory usage {}MB exceeds failed threshold {}MB", 
                 memory_usage_mb, conditions.memory_thresholds.failed_max_mb));
-        } else if memory_usage_mb > conditions.memory_thresholds.degraded_max_mb {
+        } else if memory_usage_mb >= conditions.memory_thresholds.degraded_max_mb {
             degraded_conditions.push(format!("Memory usage {}MB exceeds degraded threshold {}MB", 
                 memory_usage_mb, conditions.memory_thresholds.degraded_max_mb));
+        } else if memory_usage_mb > conditions.memory_thresholds.healthy_max_mb {
+            degraded_conditions.push(format!("Memory usage {}MB exceeds healthy threshold {}MB", 
+                memory_usage_mb, conditions.memory_thresholds.healthy_max_mb));
         }
 
         // CPU condition checks
-        if cpu_usage_percent > conditions.cpu_thresholds.failed_max_percent {
+        if cpu_usage_percent >= conditions.cpu_thresholds.failed_max_percent {
             failed_conditions.push(format!("CPU usage {:.1}% exceeds failed threshold {:.1}%", 
                 cpu_usage_percent, conditions.cpu_thresholds.failed_max_percent));
-        } else if cpu_usage_percent > conditions.cpu_thresholds.degraded_max_percent {
+        } else if cpu_usage_percent >= conditions.cpu_thresholds.degraded_max_percent {
             degraded_conditions.push(format!("CPU usage {:.1}% exceeds degraded threshold {:.1}%", 
                 cpu_usage_percent, conditions.cpu_thresholds.degraded_max_percent));
+        } else if cpu_usage_percent > conditions.cpu_thresholds.healthy_max_percent {
+            degraded_conditions.push(format!("CPU usage {:.1}% exceeds healthy threshold {:.1}%", 
+                cpu_usage_percent, conditions.cpu_thresholds.healthy_max_percent));
         }
 
         // Error condition checks
-        if errors_last_hour > conditions.error_thresholds.failed_max_per_hour {
+        if errors_last_hour >= conditions.error_thresholds.failed_max_per_hour {
             failed_conditions.push(format!("Error count {} exceeds failed threshold {}", 
                 errors_last_hour, conditions.error_thresholds.failed_max_per_hour));
-        } else if errors_last_hour > conditions.error_thresholds.degraded_max_per_hour {
+        } else if errors_last_hour >= conditions.error_thresholds.degraded_max_per_hour {
             degraded_conditions.push(format!("Error count {} exceeds degraded threshold {}", 
                 errors_last_hour, conditions.error_thresholds.degraded_max_per_hour));
+        } else if errors_last_hour > conditions.error_thresholds.healthy_max_per_hour {
+            degraded_conditions.push(format!("Error count {} exceeds healthy threshold {}", 
+                errors_last_hour, conditions.error_thresholds.healthy_max_per_hour));
         }
 
         // Determine final status based on condition violations

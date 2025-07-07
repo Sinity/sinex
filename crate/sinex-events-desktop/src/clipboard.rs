@@ -193,8 +193,8 @@ impl EventSource for ClipboardMonitor {
             error!("Neither wl-clipboard nor xclip found. Install one for clipboard monitoring");
             return Err(ErrorContext::new(CoreError::Configuration("Neither wl-clipboard nor xclip found".to_string()))
                 .with_operation("initialize_clipboard_monitor")
-                .with_context("wl_paste_available", &wl_paste_available.to_string())
-                .with_context("xclip_available", &xclip_available.to_string())
+                .with_context("wl_paste_available", wl_paste_available.to_string())
+                .with_context("xclip_available", xclip_available.to_string())
                 .with_context("required_tools", "wl-paste OR xclip")
                 .build());
         }
@@ -218,7 +218,7 @@ impl EventSource for ClipboardMonitor {
                     .await
                     .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
                         .with_operation("initialize_clipboard_monitor")
-                        .with_context("repo_path", &path.display().to_string())
+                        .with_context("repo_path", path.display().to_string())
                         .with_context("repo_name", "sinex-clipboard-annex")
                         .build())?;
             }
@@ -232,7 +232,7 @@ impl EventSource for ClipboardMonitor {
             let git_annex = GitAnnex::new(annex_config).map_err(|e| 
                 ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
                     .with_operation("initialize_clipboard_monitor")
-                    .with_context("repo_path", &path.display().to_string())
+                    .with_context("repo_path", path.display().to_string())
                     .build()
             )?;
 
@@ -616,7 +616,7 @@ impl ClipboardMonitor {
         let git_annex = self.git_annex.as_ref().ok_or_else(|| 
             ErrorContext::new(CoreError::Configuration("Git-annex not configured for large content storage".to_string()))
                 .with_operation("store_large_content")
-                .with_context("content_size", &content.len().to_string())
+                .with_context("content_size", content.len().to_string())
                 .with_context("content_hash", content_hash)
                 .build()
         )?;
@@ -629,15 +629,15 @@ impl ClipboardMonitor {
             .await
             .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
                 .with_operation("store_large_content")
-                .with_context("temp_file", &temp_file.display().to_string())
-                .with_context("content_size", &content.len().to_string())
+                .with_context("temp_file", temp_file.display().to_string())
+                .with_context("content_size", content.len().to_string())
                 .build())?;
 
         // Add to git-annex
         let annex_key = git_annex.add_file(&temp_file).await.map_err(|e| 
             ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
                 .with_operation("store_large_content")
-                .with_context("temp_file", &temp_file.display().to_string())
+                .with_context("temp_file", temp_file.display().to_string())
                 .with_context("content_hash", content_hash)
                 .build()
         )?;

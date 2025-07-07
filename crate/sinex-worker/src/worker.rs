@@ -415,9 +415,9 @@ mod tests {
         let backoff_2 = calculate_backoff_secs(2);
         
         // Should be roughly: 60, 120, 240 seconds with jitter (0.8 to 1.2 factor)
-        assert!(backoff_0 >= 48.0 && backoff_0 <= 72.0); // 60 * (0.8 to 1.2)
-        assert!(backoff_1 >= 96.0 && backoff_1 <= 144.0); // 120 * (0.8 to 1.2)
-        assert!(backoff_2 >= 192.0 && backoff_2 <= 288.0); // 240 * (0.8 to 1.2)
+        assert!((48.0..=72.0).contains(&backoff_0)); // 60 * (0.8 to 1.2)
+        assert!((96.0..=144.0).contains(&backoff_1)); // 120 * (0.8 to 1.2)
+        assert!((192.0..=288.0).contains(&backoff_2)); // 240 * (0.8 to 1.2)
         
         // Test max backoff is capped at 24 hours
         assert!(calculate_backoff_secs(20) <= 24.0 * 3600.0);
@@ -437,11 +437,11 @@ mod tests {
             let delay = calculate_backoff_secs(item.attempts);
             // With the actual backoff formula, verify reasonable ranges
             if item.attempts == 0 {
-                assert!(delay >= 48.0 && delay <= 72.0); // 60 * (0.8 to 1.2)
+                assert!((48.0..=72.0).contains(&delay)); // 60 * (0.8 to 1.2)
             } else if item.attempts == 1 {
-                assert!(delay >= 96.0 && delay <= 144.0); // 120 * (0.8 to 1.2)
+                assert!((96.0..=144.0).contains(&delay)); // 120 * (0.8 to 1.2)
             } else if item.attempts == 2 {
-                assert!(delay >= 192.0 && delay <= 288.0); // 240 * (0.8 to 1.2)
+                assert!((192.0..=288.0).contains(&delay)); // 240 * (0.8 to 1.2)
             }
         }
     }

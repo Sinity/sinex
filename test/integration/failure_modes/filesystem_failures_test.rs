@@ -18,7 +18,7 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
 
     // Simulate filesystem operations that might fail when disk is full
     async fn try_write_event_data(
-        path: &PathBuf,
+        path: &Path,
         data: &[u8],
         attempts: &Arc<AtomicU64>,
         failures: &Arc<AtomicU64>,
@@ -198,11 +198,9 @@ async fn test_filesystem_availability(_ctx: TestContext) -> TestResult {
         // Try to list directory contents
         match fs::read_dir(path) {
             Ok(entries) => {
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                        println!("{}: Found {:?}", phase, entry.path());
-                    }
+                for entry in entries.flatten() {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    println!("{}: Found {:?}", phase, entry.path());
                 }
                 Ok(())
             }
@@ -375,10 +373,8 @@ async fn test_rapid_filesystem_changes(_ctx: TestContext) -> TestResult {
                     created.fetch_add(1, Ordering::Relaxed);
                 }
                 // Immediately delete some files
-                if i % 3 == 0 {
-                    if fs::remove_file(&file_path).is_ok() {
-                        // File deleted before it could be observed
-                    }
+                if i % 3 == 0 && fs::remove_file(&file_path).is_ok() {
+                    // File deleted before it could be observed
                 }
                 // No delay - as fast as possible
             }
@@ -394,25 +390,20 @@ async fn test_rapid_filesystem_changes(_ctx: TestContext) -> TestResult {
             for _ in 0..10 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-                match fs::read_dir(&path) {
-                    Ok(entries) => {
-                        let count = entries.count();
-                        if count < 50 {
-                            // Some files were created and deleted before we could see them
-                            missed.fetch_add(1, Ordering::Relaxed);
-                        }
+                if let Ok(entries) = fs::read_dir(&path) {
+                    let count = entries.count();
+                    if count < 50 {
+                        // Some files were created and deleted before we could see them
+                        missed.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(_) => {}
                 }
             }
 
             // Final cleanup
             if let Ok(entries) = fs::read_dir(&path) {
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        if fs::remove_file(entry.path()).is_ok() {
-                            deleted.fetch_add(1, Ordering::Relaxed);
-                        }
+                for entry in entries.flatten() {
+                    if fs::remove_file(entry.path()).is_ok() {
+                        deleted.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }

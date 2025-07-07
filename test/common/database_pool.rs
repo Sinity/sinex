@@ -581,7 +581,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
     // Apply a reasonable timeout
     match tokio::time::timeout(Duration::from_secs(20), optimization_future).await {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e.into()),
+        Ok(Err(e)) => Err(e),
         Err(_) => {
             eprintln!("⚠️  Template optimization timed out after 20s, continuing anyway");
             Ok(()) // Don't fail, optimizations are optional

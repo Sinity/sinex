@@ -70,7 +70,7 @@ async fn get_system_health(
             let error_context = ErrorContext::new(CoreError::Database(format!("Failed to fetch heartbeats: {}", e)))
                 .with_operation("get_system_health")
                 .with_context("table", "component_heartbeats")
-                .with_context("cutoff_time", &cutoff.to_rfc3339())
+                .with_context("cutoff_time", cutoff.to_rfc3339())
                 .with_context("query_type", "fetch_recent_heartbeats")
                 .with_context("suggestion", "Check database connectivity and component_heartbeats table structure")
                 .build();

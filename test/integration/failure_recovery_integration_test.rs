@@ -49,7 +49,7 @@ async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
     )
     .build();
 
-    let normal_insert = insert_event(&pool, &test_event).await;
+    let normal_insert = insert_event(pool, &test_event).await;
     assert!(
         normal_insert.is_ok(),
         "Normal database operation should work"
@@ -57,7 +57,7 @@ async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
 
     // Phase 2: Simulate connection timeout scenario
     let timeout_result =
-        tokio::time::timeout(Duration::from_millis(100), insert_event(&pool, &test_event)).await;
+        tokio::time::timeout(Duration::from_millis(100), insert_event(pool, &test_event)).await;
 
     // Either succeeds quickly or times out (both are acceptable recovery behaviors)
     let connection_resilient = match timeout_result {
@@ -78,7 +78,7 @@ async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
     )
     .build();
 
-    let recovery_insert = insert_event(&pool, &recovery_event).await;
+    let recovery_insert = insert_event(pool, &recovery_event).await;
     let system_recovered = recovery_insert.is_ok();
 
     Ok(connection_resilient && system_recovered)
@@ -119,7 +119,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
     let mut successful_inserts = 0;
 
     for event in buffered.iter() {
-        if let Ok(_) = insert_event(&pool, event).await {
+        if (insert_event(pool, event).await).is_ok() {
             successful_inserts += 1;
         }
     }
@@ -414,11 +414,11 @@ async fn test_worker_retry_logic(pool: &DbPool) -> Result<bool> {
     )
     .build();
 
-    let inserted_event = insert_event(&pool, &test_event).await?;
-    add_to_work_queue(&pool, inserted_event, "test-agent", 3).await?;
+    let inserted_event = insert_event(pool, &test_event).await?;
+    add_to_work_queue(pool, inserted_event, "test-agent", 3).await?;
 
     // Phase 1: Worker claims and simulates failure
-    let claimed_items = claim_work_queue_items(&pool, "test-agent", "retry-worker", 1).await?;
+    let claimed_items = claim_work_queue_items(pool, "test-agent", "retry-worker", 1).await?;
     assert!(!claimed_items.is_empty(), "Worker should claim the item");
 
     let queue_id = claimed_items[0].queue_id;
@@ -428,10 +428,10 @@ async fn test_worker_retry_logic(pool: &DbPool) -> Result<bool> {
 
     // Phase 2: Simulate retry - fail the item to increment retry count
     let next_retry = Utc::now() + ChronoDuration::minutes(5);
-    fail_work_queue_item(&pool, queue_id, "Simulated processing failure", next_retry).await?;
+    fail_work_queue_item(pool, queue_id, "Simulated processing failure", next_retry).await?;
 
     // Phase 3: Verify retry count increased by checking if we can claim it again
-    let retry_claim = claim_work_queue_items(&pool, "test-agent", "retry-check-worker", 1).await?;
+    let retry_claim = claim_work_queue_items(pool, "test-agent", "retry-check-worker", 1).await?;
     if !retry_claim.is_empty() {
         assert!(
             retry_claim[0].attempts > 0,
@@ -440,14 +440,14 @@ async fn test_worker_retry_logic(pool: &DbPool) -> Result<bool> {
     }
 
     // Phase 4: Item should be available for retry
-    let retry_claim = claim_work_queue_items(&pool, "test-agent", "retry-worker-2", 1).await?;
+    let retry_claim = claim_work_queue_items(pool, "test-agent", "retry-worker-2", 1).await?;
     assert!(
         !retry_claim.is_empty(),
         "Item should be available for retry"
     );
 
     // Clean up
-    complete_work_queue_item(&pool, retry_claim[0].queue_id).await?;
+    complete_work_queue_item(pool, retry_claim[0].queue_id).await?;
 
     Ok(true)
 }
@@ -464,13 +464,13 @@ async fn test_dead_letter_queue_handling(pool: &DbPool) -> Result<bool> {
     )
     .build();
 
-    let inserted_event = insert_event(&pool, &test_event).await?;
-    add_to_work_queue(&pool, inserted_event, "test-agent", 2).await?; // Only 2 max retries
+    let inserted_event = insert_event(pool, &test_event).await?;
+    add_to_work_queue(pool, inserted_event, "test-agent", 2).await?; // Only 2 max retries
 
     // Exhaust retries
     for retry in 0..3 {
         let claimed =
-            claim_work_queue_items(&pool, "test-agent", &format!("dlq-worker-{}", retry), 1)
+            claim_work_queue_items(pool, "test-agent", &format!("dlq-worker-{}", retry), 1)
                 .await?;
         if claimed.is_empty() {
             break; // No more items to claim
@@ -481,7 +481,7 @@ async fn test_dead_letter_queue_handling(pool: &DbPool) -> Result<bool> {
         // Fail the item
         let next_retry = Utc::now() + ChronoDuration::minutes(1);
         fail_work_queue_item(
-            &pool,
+            pool,
             queue_id,
             &format!("Retry {} failed", retry),
             next_retry,
@@ -490,7 +490,7 @@ async fn test_dead_letter_queue_handling(pool: &DbPool) -> Result<bool> {
     }
 
     // Verify item is no longer in active queue
-    let final_claim = claim_work_queue_items(&pool, "test-agent", "final-worker", 1).await?;
+    let final_claim = claim_work_queue_items(pool, "test-agent", "final-worker", 1).await?;
 
     // Should either be empty (moved to DLQ) or still claimable but with high retry count
     if !final_claim.is_empty() {
@@ -517,8 +517,8 @@ async fn test_concurrent_worker_failures(pool: &DbPool) -> Result<bool> {
         )
         .build();
 
-        let inserted_event = insert_event(&pool, &test_event).await?;
-        add_to_work_queue(&pool, inserted_event, "test-agent", 3).await?;
+        let inserted_event = insert_event(pool, &test_event).await?;
+        add_to_work_queue(pool, inserted_event, "test-agent", 3).await?;
         event_ids.push(inserted_event);
     }
 
@@ -671,7 +671,7 @@ async fn test_memory_pressure_recovery() -> Result<bool> {
         processed
     });
 
-    let _producer_result = producer.await?;
+    producer.await?;
     let processed_count = consumer.await?;
 
     // System should either handle the load or apply backpressure gracefully

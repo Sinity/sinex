@@ -1,5 +1,5 @@
 # Complete NixOS Configuration Example for Sinex
-# This shows all available configuration options with their default values
+# This shows ALL available configuration options with their correct default values
 # Most options can be omitted for sensible defaults
 
 { config, lib, pkgs, ... }:
@@ -7,7 +7,7 @@
 {
   # Import the Sinex modules
   imports = [
-    ./modules  # Import the entire module set
+    ./modules
   ];
 
   services.sinex = {
@@ -18,9 +18,6 @@
     # Package configuration (defaults to auto-detected packages)
     package = pkgs.sinex or (import ../. { }).packages.${pkgs.system}.default;
     cliPackage = pkgs.python3;  # Temporary default
-
-    # Preset selection (affects all subsystem defaults)
-    preset = "normal";  # Options: "lite", "normal", "max"
 
     # Directory configuration (optional overrides)
     directories = {
@@ -37,19 +34,19 @@
       passwordFile = null;  # Path to password file (optional)
       autoSetup = true;     # Auto-create database and user
 
-      # Connection pool settings
+      # Connection pool settings (correct defaults from module)
       connectionPool = {
-        maxConnections = 30;     # Adjusted per preset
+        maxConnections = 20;     # Module default
         minConnections = 5;
-        connectionTimeout = 10;
+        connectionTimeout = 30;  # Module default (not 10)
         idleTimeout = 600;
       };
 
-      # Health monitoring
+      # Health monitoring (correct defaults from module)
       healthCheck = {
         enable = true;
-        interval = 60;
-        timeout = 10;
+        interval = 30;           # Module default (not 60)
+        timeout = 5;             # Module default (not 10)
         retryAttempts = 3;
       };
 
@@ -57,8 +54,8 @@
       migration = {
         enable = true;
         package = pkgs.sqlx-cli;
-        directory = "../migrations";  # Relative to project root
-        autoRun = true;
+        directory = "../migrations";
+        timeout = 300;           # Missing from original example
       };
     };
 
@@ -68,7 +65,7 @@
       logLevel = "info";  # Options: "trace", "debug", "info", "warn", "error"
       dryRun = false;     # If true, events are logged but not stored
 
-      # Health check configuration
+      # Health check configuration (EXPANDED - was incomplete)
       healthCheck = {
         enable = true;
         port = 8080;
@@ -76,6 +73,35 @@
         timeout = 5;
         retryAttempts = 3;
         enableProbes = true;
+
+        # Advanced probe configurations (missing from original)
+        path = "/health";
+        readinessPath = "/ready";
+        livenessPath = "/alive";
+
+        startupProbe = {
+          enable = true;
+          initialDelay = 30;
+          periodSeconds = 5;
+          timeoutSeconds = 3;
+          failureThreshold = 12;
+        };
+
+        readinessProbe = {
+          enable = true;
+          initialDelay = 5;
+          periodSeconds = 10;
+          timeoutSeconds = 3;
+          failureThreshold = 3;
+        };
+
+        livenessProbe = {
+          enable = true;
+          initialDelay = 60;
+          periodSeconds = 30;
+          timeoutSeconds = 5;
+          failureThreshold = 3;
+        };
       };
 
       # Restart policy
@@ -95,8 +121,8 @@
 
         cleanup = {
           enable = true;
-          maxAge = "7d";      # Adjusted per preset
-          maxFiles = 10000;   # Adjusted per preset
+          maxAge = "7d";
+          maxFiles = 10000;
         };
       };
 
@@ -106,7 +132,7 @@
         atuin = {
           enable = true;
           databasePath = "~/.local/share/atuin/history.db";
-          pollInterval = 5;  # Adjusted per preset
+          pollInterval = 3;  # Module default (not 5)
         };
 
         shellHistory = {
@@ -117,7 +143,7 @@
 
         # Terminal sources
         asciinema = {
-          enable = false;  # Disabled by default except in "max" preset
+          enable = false;  # Disabled by default
           path = "~/.local/share/asciinema";
           autoRecord = false;
           autoAnnex = true;
@@ -131,6 +157,13 @@
           enableCommandCompletion = true;
           scrollbackSafetyNetInterval = 60;
           maxScrollbackLines = 10000;
+          
+          shellIntegrationConfig = {
+            "shell_integration" = "enabled";
+            "allow_remote_control" = "socket-only";
+            "listen_on" = "unix:/tmp/kitty-\${USER}";
+          };
+          
           autoModifyUserConfig = true;
           userConfigPath = "~/.config/kitty/kitty.conf";
         };
@@ -144,37 +177,43 @@
           captureInterval = 60;
         };
 
-        # Filesystem monitoring
+        # Filesystem monitoring (with correct exclude patterns structure)
         filesystem = {
           enable = true;
-          watchPaths = [ "~/Documents" "~/Projects" "~/Downloads" ];  # Adjusted per preset
+          watchPaths = [ "~/Documents" "~/Projects" "~/Downloads" ];
           excludePatterns = [];  # Additional patterns (sensible defaults always applied)
           overrideDefaultExcludes = false;  # Advanced: ignore default excludes
+          
+          # Filesystem-specific options (missing from original)
+          debounceMs = 100;
+          maxDepth = null;
         };
 
-        # D-Bus event monitoring
+        # D-Bus event monitoring (FIXED - extractAll default is true)
         dbus = {
           enable = true;
           monitorSession = true;
           monitorSystem = true;
           logAllSignals = false;
-          extractAll = false;  # Individual options below take precedence
+          extractAll = true;  # CORRECTED: Module default is true, not false
+          
+          # Individual extraction options (when extractAll = false)
           extractNotifications = true;
-          extractMedia = true;             # Adjusted per preset
+          extractMedia = true;
           extractPower = true;
-          extractHardware = true;          # Adjusted per preset
-          extractSession = true;           # Adjusted per preset
-          extractPolicykit = true;         # Adjusted per preset
-          extractBluetooth = true;         # Adjusted per preset
-          extractNetwork = true;           # Adjusted per preset
-          extractScreensaver = true;       # Adjusted per preset
-          extractMounts = true;            # Adjusted per preset
+          extractHardware = true;
+          extractSession = true;
+          extractPolicykit = true;
+          extractBluetooth = true;
+          extractNetwork = true;
+          extractScreensaver = true;
+          extractMounts = true;
         };
 
         # Clipboard monitoring
         clipboard = {
           enable = true;
-          pollInterval = 1000;  # milliseconds, adjusted per preset
+          pollInterval = 500;  # Module default is 500ms, not 1000
           monitorClipboard = true;
           monitorPrimary = true;
           monitorSecondary = false;
@@ -190,8 +229,8 @@
     # Promotion Worker configuration
     promoWorker = {
       enable = true;
-      pollInterval = 5;      # Adjusted per preset
-      batchSize = 100;       # Adjusted per preset
+      pollInterval = 5;
+      batchSize = 100;
 
       # Health check configuration
       healthCheck = {
@@ -204,48 +243,48 @@
       };
     };
 
-    # Blob Storage (git-annex) configuration
+    # Blob Storage (git-annex) configuration (CORRECTED defaults)
     blobStorage = {
       enable = true;
-      repositoryPath = "/var/lib/sinex/annex";
+      repositoryPath = "/realm/annex";  # CORRECTED: Module default, not "/var/lib/sinex/annex"
       autoInit = true;
       
+      # Missing options from original example
+      numCopies = 2;
+      backend = "SHA256E";
+      
+      # Health check (partially corrected)
       healthCheck = {
         enable = true;
-        interval = 1800;        # 30 minutes, adjusted per preset
-        wantedSize = "100G";    # Adjusted per preset
-        checkFsck = true;
-        alertOnIssues = true;
+        interval = 1800;        # 30 minutes
+        wantedSize = "100G";
+        diskUsageWarning = 0.8;  # Missing from original
       };
 
+      # Maintenance (corrected structure)
       maintenance = {
-        gcSchedule = "weekly";     # Adjusted per preset
-        fsckSchedule = "monthly";  # Adjusted per preset
-        enableAutoCommit = true;
-        enableAutoSync = false;
+        enableAutoGc = true;     # CORRECTED: Module field name
+        gcSchedule = "weekly";
+        enablePeriodicFsck = true;  # Missing from original
+        fsckSchedule = "monthly";
       };
 
-      sync = {
-        enable = false;
-        remotes = [];
-        schedule = "daily";
-        batchMode = true;
-      };
+      # REMOVED: sync section (doesn't exist in modules)
     };
 
-    # Resource limits (automatically set based on preset)
+    # Resource limits
     resources = {
       unifiedCollector = {
-        memoryMax = "1G";      # Adjusted per preset
-        cpuQuota = "200%";     # Adjusted per preset
-        tasksMax = 1000;       # Adjusted per preset
+        memoryMax = "1G";
+        cpuQuota = "200%";
+        tasksMax = 1000;
         ioWeight = 100;
       };
 
       promoWorker = {
-        memoryMax = "512M";    # Adjusted per preset
-        cpuQuota = "100%";     # Adjusted per preset
-        tasksMax = 500;        # Adjusted per preset
+        memoryMax = "512M";
+        cpuQuota = "100%";
+        tasksMax = 500;
         ioWeight = 100;
       };
     };
@@ -261,68 +300,79 @@
     # Coordinated update configuration
     update = {
       enable = true;
-      gracePeriod = 30;               # Seconds to wait for graceful shutdown
-      healthCheckTimeout = 60;        # Seconds to wait for health checks
-      rollbackOnFailure = true;       # Auto-rollback on health check failure
-      preserveData = true;            # Preserve DLQ data during updates
+      gracePeriod = 30;
+      healthCheckTimeout = 60;
+      rollbackOnFailure = true;
+      preserveData = true;
     };
 
-    # Monitoring configuration
+    # Monitoring configuration (COMPLETELY REWRITTEN to match module)
     monitoring = {
+      # Logging configuration (corrected to match module)
       logging = {
-        level = "info";
-        enableStructured = true;
-        enableColors = true;
-        enableTimestamps = true;
-      };
-
-      prometheus = {
-        enable = false;  # Enabled in "normal" and "max" presets
-        port = 9090;
-        retentionTime = "15d";
-        scrapeInterval = "15s";
-      };
-
-      alerting = {
-        enable = false;  # Enabled in "normal" and "max" presets
-        webhookUrl = null;
-        slackChannel = null;
-        emailRecipients = [];
+        retention = {
+          maxFiles = 10;
+          maxSize = "100M";
+          maxAge = "30d";
+        };
         
-        rules = {
-          highMemoryUsage = true;
-          diskSpaceLow = true;
-          serviceDown = true;
-          databaseConnectivity = true;
-          eventProcessingLag = true;
+        performance = {
+          slowQueryThreshold = 1000;
+          traceRequests = false;
         };
       };
 
-      observabilityStack = {
-        enable = false;  # Enabled in "normal" and "max" presets
-        prometheus = true;
-        grafana = true;
-        loki = false;
-        jaeger = false;
+      # Prometheus configuration (corrected structure)
+      prometheus = {
+        centralCollector = {
+          enable = false;
+          port = 2114;
+          endpoints = [];
+        };
       };
 
-      dashboards = {
-        grafana = {
-          enable = false;  # Enabled in "normal" and "max" presets
-          port = 3000;
-          adminPassword = "admin";
-          datasources = {
-            prometheus = true;
-            postgres = true;
+      # Alerting configuration (completely different from original)
+      alerting = {
+        healthAlerts = {
+          serviceDown = {
+            enable = true;
+            threshold = "2m";
+          };
+          highErrorRate = {
+            enable = true;
+            threshold = 0.05;
+          };
+          databaseConnections = {
+            enable = true;
+            maxConnectionsPercent = 0.8;
+          };
+        };
+        
+        resourceAlerts = {
+          highMemoryUsage = {
+            enable = true;
+            threshold = 0.9;
+          };
+          highCpuUsage = {
+            enable = true;
+            threshold = 0.8;
+          };
+          diskSpaceUsage = {
+            enable = true;
+            threshold = 0.85;
           };
         };
       };
+
+      # REMOVED: observabilityStack, dashboards.grafana (don't exist in monitoring module)
     };
 
-    # Preflight verification configuration
+    # Preflight verification configuration (EXPANDED)
     preflightVerification = {
       enable = true;
       timeout = 120;
+      
+      # Corrected phase structure
       phases = {
         databaseConnectivity = true;
         extensions = true;
@@ -331,6 +381,17 @@
         configuration = true;
         services = true;
         integration = true;
+      };
+      
+      # Missing options from original
+      skipPhases = [];
+      failureAction = "abort";
+      recordResults = true;
+      
+      notifications = {
+        enable = false;
+        onFailure = true;
+        onSuccess = false;
       };
     };
   };

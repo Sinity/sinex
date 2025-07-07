@@ -16,7 +16,7 @@ fn test_auto_registration_pattern() -> TestResult {
     let registry = builder.build();
     
     // After auto-registration, we should have filesystem events
-    assert!(registry.event_types.len() > 0);
+    assert!(!registry.event_types.is_empty());
     
     // Verify specific filesystem events are registered
     assert!(registry.has_event("file.created"));

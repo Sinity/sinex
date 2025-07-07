@@ -71,7 +71,7 @@ pub async fn insert_test_event_batch(pool: &DbPool, events: &[RawEvent]) -> Resu
     let mut event_ids = Vec::new();
 
     for event in events {
-        let inserted = queries::insert_event(&pool, event).await?;
+        let inserted = queries::insert_event(pool, event).await?;
         event_ids.push(inserted.id);
     }
 

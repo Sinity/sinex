@@ -255,14 +255,11 @@ impl ConfigValidator {
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
                 // Use the core validation function for consistency
-                match crate::validation::validate_path(path_str) {
-                    Err(_) => {
-                        return Err(CoreError::Configuration(format!(
-                            "Path at '{}' contains dangerous content",
-                            path
-                        )));
-                    }
-                    Ok(_) => {}
+                if crate::validation::validate_path(path_str).is_err() {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' contains dangerous content",
+                        path
+                    )));
                 }
                 
                 if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
@@ -284,14 +281,11 @@ impl ConfigValidator {
         let validator = Box::new(move |config: &ConfigValue| {
             if let Some(path_str) = config.optional_str(&path) {
                 // Use the core validation function for consistency
-                match crate::validation::validate_path(path_str) {
-                    Err(_) => {
-                        return Err(CoreError::Configuration(format!(
-                            "Path at '{}' contains dangerous content",
-                            path
-                        )));
-                    }
-                    Ok(_) => {}
+                if crate::validation::validate_path(path_str).is_err() {
+                    return Err(CoreError::Configuration(format!(
+                        "Path at '{}' contains dangerous content",
+                        path
+                    )));
                 }
                 
                 if !Path::new(path_str).is_absolute() {
@@ -333,14 +327,11 @@ impl ConfigValidator {
                 for (i, element) in array.iter().enumerate() {
                     if let Some(path_str) = element.as_str() {
                         // Use the core validation function and check for shell metacharacters
-                        match crate::validation::validate_path(path_str) {
-                            Err(_) => {
-                                return Err(CoreError::Configuration(format!(
-                                    "Path pattern at '{}[{}]' ('{}') contains dangerous content", 
-                                    path, i, path_str
-                                )));
-                            }
-                            Ok(_) => {}
+                        if crate::validation::validate_path(path_str).is_err() {
+                            return Err(CoreError::Configuration(format!(
+                                "Path pattern at '{}[{}]' ('{}') contains dangerous content", 
+                                path, i, path_str
+                            )));
                         }
                         
                         // Check for command injection patterns
@@ -644,7 +635,7 @@ mod tests {
         assert_eq!(config.require_str("name").unwrap(), "test");
         assert_eq!(config.require_i64("port").unwrap(), 8080);
         assert_eq!(config.require_u64("port").unwrap(), 8080);
-        assert_eq!(config.require_bool("enabled").unwrap(), true);
+        assert!(config.require_bool("enabled").unwrap());
 
         // Test nested access
         assert_eq!(

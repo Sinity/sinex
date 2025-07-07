@@ -41,7 +41,7 @@ fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
     let test_entries = [
         (
             "test-1",
-            1000_000_000_000i64,
+            1_000_000_000_000_i64,
             100_000_000i64,
             0,
             "echo test",
@@ -51,7 +51,7 @@ fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
         ),
         (
             "test-2",
-            2000_000_000_000i64,
+            2_000_000_000_000_i64,
             200_000_000i64,
             0,
             "ls -la",
@@ -61,7 +61,7 @@ fn get_or_create_atuin_db() -> anyhow::Result<PathBuf> {
         ),
         (
             "test-3",
-            3000_000_000_000i64,
+            3_000_000_000_000_i64,
             150_000_000i64,
             1,
             "git status",

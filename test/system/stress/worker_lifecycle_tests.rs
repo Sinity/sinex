@@ -436,7 +436,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         println!("  ✓ No race conditions detected - system maintained integrity");
     }
 
-    StressTestUtils::cleanup_test_data(&pool, &agent_name, "stress.race_condition").await?;
+    StressTestUtils::cleanup_test_data(pool, &agent_name, "stress.race_condition").await?;
 
     Ok(())
 }

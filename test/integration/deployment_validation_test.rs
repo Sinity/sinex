@@ -245,7 +245,6 @@ async fn test_configuration_validation(ctx: TestContext) -> TestResult {
         _batch_timeout_ms: 500,
         channel_buffer_size: 10_000,
         sources: vec!["fs".to_string()],
-        ..Default::default()
     };
 
     assert!(valid_config.validate().is_ok());
@@ -625,8 +624,10 @@ mod mock_types {
         }
     }
 
+    type HealthCheck = Box<dyn Fn() -> bool>;
+    
     pub struct HealthChecker {
-        checks: Vec<(&'static str, Box<dyn Fn() -> bool>)>,
+        checks: Vec<(&'static str, HealthCheck)>,
     }
 
     impl HealthChecker {
@@ -787,15 +788,14 @@ mod mock_types {
         }
     }
 
+    type AsyncCheckFn = Box<
+        dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, anyhow::Error>>>,
+        >,
+    >;
+    
     pub struct DeploymentChecklist {
-        checks: Vec<(
-            &'static str,
-            Box<
-                dyn Fn() -> std::pin::Pin<
-                    Box<dyn std::future::Future<Output = Result<bool, anyhow::Error>>>,
-                >,
-            >,
-        )>,
+        checks: Vec<(&'static str, AsyncCheckFn)>,
     }
 
     impl DeploymentChecklist {

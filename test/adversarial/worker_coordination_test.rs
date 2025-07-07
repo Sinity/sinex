@@ -107,11 +107,9 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 
     println!("\nMicrosecond claim race results:");
     let mut total_claimed = 0;
-    for result in results {
-        if let Ok((worker_id, claimed)) = result {
-            println!("  Worker {}: claimed {} events", worker_id, claimed);
-            total_claimed += claimed;
-        }
+    for (worker_id, claimed) in results.into_iter().flatten() {
+        println!("  Worker {}: claimed {} events", worker_id, claimed);
+        total_claimed += claimed;
     }
 
     println!(
@@ -252,10 +250,8 @@ async fn test_dead_worker_holding_locks(ctx: TestContext) -> TestResult {
     let healthy_results = join_all(healthy_workers).await;
 
     println!("\nHealthy worker results:");
-    for result in healthy_results {
-        if let Ok(msg) = result {
-            println!("  {}", msg);
-        }
+    for msg in healthy_results.into_iter().flatten() {
+        println!("  {}", msg);
     }
 
     // Kill zombie

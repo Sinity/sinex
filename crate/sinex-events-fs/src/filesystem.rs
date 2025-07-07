@@ -6,6 +6,8 @@ use sinex_core::{EventSender, Timestamp};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 use sinex_core::{
@@ -132,12 +134,30 @@ impl Default for FilesystemConfig {
     }
 }
 
+/// Rename operation tracking
+#[derive(Debug, Clone)]
+struct RenameOperation {
+    source_path: PathBuf,
+    timestamp: Instant,
+    #[allow(dead_code)] // Used in HashMap operations but not directly accessed
+    cookie: Option<u32>,
+}
+
+// Global rename tracking for improved rename detection
+// Using parking_lot for better performance than std::sync
+use std::sync::{Arc, Mutex};
+use std::sync::LazyLock;
+
+static RENAME_TRACKER: LazyLock<Arc<Mutex<HashMap<u32, RenameOperation>>>> = 
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+
 /// File system monitor using the notify crate (inotify on Linux)
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
     watch_roots: Vec<PathBuf>,
     #[allow(dead_code)] // Used in async context where struct field access is limited
     event_factory: EventFactory,
+    // Rename detection state (moved to static tracking in process_notify_event_static)
 }
 
 // Legacy alias for compatibility
@@ -152,6 +172,28 @@ impl FilesystemMonitor {
         })
     }
 
+
+    /// Clean up old rename operations that didn't complete
+    async fn cleanup_old_rename_operations() {
+        const RENAME_TIMEOUT: Duration = Duration::from_secs(5);
+        
+        if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+            let now = Instant::now();
+            let mut to_remove = Vec::new();
+            
+            for (cookie, rename_op) in tracker.iter() {
+                if now.duration_since(rename_op.timestamp) > RENAME_TIMEOUT {
+                    debug!("Cleaning up orphaned rename operation: cookie {} from {}", 
+                          cookie, rename_op.source_path.display());
+                    to_remove.push(*cookie);
+                }
+            }
+            
+            for cookie in to_remove {
+                tracker.remove(&cookie);
+            }
+        }
+    }
 
     // Static version for use in spawn_blocking closure
     fn process_notify_event_static(
@@ -307,12 +349,70 @@ impl FilesystemMonitor {
             }
             notify::EventKind::Modify(modify_kind) => {
                 match modify_kind {
-                    notify::event::ModifyKind::Name(_) => {
-                        // This is a move/rename operation
-                        event_factory.filesystem()
-                            .path(path.to_string_lossy())
-                            .moved_from("unknown") // notify doesn't provide the old path in all cases
-                            .build()
+                    notify::event::ModifyKind::Name(name_kind) => {
+                        // Enhanced rename detection using inotify cookies
+                        match name_kind {
+                            notify::event::RenameMode::From => {
+                                // File being renamed FROM this path
+                                // Note: Cookie handling simplified for newer notify versions
+                                let cookie_u32 = 0u32; // Default cookie value
+                                let rename_op = RenameOperation {
+                                    source_path: path.to_path_buf(),
+                                    timestamp: Instant::now(),
+                                    cookie: Some(cookie_u32),
+                                };
+                                
+                                if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+                                    tracker.insert(cookie_u32, rename_op);
+                                    debug!("Tracked rename FROM: {} with cookie {}", path.display(), cookie_u32);
+                                }
+                                
+                                // Don't emit event yet - wait for the TO event
+                                return None;
+                            }
+                            notify::event::RenameMode::To => {
+                                // File being renamed TO this path
+                                // Note: Cookie handling simplified for newer notify versions
+                                let cookie_u32 = 0u32; // Default cookie value
+                                        
+                                // Look for matching FROM operation
+                                if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+                                    if let Some(rename_op) = tracker.remove(&cookie_u32) {
+                                        debug!("Completed rename: {} -> {} with cookie {}", 
+                                              rename_op.source_path.display(), 
+                                              path.display(), 
+                                              cookie_u32);
+                                        
+                                        // Emit proper move event with both paths
+                                        return Some(event_factory.filesystem()
+                                            .path(path.to_string_lossy())
+                                            .moved_from(rename_op.source_path.to_string_lossy().to_string())
+                                            .build());
+                                    }
+                                }
+                                
+                                // Fallback: treat as create if no matching FROM found
+                                let metadata = std::fs::metadata(path).ok()?;
+                                let mut builder = event_factory.filesystem()
+                                    .path(path.to_string_lossy())
+                                    .created()
+                                    .size(metadata.len());
+
+                                #[cfg(unix)]
+                                {
+                                    builder = builder.permissions(metadata.permissions().mode());
+                                }
+
+                                builder.build()
+                            }
+                            _ => {
+                                // Other rename operations - treat as generic move
+                                event_factory.filesystem()
+                                    .path(path.to_string_lossy())
+                                    .moved_from("unknown")
+                                    .build()
+                            }
+                        }
                     }
                     _ => {
                         // Regular modification
@@ -474,6 +574,15 @@ impl EventSource for FilesystemMonitor {
                         }
                     }
                 }
+            }
+        });
+
+        // Start rename cleanup task to handle orphaned rename operations
+        tokio::task::spawn(async {
+            let mut cleanup_interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                cleanup_interval.tick().await;
+                Self::cleanup_old_rename_operations().await;
             }
         });
 

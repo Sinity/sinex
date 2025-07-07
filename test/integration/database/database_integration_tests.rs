@@ -89,7 +89,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     let term_event = events::kitty_event("ls -la");
 
     // Insert all events concurrently
-    let events_to_insert = vec![&fs_event1, &fs_event2, &term_event];
+    let events_to_insert = [&fs_event1, &fs_event2, &term_event];
     let insert_tasks: Vec<_> = events_to_insert.iter().map(|&event| {
         let pool = ctx.pool().clone();
         let event = event.clone();

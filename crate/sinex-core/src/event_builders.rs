@@ -423,7 +423,7 @@ impl ClipboardEventBuilder {
     }
 
     pub fn build(self) -> crate::RawEvent {
-        let content = self.content.unwrap_or_else(|| "".to_string());
+        let content = self.content.unwrap_or_default();
         let content_type = self.content_type.unwrap_or(ClipboardContentType::Text);
 
         let selection_type = self.selection_type.unwrap_or_else(|| "clipboard".to_string());
@@ -699,7 +699,7 @@ impl SystemEventBuilder {
     }
 
     pub fn build_journal_entry(self) -> crate::RawEvent {
-        let message = self.message.unwrap_or_else(|| "".to_string());
+        let message = self.message.unwrap_or_default();
         let timestamp = self.timestamp.unwrap_or_else(Utc::now);
 
         let mut payload = json!({

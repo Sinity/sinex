@@ -112,7 +112,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|w| w)
+            .flatten()
             .collect();
 
             // Use timing utility for work queue status counting
@@ -257,7 +257,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         );
     }
 
-    StressTestUtils::cleanup_test_data(&pool, &agent_name, "stress.deadlock_scenario").await?;
+    StressTestUtils::cleanup_test_data(pool, &agent_name, "stress.deadlock_scenario").await?;
 
     Ok(())
 }

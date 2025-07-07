@@ -602,30 +602,29 @@ impl CollectorMetrics {
         update: impl FnOnce(&mut SourceMetrics),
     ) {
         // Enhanced metrics update with error handling and context
-        match self.source_metrics.write().await {
-            mut sources => {
-                let metrics = sources
-                    .entry(source.to_string())
-                    .or_insert_with(|| SourceMetrics {
-                        events_total: 0,
-                        errors_total: 0,
-                        bytes_processed: 0,
-                        last_event_time: None,
-                        custom: HashMap::new(),
-                    });
-                
-                // Apply the update function
-                update(metrics);
-                
-                // Log metrics update for observability
-                tracing::debug!(
-                    source = source,
-                    events_total = metrics.events_total,
-                    errors_total = metrics.errors_total,
-                    bytes_processed = metrics.bytes_processed,
-                    "Source metrics updated"
-                );
-            }
+        let mut sources = self.source_metrics.write().await;
+        {
+            let metrics = sources
+                .entry(source.to_string())
+                .or_insert_with(|| SourceMetrics {
+                    events_total: 0,
+                    errors_total: 0,
+                    bytes_processed: 0,
+                    last_event_time: None,
+                    custom: HashMap::new(),
+                });
+            
+            // Apply the update function
+            update(metrics);
+            
+            // Log metrics update for observability
+            tracing::debug!(
+                source = source,
+                events_total = metrics.events_total,
+                errors_total = metrics.errors_total,
+                bytes_processed = metrics.bytes_processed,
+                "Source metrics updated"
+            );
         }
     }
 

@@ -46,19 +46,20 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
     assert!(result.is_ok(), "Should be able to create agent manifest");
 
     // Verify all fields were stored
-    let manifest: (
-        String,
-        Option<String>,
-        String,
-        String,
-        String,
-        Option<serde_json::Value>,
-        Option<serde_json::Value>,
-        Option<serde_json::Value>,
-        Option<serde_json::Value>,
-        Option<serde_json::Value>,
-        Option<String>,
-    ) = sqlx::query_as(
+    type ManifestRow = (
+        String,                         // agent_name
+        Option<String>,                 // description
+        String,                         // version
+        String,                         // status
+        String,                         // agent_type
+        Option<serde_json::Value>,      // config_template_json
+        Option<serde_json::Value>,      // produces_event_types
+        Option<serde_json::Value>,      // subscribes_to_event_types
+        Option<serde_json::Value>,      // required_capabilities
+        Option<serde_json::Value>,      // llm_dependencies
+        Option<String>,                 // repo_url
+    );
+    let manifest: ManifestRow = sqlx::query_as(
         "SELECT agent_name, description, version, status, agent_type,
                 config_template_json, produces_event_types, subscribes_to_event_types,
                 required_capabilities, llm_dependencies, repo_url
@@ -167,7 +168,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&event_id.to_string())
+    .bind(event_id.to_string())
     .bind("delete_test")
     .bind("test_event")
     .bind("test_host")
@@ -180,7 +181,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
         "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
          VALUES ($1::ulid, $2)",
     )
-    .bind(&event_id.to_string())
+    .bind(event_id.to_string())
     .bind("delete_test_agent")
     .execute(ctx.pool())
     .await
@@ -266,7 +267,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
          WHERE agent_name = $4",
     )
     .bind("error_state")
-    .bind(&error_time)
+    .bind(error_time)
     .bind("Connection timeout to data source")
     .bind("status_test_agent")
     .execute(ctx.pool())

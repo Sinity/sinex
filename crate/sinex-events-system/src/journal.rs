@@ -179,7 +179,7 @@ impl EventSource for JournalMonitor {
             return Err(ErrorContext::new(CoreError::Configuration("journalctl command failed".to_string()))
                 .with_operation("initialize_journal_monitor")
                 .with_context("tool", "journalctl")
-                .with_context("exit_status", &check.status.to_string())
+                .with_context("exit_status", check.status.to_string())
                 .build());
         }
 
@@ -264,15 +264,15 @@ impl JournalMonitor {
             .map_err(|e| 
                 ErrorContext::new(CoreError::Io(format!("Failed to run journalctl: {}", e)))
                     .with_operation("import_historical")
-                    .with_context("args", &format!("{:?}", args))
+                    .with_context("args", format!("{:?}", args))
                     .build())?;
 
         if !output.status.success() {
             return Err(ErrorContext::new(CoreError::Io("journalctl failed".to_string()))
                 .with_operation("import_historical")
-                .with_context("exit_status", &output.status.to_string())
-                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
-                .with_context("args", &format!("{:?}", args))
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                .with_context("args", format!("{:?}", args))
                 .build());
         }
 
@@ -390,7 +390,7 @@ impl JournalMonitor {
             .map_err(|e| 
                 ErrorContext::new(CoreError::Io(format!("Failed to spawn journalctl: {}", e)))
                     .with_operation("follow_journal")
-                    .with_context("args", &format!("{:?}", args))
+                    .with_context("args", format!("{:?}", args))
                     .build())?;
 
         let stdout = child
@@ -485,7 +485,7 @@ impl JournalMonitor {
             .ok_or_else(|| 
                 ErrorContext::new(CoreError::Validation("Invalid timestamp".to_string()))
                     .with_operation("parse_journal_entry")
-                    .with_context("timestamp_us", &timestamp_us.to_string())
+                    .with_context("timestamp_us", timestamp_us.to_string())
                     .build())?;
 
         // Extract optional fields

@@ -518,8 +518,8 @@ impl HyprlandIPCMonitor {
             return Err(ErrorContext::new(CoreError::Io("hyprctl failed".to_string()))
                 .with_operation("get_hyprctl_data")
                 .with_context("command", command)
-                .with_context("exit_status", &output.status.to_string())
-                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
                 .build());
         }
 
@@ -527,7 +527,7 @@ impl HyprlandIPCMonitor {
             ErrorContext::new(CoreError::Serialization(format!("Failed to parse hyprctl output: {}", e)))
                 .with_operation("get_hyprctl_data")
                 .with_context("command", command)
-                .with_context("output_size", &output.stdout.len().to_string())
+                .with_context("output_size", output.stdout.len().to_string())
                 .build())?;
 
         // Update cache

@@ -176,7 +176,7 @@ pub async fn calculate_all_queue_metrics(pool: DbPoolRef<'_>) -> Result<QueueMet
         result.map_err(|e| {
             let error_context = ErrorContext::new(CoreError::Database(format!("Queue metrics calculation failed: {}", e)))
                 .with_operation("calculate_all_queue_metrics")
-                .with_context("duration_ms", &metrics_start.elapsed().as_millis().to_string())
+                .with_context("duration_ms", metrics_start.elapsed().as_millis().to_string())
                 .with_context("table", "work_queue")
                 .with_context("metric_types", "queue_depth,dequeue_latency,agent_lag,overall_stats")
                 .with_context("suggestion", "Check database connectivity and work_queue table performance")

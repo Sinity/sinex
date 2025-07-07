@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 90% (Complete database schema with versioning, missing only API layer)
+**Implementation**: 85% (Complete database schema with versioning, missing Rust models and CRUD API layer)
 **Dependencies**: `pgx_ulid` extension, `core.blobs` table, `core.set_updated_at_trigger_func_generic()` trigger function
 **Blocks**: PKM note management, content versioning, artifact-based workflows, content search and discovery
 

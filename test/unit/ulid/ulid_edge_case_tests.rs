@@ -244,7 +244,7 @@ async fn test_ulid_lexicographic_ordering_matches_temporal(_ctx: TestContext) ->
 
     // Sort by string representation
     let mut string_sorted = ulids.clone();
-    string_sorted.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    string_sorted.sort_by_key(|a| a.to_string());
 
     // Sort by ULID comparison
     let mut ulid_sorted = ulids.clone();

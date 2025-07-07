@@ -151,7 +151,7 @@ async fn test_git_annex_configuration(ctx: TestContext) -> TestResult {
 
     // Verify configuration was applied
     let output = tokio::process::Command::new("git")
-        .args(&["config", "annex.numcopies"])
+        .args(["config", "annex.numcopies"])
         .current_dir(&repo_path)
         .output()
         .await?;
@@ -258,7 +258,7 @@ async fn test_annex_deduplication(ctx: TestContext) -> TestResult {
 
     // Check that git-annex recognizes the deduplication
     let output = tokio::process::Command::new("git")
-        .args(&["annex", "find", "--include=*"])
+        .args(["annex", "find", "--include=*"])
         .current_dir(temp_dir.path())
         .output()
         .await?;

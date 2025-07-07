@@ -344,6 +344,7 @@ pub async fn update_agent_heartbeat_with_context(
 }
 
 /// Insert DLQ event with enhanced error context
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_dlq_event_with_context(
     pool: DbPoolRef<'_>,
     failed_event_id: Ulid,
@@ -638,7 +639,8 @@ pub async fn database_health_check_with_context(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[allow(unused_imports)]
+    use super::*; // Not actually unused - needed for test functionality
     use sinex_core::EventFactory;
 
     #[tokio::test]
@@ -648,7 +650,7 @@ mod tests {
         // Testing that error context is properly propagated
         
         let factory = EventFactory::new("test");
-        let event = factory.filesystem()
+        let _event = factory.filesystem()
             .path("/test.txt")
             .created()
             .size(1024)

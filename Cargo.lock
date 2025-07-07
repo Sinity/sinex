@@ -3054,6 +3054,7 @@ name = "sinex-db"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "blake3",
  "chrono",
  "gethostname 0.4.3",
  "jsonschema",

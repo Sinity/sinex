@@ -200,7 +200,7 @@ impl EventSource for ScrollbackCapture {
                     .await
                     .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
                         .with_operation("initialize_scrollback_capture")
-                        .with_context("repo_path", &path.display().to_string())
+                        .with_context("repo_path", path.display().to_string())
                         .with_context("repo_name", "sinex-scrollback-annex")
                         .build())?;
             }
@@ -214,7 +214,7 @@ impl EventSource for ScrollbackCapture {
             let git_annex = GitAnnex::new(annex_config).map_err(|e| 
                 ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
                     .with_operation("initialize_scrollback_capture")
-                    .with_context("repo_path", &path.display().to_string())
+                    .with_context("repo_path", path.display().to_string())
                     .build()
             )?;
 
@@ -434,8 +434,8 @@ impl ScrollbackCapture {
         if !output.status.success() {
             return Err(ErrorContext::new(CoreError::Io("kitty @ ls failed".to_string()))
                 .with_operation("get_kitty_windows")
-                .with_context("exit_status", &output.status.to_string())
-                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
                 .build());
         }
 
@@ -503,9 +503,9 @@ impl ScrollbackCapture {
         if !output.status.success() {
             return Err(ErrorContext::new(CoreError::Io("Failed to get scrollback".to_string()))
                 .with_operation("capture_scrollback_for_window")
-                .with_context("window_id", &window_id.to_string())
-                .with_context("exit_status", &output.status.to_string())
-                .with_context("stderr", &String::from_utf8_lossy(&output.stderr))
+                .with_context("window_id", window_id.to_string())
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
                 .build());
         }
 
@@ -590,7 +590,7 @@ impl ScrollbackCapture {
             .await
             .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
                 .with_operation("store_in_git_annex")
-                .with_context("tmp_file", &tmp_file_path.display().to_string())
+                .with_context("tmp_file", tmp_file_path.display().to_string())
                 .build())?;
 
         // Add file to git-annex
@@ -598,7 +598,7 @@ impl ScrollbackCapture {
             .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
                 .with_operation("store_in_git_annex")
                 .with_context("filename", &filename)
-                .with_context("window_id", &window.id.to_string())
+                .with_context("window_id", window.id.to_string())
                 .build())?;
 
         // Clean up temporary file
@@ -608,6 +608,7 @@ impl ScrollbackCapture {
         Ok((filename, annex_key.key))
     }
 
+    #[allow(clippy::type_complexity)]
     fn chunk_scrollback_content(&self, content: &str) -> Result<(Option<String>, Option<Vec<serde_json::Value>>, bool, Option<u32>, Option<String>, Option<String>)> {
         if let Some(ref chunking_service) = self.chunking_service {
             let chunks = chunking_service.chunk_string(content).map_err(|e| CoreError::Other(format!("Chunking failed: {}", e)))?;

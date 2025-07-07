@@ -354,7 +354,7 @@ impl ChannelHealthReport {
             score *= 0.5_f64.powf((self.queue_depth - 100) as f64 / 100.0);
         }
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 }
 
@@ -438,7 +438,7 @@ impl DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RawEventBuilder, JsonValue};
+    use crate::RawEventBuilder;
     use serde_json::json;
 
     #[tokio::test]

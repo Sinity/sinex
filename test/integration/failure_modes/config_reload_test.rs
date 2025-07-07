@@ -166,7 +166,7 @@ async fn test_invalid_config_reload_handling(ctx: TestContext) -> TestResult {
         "batch_size": 100
     });
 
-    let invalid_configs = vec![
+    let invalid_configs = [
         // Missing required field
         serde_json::json!({
             "batch_size": 100
@@ -186,7 +186,7 @@ async fn test_invalid_config_reload_handling(ctx: TestContext) -> TestResult {
     // Simulate config validation
     fn validate_config(config: &serde_json::Value) -> std::result::Result<(), String> {
         // Check required fields
-        if !config.get("database_url").is_some() {
+        if config.get("database_url").is_none() {
             return Err("Missing required field: database_url".to_string());
         }
 

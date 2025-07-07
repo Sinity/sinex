@@ -384,7 +384,7 @@ in
           cfg.directories.logs
         ];
         
-        ExecStart = "${cfg.package}/bin/sinex-collector --config ${import ../config-gen.nix { inherit lib pkgs; } .mkCollectorConfigFile cfg.unifiedCollector cfg}";
+        ExecStart = "${cfg.package}/bin/sinex-collector";
         
         Environment = [
           "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"

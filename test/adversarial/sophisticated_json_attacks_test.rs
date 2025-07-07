@@ -44,10 +44,7 @@ async fn test_circular_json_references(ctx: TestContext) -> TestResult {
     match validation_result {
         Ok(_) => {
             // If accepted, verify it's properly handled
-            assert!(
-                true,
-                "Validator accepted circular JSON - should handle safely"
-            );
+            // This is expected behavior for valid JSON
         }
         Err(e) => {
             // If rejected, error should be meaningful
@@ -107,7 +104,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
                 }
 
                 // Verify the JSON structure is maintained
-                assert!(json_str.len() > 0, "Serialized JSON should not be empty");
+                assert!(!json_str.is_empty(), "Serialized JSON should not be empty");
             }
             Err(_) => {
                 break; // Stop on serialization failure

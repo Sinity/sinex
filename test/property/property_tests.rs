@@ -33,7 +33,7 @@ fn assert_json_values_equivalent(a: &Value, b: &Value) {
             for (k, v1) in o1 {
                 let v2 = o2
                     .get(k)
-                    .expect(&format!("Key {} missing in second object", k));
+                    .unwrap_or_else(|| panic!("Key {} missing in second object", k));
                 assert_json_values_equivalent(v1, v2);
             }
         }
@@ -120,7 +120,7 @@ proptest! {
         // Calculate exponential backoff
         let delay = base_delay * (2.0_f64.powi(attempts));
         let with_jitter = delay * 1.1; // Max jitter
-        let clamped = with_jitter.max(1.0).min(24.0 * 3600.0);
+        let clamped = with_jitter.clamp(1.0, 24.0 * 3600.0);
 
         // Verify bounds
         assert!(clamped >= 1.0);
