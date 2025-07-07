@@ -45,7 +45,7 @@ pub use sinex_core::{
     unified_collector::{EventRegistry},
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
     ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator,
-    EventFactory, ResultExt, ValidationChain,
+    ResultExt, ValidationChain,
 };
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
@@ -65,8 +65,9 @@ pub use tempfile::{NamedTempFile, TempDir};
 // Common modules
 pub use crate::common::{database_helpers, event_sources, events};
 // Test context - THE way to write tests
-// Event factory - THE way to create events
-pub use sinex_core::EventFactory;
+// Event factory and builders - THE way to create events
+pub use sinex_core::{EventFactory, RawEventBuilder};
+pub use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 // Database helpers
 // NEW: Unified database access
 // pub use crate::common::create_test_db_pool;

@@ -32,6 +32,9 @@ pub mod database_pool;
 // Unified test context for all tests
 pub mod test_context;
 
+// Event builders for test compatibility
+pub mod event_builders;
+
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;

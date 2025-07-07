@@ -20,8 +20,9 @@
 //! ```
 
 use crate::common::database_pool::TestDatabase;
-use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+// Event builders moved to sinex-core
 use crate::common::prelude::*;
+use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
     wait_for_work_queue_count,

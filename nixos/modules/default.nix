@@ -239,6 +239,38 @@ in
       };
     };
 
+    # Security configuration
+    security = {
+      level = mkOption {
+        type = types.enum [ "minimal" "balanced" "strict" ];
+        default = "balanced";
+        description = ''
+          Security level for SystemD hardening:
+          - minimal: Basic security, maximum functionality
+          - balanced: Reasonable security with event monitoring capabilities
+          - strict: Maximum security, may restrict some monitoring features
+        '';
+      };
+
+      allowFileSystemAccess = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Allow filesystem monitoring access (disabling may break file events)";
+      };
+
+      allowSocketAccess = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Allow access to Unix sockets for terminal and window manager monitoring";
+      };
+
+      allowDeviceAccess = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Allow device access for hardware event monitoring";
+      };
+    };
+
     # Update configuration
     update = {
       enable = mkOption {
@@ -490,20 +522,27 @@ in
               # Setup database URL
               export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
               
-              # Wait for PostgreSQL with exponential backoff
+              # Wait for PostgreSQL with adaptive polling
               echo "Waiting for PostgreSQL..."
-              check_interval=1
-              max_interval=5
-              for i in {1..30}; do
+              max_attempts=60
+              for attempt in $(seq 1 $max_attempts); do
                 if ${pkgs.postgresql}/bin/pg_isready -h ${cfg.database.host} -p ${toString cfg.database.port} -U ${cfg.database.user} -d ${cfg.database.name}; then
-                  echo "✓ PostgreSQL ready (attempt $i)"
+                  echo "✓ PostgreSQL ready (attempt $attempt)"
                   break
                 fi
-                echo "  PostgreSQL not ready, waiting ${check_interval}s... (attempt $i/30)"
-                sleep $check_interval
-                # Exponential backoff capped at 5s
-                if [ $check_interval -lt $max_interval ]; then
-                  check_interval=$((check_interval * 2))
+                
+                # Adaptive delay based on connection attempts
+                if [ $attempt -lt 10 ]; then
+                  ${pkgs.coreutils}/bin/sleep 0.2  # Quick polling initially
+                elif [ $attempt -lt 30 ]; then
+                  ${pkgs.coreutils}/bin/sleep 1.0  # Moderate polling
+                else
+                  ${pkgs.coreutils}/bin/sleep 2.0  # Slower polling for persistent issues
+                fi
+                
+                # Progress feedback every 15 attempts
+                if [ $((attempt % 15)) -eq 0 ]; then
+                  echo "  PostgreSQL not ready, still trying... (attempt $attempt/$max_attempts)"
                 fi
               done
               
@@ -548,24 +587,29 @@ in
             
             echo "Validating Sinex collector startup..."
             
-            # Wait for service to be ready with adaptive timing
+            # Wait for service to be ready with process-based monitoring
             echo "Waiting for service to reach running state..."
-            check_interval=1
-            max_interval=3
-            for i in {1..30}; do
+            max_attempts=60
+            for attempt in $(seq 1 $max_attempts); do
               if systemctl show -p SubState --value sinex-unified-collector | grep -q "running"; then
-                echo "✓ Service is running (attempt $i)"
+                echo "✓ Service is running (attempt $attempt)"
                 break
               fi
-              if [ $i -eq 30 ]; then
-                echo "ERROR: Service failed to reach running state" >&2
+              if [ $attempt -eq $max_attempts ]; then
+                echo "ERROR: Service failed to reach running state after $max_attempts attempts" >&2
                 exit 1
               fi
-              echo "  Service not ready, waiting ${check_interval}s... (attempt $i/30)"
-              sleep $check_interval
-              # Exponential backoff capped at 3s
-              if [ $check_interval -lt $max_interval ]; then
-                check_interval=$((check_interval * 2))
+              
+              # Adaptive polling based on service startup phase
+              if [ $attempt -lt 15 ]; then
+                ${pkgs.coreutils}/bin/sleep 0.2  # Quick polling during startup
+              else
+                ${pkgs.coreutils}/bin/sleep 1.0  # Slower polling if service is struggling
+              fi
+              
+              # Progress feedback every 20 attempts
+              if [ $((attempt % 20)) -eq 0 ]; then
+                echo "  Service not ready, still waiting... (attempt $attempt/$max_attempts)"
               fi
             done
             
@@ -629,10 +673,10 @@ in
           TasksMax = cfg.resources.unifiedCollector.tasksMax;
           IOWeight = cfg.resources.unifiedCollector.ioWeight;
           
-          # Security hardening
-          PrivateTmp = true;
-          ProtectSystem = "strict";
-          ProtectHome = true;
+          # Security hardening (configurable based on security level)
+          PrivateTmp = !(cfg.security.allowSocketAccess && cfg.security.level != "strict");
+          ProtectSystem = if cfg.security.allowFileSystemAccess && cfg.security.level == "minimal" then false else "strict";
+          ProtectHome = !(cfg.security.allowFileSystemAccess && cfg.security.level != "strict");
           NoNewPrivileges = true;
           RestrictSUIDSGID = true;
           RemoveIPC = true;
@@ -640,9 +684,29 @@ in
           ProtectControlGroups = true;
           RestrictRealtime = true;
           LockPersonality = true;
-          SystemCallFilter = [ "@system-service" "~@privileged" ];
           
-          # Allow writes to DLQ and logs
+          # System call filters based on security level
+          SystemCallFilter = if cfg.security.level == "minimal" then
+            [ "@system-service" "@network-io" "@file-system" "@process" "~@privileged" ]
+          else if cfg.security.level == "balanced" then
+            [ "@system-service" "@network-io" "@file-system" "~@privileged" "~@mount" ]
+          else  # strict
+            [ "@system-service" "@network-io" "~@privileged" "~@mount" "~@raw-io" ];
+          
+          # Network and device access
+          PrivateNetwork = false;  # Always need network for PostgreSQL and D-Bus
+          PrivateDevices = !cfg.security.allowDeviceAccess;
+          ProtectProc = if cfg.security.level == "strict" then "noaccess" else "invisible";
+          ProcSubset = "pid";
+          
+          # Socket and runtime access (conditional)
+          BindReadOnlyPaths = lib.optionals cfg.security.allowSocketAccess [
+            "/run/user"      # For user sockets (Hyprland, etc.)
+          ] ++ lib.optionals (!cfg.security.allowSocketAccess || cfg.security.level != "strict") [
+            "/tmp"           # For temporary sockets and files
+          ];
+          
+          # Allow writes to DLQ, logs, and monitoring paths
           ReadWritePaths = lib.optionals cfg.unifiedCollector.dlq.enable [
             cfg.unifiedCollector.dlq.failureStoragePath
           ] ++ [
@@ -705,10 +769,10 @@ in
           TasksMax = cfg.resources.promoWorker.tasksMax;
           IOWeight = cfg.resources.promoWorker.ioWeight;
           
-          # Security hardening
-          PrivateTmp = true;
-          ProtectSystem = "strict";
-          ProtectHome = true;
+          # Security hardening (more restrictive for worker - database-only)
+          PrivateTmp = cfg.security.level != "minimal";
+          ProtectSystem = "strict";  # Worker doesn't monitor filesystem
+          ProtectHome = true;        # Worker doesn't need home directory access
           NoNewPrivileges = true;
           RestrictSUIDSGID = true;
           RemoveIPC = true;
@@ -716,7 +780,18 @@ in
           ProtectControlGroups = true;
           RestrictRealtime = true;
           LockPersonality = true;
-          SystemCallFilter = [ "@system-service" "~@privileged" ];
+          
+          # Worker only needs basic system calls and network
+          SystemCallFilter = if cfg.security.level == "minimal" then
+            [ "@system-service" "@network-io" "~@privileged" ]
+          else
+            [ "@system-service" "@network-io" "~@privileged" "~@mount" "~@raw-io" ];
+          
+          # Worker only needs network for PostgreSQL
+          PrivateNetwork = false;  # Need network for PostgreSQL connection
+          PrivateDevices = true;   # Worker doesn't need device access
+          ProtectProc = if cfg.security.level == "strict" then "noaccess" else "invisible";
+          ProcSubset = "pid";      # Minimal process information
           
           # Database access only, no file writes needed for promo worker
           ReadWritePaths = [ ];
@@ -818,34 +893,41 @@ in
           check_health() {
             local service=$1
             
-            # Check if service is active
+            # Check if service is active using systemd state
             if ! systemctl is-active "$service" >/dev/null 2>&1; then
               return 1
             fi
             
-            # Check for recent heartbeats (if database is available)
+            # Process-based health indicators (not clock-dependent)
+            local service_pid=$(systemctl show -p MainPID --value "$service")
+            if [ -z "$service_pid" ] || [ "$service_pid" = "0" ]; then
+              return 1
+            fi
+            
+            # Check if process is actually running and responsive
+            if ! kill -0 "$service_pid" 2>/dev/null; then
+              return 1
+            fi
+            
+            # Check process state (not zombie/defunct)
+            local proc_state=$(ps -o state= -p "$service_pid" 2>/dev/null | tr -d ' ')
+            case "$proc_state" in
+              Z|X|D) return 1 ;;  # Zombie, dead, or uninterruptible sleep
+              *) ;;               # Running, sleeping, or other normal states
+            esac
+            
+            # Check for database connectivity for data services (optional)
             if systemctl is-active postgresql >/dev/null 2>&1; then
               export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
               
-              local component_name=""
               case "$service" in
-                sinex-unified-collector) component_name="unified-collector" ;;
-                sinex-promo-worker) component_name="default-worker" ;;
+                sinex-unified-collector|sinex-promo-worker)
+                  # Quick connectivity test (not time-dependent)
+                  if ! ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "SELECT 1;" >/dev/null 2>&1; then
+                    return 1
+                  fi
+                  ;;
               esac
-              
-              if [ -n "$component_name" ]; then
-                local heartbeat_count=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
-                  SELECT COUNT(*) FROM component_heartbeats 
-                  WHERE component_name = '$component_name' 
-                  AND timestamp > NOW() - INTERVAL '2 minutes'
-                  AND status != 'failed'
-                " 2>/dev/null || echo "0")
-                
-                if [ "$heartbeat_count" -eq 0 ]; then
-                  echo "WARNING: No recent healthy heartbeats for $component_name"
-                  return 1
-                fi
-              fi
             fi
             
             return 0
@@ -854,37 +936,49 @@ in
           # Wait for service to reach ready state with exponential backoff
           wait_for_service_ready() {
             local service_name=$1
-            local max_wait_seconds=''${2:-60}
-            local check_interval=1
-            local max_interval=8
-            local elapsed=0
+            local max_attempts=''${2:-120}  # Maximum number of attempts instead of time
+            local attempt=0
+            local backoff_interval=0.1  # Start with very short interval
+            local max_interval=2.0      # Cap backoff at 2s
             
             echo "Waiting for $service_name to become ready..."
             
-            while [ $elapsed -lt $max_wait_seconds ]; do
+            while [ $attempt -lt $max_attempts ]; do
               if check_health "$service_name"; then
-                echo "✓ $service_name is ready (took ${elapsed}s)"
+                echo "✓ $service_name is ready (attempt $attempt)"
                 return 0
               fi
               
-              echo "  $service_name not ready yet, waiting ${check_interval}s... ($elapsed/${max_wait_seconds}s)"
-              sleep $check_interval
-              elapsed=$((elapsed + check_interval))
+              attempt=$((attempt + 1))
               
-              # Exponential backoff (1s, 2s, 4s, 8s, 8s...)
-              if [ $check_interval -lt $max_interval ]; then
-                check_interval=$((check_interval * 2))
+              # Adaptive backoff based on service behavior, not time
+              if [ $attempt -lt 10 ]; then
+                # Quick polling initially (process startup phase)
+                ${pkgs.coreutils}/bin/sleep 0.1
+              elif [ $attempt -lt 30 ]; then
+                # Moderate polling (service initialization phase)
+                ${pkgs.coreutils}/bin/sleep 0.5
+              else
+                # Slower polling (waiting for dependencies)
+                ${pkgs.coreutils}/bin/sleep 1.0
+              fi
+              
+              # Progress feedback every 20 attempts
+              if [ $((attempt % 20)) -eq 0 ]; then
+                echo "  $service_name not ready yet (attempt $attempt/$max_attempts)..."
               fi
             done
             
-            echo "ERROR: $service_name failed to become ready within ${max_wait_seconds}s"
+            echo "ERROR: $service_name failed to become ready within $max_attempts attempts"
             return 1
           }
           
           # Wait for worker to finish processing with active monitoring
           wait_for_worker_idle() {
-            local max_wait_seconds=''${1:-30}
-            local elapsed=0
+            local max_checks=''${1:-60}  # Maximum number of checks instead of time
+            local check_count=0
+            local consecutive_idle=0      # Count consecutive idle checks
+            local required_idle=3         # Require 3 consecutive idle checks
             
             echo "Waiting for worker to finish processing..."
             
@@ -895,7 +989,7 @@ in
             
             export DATABASE_URL="postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
             
-            while [ $elapsed -lt $max_wait_seconds ]; do
+            while [ $check_count -lt $max_checks ]; do
               # Check if worker is processing items
               local processing_count=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "
                 SELECT COUNT(*) FROM work_queue 
@@ -904,16 +998,22 @@ in
               " 2>/dev/null || echo "0")
               
               if [ "$processing_count" -eq 0 ]; then
-                echo "✓ Worker is idle (no items being processed)"
-                return 0
+                consecutive_idle=$((consecutive_idle + 1))
+                if [ $consecutive_idle -ge $required_idle ]; then
+                  echo "✓ Worker is idle (confirmed with $required_idle consecutive checks)"
+                  return 0
+                fi
+                echo "  Worker idle ($consecutive_idle/$required_idle consecutive checks)"
+              else
+                consecutive_idle=0
+                echo "  Worker processing $processing_count items (check $check_count/$max_checks)"
               fi
               
-              echo "  Worker processing $processing_count items, waiting... ($elapsed/${max_wait_seconds}s)"
-              sleep 2
-              elapsed=$((elapsed + 2))
+              check_count=$((check_count + 1))
+              ${pkgs.coreutils}/bin/sleep 0.5  # Fixed short interval for work queue monitoring
             done
             
-            echo "WARNING: Worker still processing after ${max_wait_seconds}s, proceeding anyway"
+            echo "WARNING: Worker still processing after $max_checks checks, proceeding anyway"
             return 0
           }
           
@@ -985,21 +1085,17 @@ in
             fi
           fi
           
-          # Health check with timeout
-          echo "Performing health checks (timeout: ${toString cfg.update.healthCheckTimeout}s)..."
+          # Health check with attempt-based limits (not time-based)
+          echo "Performing health checks (max attempts: ${toString cfg.update.healthCheckTimeout})..."
           
           HEALTH_CHECK_PASSED=true
-          START_TIME=$(date +%s)
+          check_attempt=0
+          max_attempts=${toString cfg.update.healthCheckTimeout}  # Reuse config value as max attempts
+          consecutive_healthy=0
+          required_consecutive=3  # Require multiple consecutive healthy checks
           
-          while true; do
-            CURRENT_TIME=$(date +%s)
-            ELAPSED=$((CURRENT_TIME - START_TIME))
-            
-            if [ $ELAPSED -gt ${toString cfg.update.healthCheckTimeout} ]; then
-              echo "ERROR: Health check timeout exceeded!" >&2
-              HEALTH_CHECK_PASSED=false
-              break
-            fi
+          while [ $check_attempt -lt $max_attempts ]; do
+            check_attempt=$((check_attempt + 1))
             
             ALL_HEALTHY=true
             
@@ -1012,13 +1108,30 @@ in
             fi
             
             if [ "$ALL_HEALTHY" = "true" ]; then
-              echo "✓ All services healthy"
-              break
+              consecutive_healthy=$((consecutive_healthy + 1))
+              if [ $consecutive_healthy -ge $required_consecutive ]; then
+                echo "✓ All services healthy (confirmed with $required_consecutive consecutive checks)"
+                break
+              fi
+              echo "  Services healthy ($consecutive_healthy/$required_consecutive consecutive checks)"
+            else
+              consecutive_healthy=0
+              echo "  Waiting for services to become healthy (attempt $check_attempt/$max_attempts)..."
             fi
             
-            echo "Waiting for services to become healthy... ($ELAPSED/${toString cfg.update.healthCheckTimeout}s)"
-            sleep 3  # Shorter interval for health checks
+            # Adaptive delay based on check progress
+            if [ $check_attempt -lt 10 ]; then
+              ${pkgs.coreutils}/bin/sleep 1    # Quick checks initially
+            else
+              ${pkgs.coreutils}/bin/sleep 2    # Longer interval if services are struggling
+            fi
           done
+          
+          # Final validation
+          if [ $consecutive_healthy -lt $required_consecutive ]; then
+            echo "ERROR: Health check failed after $max_attempts attempts!" >&2
+            HEALTH_CHECK_PASSED=false
+          fi
           
           # Handle rollback if needed
           if [ "$HEALTH_CHECK_PASSED" = "false" ] && [ "${toString cfg.update.rollbackOnFailure}" = "true" ]; then

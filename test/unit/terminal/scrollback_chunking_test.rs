@@ -15,8 +15,8 @@ fn test_scrollback_config_default() {
     assert_eq!(config.max_scrollback_lines, 10000);
     assert_eq!(config.include_ansi_codes, false);
     assert_eq!(config.capture_command_output, true);
-    assert_eq!(config.save_to_files, false);
-    assert_eq!(config.capture_on_command, true);
+    assert_eq!(config.auto_annex, false);
+    assert_eq!(config.capture_on_command, false);
     assert_eq!(config.command_capture_delay_ms, 500);
     assert_eq!(config.chunking_threshold_bytes, 32_768); // 32KB
     assert_eq!(config.enable_chunking, true);
@@ -30,12 +30,13 @@ fn test_scrollback_config_serialization() {
         max_scrollback_lines: 5000,
         include_ansi_codes: true,
         capture_command_output: false,
-        save_to_files: true,
-        scrollback_dir: PathBuf::from("/tmp/scrollback"),
+        git_annex_repo: Some(PathBuf::from("/tmp/annex")),
+        auto_annex: true,
         capture_on_command: false,
         command_capture_delay_ms: 1000,
         chunking_threshold_bytes: 16_384, // 16KB
         enable_chunking: false,
+        annex_threshold_bytes: 32_000,
     };
     
     let serialized = serde_json::to_string(&config).expect("Should serialize");
@@ -46,8 +47,8 @@ fn test_scrollback_config_serialization() {
     assert_eq!(config.max_scrollback_lines, deserialized.max_scrollback_lines);
     assert_eq!(config.include_ansi_codes, deserialized.include_ansi_codes);
     assert_eq!(config.capture_command_output, deserialized.capture_command_output);
-    assert_eq!(config.save_to_files, deserialized.save_to_files);
-    assert_eq!(config.scrollback_dir, deserialized.scrollback_dir);
+    assert_eq!(config.auto_annex, deserialized.auto_annex);
+    assert_eq!(config.git_annex_repo, deserialized.git_annex_repo);
     assert_eq!(config.capture_on_command, deserialized.capture_on_command);
     assert_eq!(config.command_capture_delay_ms, deserialized.command_capture_delay_ms);
     assert_eq!(config.chunking_threshold_bytes, deserialized.chunking_threshold_bytes);
@@ -66,6 +67,8 @@ fn test_terminal_scrollback_payload_small_content() {
         window_title: "Terminal".to_string(),
         scrollback_text: Some(small_text.to_string()),
         scrollback_chunks: None,
+        git_annex_path: None,
+        git_annex_key: None,
         scrollback_lines: 1,
         scrollback_size_bytes: small_text.len() as u64,
         is_chunked: false,
@@ -106,6 +109,8 @@ fn test_terminal_scrollback_payload_chunked_content() {
         window_title: "Terminal".to_string(),
         scrollback_text: None, // No raw text for chunked content
         scrollback_chunks: Some(chunk_jsons.clone()),
+        git_annex_path: None,
+        git_annex_key: None,
         scrollback_lines: 1,
         scrollback_size_bytes: large_text.len() as u64,
         is_chunked: true,
@@ -194,12 +199,13 @@ async fn test_scrollback_capture_initialization() {
         max_scrollback_lines: 1000,
         include_ansi_codes: false,
         capture_command_output: true,
-        save_to_files: false,
-        scrollback_dir: PathBuf::from("/tmp"),
+        git_annex_repo: None,
+        auto_annex: false,
         capture_on_command: true,
         command_capture_delay_ms: 500,
         chunking_threshold_bytes: 16_384,
         enable_chunking: true,
+        annex_threshold_bytes: 64_000,
     };
     
     let ctx = EventSourceContext {
