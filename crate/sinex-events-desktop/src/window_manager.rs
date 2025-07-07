@@ -16,7 +16,7 @@ use tokio::time;
 use tracing::{debug, error, info};
 
 use sinex_core::{
-    event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType, RawEvent, Result,
+    event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType, Result,
     EventFactory, ErrorContext, CoreError, BackoffHelper,
 };
 

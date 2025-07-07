@@ -4,7 +4,7 @@ use sinex_core::unified_collector::EventRegistryBuilder;
 /// Test that demonstrates auto-registration pattern working
 #[test]
 fn test_auto_registration_pattern() -> TestResult {
-    let mut builder = EventRegistryBuilder::new();
+    let builder = EventRegistryBuilder::new();
     
     // Before auto-registration, builder should be empty
     let empty_registry = builder.build();

@@ -136,6 +136,7 @@ impl Default for FilesystemConfig {
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
     watch_roots: Vec<PathBuf>,
+    #[allow(dead_code)] // Used in async context where struct field access is limited
     event_factory: EventFactory,
 }
 

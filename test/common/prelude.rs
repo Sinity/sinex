@@ -41,7 +41,7 @@ pub use serde::{Deserialize, Serialize};
 pub use serde_json::{json, Value};
 // ===== Sinex Core Types =====
 pub use sinex_core::{
-    event_type_constants, parse_duration, sources,
+    event_type_constants, parse_duration,
     unified_collector::{EventRegistry},
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
     ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator,
@@ -67,7 +67,7 @@ pub use crate::common::{database_helpers, event_sources, events};
 // Test context - THE way to write tests
 // Event factory and builders - THE way to create events
 pub use sinex_core::{EventFactory, RawEventBuilder};
-pub use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+pub use crate::common::event_builders::EventBuilder;
 // Database helpers
 // NEW: Unified database access
 // pub use crate::common::create_test_db_pool;

@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use sinex_events_terminal::asciinema::{AsciinemaConfig, AsciinemaRecorder};
 use sinex_core::{EventSource, EventSourceContext};
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[sinex_test]

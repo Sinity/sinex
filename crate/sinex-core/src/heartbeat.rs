@@ -211,6 +211,7 @@ impl ComponentHeartbeat {
     }
 
     /// Get basic system metrics (memory, CPU)
+    #[allow(dead_code)] // Future use for system monitoring
     fn get_system_metrics() -> Result<(u32, f32), HeartbeatError> {
         Self::get_system_metrics_enhanced("unknown")
     }
@@ -239,6 +240,7 @@ impl ComponentHeartbeat {
     }
 
     /// Get current process memory usage in MB
+    #[allow(dead_code)] // Future use for system monitoring
     fn get_memory_usage() -> Option<u32> {
         Self::get_memory_usage_enhanced("unknown").ok()
     }
@@ -330,6 +332,7 @@ impl ComponentHeartbeat {
     }
 
     /// Determine health status based on current metrics (legacy method)
+    #[allow(dead_code)] // Legacy method kept for compatibility
     fn determine_health_status(
         memory_usage_mb: u32,
         cpu_usage_percent: f32,

@@ -1,8 +1,8 @@
 use sinex_events_terminal::kitty::{
     KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackIncremental,
     KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged,
-    KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
-    KittyTabCreatedPayload, KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
+    KittyCommandExecutedPayload, KittyCommandCompletedPayload,
+    KittyTabCreatedPayload, KittyProcessChangedPayload,
     KittyProcessInfo,
 };
 use sinex_core::{EventSource, EventSourceContext, EventType};

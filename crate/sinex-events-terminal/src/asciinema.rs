@@ -125,6 +125,7 @@ pub struct AsciinemaRecorder {
     config: AsciinemaConfig,
     active_sessions: Arc<Mutex<HashMap<PathBuf, RecordingSession>>>,
     processed_files: Arc<Mutex<Vec<PathBuf>>>,
+    #[allow(dead_code)] // Used in future event creation
     event_factory: EventFactory,
 }
 

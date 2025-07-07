@@ -506,5 +506,6 @@ struct AtuinHistoryEntry {
     command: String,
     cwd: String,
     session: String,
+    #[allow(dead_code)] // Part of DB schema but not used in processing
     hostname: String,
 }

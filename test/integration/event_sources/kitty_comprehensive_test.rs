@@ -232,7 +232,7 @@ async fn test_kitty_multiple_event_types_query(ctx: TestContext) -> TestResult {
 async fn test_kitty_event_ordering_and_timing(ctx: TestContext) -> TestResult {
     // Test that Kitty events maintain proper timing and ordering
     
-    let base_time = chrono::Utc::now();
+    let _base_time = chrono::Utc::now();
     
     // Create events 
     let events = vec![

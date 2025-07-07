@@ -7,7 +7,7 @@ use sinex_db::DbPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ComponentStatus {

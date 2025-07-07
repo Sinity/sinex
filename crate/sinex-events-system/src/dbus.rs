@@ -324,6 +324,7 @@ impl Default for DbusConfig {
 
 pub struct DbusMonitor {
     config: DbusConfig,
+    #[allow(dead_code)] // Used by create_event method
     event_factory: EventFactory,
 }
 
@@ -1134,6 +1135,7 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
 
 
 impl DbusMonitor {
+    #[allow(dead_code)] // Helper method for future event creation
     fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         self.event_factory.create_event(event_type, payload)
     }
