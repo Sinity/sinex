@@ -41,6 +41,8 @@ pub struct TestConfig {
     pub verbose: bool,
     /// Test name for identification
     pub test_name: String,
+    /// Use transaction isolation for this test
+    pub use_transaction: bool,
 }
 
 impl Default for TestConfig {
@@ -50,6 +52,7 @@ impl Default for TestConfig {
             pool_size: 5,
             verbose: false,
             test_name: "unnamed_test".to_string(),
+            use_transaction: false,
         }
     }
 }
@@ -153,6 +156,13 @@ impl TestContext {
 
     /// Get count of events
     pub async fn event_count(&self) -> Result<i64> {
+        // Debug: verify which database we're querying
+        let db_name = sqlx::query_scalar!("SELECT current_database()")
+            .fetch_one(self.pool())
+            .await?
+            .unwrap_or_else(|| "unknown".to_string());
+        eprintln!("  [event_count] Querying database: {}", db_name);
+        
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
             .fetch_one(self.pool())
             .await?;

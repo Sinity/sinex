@@ -58,6 +58,11 @@ test-unit *ARGS:
     @echo "📦 Running unit tests (fast, isolated components)..."
     cargo nextest run -E "test(unit::)" {{ARGS}}
 
+# 📦 Unit tests with limited parallelism - Reliable test execution
+test-unit-reliable:
+    @echo "📦 Running unit tests with limited parallelism for reliability..."
+    cargo nextest run -E "test(unit::)" -j 2
+
 # 🔗 Integration tests - Component interaction tests (~30s)
 test-integration *ARGS:
     @echo "🔗 Running integration tests (component interactions)..."

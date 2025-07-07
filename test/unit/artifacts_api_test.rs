@@ -60,7 +60,7 @@ async fn test_create_artifact_minimal(ctx: TestContext) -> TestResult {
 async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     // Create an artifact first
     let input = CreateArtifactInput {
-        artifact_type: "image".to_string(),
+        artifact_type: "media".to_string(),
         title: "Test Image".to_string(),
         source_url: None,
         original_path: None,
@@ -99,7 +99,7 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> TestResult {
     // Create multiple artifacts
     let inputs = vec![
         CreateArtifactInput {
-            artifact_type: "doc1".to_string(),
+            artifact_type: "document".to_string(),
             title: "Document 1".to_string(),
             source_url: None,
             original_path: None,
@@ -111,7 +111,7 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> TestResult {
             blob_id: None,
         },
         CreateArtifactInput {
-            artifact_type: "doc2".to_string(),
+            artifact_type: "document".to_string(),
             title: "Document 2".to_string(),
             source_url: None,
             original_path: None,
@@ -123,7 +123,7 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> TestResult {
             blob_id: None,
         },
         CreateArtifactInput {
-            artifact_type: "doc3".to_string(),
+            artifact_type: "document".to_string(),
             title: "Document 3".to_string(),
             source_url: None,
             original_path: None,
@@ -154,10 +154,13 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_artifact_with_event_reference(ctx: TestContext) -> TestResult {
     // Create a test event first
-    let event_id = Ulid::new();
+    let test_event = EventFactory::new("test")
+        .create_event("document.processed", json!({"source": "test"}));
+    
+    let event_id = assert_event_inserted_with_context(ctx.pool(), &test_event, "test_artifact_with_event_reference").await?;
     
     let input = CreateArtifactInput {
-        artifact_type: "processed_document".to_string(),
+        artifact_type: "document".to_string(),
         title: "Event-generated Document".to_string(),
         source_url: None,
         original_path: None,
@@ -198,7 +201,7 @@ async fn test_artifact_large_metadata(ctx: TestContext) -> TestResult {
     });
 
     let input = CreateArtifactInput {
-        artifact_type: "complex_document".to_string(),
+        artifact_type: "document".to_string(),
         title: "Complex Document with Large Metadata".to_string(),
         source_url: None,
         original_path: None,

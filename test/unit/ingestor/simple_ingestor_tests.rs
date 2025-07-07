@@ -336,8 +336,10 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_source_database_integration(ctx: TestContext) -> TestResult {
-    // Removed: using ctx.pool() directly instead
-
+    // Generate a unique event type for this test to avoid contamination
+    let test_id = Ulid::new().to_string();
+    let unique_event_type = format!("test_event_{}", &test_id[..8]);
+    
     let config = TestSourceConfig {
         events_to_generate: 2,
         generation_delay_ms: 10,
@@ -351,24 +353,34 @@ async fn test_event_source_database_integration(ctx: TestContext) -> TestResult 
 
     let stream_handle = tokio::spawn(async move { source.stream_events(tx).await });
 
-    // Receive and store events
+    // Receive and store events with our unique type
+    let mut inserted_count = 0;
     for _ in 0..2 {
-        if let Some(event) = rx.recv().await {
+        if let Some(mut event) = rx.recv().await {
+            // Modify the event type to be unique for this test
+            event.event_type = unique_event_type.clone();
+            
             // Store in database using proper queries that handle ts_ingest correctly
             use sinex_db::queries::insert_event;
             insert_event(ctx.pool(), &event).await?;
+            inserted_count += 1;
         }
     }
 
     stream_handle.abort();
+    
+    // Ensure we actually inserted 2 events
+    assert_eq!(inserted_count, 2, "Should have inserted 2 events");
 
-    // Verify events were stored
+    // Verify events were stored - count only our unique event type
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE source = 'test_source'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE event_type = $1")
+            .bind(&unique_event_type)
             .fetch_one(ctx.pool())
             .await?;
 
-    pretty_assertions::assert_eq!(count, 2);
+    // We inserted exactly 2 events with our unique type
+    assert_eq!(count, 2, "Should have exactly 2 events with type {}, found {}", unique_event_type, count);
 
     Ok(())
 }

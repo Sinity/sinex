@@ -73,7 +73,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     });
 
     let output = if takes_context {
-        // Database test using universal pool system
+        // Database test using universal pool system with proper cleanup
         quote! {
             #[tokio::test]
             #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -90,9 +90,10 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     // Acquire database from manager (guaranteed cleanup)
                     let managed_db = database_pool::acquire_test_database().await?;
 
-                    // Create test context
+                    // Create test context  
                     let ctx = TestContext::with_managed_database(managed_db, TestConfig {
                         test_name: test_name.to_string(),
+                        use_transaction: true,  // Enable transaction isolation
                         ..Default::default()
                     }).await?;
 

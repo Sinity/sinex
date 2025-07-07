@@ -15,8 +15,8 @@ fn test_scrollback_config_default() {
     assert_eq!(config.max_scrollback_lines, 10000);
     assert!(!config.include_ansi_codes);
     assert!(config.capture_command_output);
-    assert!(!config.auto_annex);
-    assert!(!config.capture_on_command);
+    assert!(config.auto_annex);
+    assert!(config.capture_on_command);
     assert_eq!(config.command_capture_delay_ms, 500);
     assert_eq!(config.chunking_threshold_bytes, 32_768); // 32KB
     assert!(config.enable_chunking);

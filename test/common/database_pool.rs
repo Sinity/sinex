@@ -66,6 +66,45 @@ impl TestDatabase {
 impl Drop for TestDatabase {
     fn drop(&mut self) {
         // Mark slot as available
+        let thread_id = std::thread::current().id();
+        eprintln!("🔓 Thread {:?} releasing database slot: {}", thread_id, self.name);
+        
+        // Close the connection pool synchronously
+        // We spawn a blocking task to handle the async pool closure
+        if let Ok(mut pool_opt) = self.slot.pool.lock() {
+            if let Some(pool) = pool_opt.take() {
+                // Use a channel to wait for the pool to close
+                let (tx, rx) = std::sync::mpsc::channel();
+                
+                // Spawn a task to close the pool
+                std::thread::spawn(move || {
+                    // Create a new runtime for the cleanup
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        pool.close().await;
+                        // Give a small grace period for any final operations
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    });
+                    let _ = tx.send(());
+                });
+                
+                // Wait for the pool to close with a timeout
+                match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                    Ok(_) => {
+                        eprintln!("✅ Pool closed successfully for slot {}", self.name);
+                    }
+                    Err(_) => {
+                        eprintln!("⚠️  Timeout waiting for pool to close for slot {}", self.name);
+                    }
+                }
+            }
+        }
+        
+        // Record when this slot was released
+        if let Ok(mut last_released) = self.slot.last_released.lock() {
+            *last_released = Some(std::time::Instant::now());
+        }
+        
         self.slot.in_use.store(false, Ordering::Release);
     }
 }
@@ -73,8 +112,13 @@ impl Drop for TestDatabase {
 /// A slot in the database pool
 struct DatabaseSlot {
     name: String,
-    pool: DbPool,
+    url: String,  // Store URL instead of pool to create fresh connections
+    pool: std::sync::Mutex<Option<DbPool>>,  // Current pool if in use
     in_use: AtomicBool,
+    // Track when the slot was acquired to help debug issues
+    last_acquired: std::sync::Mutex<Option<std::time::Instant>>,
+    // Track when the slot was released for cooldown
+    last_released: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 /// The global database pool
@@ -160,15 +204,10 @@ impl DatabasePool {
                 
                 drop(conn);
                 
-                // Create connection pool
+                // Store URL for later pool creation
                 let url = base_url.replace("/sinex_dev", &format!("/{}", name));
-                let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(15)  // Increased from 5 for better test concurrency
-                    .acquire_timeout(Duration::from_secs(10))  // Increased timeout for parallel tests
-                    .connect(&url)
-                    .await?;
                 
-                Result::<_, anyhow::Error>::Ok((name, pool))
+                Result::<_, anyhow::Error>::Ok((name, url))
             });
             
             tasks.push(task);
@@ -176,11 +215,14 @@ impl DatabasePool {
         
         // Wait for all databases to be created
         for task in tasks {
-            let (name, pool) = task.await??;
+            let (name, url) = task.await??;
             slots.push(Arc::new(DatabaseSlot {
                 name,
-                pool,
+                url,
+                pool: std::sync::Mutex::new(None),
                 in_use: AtomicBool::new(false),
+                last_acquired: std::sync::Mutex::new(None),
+                last_released: std::sync::Mutex::new(None),
             }));
         }
         
@@ -195,12 +237,57 @@ impl DatabasePool {
     async fn acquire(&self) -> Result<TestDatabase> {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
+        
+        // Start from a rotating slot to distribute load better
+        static SLOT_COUNTER: AtomicU32 = AtomicU32::new(0);
+        let start_index = SLOT_COUNTER.fetch_add(1, Ordering::Relaxed) as usize % self.slots.len();
+        
         loop {
-            for slot in &self.slots {
-                if !slot.in_use.swap(true, Ordering::AcqRel) {
-                    // Got a slot! Clean it before use
+            // Iterate through slots starting from random position
+            for i in 0..self.slots.len() {
+                let slot_index = (start_index + i) % self.slots.len();
+                let slot = &self.slots[slot_index];
+                let was_in_use = slot.in_use.swap(true, Ordering::AcqRel);
+                if !was_in_use {
+                    // Check if slot is in cooldown period
+                    // No cooldown needed - we'll ensure proper cleanup instead
+                    
+                    // Got a slot! Record when it was acquired
+                    if let Ok(mut last_acquired) = slot.last_acquired.lock() {
+                        *last_acquired = Some(std::time::Instant::now());
+                    }
+                    
+                    let thread_id = std::thread::current().id();
+                    // Count how many slots are currently in use
+                    let in_use_count = self.slots.iter()
+                        .filter(|s| s.in_use.load(Ordering::Acquire))
+                        .count();
+                    eprintln!("🔑 Thread {:?} acquired database slot: {} ({}/{} slots in use)", 
+                              thread_id, slot.name, in_use_count, self.slots.len());
+                    
+                    // Create a fresh pool for this test
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(15)
+                        .acquire_timeout(Duration::from_secs(10))
+                        .connect(&slot.url)
+                        .await?;
+                    
+                    // Store the pool in the slot
+                    if let Ok(mut pool_opt) = slot.pool.lock() {
+                        *pool_opt = Some(pool.clone());
+                    }
+                    
+                    // Verify we're connected to the right database
+                    let db_name: String = sqlx::query_scalar("SELECT current_database()")
+                        .fetch_one(&pool)
+                        .await?;
+                    if db_name != slot.name {
+                        eprintln!("⚠️  WARNING: Expected database {} but connected to {}", slot.name, db_name);
+                    }
+                    
+                    // Clean it before use
                     let clean_start = std::time::Instant::now();
-                    match clean_database(&slot.pool).await {
+                    match clean_database(&pool, &slot.name).await {
                         Ok(_) => {
                             let clean_time = clean_start.elapsed();
                             if clean_time.as_millis() > 100 {
@@ -208,12 +295,17 @@ impl DatabasePool {
                             }
                             return Ok(TestDatabase {
                                 name: slot.name.clone(),
-                                pool: slot.pool.clone(),
+                                pool: pool.clone(),
                                 slot: slot.clone(),
                             });
                         }
                         Err(e) => {
                             eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
+                            // Close the pool we just created
+                            pool.close().await;
+                            if let Ok(mut pool_opt) = slot.pool.lock() {
+                                *pool_opt = None;
+                            }
                             slot.in_use.store(false, Ordering::Release);
                         }
                     }
@@ -239,62 +331,207 @@ impl DatabasePool {
 }
 
 /// Clean a database for reuse
-async fn clean_database(pool: &DbPool) -> Result<()> {
+async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
+    eprintln!("🧹 Cleaning database: {}", db_name);
     
-    // Clean in proper dependency order based on foreign key constraints
-    // First clean tables that reference other tables
-    let cleanup_queries = [
-        "DELETE FROM sinex_schemas.work_queue",
-        "DELETE FROM core.event_annotations", 
-        "DELETE FROM core.event_artifact_refs",
-        "DELETE FROM core.event_relations",
-        "DELETE FROM core.event_cluster_members",
-        "DELETE FROM core.artifact_event_sources",
-        "DELETE FROM core.event_embeddings",
-        "DELETE FROM core.artifact_embeddings",
-        "DELETE FROM core.artifact_contents",
-        "DELETE FROM core.artifact_tags",
-        "DELETE FROM core.artifact_relations", 
-        "DELETE FROM core.entity_relations",
-        "DELETE FROM core.entities",  // Added - must come after entity_relations due to FK
-        "DELETE FROM core.artifacts",
-        "DELETE FROM raw.events",
-        "DELETE FROM sinex_schemas.agent_manifests",
-    ];
+    // First, disable FK checks for the cleanup session
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(pool)
+        .await?;
     
-    for query in cleanup_queries {
-        let result = sqlx::query(query).execute(pool).await;
+    // Try to use TRUNCATE for non-hypertables (much faster and more thorough)
+    let truncate_result = sqlx::query(r#"
+        TRUNCATE TABLE 
+            core.event_annotations,
+            core.event_artifact_refs,
+            core.event_relations,
+            core.event_cluster_members,
+            core.artifact_event_sources,
+            core.event_embeddings,
+            core.entity_relations,
+            core.artifact_embeddings,
+            core.artifact_contents,
+            core.artifact_tags,
+            core.artifact_relations,
+            core.entities,
+            core.artifacts,
+            core.event_clusters,
+            sinex_schemas.work_queue,
+            sinex_schemas.agent_manifests
+        CASCADE
+    "#)
+    .execute(pool)
+    .await;
+    
+    if let Err(e) = truncate_result {
+        eprintln!("  ⚠️  TRUNCATE failed ({}), falling back to DELETE", e);
         
-        // Log cleanup results for entities table specifically
-        if query.contains("core.entities") {
-            match &result {
-                Ok(done) => {
-                    let rows_affected = done.rows_affected();
-                    if rows_affected > 0 {
-                        eprintln!("  🧹 Cleaned {} entities from previous test", rows_affected);
+        // Fall back to DELETE in dependency order
+        let delete_queries = [
+            // First, delete from tables that reference raw.events
+            "DELETE FROM core.event_annotations",
+            "DELETE FROM core.event_artifact_refs",
+            "DELETE FROM core.event_relations",
+            "DELETE FROM core.event_cluster_members",
+            "DELETE FROM core.artifact_event_sources",
+            "DELETE FROM core.event_embeddings",
+            
+            // Delete from tables that reference entities
+            "DELETE FROM core.entity_relations",
+            
+            // Delete from artifact-related tables
+            "DELETE FROM core.artifact_embeddings",
+            "DELETE FROM core.artifact_contents",
+            "DELETE FROM core.artifact_tags",
+            "DELETE FROM core.artifact_relations",
+            
+            // Delete from work queue
+            "DELETE FROM sinex_schemas.work_queue",
+            "DELETE FROM sinex_schemas.agent_manifests",
+            
+            // Finally, delete from primary tables
+            "DELETE FROM core.entities",
+            "DELETE FROM core.artifacts",
+            "DELETE FROM core.event_clusters",
+        ];
+        
+        for query in delete_queries {
+            match sqlx::query(query).execute(pool).await {
+                Ok(result) => {
+                    let rows = result.rows_affected();
+                    if rows > 0 {
+                        let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
+                        eprintln!("  🧹 Deleted {} rows from {}", rows, table_name);
                     }
                 }
                 Err(e) => {
-                    eprintln!("  ⚠️  Failed to clean entities: {}", e);
+                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
+                    eprintln!("  ⚠️  Failed to delete from {}: {}", table_name, e);
                 }
+            }
+        }
+    } else {
+        eprintln!("  ✅ Tables truncated successfully");
+    }
+    
+    // Handle raw.events separately (hypertable cannot be truncated)
+    match sqlx::query("DELETE FROM raw.events").execute(pool).await {
+        Ok(result) => {
+            let rows = result.rows_affected();
+            if rows > 0 {
+                eprintln!("  🧹 Deleted {} rows from raw.events", rows);
+            }
+        }
+        Err(e) => {
+            eprintln!("  ⚠️  Failed to delete from raw.events: {}", e);
+            // Try TimescaleDB-specific cleanup
+            match sqlx::query("SELECT drop_chunks('raw.events', older_than => INTERVAL '0 seconds')")
+                .execute(pool)
+                .await 
+            {
+                Ok(_) => eprintln!("  🧹 Dropped all chunks from raw.events"),
+                Err(e2) => eprintln!("  ⚠️  Failed to drop chunks: {}", e2),
             }
         }
     }
     
-    // Verify entities table is actually empty
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    // Re-enable FK checks
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(pool)
+        .await?;
     
-    if count > 0 {
-        eprintln!("  ⚠️  WARNING: {} entities still exist after cleanup!", count);
-        // Try a more aggressive cleanup
-        let _ = sqlx::query("TRUNCATE TABLE core.entity_relations, core.entities CASCADE")
-            .execute(pool)
-            .await;
+    // Verification with detailed output
+    let verification_queries = [
+        ("raw.events", "SELECT COUNT(*) FROM raw.events"),
+        ("core.event_annotations", "SELECT COUNT(*) FROM core.event_annotations"),
+        ("core.entities", "SELECT COUNT(*) FROM core.entities"),
+        ("core.entity_relations", "SELECT COUNT(*) FROM core.entity_relations"),
+        ("core.artifacts", "SELECT COUNT(*) FROM core.artifacts"),
+        ("core.artifact_relations", "SELECT COUNT(*) FROM core.artifact_relations"),
+        ("core.artifact_contents", "SELECT COUNT(*) FROM core.artifact_contents"),
+    ];
+    
+    let mut all_clean = true;
+    let mut remaining_counts = Vec::new();
+    
+    for (table_name, query) in verification_queries {
+        let count: i64 = sqlx::query_scalar(query)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+        
+        if count > 0 {
+            all_clean = false;
+            remaining_counts.push((table_name, count));
+        }
     }
     
+    if !all_clean {
+        eprintln!("  ❌ CRITICAL: Database {} not fully cleaned!", db_name);
+        for (table, count) in &remaining_counts {
+            eprintln!("     - {} has {} rows remaining", table, count);
+        }
+        
+        // Try one final aggressive cleanup
+        eprintln!("  🔧 Final cleanup attempt...");
+        
+        // Disable all constraints
+        sqlx::query("SET session_replication_role = 'replica'")
+            .execute(pool)
+            .await?;
+        
+        // Use CASCADE DELETE on primary tables to force cleanup
+        let cascade_queries = [
+            "DELETE FROM raw.events CASCADE",
+            "DELETE FROM core.entities CASCADE",
+            "DELETE FROM core.artifacts CASCADE",
+            "DELETE FROM core.event_clusters CASCADE",
+        ];
+        
+        for query in cascade_queries {
+            match sqlx::query(query).execute(pool).await {
+                Ok(result) => {
+                    if result.rows_affected() > 0 {
+                        eprintln!("     🧹 CASCADE deleted from {}", 
+                                 query.split_whitespace().nth(2).unwrap_or("unknown"));
+                    }
+                }
+                Err(e) => {
+                    // CASCADE might not be supported, try without
+                    let non_cascade = query.replace(" CASCADE", "");
+                    let _ = sqlx::query(&non_cascade).execute(pool).await;
+                }
+            }
+        }
+        
+        // Re-enable constraints
+        sqlx::query("SET session_replication_role = 'origin'")
+            .execute(pool)
+            .await?;
+        
+        // Final verification
+        all_clean = true;
+        for (table_name, query) in verification_queries {
+            let count: i64 = sqlx::query_scalar(query)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            
+            if count > 0 {
+                all_clean = false;
+                eprintln!("     ❌ {} STILL has {} rows!", table_name, count);
+            }
+        }
+        
+        if !all_clean {
+            return Err(anyhow::anyhow!(
+                "Database {} cleanup failed - tables still contain data", 
+                db_name
+            ));
+        }
+    }
+    
+    eprintln!("  ✅ Database cleanup verified - all tables empty");
     Ok(())
 }
 
