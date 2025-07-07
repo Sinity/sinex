@@ -255,6 +255,7 @@ async fn clean_database(pool: &DbPool) -> Result<()> {
         "DELETE FROM core.artifact_tags",
         "DELETE FROM core.artifact_relations", 
         "DELETE FROM core.entity_relations",
+        "DELETE FROM core.entities",  // Added - must come after entity_relations due to FK
         "DELETE FROM core.artifacts",
         "DELETE FROM raw.events",
         "DELETE FROM sinex_schemas.agent_manifests",
