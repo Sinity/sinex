@@ -56,12 +56,42 @@ pub async fn insert_raw_event_with_validator(
     source: &str,
     event_type: &str,
     host: &str,
+    payload: JsonValue,
+    ts_orig: OptionalTimestamp,
+    ingestor_version: Option<&str>,
+    payload_schema_id: Option<Ulid>,
+    validator: Option<&EventValidator>,
+) -> Result<RawEvent> {
+    insert_raw_event_with_validator_and_id(
+        pool,
+        None,
+        source,
+        event_type,
+        host,
+        payload,
+        ts_orig,
+        ingestor_version,
+        payload_schema_id,
+        validator,
+    ).await
+}
+
+/// Insert a raw event with optional validation and optional predetermined ID
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_raw_event_with_validator_and_id(
+    pool: DbPoolRef<'_>,
+    event_id: Option<Ulid>,
+    source: &str,
+    event_type: &str,
+    host: &str,
     mut payload: JsonValue,
     ts_orig: OptionalTimestamp,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<Ulid>,
     validator: Option<&EventValidator>,
 ) -> Result<RawEvent> {
+    // Use provided ID or generate a new one
+    let event_id = event_id.unwrap_or_default();
     // Sanitize the source field (where test payloads like SQL injection come in)
     // Detect path traversal attempts including encoded variants
     // Be specific: only sanitize actual path traversal, not command injection containing paths
@@ -170,8 +200,8 @@ pub async fn insert_raw_event_with_validator(
     // Use query! for compile-time checking, then map to our ULID-based struct
     let record = sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid)
+        INSERT INTO raw.events (id, source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::uuid)
         RETURNING 
             id::uuid as "id!", 
             source as "source!", 
@@ -183,6 +213,7 @@ pub async fn insert_raw_event_with_validator(
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!"
         "#,
+        ulid_to_uuid(event_id),
         sanitized_source.as_str(),
         event_type,
         host,
@@ -196,7 +227,7 @@ pub async fn insert_raw_event_with_validator(
 
     // Map the UUID fields to ULID with compile-time verified field access
     Ok(RawEvent {
-        id: uuid_to_ulid(record.id),
+        id: event_id,
         source: record.source,
         event_type: record.event_type,
         ts_ingest: record.ts_ingest,
@@ -210,8 +241,9 @@ pub async fn insert_raw_event_with_validator(
 
 /// Insert a RawEvent struct directly with optional validation
 pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<RawEvent> {
-    insert_raw_event(
+    insert_raw_event_with_validator_and_id(
         pool,
+        Some(event.id),
         &event.source,
         &event.event_type,
         &event.host,
@@ -219,6 +251,7 @@ pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<RawEv
         event.ts_orig,
         event.ingestor_version.as_deref(),
         event.payload_schema_id,
+        None,
     )
     .await
 }
@@ -229,8 +262,9 @@ pub async fn insert_event_with_validator(
     event: &RawEvent,
     validator: Option<&EventValidator>,
 ) -> Result<RawEvent> {
-    insert_raw_event_with_validator(
+    insert_raw_event_with_validator_and_id(
         pool,
+        Some(event.id),
         &event.source,
         &event.event_type,
         &event.host,

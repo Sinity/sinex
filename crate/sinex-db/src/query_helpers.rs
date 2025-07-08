@@ -3,6 +3,18 @@
 //! This module provides helper functions for common database operations with automatic
 //! ULID<->UUID conversion, transaction support, and retry logic.
 //!
+//! # ULID/UUID Conversion Convention
+//! 
+//! When working with database queries in sinex-db, always use the conversion 
+//! functions from this module:
+//! 
+//! - `ulid_to_uuid()` for ULID → UUID conversion before database operations
+//! - `uuid_to_ulid()` for UUID → ULID conversion after database fetches
+//! - `UlidArrayExt` trait for batch conversions
+//! 
+//! **DO NOT** use `.to_uuid()` method directly on ULID types. This ensures
+//! consistency and makes conversions explicit at database boundaries.
+//!
 //! # Examples
 //!
 //! ## Using function helpers:
@@ -73,6 +85,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
 use tracing::warn;
+use sinex_core::{timeouts, retry};
 
 /// Database operation error type
 #[derive(Error, Debug)]
@@ -115,10 +128,10 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 3,
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(5),
-            exponential_base: 2.0,
+            max_attempts: retry::MAX_RETRY_ATTEMPTS,
+            initial_delay: timeouts::DEFAULT_TERMINAL_POLL_INTERVAL,
+            max_delay: timeouts::RETRY_MAX_DELAY,
+            exponential_base: retry::BACKOFF_MULTIPLIER as f64,
         }
     }
 }
@@ -306,10 +319,10 @@ mod tests {
     #[test]
     fn test_retry_config_default() {
         let config = RetryConfig::default();
-        assert_eq!(config.max_attempts, 3);
-        assert_eq!(config.initial_delay, Duration::from_millis(100));
-        assert_eq!(config.max_delay, Duration::from_secs(5));
-        assert_eq!(config.exponential_base, 2.0);
+        assert_eq!(config.max_attempts, retry::MAX_RETRY_ATTEMPTS);
+        assert_eq!(config.initial_delay, timeouts::DEFAULT_TERMINAL_POLL_INTERVAL);
+        assert_eq!(config.max_delay, timeouts::RETRY_MAX_DELAY);
+        assert_eq!(config.exponential_base, retry::BACKOFF_MULTIPLIER as f64);
     }
 
     #[test]
