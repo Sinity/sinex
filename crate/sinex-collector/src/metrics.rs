@@ -497,10 +497,7 @@ impl CollectorMetrics {
         });
     }
 
-    /// Increment error counter with basic tracking (legacy method)
-    pub fn record_error(&self, source: &str) {
-        self.record_error_with_context(source, None, None)
-    }
+    // Legacy method removed - use record_error_with_context instead
 
     /// Enhanced error recording with rich context and categorization
     pub fn record_error_with_context(

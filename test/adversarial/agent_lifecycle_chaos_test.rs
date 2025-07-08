@@ -45,15 +45,16 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 updated_at: Utc::now(),
             };
 
-            match queries::upsert_agent_manifest(
+            match sinex_db::agent_correct::upsert_agent_manifest(
                 &pool_clone,
                 &manifest.agent_name,
                 &manifest.version,
-                &manifest.status,
-                &manifest.agent_type,
                 manifest.description.as_deref(),
-                manifest.produces_event_types.clone(),
-                manifest.subscribes_to_event_types.clone(),
+                &manifest.agent_type,
+                manifest.config_template_json.clone().unwrap_or_else(|| json!({})),
+                manifest.produces_event_types.clone().unwrap_or_else(|| json!([])),
+                manifest.subscribes_to_event_types.clone().unwrap_or_else(|| json!([])),
+                manifest.required_capabilities.clone().unwrap_or_else(|| json!([])),
             )
             .await
             {
@@ -211,15 +212,16 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
         updated_at: Utc::now(),
     };
 
-    queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest_v2.agent_name,
         &manifest_v2.version,
-        &manifest_v2.status,
-        &manifest_v2.agent_type,
         manifest_v2.description.as_deref(),
-        manifest_v2.produces_event_types.clone(),
-        manifest_v2.subscribes_to_event_types.clone(),
+        &manifest_v2.agent_type,
+        manifest_v2.config_template_json.clone().unwrap_or_else(|| json!({})),
+        manifest_v2.produces_event_types.clone().unwrap_or_else(|| json!([])),
+        manifest_v2.subscribes_to_event_types.clone().unwrap_or_else(|| json!([])),
+        manifest_v2.required_capabilities.clone().unwrap_or_else(|| json!([])),
     )
     .await?;
     println!("Registered agent v2.0");
@@ -261,7 +263,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
     // Try to send v1.0 event with old capabilities
     let v1_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("1.0.0"));
 
-    match queries::upsert_agent_manifest(
+    match sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest_v1.agent_name,
         &manifest_v1.version,
@@ -334,7 +336,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
         updated_at: Utc::now(),
     };
 
-    queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
@@ -439,7 +441,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
         updated_at: Utc::now(),
     };
 
-    queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
@@ -474,7 +476,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
         updated_at: Utc::now(),
     };
 
-    match queries::upsert_agent_manifest(
+    match sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &recovery_manifest.agent_name,
         &recovery_manifest.version,

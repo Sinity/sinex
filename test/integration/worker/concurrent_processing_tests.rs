@@ -7,7 +7,7 @@
 
 use crate::common::prelude::*;
 use crate::common::worker_test_utils;
-use sinex_db::queries::{claim_work_queue_items, complete_work_queue_item};
+use sinex_db::work_queue_correct::{claim_work_queue_items, complete_work_queue_item};
 use std::sync::Mutex;
 use tokio::task::JoinSet;
 

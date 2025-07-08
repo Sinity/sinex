@@ -10,10 +10,10 @@ pub mod sanitization;
 pub mod security;
 pub mod validation;
 
-// New API modules (correctly implemented)
-pub mod artifacts_correct;
-pub mod annotations_correct;
-pub mod knowledge_graph_correct;
+// New API modules
+pub mod artifacts;
+pub mod annotations;
+pub mod knowledge_graph;
 
 // Domain-specific query modules
 pub mod events;
@@ -86,7 +86,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
 use std::time::Duration;
 use std::env;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use serde::{Deserialize, Serialize};
 
 // Common type aliases for database operations
@@ -153,54 +153,25 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     Ok(pool)
 }
 
-/// Try to get database URL from environment with helpful error messages
-pub fn get_database_url_with_fallbacks() -> Result<String> {
-    // Try DATABASE_URL first
-    if let Ok(url) = env::var("DATABASE_URL") {
-        return Ok(url);
-    }
-
-    // Try common development patterns
-    let fallback_urls = vec![
-        "postgresql:///sinex_dev?host=/run/postgresql",
-        "postgresql://localhost/sinex_dev",
-        "postgresql://postgres:postgres@localhost/sinex",
-    ];
-
-    for url in &fallback_urls {
-        if std::process::Command::new("pg_isready")
-            .arg("-d")
-            .arg(url)
-            .arg("-q")
-            .output().is_ok()
-        {
-            warn!("DATABASE_URL not set, using fallback: {}", url);
-            warn!("For production, please set DATABASE_URL environment variable");
-            return Ok(url.to_string());
-        }
-    }
-
-    error!("DATABASE_URL environment variable is not set and no fallback database connection works");
-    error!("Please ensure PostgreSQL is running and set DATABASE_URL, for example:");
-    error!("  export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql");
-    error!("  export DATABASE_URL=postgresql://username:password@localhost/database_name");
-    
-    Err(anyhow::anyhow!(
-        "DATABASE_URL not set and no accessible PostgreSQL database found. \
-         Please set DATABASE_URL environment variable or ensure PostgreSQL is running \
-         with a database named 'sinex_dev' or 'sinex'."
-    ))
+/// Get database URL from environment - DATABASE_URL required
+pub fn get_database_url() -> Result<String> {
+    env::var("DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!(
+            "DATABASE_URL environment variable is required. Set it like: \
+             export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql"
+        )
+    })
 }
 
-/// Create a database connection pool with graceful fallbacks
-pub async fn create_pool_with_fallbacks() -> Result<DbPool> {
-    let database_url = get_database_url_with_fallbacks()?;
+/// Create a database connection pool
+pub async fn create_pool_strict() -> Result<DbPool> {
+    let database_url = get_database_url()?;
     create_pool(&database_url).await
 }
 
-/// Create a database connection pool with custom configuration and graceful fallbacks
-pub async fn create_pool_with_config_and_fallbacks(config: &PoolConfig) -> Result<DbPool> {
-    let database_url = get_database_url_with_fallbacks()?;
+/// Create a database connection pool with custom configuration
+pub async fn create_pool_with_config_strict(config: &PoolConfig) -> Result<DbPool> {
+    let database_url = get_database_url()?;
     create_pool_with_config(&database_url, config).await
 }
 
@@ -375,8 +346,7 @@ mod tests {
             QueueStatus::FailedRetryable
         );
 
-        // Test legacy mapping
-        assert_eq!(QueueStatus::from("completed"), QueueStatus::Succeeded);
+        // Test that invalid values default to Pending
 
         // Test unknown values default to Pending
         assert_eq!(QueueStatus::from("unknown"), QueueStatus::Pending);

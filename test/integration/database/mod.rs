@@ -25,11 +25,8 @@ pub mod timescaledb_tests;
 /// ULID integration and conversion tests
 pub mod ulid_integration_tests;
 
-/// JSON schema validation tests (pg_jsonschema)
-pub mod jsonschema_validation_tests;
-
-/// Schema validation and management tests
-pub mod schema_validation_tests;
+/// Consolidated validation tests (JSON schema + basic validation)
+pub mod validation_test;
 
 /// Work queue functionality tests
 pub mod work_queue_tests;

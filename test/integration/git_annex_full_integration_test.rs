@@ -6,9 +6,9 @@
 
 use crate::common::prelude::*;
 use sinex_db::queries::{
-    add_to_work_queue, claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
-    insert_event,
+    add_to_work_queue, insert_event,
 };
+use sinex_db::work_queue_correct::{claim_work_queue_items, complete_work_queue_item, fail_work_queue_item};
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};

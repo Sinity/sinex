@@ -176,7 +176,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     println!("✓ Complex operation completed: {}", complex_operation_result);
 
     // 8. Final Verification using Event Equivalence
-    let retrieved_event = queries::get_event_by_id(ctx.pool(), event_id).await
+    let retrieved_event = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id).await
         .map_err(|e| {
             CoreError::database("Failed to retrieve inserted event")
                 .with_event_id(event_id)

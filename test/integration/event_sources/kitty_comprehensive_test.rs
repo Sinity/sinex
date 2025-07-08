@@ -167,7 +167,7 @@ async fn test_kitty_event_storage_and_retrieval(ctx: TestContext) -> TestResult 
     let event_id = insert_event(ctx.pool(), &command_event).await?;
     
     // Retrieve and verify
-    let retrieved = sinex_db::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id).await?;
     assert_eq!(retrieved.source, "shell.kitty");
     assert_eq!(retrieved.event_type, "command.completed");
     
@@ -184,7 +184,7 @@ async fn test_kitty_incremental_scrollback_storage(ctx: TestContext) -> TestResu
     let event_id = insert_event(ctx.pool(), &scrollback_event).await?;
     
     // Retrieve and verify content is actually stored
-    let retrieved = sinex_db::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id).await?;
     assert_eq!(retrieved.event_type, "content.streamed");
     
     // The payload should contain meaningful data (not just metadata)

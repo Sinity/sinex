@@ -169,7 +169,7 @@ impl UnifiedCollector {
             .await
             {
                 error!("Failed to output event: {}", e);
-                self.metrics.record_error(&event.source);
+                self.metrics.record_error_with_context(&event.source, None, Some("output_event"));
             }
         }
 

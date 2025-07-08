@@ -354,7 +354,7 @@ async fn check_worker_health(pool: &DbPool) -> Result<HealthStatus> {
     {
         Ok(_) => {
             // Test worker operations by checking if we can claim work
-            match queries::claim_work_queue_items(pool, "health-check-agent", "health-worker", 0)
+            match claim_work_queue_items(pool, "health-check-agent", "health-worker", 0)
                 .await
             {
                 Ok(_) => Ok(HealthStatus::Healthy),
@@ -689,7 +689,7 @@ async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> TestResu
                         .await;
 
                 // Try to claim work
-                match queries::claim_work_queue_items(
+                match claim_work_queue_items(
                     &workload_pool,
                     "health-test-agent",
                     "health-worker",
@@ -705,7 +705,7 @@ async fn test_health_monitoring_with_real_workload(ctx: TestContext) -> TestResu
                         // Complete the work
                         for item in items {
                             let _ =
-                                queries::complete_work_queue_item(&workload_pool, item.queue_id)
+                                complete_work_queue_item(&workload_pool, item.queue_id)
                                     .await;
                         }
                     }

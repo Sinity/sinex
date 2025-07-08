@@ -53,7 +53,7 @@ impl CollectorConfig {
         
         let paths = vec![
             Some(PathBuf::from("sinex-collector.toml")),
-            Some(PathBuf::from("unified-collector.toml")), // Legacy compatibility
+            // Legacy config file removed
             dirs::config_dir().map(|mut p| {
                 p.push("sinex/collector.toml");
                 p
@@ -281,25 +281,21 @@ impl CollectorConfig {
     fn validate_event_config(&self, event_name: &str, config: &ConfigValue) -> Result<()> {
         // Map the event key format to the actual event type
         let actual_event_name = match event_name {
-            "shell_command_executed_atuin" => "command.imported",  // Legacy mapping
-            "command_imported" => "command.imported",              // New mapping
-            "terminal_scrollback_captured" => "output.captured",   // Updated mapping
-            "terminal_command_output_captured" => "output.captured", // Updated mapping
-            "command_executed" => "command.executed",              // New mapping
-            "command_hist" => "command.hist",                      // Shell history
-            "command_completed" => "command.completed",            // New mapping
+            "command_imported" => "command.imported",
+            "output_captured" => "output.captured",
+            "command_executed" => "command.executed",
+            "command_hist" => "command.hist",
+            "command_completed" => "command.completed",
             "file_created" => "file.created",
             "file_modified" => "file.modified",
             "file_deleted" => "file.deleted",
-            "file_moved" => "file.moved",                          // New mapping
-            "dir_created" => "dir.created",                        // New mapping
-            "dir_deleted" => "dir.deleted",                        // New mapping
-            "clipboard_content_changed" => "copied",               // Updated mapping
-            "clipboard_selection_changed" => "selected",           // Updated mapping
-            "copied" => "copied",                                   // New mapping
-            "selected" => "selected",                               // New mapping
-            "recording_started" => "recording.started",            // New mapping
-            "recording_ended" => "recording.ended",                // New mapping
+            "file_moved" => "file.moved",
+            "dir_created" => "dir.created",
+            "dir_deleted" => "dir.deleted",
+            "copied" => "copied",
+            "selected" => "selected",
+            "recording_started" => "recording.started",
+            "recording_ended" => "recording.ended",
             // Allow the actual event names as well
             other if other.contains('.') => other,
             _ => event_name,
@@ -590,7 +586,7 @@ impl Default for CollectorConfig {
         );
 
         flat_config.insert(
-            "event.command_imported".to_string(),  // Updated event name
+            "event.command_imported".to_string(),
             ConfigValue::Table({
                 let mut table = toml::map::Map::new();
                 table.insert(
@@ -606,7 +602,7 @@ impl Default for CollectorConfig {
         );
 
         flat_config.insert(
-            "event.command_executed".to_string(),
+            "event.command_completed".to_string(),
             ConfigValue::Table({
                 let mut table = toml::map::Map::new();
                 table.insert(
@@ -616,8 +612,8 @@ impl Default for CollectorConfig {
                             .unwrap_or_else(|_| "/tmp/kitty".to_string())
                     ),
                 );
-                table.insert("poll_interval_seconds".to_string(), ConfigValue::Integer(2));  // Use correct Rust field name
-                table.insert("enabled".to_string(), ConfigValue::Boolean(true));  // Add Rust field
+                table.insert("poll_interval_seconds".to_string(), ConfigValue::Integer(2));
+                table.insert("enabled".to_string(), ConfigValue::Boolean(true));
                 table
             }),
         );
@@ -627,11 +623,11 @@ impl Default for CollectorConfig {
                 "file.created".to_string(),
                 "file.modified".to_string(),
                 "file.deleted".to_string(),
-                "command.executed".to_string(),
-                "command.hist".to_string(),      // Shell history files
-                "command.imported".to_string(),  // Updated from shell.command.executed_atuin
+                "command.completed".to_string(),
+                "command.hist".to_string(),
+                "command.imported".to_string(),
                 "window.focused".to_string(),
-                "workspace.switched".to_string(),  // Updated from workspace.changed
+                "workspace.switched".to_string(),
             ],
             event: HashMap::new(),
             flat_config,

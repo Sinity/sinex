@@ -9,9 +9,9 @@ pub mod terminal;
 pub use asciinema::{AsciinemaSessionEnded, AsciinemaSessionStarted, AsciinemaSessionStartedPayload, AsciinemaSessionEndedPayload};
 pub use atuin::{CommandExecutedAtuin, CommandExecutedAtuinPayload};
 pub use kitty::{
-    KittyCommandExecuted, KittyCommandCompleted, KittyScrollbackIncremental, KittyTabCreated, 
+    KittyCommandCompleted, KittyScrollbackIncremental, KittyTabCreated, 
     KittyTabFocused, KittyTabClosed, KittyProcessChanged,
-    KittyCommandExecutedPayload, KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
+    KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
     KittyTabCreatedPayload, KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
 };
 pub use scrollback::{CommandOutputCaptured, TerminalScrollbackCaptured, CommandOutputCapturedPayload, TerminalScrollbackCapturedPayload};
@@ -33,7 +33,6 @@ register_events! {
     "command.hist" => (shell.history, ShellHistoryCommandPayload),
     
     // Real-time terminal events from Kitty
-    "command.started" => (shell.kitty, KittyCommandExecutedPayload),
     "command.completed" => (shell.kitty, KittyCommandCompletedPayload),
     "tab.created" => (shell.kitty, KittyTabCreatedPayload),
     "tab.focused" => (shell.kitty, KittyTabFocusedPayload),

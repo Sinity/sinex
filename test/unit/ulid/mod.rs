@@ -1,5 +1,5 @@
 // Core ULID functionality tests (run by default)
-mod ulid_edge_case_tests;
+// mod ulid_edge_case_tests; // Removed - tests consolidated
 
 // Performance and correctness validation (run by default)
 mod bit_layout_verification;

@@ -15,7 +15,7 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
             .await?;
 
     // Retrieve the inserted event
-    let inserted_event = queries::get_event_by_id(ctx.pool(), event_id)
+    let inserted_event = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id)
         .await
         .map_err(|e| {
             CoreError::database("Failed to retrieve inserted event")

@@ -17,8 +17,8 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
     }
 
     let pool = match config {
-        Some(config) => crate::create_pool_with_config_and_fallbacks(&config).await?,
-        None => crate::create_pool_with_fallbacks().await?,
+        Some(config) => crate::create_pool_with_config_strict(&config).await?,
+        None => crate::create_pool_strict().await?,
     };
 
     POOL.set(pool)
@@ -28,8 +28,4 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
     POOL.get().ok_or_else(|| anyhow::anyhow!("Pool not initialized"))
 }
 
-/// Get or create the global database pool with graceful fallbacks (deprecated - use get_pool)
-#[deprecated(note = "Use get_pool() instead - it now includes graceful fallbacks by default")]
-pub async fn get_pool_with_fallbacks() -> Result<&'static DbPool> {
-    get_pool().await
-}
+// Deprecated function removed

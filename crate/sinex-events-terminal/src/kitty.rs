@@ -40,17 +40,6 @@ impl EventType for KittyCommandCompleted {
     const EVENT_NAME: &'static str = "command.completed";
 }
 
-/// Legacy command execution event (kept for backward compatibility)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KittyCommandExecuted;
-
-impl EventType for KittyCommandExecuted {
-    type Payload = KittyCommandExecutedPayload;
-    type SourceImpl = KittyEventSource;
-    const EVENT_NAME: &'static str = "command.started";
-}
-
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyCommandCompletedPayload {
     pub command: String,
@@ -64,18 +53,6 @@ pub struct KittyCommandCompletedPayload {
     pub output_line_count: u32,
     pub shell_integration_used: bool,
     pub completion_timestamp: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct KittyCommandExecutedPayload {
-    pub command: String,
-    pub working_directory: Option<String>,
-    pub kitty_window_id: String,
-    pub kitty_tab_id: String,
-    pub exit_status: Option<i32>,
-    pub execution_time_ms: Option<u64>,
-    pub prompt_detected: bool,
-    pub scrollback_hash: Option<String>,
 }
 
 

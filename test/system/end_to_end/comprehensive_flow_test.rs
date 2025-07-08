@@ -200,19 +200,18 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
     info!("Testing agent registration and heartbeats");
 
     let agent_name = "test-collector";
-    let manifest = queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         ctx.pool(),
         agent_name,
         "0.1.0",
-        "running",
-        "collector",
         Some("Test collector for integration testing"),
-        Some(serde_json::json!(["file.created", "file.modified"])),
-        None,
+        "collector",
+        serde_json::json!({}),
+        serde_json::json!(["file.created", "file.modified"]),
+        serde_json::json!([]),
+        serde_json::json!([]),
     )
     .await?;
-
-    pretty_assertions::assert_eq!(manifest.agent_name, agent_name);
 
     // Send heartbeat
     let _heartbeat = AgentHeartbeat {

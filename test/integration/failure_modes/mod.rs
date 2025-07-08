@@ -9,7 +9,7 @@
 //! Each test is designed to verify graceful degradation and recovery.
 
 pub mod channel_backpressure_test;
-pub mod config_reload_test;
+// pub mod config_reload_test; // Consolidated to configuration_test.rs
 pub mod connection_pool_test;
 pub mod database_failures_test;
 pub mod filesystem_failures_test;

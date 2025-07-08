@@ -29,6 +29,9 @@ pub mod database;
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;
 
+// Consolidated test assertions and utilities
+pub mod consolidated_assertions;
+
 // Unified test context for all tests
 pub mod test_context;
 
@@ -349,15 +352,16 @@ pub mod assertions {
         pool: &DbPool,
         manifest: &AgentManifest,
     ) -> Result<(), anyhow::Error> {
-        let result = queries::upsert_agent_manifest(
+        let result = sinex_db::agent_correct::upsert_agent_manifest(
             pool,
             &manifest.agent_name,
-            manifest.description.as_deref().unwrap_or(""),
             &manifest.version,
-            &manifest.status,
-            Some(&manifest.agent_type),
+            manifest.description.as_deref(),
+            &manifest.agent_type,
             manifest.config_template_json.clone(),
             manifest.produces_event_types.clone(),
+            manifest.subscribes_to_event_types.clone(),
+            manifest.required_capabilities.clone(),
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
@@ -627,15 +631,16 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
-        manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
-        &manifest.status,
-        Some(&manifest.agent_type),
+        manifest.description.as_deref(),
+        &manifest.agent_type,
         manifest.config_template_json.clone(),
         manifest.produces_event_types.clone(),
+        manifest.subscribes_to_event_types.clone(),
+        manifest.required_capabilities.clone(),
     )
     .await?;
     Ok(())
@@ -658,15 +663,16 @@ pub async fn create_agent_with_subscriptions(
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
-    queries::upsert_agent_manifest(
+    sinex_db::agent_correct::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
-        manifest.description.as_deref().unwrap_or(""),
         &manifest.version,
-        &manifest.status,
-        Some(&manifest.agent_type),
+        manifest.description.as_deref(),
+        &manifest.agent_type,
         manifest.config_template_json.clone(),
         manifest.produces_event_types.clone(),
+        manifest.subscribes_to_event_types.clone(),
+        manifest.required_capabilities.clone(),
     )
     .await?;
 
@@ -860,9 +866,10 @@ pub mod resources {
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
-pub use sinex_db::queries::{
-    get_event_by_id, get_events_by_source, get_events_by_type, get_recent_events,
+pub use sinex_db::events::{
+    get_event_by_id,
 };
+// Note: Some query functions may need to be migrated to domain modules
 pub mod channel_test_utils;
 pub mod config_test_utils;
 pub mod enhanced_assertions;
