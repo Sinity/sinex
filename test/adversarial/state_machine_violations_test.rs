@@ -345,7 +345,7 @@ async fn test_worker_state_machine_corruption(ctx: TestContext) -> TestResult {
         None,
     );
 
-    queries::insert_event(&pool, &test_event).await.unwrap();
+    queries::insert_event(pool, &test_event).await.unwrap();
 
     // Simulate multiple workers trying to process the same event
     let state_violations = Arc::new(AtomicU64::new(0));

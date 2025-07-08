@@ -27,7 +27,7 @@ fn json_values_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Object(obj1), Value::Object(obj2)) => {
             obj1.len() == obj2.len() && obj1.iter().all(|(k, v)| {
-                obj2.get(k).map_or(false, |v2| json_values_equal(v, v2))
+                obj2.get(k).is_some_and(|v2| json_values_equal(v, v2))
             })
         }
         _ => a == b,
@@ -74,7 +74,7 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
         Just("file.deleted".to_string()),
         // Terminal events
         Just("command.executed".to_string()),
-        Just("shell.command.executed_atuin".to_string()),
+        Just("command.executed".to_string()),
         // Window events
         Just("window.focused".to_string()),
         Just("window.opened".to_string()),

@@ -74,9 +74,13 @@ def parse_datetime(date_str: str) -> datetime:
 
 
 @click.group()
-def cli():
+@click.option('--interactive', '-i', is_flag=True, help='Launch interactive query builder')
+def cli(interactive):
     """Sinex CLI - Query your digital memory."""
-    pass
+    if interactive:
+        from .interactive import run_interactive_mode
+        run_interactive_mode()
+        return
 
 
 @cli.command()
@@ -1636,6 +1640,49 @@ def stats():
             
             console.print(f"  {status_icon} {agent['agent_name']}: {agent['status']} "
                          f"(last: {last_hb.strftime('%H:%M:%S') if last_hb else 'never'})")
+
+
+@cli.group()
+def completion():
+    """Shell completion management."""
+    pass
+
+
+@completion.command('install')
+@click.argument('shell', type=click.Choice(['bash', 'zsh', 'fish']))
+@click.option('--completion-dir', help='Custom completion directory')
+def completion_install(shell: str, completion_dir: Optional[str]):
+    """Install shell completion for the specified shell."""
+    try:
+        from .completion import install_completion
+        if install_completion(shell, completion_dir):
+            console.print(f"[green]✅ {shell.title()} completion installed successfully![/green]")
+        else:
+            console.print(f"[red]❌ Failed to install {shell} completion[/red]")
+            sys.exit(1)
+    except ImportError:
+        console.print("[red]Completion module not available[/red]")
+        sys.exit(1)
+
+
+@completion.command('generate')
+@click.argument('shell', type=click.Choice(['bash', 'zsh', 'fish']))
+def completion_generate(shell: str):
+    """Generate completion script for the specified shell."""
+    try:
+        from .completion import generate_bash_completion, generate_zsh_completion, generate_fish_completion
+        
+        if shell == 'bash':
+            content = generate_bash_completion()
+        elif shell == 'zsh':
+            content = generate_zsh_completion()
+        elif shell == 'fish':
+            content = generate_fish_completion()
+        
+        click.echo(content)
+    except ImportError:
+        console.print("[red]Completion module not available[/red]")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

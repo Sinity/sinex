@@ -323,7 +323,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
 
     // Phase 1: Normal operation
     for _ in 0..5 {
-        let _ = try_query(&ctx.pool(), &queries_before, &connection_errors).await;
+        let _ = try_query(ctx.pool(), &queries_before, &connection_errors).await;
     }
 
     // Phase 2: Simulate database unavailability
@@ -331,7 +331,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     // For this test, we'll use a ctx.pool() with bad connection string
     let bad_pool = PgPool::connect("postgresql://bad_host/bad_db").await;
 
-    if let Err(_) = bad_pool {
+    if bad_pool.is_err() {
         // Expected - can't connect to non-existent database
         for _ in 0..5 {
             queries_during_outage.fetch_add(1, Ordering::Relaxed);
@@ -343,7 +343,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     for _ in 0..5 {
-        let _ = try_query(&ctx.pool(), &queries_after, &connection_errors).await;
+        let _ = try_query(ctx.pool(), &queries_after, &connection_errors).await;
     }
 
     println!("\nDatabase restart resilience test results:");

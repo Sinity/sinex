@@ -181,7 +181,7 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
         !events.is_empty(),
         "Should have received events before crash"
     );
-    assert!(events.len() >= 1, "Should have received at least 1 event");
+    assert!(!events.is_empty(), "Should have received at least 1 event");
 
     // Verify event content
     let first_event = &events[0];

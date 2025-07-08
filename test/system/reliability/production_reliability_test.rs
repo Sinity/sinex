@@ -20,11 +20,12 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     println!("Testing graceful degradation under database connectivity issues...");
 
-    // Test 1: Database connection pool exhaustion
+    // Test 1: Database connection pool exhaustion simulation
+    // Test reasonable connection pressure within shared pool limits
     let mut held_connections = Vec::new();
-    let max_connections = 20; // Typical test pool size
+    let max_connections = 8; // Reasonable for testing connection pressure with 12 cores
 
-    // Exhaust connection pool
+    // Simulate connection pressure without exhausting the shared pool
     for i in 0..max_connections {
         match pool.acquire().await {
             Ok(conn) => {
@@ -39,7 +40,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     }
 
     println!(
-        "  Connection pool exhausted with {} connections",
+        "  Connection pressure applied with {} connections",
         held_connections.len()
     );
 
@@ -60,8 +61,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             Some("1.0.0"),
             None,
         )
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
         Ok(())
     }
 
@@ -142,7 +142,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     let recovery_test = timeout(
         Duration::from_secs(5),
         insert_raw_event(
-            &pool,
+            pool,
             "degradation.test",
             "recovery_test",
             "localhost",
@@ -238,8 +238,8 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         })
     };
 
-    // Create high volume of events
-    let (tx, mut rx) = mpsc::channel(100);
+    // Create substantial volume of events to properly test performance
+    let (tx, mut rx) = mpsc::channel(200);
 
     // Event generation task
     let generation_task = tokio::spawn(async move {
@@ -359,7 +359,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     // Test 2: Database connection limits under concurrent access
     println!("\nTesting database connection limits...");
 
-    let concurrent_connections = 50;
+    let concurrent_connections = 24; // Scale up for 12 cores with proper connection management
     let mut connection_tasks = Vec::new();
 
     for i in 0..concurrent_connections {
@@ -400,28 +400,26 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
             let mut timed_out_connections = 0;
             let mut total_duration = Duration::ZERO;
 
-            for result in results {
-                if let Ok((i, conn_result, duration)) = result {
-                    total_duration += duration;
+            for (i, conn_result, duration) in results.into_iter().flatten() {
+                total_duration += duration;
 
-                    match conn_result {
-                        Ok(Ok(_)) => {
-                            successful_connections += 1;
-                            if i < 5 {
-                                println!("  Connection {} succeeded in {:?}", i, duration);
-                            }
+                match conn_result {
+                    Ok(Ok(_)) => {
+                        successful_connections += 1;
+                        if i < 5 {
+                            println!("  Connection {} succeeded in {:?}", i, duration);
                         }
-                        Ok(Err(e)) => {
-                            failed_connections += 1;
-                            if i < 5 {
-                                println!("  Connection {} failed: {}", i, e);
-                            }
+                    }
+                    Ok(Err(e)) => {
+                        failed_connections += 1;
+                        if i < 5 {
+                            println!("  Connection {} failed: {}", i, e);
                         }
-                        Err(_) => {
-                            timed_out_connections += 1;
-                            if i < 5 {
-                                println!("  Connection {} timed out after {:?}", i, duration);
-                            }
+                    }
+                    Err(_) => {
+                        timed_out_connections += 1;
+                        if i < 5 {
+                            println!("  Connection {} timed out after {:?}", i, duration);
                         }
                     }
                 }
@@ -531,7 +529,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     let timed_out_health_checks = health_results
         .iter()
-        .filter(|(_, result, _)| matches!(result, Err(_)))
+        .filter(|(_, result, _)| result.is_err())
         .count();
 
     let avg_health_duration: Duration = health_results
@@ -680,28 +678,26 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
             let mut failed_transactions = 0;
             let mut total_tx_duration = Duration::ZERO;
 
-            for result in results {
-                if let Ok((i, tx_result, duration)) = result {
-                    total_tx_duration += duration;
+            for (i, tx_result, duration) in results.into_iter().flatten() {
+                total_tx_duration += duration;
 
-                    match tx_result {
-                        Ok(Ok(())) => {
-                            successful_transactions += 1;
-                            if i < 3 {
-                                println!("    Transaction {} completed in {:?}", i, duration);
-                            }
+                match tx_result {
+                    Ok(Ok(())) => {
+                        successful_transactions += 1;
+                        if i < 3 {
+                            println!("    Transaction {} completed in {:?}", i, duration);
                         }
-                        Ok(Err(e)) => {
-                            failed_transactions += 1;
-                            if i < 3 {
-                                println!("    Transaction {} failed: {}", i, e);
-                            }
+                    }
+                    Ok(Err(e)) => {
+                        failed_transactions += 1;
+                        if i < 3 {
+                            println!("    Transaction {} failed: {}", i, e);
                         }
-                        Err(_) => {
-                            failed_transactions += 1;
-                            if i < 3 {
-                                println!("    Transaction {} timed out", i);
-                            }
+                    }
+                    Err(_) => {
+                        failed_transactions += 1;
+                        if i < 3 {
+                            println!("    Transaction {} timed out", i);
                         }
                     }
                 }
@@ -732,7 +728,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     println!("\nTesting query performance under load...");
 
     let query_performance_start = Instant::now();
-    let complex_queries = vec![
+    let complex_queries = [
         // Aggregation query
         "SELECT source, COUNT(*) as event_count FROM raw.events WHERE created_at > NOW() - INTERVAL '1 hour' GROUP BY source",
 

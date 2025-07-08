@@ -1,13 +1,20 @@
 pub mod channel_helpers;
+pub mod channel_enhancements;
+pub mod chunking;
 pub mod config_extractors;
+pub mod config_helpers;
+pub mod directory_manager;
 pub mod error_context;
 pub mod event;
+pub mod event_builders;
+pub mod event_registry_macro;
 pub mod event_source_base;
 pub mod event_source_context;
 pub mod heartbeat;
 pub mod unified_collector;
 pub mod validation;
 pub mod validation_chains;
+pub mod wait_helpers;
 
 pub use channel_helpers::{
     BackpressureManager, // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
@@ -16,8 +23,22 @@ pub use channel_helpers::{
     ChannelSenderExt,
     ChannelStats,
 };
+pub use channel_enhancements::{
+    EnhancedEventSender, PerformanceTracker, PerformanceMetrics, 
+    BatchSendResult, ChannelHealthReport, ChannelDiagnostics, 
+    DiagnosticsReport, create_enhanced_event_sender
+};
+pub use chunking::{
+    ChunkingConfig, ChunkingService, ContentChunk, ChunkInfo,
+};
 pub use config_extractors::{parse_duration, ConfigExtractor, ConfigValidator};
+pub use config_helpers::{
+    ConfigFactory, ConfigExtraction, ConfigMerger, 
+    DatabaseConfig, CollectorConfig, ObservabilityConfig, SourcesConfig
+};
+pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use event_builders::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
 pub use event_source_base::EventSourceBase;
 pub use event_source_context::EventSourceContext;
 pub use heartbeat::{
@@ -26,6 +47,12 @@ pub use heartbeat::{
 pub use unified_collector::{EventOutput, EventSource, EventType};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 pub use validation::{validate_path_within_root, contains_shell_metacharacters};
+pub use wait_helpers::{
+    wait_for_database_ready, wait_for_database_ready_with_timeout, wait_for_event_count,
+    wait_for_worker_status, wait_for_work_queue_count, wait_for_work_queue_status_count,
+    wait_for_work_queue_empty, wait_for_agent_status, wait_for_condition, 
+    wait_for_condition_or_timeout, BackoffHelper
+};
 
 // Common type aliases for event handling (defined after RawEvent struct)
 
@@ -260,13 +287,20 @@ pub mod event_type_constants {
 
     pub mod shell {
         pub const COMMAND_EXECUTED: &str = "command.executed";
+        pub const COMMAND_COMPLETED: &str = "command.completed";
         pub const COMMAND_FAILED: &str = "command.failed";
         pub const SESSION_STARTED: &str = "session.started";
         pub const SESSION_ENDED: &str = "session.ended";
         pub const COMMAND_IMPORTED: &str = "command.imported";
         pub const RECORDING_STARTED: &str = "recording.started";
         pub const RECORDING_ENDED: &str = "recording.ended";
-        pub const OUTPUT_CAPTURED: &str = "output.captured";
+        pub const COMMAND_OUTPUT: &str = "command.output";
+        pub const SCROLLBACK_FULL: &str = "scrollback.full";
+        pub const TAB_CREATED: &str = "tab.created";
+        pub const TAB_FOCUSED: &str = "tab.focused";
+        pub const TAB_CLOSED: &str = "tab.closed";
+        pub const PROCESS_CHANGED: &str = "process.changed";
+        pub const CONFIG_CHANGED: &str = "config.changed";
     }
 
     pub mod window_manager {
@@ -286,8 +320,8 @@ pub mod event_type_constants {
     }
 
     pub mod clipboard {
-        pub const COPIED: &str = "copied";
-        pub const SELECTED: &str = "selected";
+        pub const COPIED: &str = "clipboard.copied";
+        pub const SELECTED: &str = "clipboard.selected";
     }
 
     pub mod dbus {
@@ -301,10 +335,14 @@ pub mod event_type_constants {
         pub const NETWORK_STATE_CHANGED: &str = "network.state_changed";
         pub const BLUETOOTH_DEVICE_CHANGED: &str = "bluetooth.device_changed";
         pub const MOUNT_CHANGED: &str = "mount.changed";
+        pub const SESSION_STATE_CHANGED: &str = "session.state_changed";
+        pub const SECURITY_AUTHORIZATION: &str = "security.authorization";
+        pub const SCREENSAVER_STATE_CHANGED: &str = "screensaver.state_changed";
     }
 
     pub mod journald {
         pub const ENTRY_WRITTEN: &str = "entry.written";
+        pub const SYNC_COMPLETED: &str = "sync.completed";
     }
 }
 

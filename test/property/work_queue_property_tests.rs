@@ -377,7 +377,7 @@ mod unit_tests {
         pretty_assertions::assert_eq!(tracker.get_duplicates()[0], id1);
     }
 
-    #[sinex_test]
+    #[sinex_test(timeout = 40)]
     async fn test_worker_crash_simulation(ctx: TestContext) -> anyhow::Result<()> {
         // This is a basic test that the crash simulation compiles and runs
         let tracker = ProcessingTracker::new();

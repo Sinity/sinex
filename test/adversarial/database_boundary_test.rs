@@ -31,7 +31,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
         let event = events::large_payload_test_event(1024);
 
         let start = Instant::now();
-        match insert_event(&pool, &event).await {
+        match insert_event(pool, &event).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
@@ -250,13 +250,11 @@ async fn test_concurrent_btree_index_splits(ctx: TestContext) -> TestResult {
     let query_inconsistencies = query_handle.await.unwrap();
 
     println!("\nB-tree split test results:");
-    for result in results {
-        if let Ok((group, success, failed, elapsed)) = result {
-            println!(
-                "  Group {}: {} success, {} failed in {:?}",
-                group, success, failed, elapsed
-            );
-        }
+    for (group, success, failed, elapsed) in results.into_iter().flatten() {
+        println!(
+            "  Group {}: {} success, {} failed in {:?}",
+            group, success, failed, elapsed
+        );
     }
 
     println!(
@@ -309,7 +307,7 @@ async fn test_events_spanning_chunk_boundary(ctx: TestContext) -> TestResult {
             None,
         );
 
-        match insert_event(&pool, &event).await {
+        match insert_event(pool, &event).await {
             Ok(_) => println!("    Inserted {}: {}", label, timestamp),
             Err(e) => println!("    Failed {}: {}", label, e),
         }
@@ -382,7 +380,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
                 let start = Instant::now();
                 // Use timing utility for count query during compression stress
                 let count = wait_for_filtered_event_count(
-                    &*pool,
+                    &pool,
                     "source = $1",
                     &["compression_test"],
                     0, // Accept any count
@@ -406,7 +404,7 @@ async fn test_query_during_chunk_compression(ctx: TestContext) -> TestResult {
                 let start = Instant::now();
                 // Use timing utility for range scan during compression stress
                 let count = wait_for_filtered_event_count(
-                    &*pool,
+                    &pool,
                     "source = $1 AND ts_ingest >= $2",
                     &["compression_test"], // Note: can't bind timestamp easily, but this is a stress test
                     0,                     // Accept any count

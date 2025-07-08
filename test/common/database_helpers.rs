@@ -71,7 +71,7 @@ pub async fn insert_test_event_batch(pool: &DbPool, events: &[RawEvent]) -> Resu
     let mut event_ids = Vec::new();
 
     for event in events {
-        let inserted = queries::insert_event(&pool, event).await?;
+        let inserted = queries::insert_event(pool, event).await?;
         event_ids.push(inserted.id);
     }
 
@@ -102,7 +102,7 @@ pub async fn setup_test_workload(
 
 /// Create a simple test event
 pub async fn create_test_event(source: &str, event_type: &str) -> RawEvent {
-    RawEventBuilder::new(source, event_type, json!({"test": true})).build()
+    EventFactory::new(source).create_event(event_type, json!({"test": true}))
 }
 
 /// Create a test agent with minimal fields

@@ -68,7 +68,7 @@ async fn test_json_hash_collision_dos(ctx: TestContext) -> TestResult {
     let mut collision_object = HashMap::new();
 
     // These strings often collide in simple hash functions
-    let collision_keys = vec![
+    let collision_keys = [
         "Aa", "BB", // Often same hash
         "AaAa", "AaBB", "BBAa", "BBBB", // Chain collisions
     ];

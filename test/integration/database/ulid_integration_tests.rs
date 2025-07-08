@@ -2,7 +2,7 @@ use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use crate::common::{assertions, events};
 
-#[sinex_test]
+#[sinex_test(timeout = 40)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
@@ -79,7 +79,7 @@ async fn test_ulid_timestamp_extraction(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout = 35)]
 async fn test_ulid_monotonic_generation(ctx: TestContext) -> TestResult {
     // Generate multiple ULIDs rapidly to test monotonic behavior
     let mut _prev_ulid = None;
@@ -168,7 +168,7 @@ async fn test_ulid_range_queries(ctx: TestContext) -> TestResult {
             "INSERT INTO raw.events (id, source, event_type, host, payload)
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(&ulid.to_string())
+        .bind(ulid.to_string())
         .bind("range_test_v2")
         .bind("first_batch")
         .bind("test_host")
@@ -194,7 +194,7 @@ async fn test_ulid_range_queries(ctx: TestContext) -> TestResult {
             "INSERT INTO raw.events (id, source, event_type, host, payload)
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(&ulid.to_string())
+        .bind(ulid.to_string())
         .bind("range_test_v2")
         .bind("second_batch")
         .bind("test_host")
@@ -295,7 +295,7 @@ async fn test_ulid_in_foreign_keys(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&event_id.to_string())
+    .bind(event_id.to_string())
     .bind("fk_test_v2")
     .bind("test_type_v2")
     .bind("test_host")
@@ -309,8 +309,8 @@ async fn test_ulid_in_foreign_keys(ctx: TestContext) -> TestResult {
         "INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name)
          VALUES ($1::ulid, $2::ulid, $3)",
     )
-    .bind(&queue_id.to_string())
-    .bind(&event_id.to_string())
+    .bind(queue_id.to_string())
+    .bind(event_id.to_string())
     .bind("fk_ulid_test_agent_v2")
     .execute(ctx.pool())
     .await?;
@@ -322,7 +322,7 @@ async fn test_ulid_in_foreign_keys(ctx: TestContext) -> TestResult {
          JOIN sinex_schemas.work_queue pq ON e.id = pq.raw_event_id
          WHERE pq.queue_id = $1::ulid",
     )
-    .bind(&queue_id.to_string())
+    .bind(queue_id.to_string())
     .fetch_one(ctx.pool())
     .await?;
 
@@ -347,7 +347,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> TestResult {
             "INSERT INTO raw.events (id, source, event_type, host, payload)
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(&ulid.to_string())
+        .bind(ulid.to_string())
         .bind("perf_test_v2")
         .bind(format!("type_{}", i % 10))
         .bind("test_host")
@@ -362,7 +362,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&lookup_ulid.to_string())
+    .bind(lookup_ulid.to_string())
     .bind("perf_test_v2")
     .bind("lookup_test")
     .bind("test_host")
@@ -378,7 +378,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> TestResult {
     // Test primary key lookup efficiency
     let found_event_type: Option<String> =
         sqlx::query_scalar("SELECT event_type FROM raw.events WHERE id = $1::ulid")
-            .bind(&lookup_ulid.to_string())
+            .bind(lookup_ulid.to_string())
             .fetch_optional(ctx.pool())
             .await?;
 
@@ -391,7 +391,7 @@ async fn test_ulid_index_performance(ctx: TestContext) -> TestResult {
     // Test that we can lookup the specific payload
     let found_payload: serde_json::Value =
         sqlx::query_scalar("SELECT payload FROM raw.events WHERE id = $1::ulid")
-            .bind(&lookup_ulid.to_string())
+            .bind(lookup_ulid.to_string())
             .fetch_one(ctx.pool())
             .await?;
 

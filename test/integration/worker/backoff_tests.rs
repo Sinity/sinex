@@ -9,9 +9,9 @@ async fn test_calculate_backoff_basic(ctx: TestContext) -> TestResult {
     let backoff_2 = calculate_backoff_secs(2);
 
     // Should be roughly 60s, 120s, 240s (with jitter)
-    assert!(backoff_0 >= 48.0 && backoff_0 <= 72.0); // 60 * 0.8 to 60 * 1.2
-    assert!(backoff_1 >= 96.0 && backoff_1 <= 144.0); // 120 * 0.8 to 120 * 1.2
-    assert!(backoff_2 >= 192.0 && backoff_2 <= 288.0); // 240 * 0.8 to 240 * 1.2
+    assert!((48.0..=72.0).contains(&backoff_0)); // 60 * 0.8 to 60 * 1.2
+    assert!((96.0..=144.0).contains(&backoff_1)); // 120 * 0.8 to 120 * 1.2
+    assert!((192.0..=288.0).contains(&backoff_2)); // 240 * 0.8 to 240 * 1.2
     Ok(())
 }
 

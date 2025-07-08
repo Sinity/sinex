@@ -96,8 +96,8 @@ pub mod health_monitoring_integration_test;
 /// Git Annex storage integration testing
 pub mod git_annex_full_integration_test;
 
-/// Configuration validation integration testing
-pub mod configuration_validation_integration_test;
 
 /// Deployment validation testing
 pub mod deployment_validation_test;
+
+

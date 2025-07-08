@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::info;
+use std::env;
+use tracing::{info, warn};
 
 /// Direct configuration structure that matches NixOS module options
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -367,8 +368,8 @@ impl NixosConfig {
         shell_config.insert(
             "history_files".to_string(),
             sinex_core::ConfigValue::Array(vec![
-                sinex_core::ConfigValue::String("~/.zsh_history".to_string()),
-                sinex_core::ConfigValue::String("~/.bash_history".to_string()),
+                sinex_core::ConfigValue::String(resolve_system_safe_path("~/.zsh_history", Some("ZSH_HISTORY_FILE"), "/var/lib/sinex/shell")),
+                sinex_core::ConfigValue::String(resolve_system_safe_path("~/.bash_history", Some("BASH_HISTORY_FILE"), "/var/lib/sinex/shell")),
             ]),
         );
         shell_config.insert(
@@ -579,9 +580,10 @@ impl NixosConfig {
     }
 
     fn auto_discover_kitty_config(&self) -> Result<sinex_core::ConfigValue> {
+        let default_tmp_dir = env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let possible_sockets = [
-            "/tmp/kitty".to_string(),
-            format!("/tmp/kitty-{}", std::process::id()),
+            format!("{}/kitty", default_tmp_dir),
+            format!("{}/kitty-{}", default_tmp_dir, std::process::id()),
             std::env::var("KITTY_LISTEN_ON").unwrap_or_default(),
         ];
 
@@ -589,7 +591,10 @@ impl NixosConfig {
             .iter()
             .find(|path| !path.is_empty() && PathBuf::from(path).exists())
             .cloned()
-            .unwrap_or_else(|| "/tmp/kitty".to_string());
+            .unwrap_or_else(|| {
+                let tmp_dir = env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+                format!("{}/kitty", tmp_dir)
+            });
 
         let mut config = toml::map::Map::new();
         config.insert(
@@ -663,6 +668,39 @@ impl NixosConfig {
             anyhow::bail!("Invalid retention period format (expected number with d/w/m/y suffix)")
         }
     }
+}
+
+/// Resolve path without home directory assumptions for system services
+fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_dir: &str) -> String {
+    // First try environment variable if provided
+    if let Some(var_name) = env_var {
+        if let Ok(path) = env::var(var_name) {
+            return path;
+        }
+    }
+    
+    // If path starts with ~, resolve to system-safe alternatives
+    if let Some(relative_path) = default_path.strip_prefix("~/") {
+        // Remove ~/
+        
+        // Try XDG directories first (most appropriate for system services)
+        if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
+            return format!("{}/{}", data_dir, relative_path);
+        }
+        
+        // Try HOME as last resort
+        if let Ok(home) = env::var("HOME") {
+            warn!("Using HOME directory for system service - consider setting XDG_DATA_HOME");
+            return format!("{}/.local/share/{}", home, relative_path);
+        }
+        
+        // Fall back to /var/lib or /tmp for system services
+        warn!("No HOME or XDG_DATA_HOME available, using fallback: {}/{}", fallback_dir, relative_path);
+        return format!("{}/{}", fallback_dir, relative_path);
+    }
+    
+    // Return path as-is if not home directory based
+    default_path.to_string()
 }
 
 #[cfg(test)]

@@ -201,10 +201,10 @@ async fn test_concurrent_claiming_prevents_duplicates(ctx: TestContext) -> TestR
     pretty_assertions::assert_eq!(items.len(), 0, "Worker 2 should not get any items");
 
     // Complete the item
-    complete_work_queue_item(&ctx.pool(), claimed[0].queue_id).await?;
+    complete_work_queue_item(ctx.pool(), claimed[0].queue_id).await?;
 
     // Verify the item was completed successfully
-    let completed_item = sinex_db::queries::get_work_item_by_id(&ctx.pool(), claimed[0].queue_id).await?;
+    let completed_item = sinex_db::queries::get_work_item_by_id(ctx.pool(), claimed[0].queue_id).await?;
     pretty_assertions::assert_eq!(completed_item.status, "succeeded", "Item should be marked as succeeded");
 
     Ok(())
@@ -222,7 +222,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> TestResult {
 
     // Create work queue items from events
     for event in &events {
-        worker_test_utils::create_work_item(&ctx.pool(), "stress_worker", event.id).await?;
+        worker_test_utils::create_work_item(ctx.pool(), "stress_worker", event.id).await?;
     }
 
     let _pool = Arc::new(ctx.pool().clone());
@@ -281,20 +281,21 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> TestResult {
     }
 
     // Analyze results
-    let stats = processing_stats.lock().unwrap();
-    let total_processed: i32 = stats.values().filter_map(|s| s.get("processed")).sum();
+    let (total_processed, active_workers) = {
+        let stats = processing_stats.lock().unwrap();
+        let total_processed: i32 = stats.values().filter_map(|s| s.get("processed")).sum();
+        let active_workers = stats
+            .values()
+            .filter(|s| s.get("processed").copied().unwrap_or(0) > 0)
+            .count();
+        (total_processed, active_workers)
+    };
 
     pretty_assertions::assert_eq!(
         total_processed,
         item_count as i32,
         "All items should be processed"
     );
-
-    // Verify work was distributed
-    let active_workers = stats
-        .values()
-        .filter(|s| s.get("processed").copied().unwrap_or(0) > 0)
-        .count();
 
     assert!(
         active_workers >= worker_count / 2,
@@ -310,7 +311,7 @@ async fn test_high_concurrency_stress_test(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
     // Test that items can be reclaimed after worker failure
-    let _ = worker_test_utils::insert_test_items(&ctx.pool(), 5).await?;
+    let _ = worker_test_utils::insert_test_items(ctx.pool(), 5).await?;
 
     // Worker 1 claims items but "crashes"
     let claimed = claim_work_queue_items(ctx.pool(), "test_worker_agent", "worker-failing", 5).await?;
@@ -339,11 +340,11 @@ async fn test_worker_failure_recovery(ctx: TestContext) -> TestResult {
 
     // Complete processing
     for item in reclaimed {
-        complete_work_queue_item(&ctx.pool(), item.queue_id).await?;
+        complete_work_queue_item(ctx.pool(), item.queue_id).await?;
     }
 
     // Verify all items were completed (status = succeeded)
-    let stats = worker_test_utils::get_work_queue_stats(&ctx.pool()).await?;
+    let stats = worker_test_utils::get_work_queue_stats(ctx.pool()).await?;
     pretty_assertions::assert_eq!(stats.succeeded, 5, "All 5 items should be succeeded");
     pretty_assertions::assert_eq!(stats.pending, 0, "No items should be pending");
 

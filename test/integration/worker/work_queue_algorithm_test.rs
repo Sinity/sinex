@@ -361,7 +361,7 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
     });
 
     // Wait for all to complete
-    let _ = creator_handle.await?;
+    creator_handle.await?;
     let worker_results = join_all(worker_handles).await;
     let queue_samples = monitor_handle.await?;
 
@@ -378,14 +378,14 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
 
     // Check final queue status using timing utilities
     let final_pending = wait_for_work_queue_status_count(
-        &pool, "pending", 0, // Accept any count
+        pool, "pending", 0, // Accept any count
         5, // Reasonable timeout for final check
     )
     .await
     .unwrap_or(0);
 
     let final_succeeded = wait_for_work_queue_status_count(
-        &pool,
+        pool,
         "succeeded",
         0, // Accept any count
         5, // Reasonable timeout for final check
@@ -500,7 +500,7 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
     // Pre-create all work items to maximize contention
     for i in 0..work_items {
         let event = insert_raw_event(
-            &pool,
+            pool,
             "algorithm.contention_test",
             "high_contention_item",
             "localhost",
@@ -664,7 +664,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
         sleep(Duration::from_millis(10)).await;
 
         let event = insert_raw_event(
-            &pool,
+            pool,
             "algorithm.ordering_test",
             "ordered_item",
             "localhost",
@@ -757,7 +757,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
     // Add more items
     for i in 20..20 + remaining_items {
         let event = insert_raw_event(
-            &pool,
+            pool,
             "algorithm.ordering_test",
             "concurrent_ordered_item",
             "localhost",
@@ -864,7 +864,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
 
     for (max_attempts, case_name) in &retry_test_cases {
         let event = insert_raw_event(
-            &pool,
+            pool,
             "algorithm.retry_test",
             case_name,
             "localhost",
@@ -915,7 +915,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
 
             pretty_assertions::assert_eq!(
                 claimed.attempts,
-                attempt as i32,
+                { attempt },
                 "Attempt count should match"
             );
 
@@ -978,7 +978,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
     // Test SELECT FOR UPDATE SKIP LOCKED respects max_attempts
     let test_queue_id = Ulid::new();
     let event = insert_raw_event(
-        &pool,
+        pool,
         "algorithm.retry_test",
         "skip_locked_test",
         "localhost",

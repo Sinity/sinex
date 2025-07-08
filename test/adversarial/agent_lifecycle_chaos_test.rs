@@ -154,7 +154,7 @@ async fn test_heartbeat_from_unregistered_agent(ctx: TestContext) -> TestResult 
     // 1. Fail gracefully
     // 2. Auto-register phantom agent (potential security issue)
     // 3. Create inconsistent state
-    match queries::insert_event(&pool, &heartbeat_event).await {
+    match queries::insert_event(pool, &heartbeat_event).await {
         Ok(_) => {
             println!("Phantom heartbeat was accepted - checking for side effects");
 
@@ -212,7 +212,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
     };
 
     queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest_v2.agent_name,
         &manifest_v2.version,
         &manifest_v2.status,
@@ -227,7 +227,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
     // Send some v2.0 events
     let v2_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("2.0.0"));
 
-    queries::insert_event(&pool, &v2_event).await?;
+    queries::insert_event(pool, &v2_event).await?;
     println!("Sent v2.0 event");
 
     yield_now().await;
@@ -262,7 +262,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
     let v1_event = events::filesystem_chaos_event("file.deleted", "/test/path", Some("1.0.0"));
 
     match queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest_v1.agent_name,
         &manifest_v1.version,
         &manifest_v1.status,
@@ -291,7 +291,7 @@ async fn test_agent_downgrade_during_operation(ctx: TestContext) -> TestResult {
                 println!("VERSION CHAOS: Multiple versions of same agent registered!");
             }
 
-            match queries::insert_event(&pool, &v1_event).await {
+            match queries::insert_event(pool, &v1_event).await {
                 Ok(_) => {
                     println!("COMPATIBILITY ISSUE: v1.0 agent sent event type it doesn't support!");
                 }
@@ -335,7 +335,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
     };
 
     queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest.agent_name,
         &manifest.version,
         &manifest.status,
@@ -350,7 +350,7 @@ async fn test_concurrent_agent_status_updates(ctx: TestContext) -> TestResult {
     let status_updates = Arc::new(AtomicU64::new(0));
 
     // Multiple workers try to update agent status simultaneously
-    let statuses = vec!["running", "stopped", "error_state", "running", "degraded"];
+    let statuses = ["running", "stopped", "error_state", "running", "degraded"];
 
     for (i, status) in statuses.iter().enumerate() {
         let pool_clone = pool.clone();
@@ -440,7 +440,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
     };
 
     queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &manifest.agent_name,
         &manifest.version,
         &manifest.status,
@@ -475,7 +475,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
     };
 
     match queries::upsert_agent_manifest(
-        &pool,
+        pool,
         &recovery_manifest.agent_name,
         &recovery_manifest.version,
         &recovery_manifest.status,
@@ -515,7 +515,7 @@ async fn test_agent_zombie_heartbeat_scenario(ctx: TestContext) -> TestResult {
     // Try to send heartbeat from "recovered" agent
     let heartbeat = events::agent_heartbeat_chaos_event(agent_name, Some("1.0.1"));
 
-    match queries::insert_event(&pool, &heartbeat).await {
+    match queries::insert_event(pool, &heartbeat).await {
         Ok(_) => {
             println!("Recovery heartbeat accepted");
         }

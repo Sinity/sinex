@@ -35,7 +35,7 @@ async fn test_json_payload_size_limits(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_json_special_characters(ctx: TestContext) -> TestResult {
     // Test JSON with special characters that might break things
-    let evil_payloads = vec![
+    let evil_payloads = [
         json!({ "key": "\u{0000}" }),              // Null byte
         json!({ "key": "\u{001F}" }),              // Control character
         json!({ "emoji": "😈🔥💣" }),              // Emojis

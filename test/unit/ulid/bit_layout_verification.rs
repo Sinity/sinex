@@ -38,7 +38,7 @@ async fn test_bit_layout_matches_standard(_ctx: TestContext) -> TestResult {
         .unwrap()
         .as_millis() as u64;
 
-    let hour_ago = now.saturating_sub(3600_000);
+    let hour_ago = now.saturating_sub(3_600_000);
     let minute_future = now + 60_000;
 
     assert!(
@@ -218,7 +218,7 @@ async fn test_our_implementation_problems(_ctx: TestContext) -> TestResult {
             // But we're doing wrapping_add(1) on a u128, which might increment timestamp!
             if curr_u128 <= prev_u128 {
                 println!("❌ CRITICAL: Current ULID not > previous!");
-                assert!(false, "Monotonic ordering violated");
+                panic!("Monotonic ordering violated");
             }
         }
     }

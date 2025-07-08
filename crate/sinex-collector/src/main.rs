@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use sinex_collector::{nixos_config::NixosConfig, CollectorConfig, OutputConfig, UnifiedCollector};
+use sinex_core::DirectoryManager;
 use sinex_db::{create_pool, validation::EventValidator};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -161,6 +162,17 @@ async fn main() -> Result<()> {
     }
 
     info!(?config.enabled_events, "Configuration loaded");
+
+    // Initialize required directories with proper permissions
+    info!("Initializing required directories...");
+    let mut directory_manager = DirectoryManager::new();
+    directory_manager.add_directories(DirectoryManager::get_standard_directories());
+
+    if let Err(e) = directory_manager.initialize_all().await {
+        error!("Failed to initialize required directories: {}", e);
+        anyhow::bail!("Directory initialization failed: {}", e);
+    }
+    info!("All required directories initialized successfully");
 
     // Create output configuration
     let output_config = OutputConfig::new(

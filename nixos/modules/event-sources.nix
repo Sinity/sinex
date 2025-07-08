@@ -95,9 +95,68 @@ in
       };
     };
 
+    kitty = mkEventSource {
+      name = "Kitty terminal integration";
+      defaultPollInterval = 2; # Fast polling for real-time command detection
+      extraOptions = {
+        socketPath = mkOption {
+          type = types.str;
+          default = "/tmp/kitty";
+          description = "Kitty remote control socket path";
+        };
+
+        autoConfigureShellIntegration = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Automatically configure Kitty shell integration for command+output capture";
+        };
+
+        enableCommandCompletion = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Capture command+output pairs using shell integration";
+        };
+
+        scrollbackSafetyNetInterval = mkOption {
+          type = types.int;
+          default = 60;
+          description = "Interval in seconds for full scrollback safety net captures";
+        };
+
+        maxScrollbackLines = mkOption {
+          type = types.int;
+          default = 10000;
+          description = "Maximum scrollback lines to capture";
+        };
+
+        shellIntegrationConfig = mkOption {
+          type = types.attrsOf types.str;
+          default = {
+            "shell_integration" = "enabled";
+            "allow_remote_control" = "socket-only";
+            "listen_on" = "unix:/tmp/kitty-\${USER}";
+          };
+          description = "Kitty configuration for shell integration";
+        };
+
+        autoModifyUserConfig = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Automatically modify user's kitty.conf to enable shell integration";
+        };
+
+        userConfigPath = mkOption {
+          type = types.str;
+          default = "~/.config/kitty/kitty.conf";
+          description = "Path to user's kitty.conf file";
+        };
+      };
+    };
+    
+    # Backward compatibility alias
     kittyScrollback = mkEventSource {
-      name = "Kitty terminal scrollback capture";
-      defaultPollInterval = 15;
+      name = "Kitty terminal scrollback capture (legacy)";
+      defaultPollInterval = 60;
       extraOptions = {
         socketPath = mkOption {
           type = types.str;
@@ -111,21 +170,9 @@ in
           description = "Maximum scrollback lines to capture";
         };
 
-        captureOnCommand = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Capture scrollback when commands are executed";
-        };
-
-        commandCaptureDelay = mkOption {
-          type = types.int;
-          default = 500;
-          description = "Delay in milliseconds after command execution before capturing";
-        };
-
         captureInterval = mkOption {
           type = types.int;
-          default = 30;
+          default = 60;
           description = "Interval in seconds between automatic scrollback captures";
         };
       };

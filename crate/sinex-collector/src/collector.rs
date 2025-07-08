@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
-    unified_collector::{create_registry, EventRegistry, EventRegistryBuilder, EventSource},
+    unified_collector::{EventRegistry, EventRegistryBuilder, EventSource},
     ConfigValue, EventSender, EventSourceContext, JsonValue,
 };
 use sinex_db::validation::EventValidator;
@@ -18,9 +18,9 @@ use sinex_events_system::{
 use sinex_events_terminal::{
     asciinema::{AsciinemaConfig, AsciinemaRecorder},
     atuin::{AtuinConfig, AtuinDbReader},
+    kitty::{KittyConfig, KittyEventSource},
     scrollback::{ScrollbackCapture, ScrollbackConfig},
     shell_history::{ShellHistoryConfig, ShellHistoryReader},
-    terminal::{KittyConfig, KittySocketListener},
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -53,19 +53,17 @@ use crate::OutputConfig;
 /// # Implementation Status
 /// 
 /// - ✅ sinex-events-fs: Implemented auto-registration
-/// - ⏳ sinex-events-desktop: TODO - add register_events() function  
-/// - ⏳ sinex-events-terminal: TODO - add register_events() function
-/// - ⏳ sinex-events-system: TODO - add register_events() function
+/// - ✅ sinex-events-desktop: Implemented auto-registration
+/// - ✅ sinex-events-terminal: Implemented auto-registration
+/// - ✅ sinex-events-system: Implemented auto-registration
 pub fn create_registry_with_auto_registration() -> EventRegistry {
     let mut builder = EventRegistryBuilder::new();
     
     // Auto-register event types from each event crate
     sinex_events_fs::register_events(&mut builder);
-    
-    // TODO: Add other event crates when they implement register_events:
-    // sinex_events_desktop::register_events(&mut builder);
-    // sinex_events_terminal::register_events(&mut builder);
-    // sinex_events_system::register_events(&mut builder);
+    sinex_events_desktop::register_events(&mut builder);
+    sinex_events_terminal::register_events(&mut builder);
+    sinex_events_system::register_events(&mut builder);
     
     builder.build()
 }
@@ -109,7 +107,7 @@ impl UnifiedCollector {
         validator: Option<EventValidator>,
     ) -> Self {
         let enabled_events: HashSet<_> = config.enabled_events.iter().cloned().collect();
-        let registry = create_registry();
+        let registry = create_registry_with_auto_registration();
 
         Self {
             config,
@@ -188,47 +186,47 @@ impl UnifiedCollector {
     async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
 
-        if self.needs_source("filesystem") {
+        if self.needs_source("fs") {
             let handle = self.start_filesystem_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("terminal.kitty") {
+        if self.needs_source("shell.kitty") {
             let handle = self.start_terminal_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("window_manager.hyprland") {
+        if self.needs_source("wm.hyprland") {
             let handle = self.start_window_manager_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("ingestor.atuin_db_reader") {
+        if self.needs_source("shell.atuin") {
             let handle = self.start_atuin_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("ingestor.shell_history_reader") {
+        if self.needs_source("shell.history") {
             let handle = self.start_shell_history_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("ingestor.asciinema_recorder") {
+        if self.needs_source("shell.recording") {
             let handle = self.start_asciinema_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("ingestor.scrollback_capture") {
+        if self.needs_source("shell.scrollback") {
             let handle = self.start_scrollback_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("dbus.monitor") {
+        if self.needs_source("dbus") {
             let handle = self.start_dbus_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("clipboard.monitor") {
+        if self.needs_source("clipboard") {
             match self.start_clipboard_source(event_tx.clone()).await {
                 Ok(handle) => handles.push(handle),
                 Err(e) => error!(
@@ -238,7 +236,7 @@ impl UnifiedCollector {
             }
         }
 
-        if self.needs_source("journal.monitor") {
+        if self.needs_source("journald") {
             let handle = self.start_journal_source(event_tx.clone()).await?;
             handles.push(handle);
         }
@@ -321,7 +319,7 @@ impl UnifiedCollector {
             ctx = ctx.with_annex_path(annex_path.clone());
         }
 
-        let mut source = KittySocketListener::initialize(ctx).await?;
+        let mut source = KittyEventSource::initialize(ctx).await?;
 
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {

@@ -53,3 +53,7 @@ dirs = { workspace = true }
 path-clean = "1.0"
 sanitize-filename = "0.5"
 
+# For FastCDC chunking
+fastcdc = "3.1"
+blake3 = "1.5"
+

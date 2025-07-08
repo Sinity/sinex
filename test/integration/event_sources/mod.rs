@@ -29,6 +29,9 @@ pub mod lifecycle_management_test;
 /// Terminal event source tests
 pub mod terminal_tests;
 
+/// Comprehensive Kitty terminal integration tests
+pub mod kitty_comprehensive_test;
+
 /// Common utilities for event source testing
 pub mod utils {
     // use crate::common::event_builders::EventBuilder;

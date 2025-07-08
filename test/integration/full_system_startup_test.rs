@@ -11,24 +11,19 @@ use std::time::{Duration, Instant};
 
 /// Test helper to create a comprehensive collector configuration
 fn create_comprehensive_config() -> CollectorConfig {
-    let mut config = CollectorConfig::default();
-
-    // Enable all major event sources
-    config.enabled_events = vec![
-        "filesystem.file.created".to_string(),
-        "filesystem.file.modified".to_string(),
-        "terminal.command.executed".to_string(),
-        "hyprland.window.focus".to_string(),
-        "clipboard.content.changed".to_string(),
-    ];
-
-    // Configure git-annex integration using the simplified config structure
-    config.annex_repo_path = Some("/tmp/test-annex".to_string());
-
+    CollectorConfig {
+        enabled_events: vec![
+            "filesystem.file.created".to_string(),
+            "filesystem.file.modified".to_string(),
+            "terminal.command.executed".to_string(),
+            "hyprland.window.focus".to_string(),
+            "clipboard.content.changed".to_string(),
+        ],
+        annex_repo_path: Some("/tmp/test-annex".to_string()),
+        ..Default::default()
+    }
     // Note: monitoring and database config are no longer part of CollectorConfig
     // They are handled elsewhere in the application
-
-    config
 }
 
 #[sinex_test]
@@ -323,13 +318,13 @@ async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
 
     // Insert test work items
     let test_event = create_test_event("worker_startup_test", "system.health_check").await;
-    let inserted_event_id = insert_event(&pool, &test_event).await?;
+    let inserted_event_id = insert_event(pool, &test_event).await?;
 
     // Add to promotion queue
-    add_to_work_queue(&pool, inserted_event_id, "test-agent", 3).await?;
+    add_to_work_queue(pool, inserted_event_id, "test-agent", 3).await?;
 
     // Test that workers can claim items
-    let claimed_items = claim_work_queue_items(&pool, "test-agent", "startup-worker", 1).await?;
+    let claimed_items = claim_work_queue_items(pool, "test-agent", "startup-worker", 1).await?;
 
     assert!(
         !claimed_items.is_empty(),
@@ -337,7 +332,7 @@ async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
     );
 
     // Clean up
-    complete_work_queue_item(&pool, claimed_items[0].queue_id).await?;
+    complete_work_queue_item(pool, claimed_items[0].queue_id).await?;
 
     Ok(true)
 }
@@ -409,7 +404,7 @@ async fn test_configuration_validation_end_to_end(_ctx: TestContext) -> TestResu
     let mut incomplete_config = CollectorConfig::default();
     incomplete_config
         .enabled_events
-        .push("shell.command.executed_atuin".to_string());
+        .push("command.executed".to_string());
     // Don't provide required atuin configuration
 
     let cross_validation = incomplete_config.cross_validate();
@@ -480,7 +475,7 @@ async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
 
     // Simulate successful database operations
     let test_event = create_test_event("recovery_test", "system.test").await;
-    let insert_result = insert_event(&pool, &test_event).await;
+    let insert_result = insert_event(pool, &test_event).await;
 
     // Should succeed in normal conditions
     assert!(
@@ -579,7 +574,7 @@ async fn test_health_check_failure_detection() -> Result<bool> {
     // Test that health check system can detect component failures
 
     // Simulate a component reporting unhealthy status
-    let component_states = vec![
+    let component_states = [
         ("database", true),
         ("filesystem_source", false), // Simulated failure
         ("terminal_source", true),
@@ -711,22 +706,22 @@ async fn test_worker_error_handling(pool: &DbPool) -> Result<bool> {
     let test_event1 = create_test_event("worker_error_test_1", "system.test").await;
     let test_event2 = create_test_event("worker_error_test_2", "system.test").await;
 
-    let inserted_event1_id = insert_event(&pool, &test_event1).await?;
-    let inserted_event2_id = insert_event(&pool, &test_event2).await?;
+    let inserted_event1_id = insert_event(pool, &test_event1).await?;
+    let inserted_event2_id = insert_event(pool, &test_event2).await?;
 
     // Add both to promotion queue
-    add_to_work_queue(&pool, inserted_event1_id, "test-agent", 3).await?;
-    add_to_work_queue(&pool, inserted_event2_id, "test-agent", 3).await?;
+    add_to_work_queue(pool, inserted_event1_id, "test-agent", 3).await?;
+    add_to_work_queue(pool, inserted_event2_id, "test-agent", 3).await?;
 
     // Simulate one worker succeeding and another failing
-    let claimed_items1 = claim_work_queue_items(&pool, "test-agent", "worker1", 1).await?;
-    let claimed_items2 = claim_work_queue_items(&pool, "test-agent", "worker2", 1).await?;
+    let claimed_items1 = claim_work_queue_items(pool, "test-agent", "worker1", 1).await?;
+    let claimed_items2 = claim_work_queue_items(pool, "test-agent", "worker2", 1).await?;
 
     assert!(!claimed_items1.is_empty(), "Worker1 should claim an item");
     assert!(!claimed_items2.is_empty(), "Worker2 should claim an item");
 
     // Worker1 completes successfully
-    complete_work_queue_item(&pool, claimed_items1[0].queue_id).await?;
+    complete_work_queue_item(pool, claimed_items1[0].queue_id).await?;
 
     // Worker2 simulates failure by not completing
     // (In real scenario, this would timeout and be reclaimed)

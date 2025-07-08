@@ -10,7 +10,7 @@ pub async fn register_test_schema(
     event_type: &str,
     schema: Value,
 ) -> Result<Ulid> {
-    database::insert_test_schema(&pool, event_source, event_type, "1.0", schema).await
+    database::insert_test_schema(pool, event_source, event_type, "1.0", schema).await
 }
 
 /// Assert schema validates event successfully
@@ -20,7 +20,7 @@ pub async fn assert_schema_valid_event(
     schema_id: Ulid,
 ) -> Result<(), anyhow::Error> {
     // Load the schema from database
-    let schema = database::get_schema(&pool, schema_id)
+    let schema = database::get_schema(pool, schema_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
 
@@ -40,7 +40,7 @@ pub async fn assert_schema_invalid_event(
     schema_id: Ulid,
 ) -> Result<(), anyhow::Error> {
     // Load the schema from database
-    let schema = database::get_schema(&pool, schema_id)
+    let schema = database::get_schema(pool, schema_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
 
@@ -360,7 +360,7 @@ pub mod database {
 
         // Insert filesystem schema
         let fs_id = insert_test_schema(
-            &pool,
+            pool,
             "fs",
             "file.created",
             "1.0",
@@ -371,7 +371,7 @@ pub mod database {
 
         // Insert terminal schema
         let term_id = insert_test_schema(
-            &pool,
+            pool,
             "shell.kitty",
             "command.executed",
             "1.0",
@@ -382,7 +382,7 @@ pub mod database {
 
         // Insert window manager schema
         let wm_id = insert_test_schema(
-            &pool,
+            pool,
             "wm.hyprland",
             "window.focused",
             "1.0",
@@ -400,7 +400,7 @@ pub mod database {
         schema_ids: &[Ulid],
     ) -> Result<(), anyhow::Error> {
         for &schema_id in schema_ids {
-            delete_schema(&pool, schema_id).await?;
+            delete_schema(pool, schema_id).await?;
         }
         Ok(())
     }

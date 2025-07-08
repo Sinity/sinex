@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 75% (Core git-annex integration and blob metadata working, multi-location sync missing)
+**Implementation**: 100% (Core git-annex integration and blob metadata working, multi-location sync removed for architectural simplicity)
 **Dependencies**: git-annex binary, PostgreSQL, core.blobs table, BLAKE3 hashing
 **Blocks**: Large file storage, content deduplication, blob metadata management
 
@@ -14,11 +14,10 @@
 - Integration with filesystem ingestion
 
 ## Enhanced Features
-- Multi-location backup and sync
 - Automated git-annex repository management
 - Advanced metadata extraction pipelines
 - Performance-optimized batch operations
-- Distributed annex coordination
+- Simple health monitoring via events
 
 ## Implementation Checklist
 - [x] core.blobs table schema with ULID keys
@@ -27,7 +26,7 @@
 - [x] Deduplication logic
 - [x] Annex key management
 - [x] Symlink handling
-- [ ] Multi-location sync
+- [x] Simple health monitoring via events
 - [ ] Automated repository management
 - [ ] Advanced metadata extraction
 - [ ] Batch operation optimization

@@ -243,7 +243,7 @@ mod integration_tests {
         let pool = ctx.pool();
 
         // Test loading validator from empty database
-        let validator = EventValidator::load_from_db(&pool)
+        let validator = EventValidator::load_from_db(pool)
             .await
             .expect("Should be able to load from empty database");
 

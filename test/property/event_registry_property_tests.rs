@@ -120,7 +120,7 @@ proptest! {
         num_threads in 2usize..=8,
         operations_per_thread in 5usize..=20
     ) {
-        let known_events = vec![
+        let known_events = [
             "file.created",
             "file.modified",
             "command.executed",

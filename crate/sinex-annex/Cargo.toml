@@ -21,3 +21,6 @@ gethostname.workspace = true
 sinex-core = { path = "../sinex-core" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
+
+[dev-dependencies]
+tokio-test = "0.4"

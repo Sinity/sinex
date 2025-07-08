@@ -63,17 +63,15 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     .await?;
 
     // Insert events across different time periods to trigger chunk creation
-    let time_periods = vec![
-        Utc::now(),
+    let time_periods = [Utc::now(),
         Utc::now() - Duration::days(10),
         Utc::now() - Duration::days(20),
-        Utc::now() + Duration::days(5),
-    ];
+        Utc::now() + Duration::days(5)];
 
     for (i, ts) in time_periods.iter().enumerate() {
         let event = RawEventBuilder::new(
             "chunk_test",
-            &format!("event_type_{}", i),
+            format!("event_type_{}", i),
             json!({"chunk_test": i}),
         )
         .build();
@@ -84,7 +82,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
             "INSERT INTO raw.events (id, source, event_type, host, payload)
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(&event_id.to_string())
+        .bind(event_id.to_string())
         .bind(event.source)
         .bind(event.event_type)
         .bind(event.host)
@@ -166,7 +164,7 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
             "INSERT INTO raw.events (id, source, event_type, host, payload)
              VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(&event_id.to_string())
+        .bind(event_id.to_string())
         .bind("compression_test")
         .bind("old_event")
         .bind("test_host")
@@ -239,7 +237,7 @@ async fn test_timescale_continuous_aggregates(ctx: TestContext) -> TestResult {
                     "INSERT INTO raw.events (id, source, event_type, host, payload)
                      VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
                 )
-                .bind(&event_id.to_string())
+                .bind(event_id.to_string())
                 .bind(source)
                 .bind(event_type)
                 .bind(format!("host_{}", hour % 3))
@@ -322,7 +320,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&old_event_id.to_string())
+    .bind(old_event_id.to_string())
     .bind("retention_test")
     .bind("very_old_event")
     .bind("test_host")
@@ -336,7 +334,7 @@ async fn test_timescale_retention_policies(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&recent_event_id.to_string())
+    .bind(recent_event_id.to_string())
     .bind("retention_test")
     .bind("recent_event")
     .bind("test_host")
@@ -384,12 +382,13 @@ async fn test_timescale_data_node_stats(ctx: TestContext) -> TestResult {
     }
 
     // Get detailed chunk information
-    let chunks: Vec<(
+    type ChunkInfo = (
         String,
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
         bool,
-    )> = sqlx::query_as(
+    );
+    let chunks: Vec<ChunkInfo> = sqlx::query_as(
         "SELECT
                 chunk_name,
                 range_start,

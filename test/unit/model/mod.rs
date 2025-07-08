@@ -30,13 +30,11 @@ async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     use sinex_db::models::QueueStatus;
 
     // Verify we can create each status
-    let statuses = vec![
-        QueueStatus::Pending,
+    let statuses = [QueueStatus::Pending,
         QueueStatus::Processing,
         QueueStatus::Succeeded,
         QueueStatus::Failed,
-        QueueStatus::FailedRetryable,
-    ];
+        QueueStatus::FailedRetryable];
 
     pretty_assertions::assert_eq!(statuses.len(), 5, "Should have all queue status variants");
 

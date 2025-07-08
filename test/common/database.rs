@@ -22,8 +22,10 @@ pub struct TestPool {
 
 /// Cleanup strategy for test databases
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub enum CleanupStrategy {
     /// Use transaction that auto-rolls back (default, recommended)
+    #[default]
     Transaction,
     /// Truncate tables after test (for tests that need commits)
     Truncate,
@@ -31,11 +33,6 @@ pub enum CleanupStrategy {
     None,
 }
 
-impl Default for CleanupStrategy {
-    fn default() -> Self {
-        CleanupStrategy::Transaction
-    }
-}
 
 /// Handle for cleanup operations
 struct CleanupHandle {
@@ -45,16 +42,14 @@ struct CleanupHandle {
 
 impl Drop for CleanupHandle {
     fn drop(&mut self) {
-        match self.strategy {
-            CleanupStrategy::Truncate => {
-                // Spawn a task to clean up
-                let pool = self.pool.clone();
-                tokio::task::spawn(async move {
-                    let _ = cleanup_test_data(&pool).await;
-                });
-            }
-            _ => {} // Transaction rolls back automatically, None does nothing
+        if let CleanupStrategy::Truncate = self.strategy {
+            // Spawn a task to clean up
+            let pool = self.pool.clone();
+            tokio::task::spawn(async move {
+                let _ = cleanup_test_data(&pool).await;
+            });
         }
+        // Transaction rolls back automatically, None does nothing
     }
 }
 

@@ -50,9 +50,7 @@ async fn test_filesystem_unicode_normalization_collision(
 #[sinex_test]
 async fn test_filesystem_case_sensitivity_race(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Test rapid case variations of same filename
-    let case_variants = vec![
-        "test.txt", "Test.txt", "TEST.txt", "TeSt.TxT", "test.TXT", "TEST.TXT",
-    ];
+    let case_variants = ["test.txt", "Test.txt", "TEST.txt", "TeSt.TxT", "test.TXT", "TEST.TXT"];
 
     println!("Testing filesystem case sensitivity races:");
 

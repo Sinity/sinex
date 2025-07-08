@@ -73,9 +73,9 @@ async fn test_malformed_event_type_validation(ctx: TestContext) -> TestResult {
 async fn test_event_config_validation(ctx: TestContext) -> TestResult {
     // Test by loading an invalid config from string
     let invalid_config_toml = r#"
-enabled_events = ["shell.command.executed_atuin"]
+enabled_events = ["command.executed"]
 
-[event.shell_command_executed_atuin]
+[event.command_executed]
 db_path = "relative/path"  # Should be absolute
 polling_interval_secs = -1  # Should be positive
 "#;
@@ -92,10 +92,14 @@ polling_interval_secs = -1  # Should be positive
         assert!(
             error_msg.contains("db_path must be an absolute path")
                 || error_msg.contains("polling_interval_secs must be greater than 0")
+                || error_msg.contains("must be an absolute path or start with ~/")
+                || error_msg.contains("must be greater than 0"),
+            "Error message should mention path or interval validation: {}",
+            error_msg
         );
     } else {
         // If TOML parsing itself fails, that's also a validation failure
-        assert!(true, "Invalid TOML should fail parsing");
+        // This is expected behavior for invalid TOML
     }
 
     Ok(())
@@ -111,7 +115,7 @@ async fn test_cross_validation(ctx: TestContext) -> TestResult {
     config.enabled_events.clear();
     config
         .enabled_events
-        .push("shell.command.executed_atuin".to_string());
+        .push("command.executed".to_string());
 
     let result = config.cross_validate();
     assert!(
@@ -130,9 +134,9 @@ async fn test_cross_validation(ctx: TestContext) -> TestResult {
 async fn test_valid_event_config(ctx: TestContext) -> TestResult {
     // Test by loading a valid config from string
     let valid_config_toml = r#"
-enabled_events = ["shell.command.executed_atuin"]
+enabled_events = ["command.executed"]
 
-[event.shell_command_executed_atuin]
+[event.command_executed]
 db_path = "/home/user/.local/share/atuin/history.db"
 polling_interval_secs = 5
 "#;

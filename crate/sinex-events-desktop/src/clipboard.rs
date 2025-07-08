@@ -8,7 +8,7 @@ use tracing::{debug, error, info};
 use sinex_annex::{AnnexConfig, BlobManager, BlobMetadata, GitAnnex};
 use sinex_core::{
     sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext,
-    EventType, JsonValue, Result, Timestamp,
+    EventType, JsonValue, Result, Timestamp, ErrorContext, CoreError,
 };
 use sinex_db::DbPool;
 
@@ -80,14 +80,14 @@ pub struct ClipboardChanged;
 impl EventType for ClipboardChanged {
     type Payload = ClipboardChangedPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "copied";
+    const EVENT_NAME: &'static str = "clipboard.copied";
 }
 
 pub struct ClipboardSelection;
 impl EventType for ClipboardSelection {
     type Payload = ClipboardSelectionPayload;
     type SourceImpl = ClipboardMonitor;
-    const EVENT_NAME: &'static str = "selected";
+    const EVENT_NAME: &'static str = "clipboard.selected";
 }
 
 // ============================================================================
@@ -191,10 +191,12 @@ impl EventSource for ClipboardMonitor {
 
         if !wl_paste_available && !xclip_available {
             error!("Neither wl-clipboard nor xclip found. Install one for clipboard monitoring");
-            return Err(sinex_core::CoreError::Other(
-                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring"
-                    .to_string(),
-            ));
+            return Err(ErrorContext::new(CoreError::Configuration("Neither wl-clipboard nor xclip found".to_string()))
+                .with_operation("initialize_clipboard_monitor")
+                .with_context("wl_paste_available", wl_paste_available.to_string())
+                .with_context("xclip_available", xclip_available.to_string())
+                .with_context("required_tools", "wl-paste OR xclip")
+                .build());
         }
 
         info!(
@@ -214,12 +216,11 @@ impl EventSource for ClipboardMonitor {
             if !path.join(".git").exists() {
                 GitAnnex::init(&path, Some("sinex-clipboard-annex"))
                     .await
-                    .map_err(|e| {
-                        sinex_core::CoreError::Other(format!(
-                            "Failed to initialize git-annex: {}",
-                            e
-                        ))
-                    })?;
+                    .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                        .with_operation("initialize_clipboard_monitor")
+                        .with_context("repo_path", path.display().to_string())
+                        .with_context("repo_name", "sinex-clipboard-annex")
+                        .build())?;
             }
 
             let annex_config = AnnexConfig {
@@ -228,9 +229,12 @@ impl EventSource for ClipboardMonitor {
                 large_files: None,
             };
 
-            let git_annex = GitAnnex::new(annex_config).map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to create GitAnnex: {}", e))
-            })?;
+            let git_annex = GitAnnex::new(annex_config).map_err(|e| 
+                ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
+                    .with_operation("initialize_clipboard_monitor")
+                    .with_context("repo_path", path.display().to_string())
+                    .build()
+            )?;
 
             Some(git_annex)
         } else {
@@ -609,11 +613,13 @@ impl ClipboardMonitor {
         content_hash: &str,
     ) -> Result<(String, Option<String>)> {
         // Check if we have git-annex configured
-        let git_annex = self.git_annex.as_ref().ok_or_else(|| {
-            sinex_core::CoreError::Other(
-                "Git-annex not configured for large content storage".to_string(),
-            )
-        })?;
+        let git_annex = self.git_annex.as_ref().ok_or_else(|| 
+            ErrorContext::new(CoreError::Configuration("Git-annex not configured for large content storage".to_string()))
+                .with_operation("store_large_content")
+                .with_context("content_size", content.len().to_string())
+                .with_context("content_hash", content_hash)
+                .build()
+        )?;
 
         // Create a temporary file with the content
         let temp_dir = std::env::temp_dir();
@@ -621,14 +627,20 @@ impl ClipboardMonitor {
 
         tokio::fs::write(&temp_file, content.as_bytes())
             .await
-            .map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to write temporary file: {}", e))
-            })?;
+            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
+                .with_operation("store_large_content")
+                .with_context("temp_file", temp_file.display().to_string())
+                .with_context("content_size", content.len().to_string())
+                .build())?;
 
         // Add to git-annex
-        let annex_key = git_annex.add_file(&temp_file).await.map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to add file to git-annex: {}", e))
-        })?;
+        let annex_key = git_annex.add_file(&temp_file).await.map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
+                .with_operation("store_large_content")
+                .with_context("temp_file", temp_file.display().to_string())
+                .with_context("content_hash", content_hash)
+                .build()
+        )?;
 
         // Clean up temp file (git-annex has moved it)
         let _ = tokio::fs::remove_file(&temp_file).await;

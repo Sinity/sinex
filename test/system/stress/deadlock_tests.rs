@@ -28,21 +28,21 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     for i in 0..deadlock_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload)
-             VALUES ($1::uuid::ulid, $2, $3, $4)",
+            "INSERT INTO raw.events (id, source, event_type, payload, host)
+             VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.deadlock_scenario",
             "deadlock_item",
-            json!({"deadlock_item": i})
+            json!({"deadlock_item": i}),
+            "test-host"
         )
         .execute(pool)
         .await?;
-
         let queue_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue
              (queue_id, raw_event_id, target_agent_name, max_attempts, status)
-             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
+             VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
             agent_name
@@ -112,7 +112,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|w| w)
+            .flatten()
             .collect();
 
             // Use timing utility for work queue status counting
@@ -257,7 +257,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         );
     }
 
-    StressTestUtils::cleanup_test_data(&pool, &agent_name, "stress.deadlock_scenario").await?;
+    StressTestUtils::cleanup_test_data(pool, &agent_name, "stress.deadlock_scenario").await?;
 
     Ok(())
 }
