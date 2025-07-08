@@ -36,9 +36,11 @@ pub async fn setup_test_worker(
     let agent_name = format!("{}_agent", worker_name);
     crate::common::create_test_agent(pool, &agent_name).await?;
 
-    // Create test work queue items with corresponding raw events
+    // Create events and work queue items atomically in a single transaction
+    let mut tx = pool.begin().await?;
+    
     for i in 0..item_count {
-        // First create a raw event to reference
+        // Create a raw event to reference
         let event = crate::common::events::generic_adversarial_event(
             "test_source",
             "test.event",
@@ -46,18 +48,46 @@ pub async fn setup_test_worker(
             Some("test_1.0"),
         );
 
-        // Insert the raw event first
-        let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
-
-        // Now insert the work queue item using the real query function with the proper agent name
-        let work_item = sinex_db::queries::insert_work_queue_item(
-            pool, 
-            inserted_event.id, 
-            &agent_name  // Use the agent name that has a manifest
-        ).await?;
+        // Insert event and work queue item atomically using raw SQL
+        let queue_id = Ulid::new();
+        let event_id = event.id;
         
-        queue_ids.push(work_item.queue_id);
+        // Insert the raw event first
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.events (id, source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::uuid)
+            "#,
+            event_id.to_uuid(),
+            &event.source,
+            &event.event_type,
+            &event.host,
+            &event.payload,
+            event.ts_orig,
+            event.ingestor_version.as_deref(),
+            event.payload_schema_id.map(|id| id.to_uuid())
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert the work queue item referencing the event
+        sqlx::query!(
+            r#"
+            INSERT INTO sinex_schemas.work_queue (queue_id, raw_event_id, target_agent_name)
+            VALUES ($1::uuid, $2::uuid, $3)
+            "#,
+            queue_id.to_uuid(),
+            event_id.to_uuid(),
+            &agent_name
+        )
+        .execute(&mut *tx)
+        .await?;
+        
+        queue_ids.push(queue_id);
     }
+    
+    // Commit the transaction to ensure atomicity
+    tx.commit().await?;
 
     Ok(queue_ids)
 }

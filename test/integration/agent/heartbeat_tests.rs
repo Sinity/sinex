@@ -14,7 +14,7 @@ async fn test_agent_heartbeat_generation(ctx: TestContext) -> TestResult {
     .await
     .unwrap();
 
-    // Simulate heartbeat event insertion
+    // Create heartbeat event using proper abstraction
     let heartbeat_payload = json!({
         "agent_name": "heartbeat_test_agent",
         "version": "1.0.0",
@@ -30,19 +30,12 @@ async fn test_agent_heartbeat_generation(ctx: TestContext) -> TestResult {
         "queue_size": 45
     });
 
-    let event_id = Ulid::new();
-    sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload)
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
-    )
-    .bind(event_id.to_string())
-    .bind("sinex.agent.heartbeat_test_agent")
-    .bind("agent.heartbeat")
-    .bind("test_host")
-    .bind(&heartbeat_payload)
-    .execute(ctx.pool())
-    .await
-    .unwrap();
+    let heartbeat_event = EventFactory::new("sinex.agent.heartbeat_test_agent").create_event(
+        event_type_constants::sinex::AGENT_HEARTBEAT,
+        heartbeat_payload,
+    );
+    
+    let _inserted_event = queries::insert_event(ctx.pool(), &heartbeat_event).await.unwrap();
 
     // Update agent's last_heartbeat_ts
     sqlx::query(

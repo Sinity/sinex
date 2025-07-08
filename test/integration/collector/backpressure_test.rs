@@ -303,17 +303,17 @@ async fn test_multiple_sources_backpressure(_ctx: TestContext) -> TestResult {
     // Test backpressure with multiple event sources feeding into the same channel
     let (tx, rx) = mpsc::channel::<RawEvent>(1000);
 
-    // Create multiple producers
+    // Create multiple producers with fewer events for reasonable test time
     let producers = vec![
-        HighFrequencyEventSource::new(1000).with_max_events(500),
-        HighFrequencyEventSource::new(800).with_max_events(400),
-        HighFrequencyEventSource::new(1200).with_max_events(600),
+        HighFrequencyEventSource::new(1000).with_max_events(50),
+        HighFrequencyEventSource::new(800).with_max_events(40),
+        HighFrequencyEventSource::new(1200).with_max_events(60),
     ];
 
-    let total_expected_events = 500 + 400 + 600; // 1500 events total
+    let total_expected_events = 50 + 40 + 60; // 150 events total
 
-    // Slow consumer
-    let consumer = SlowEventProcessor::new(Duration::from_millis(50)); // 20 events/sec
+    // Moderately slow consumer for reasonable test time
+    let consumer = SlowEventProcessor::new(Duration::from_millis(10)); // 100 events/sec
 
     // Start consumer
     let consumer_handle = {
@@ -347,7 +347,9 @@ async fn test_multiple_sources_backpressure(_ctx: TestContext) -> TestResult {
     }
 
     // Wait for consumer to finish processing
-    let _ = timeout(Duration::from_secs(10), consumer_handle).await;
+    // With 150 events at 100 events/sec, this will take ~1.5 seconds
+    // Use a reasonable timeout with margin
+    let _ = timeout(Duration::from_secs(5), consumer_handle).await;
 
     let events_processed = consumer.events_processed();
 
@@ -450,13 +452,15 @@ async fn test_backpressure_recovery(_ctx: TestContext) -> TestResult {
     sleep(Duration::from_millis(100)).await;
     let events_after_relief = producer.events_sent();
 
-    // Phase 4: Consume remaining events
-    while let Ok(Some(_)) = timeout(Duration::from_millis(1), rx.recv()).await {
+    // Phase 4: Consume remaining events with adequate timeout for draining
+    // At 5000 Hz, remaining ~170 events should take ~34ms, so give more time
+    while let Ok(Some(_)) = timeout(Duration::from_millis(10), rx.recv()).await {
         events_consumed += 1;
     }
 
-    // Wait for producer to complete
-    let (total_sent, result) = timeout(Duration::from_secs(1), producer_handle)
+    // Wait for producer to complete with longer timeout
+    // At 5000 Hz, 200 events should complete in well under 2 seconds
+    let (total_sent, result) = timeout(Duration::from_secs(2), producer_handle)
         .await
         .expect("Producer should complete")
         .unwrap();

@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use std::time::Duration;
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
+use sinex_core::timeouts;
 
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
 static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -78,14 +79,16 @@ impl Drop for TestDatabase {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                // Release the advisory lock
-                match sqlx::query("SELECT pg_advisory_unlock($1)")
-                    .bind(lock_id)
-                    .execute(&pool_clone)
-                    .await
-                {
-                    Ok(_) => eprintln!("✅ Released advisory lock {}", lock_id),
-                    Err(e) => eprintln!("⚠️  Failed to release advisory lock {}: {}", lock_id, e),
+                // Try to release the advisory lock with a short timeout
+                match tokio::time::timeout(
+                    timeouts::DEFAULT_TERMINAL_POLL_INTERVAL,
+                    sqlx::query("SELECT pg_advisory_unlock($1)")
+                        .bind(lock_id)
+                        .execute(&pool_clone)
+                ).await {
+                    Ok(Ok(_)) => eprintln!("✅ Released advisory lock {}", lock_id),
+                    Ok(Err(e)) => eprintln!("⚠️  Failed to release advisory lock {}: {}", lock_id, e),
+                    Err(_) => eprintln!("⚠️  Timeout releasing advisory lock {} (pool shutting down)", lock_id),
                 }
                 
                 // Then close the pool

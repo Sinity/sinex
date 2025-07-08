@@ -147,7 +147,7 @@ async fn test_connection_pool_max_lifetime(ctx: TestContext) -> TestResult {
         .await?;
 
     // Wait for max lifetime to expire
-    ctx.wait_for_work_queue(0).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Get new connection - should have different ID
     let conn_id_2: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")

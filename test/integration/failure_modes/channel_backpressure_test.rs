@@ -196,7 +196,7 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
 
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             for i in 0..100 {
-                let event = RawEventBuilder::new("crashing", "test", json!({"test": true})).build();
+                let event = RawEventBuilder::new("crashing", "test", json!({"test": true, "seq": i})).build();
                 if tx.send(event).await.is_err() {
                     break;
                 }

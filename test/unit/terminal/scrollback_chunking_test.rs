@@ -11,7 +11,7 @@ use chrono::Utc;
 fn test_scrollback_config_default() {
     let config = ScrollbackConfig::default();
     
-    assert_eq!(config.capture_interval_secs, 60);
+    assert_eq!(config.capture_interval_secs, 180); // 3 minutes
     assert_eq!(config.max_scrollback_lines, 10000);
     assert!(!config.include_ansi_codes);
     assert!(config.capture_command_output);

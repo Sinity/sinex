@@ -1,7 +1,6 @@
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 /// Comprehensive metrics for tracking concurrency stress patterns
 #[derive(Debug)]

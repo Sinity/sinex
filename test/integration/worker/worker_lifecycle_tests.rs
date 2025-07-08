@@ -60,10 +60,10 @@ async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
     let process_count = processor.process_count.clone();
 
     // Insert a test item using the utility
-    let queue_ids = worker_test_utils::setup_test_worker(pool, "test_agent", 1).await?;
+    let queue_ids = worker_test_utils::setup_test_worker(pool, "test", 1).await?;
     let _queue_id = queue_ids[0];
 
-    // Process the item using the proper query function
+    // Process the item using the proper query function (setup_test_worker creates agent with _agent suffix)
     let item = sinex_db::queries::get_next_work_item(pool, "test_agent")
         .await?
         .expect("Should have work item for test_agent");
