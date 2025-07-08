@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::env;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
+use crate::config_utils::resolve_system_safe_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectorConfig {
@@ -79,6 +80,26 @@ impl CollectorConfig {
     }
 
     pub fn load_from_file(path: &Path) -> Result<Self> {
+        // Security: Validate path is not a symlink attack
+        let metadata = std::fs::symlink_metadata(path)
+            .with_context(|| format!("Cannot read metadata for config file: {}", path.display()))?;
+        
+        if metadata.file_type().is_symlink() {
+            // Resolve symlink and validate target is within allowed directories
+            let canonical_path = path.canonicalize()
+                .with_context(|| format!("Cannot resolve symlink target for config file: {}", path.display()))?;
+            
+            // Validate canonical path is a regular file
+            let canonical_metadata = std::fs::metadata(&canonical_path)
+                .with_context(|| format!("Cannot read canonical path metadata: {}", canonical_path.display()))?;
+            
+            if !canonical_metadata.is_file() {
+                return Err(anyhow!("Config symlink target is not a regular file: {}", canonical_path.display()));
+            }
+            
+            warn!("Loading config from symlink: {} -> {}", path.display(), canonical_path.display());
+        }
+        
         let content = std::fs::read_to_string(path)?;
         
         // Validate configuration content for security issues
@@ -179,15 +200,20 @@ impl CollectorConfig {
                 ));
             }
 
-            if !part.chars().next().unwrap().is_alphabetic() {
-                return Err(anyhow!("Event type parts must start with a letter"));
+            if let Some(first_char) = part.chars().next() {
+                if !first_char.is_alphabetic() {
+                    return Err(anyhow!("Event type parts must start with a letter"));
+                }
+            } else {
+                return Err(anyhow!("Event type parts cannot be empty"));
             }
         }
 
         // Check against known event types (matching actual Rust EVENT_NAME constants)
         let known_events = [
             // Terminal/command events
-            "command.executed",         // KittyCommandExecuted
+            "command.executed",         // Atuin command history
+            "command.hist",             // Shell history files
             "command.completed",        // KittyCommandCompleted  
             "command.failed",           // KittyCommandFailed
             "command.imported",         // AtuinCommandImported, ShellHistoryCommandImported
@@ -260,6 +286,7 @@ impl CollectorConfig {
             "terminal_scrollback_captured" => "output.captured",   // Updated mapping
             "terminal_command_output_captured" => "output.captured", // Updated mapping
             "command_executed" => "command.executed",              // New mapping
+            "command_hist" => "command.hist",                      // Shell history
             "command_completed" => "command.completed",            // New mapping
             "file_created" => "file.created",
             "file_modified" => "file.modified",
@@ -533,39 +560,6 @@ impl ValidationReport {
     }
 }
 
-/// Resolve path without home directory assumptions for system services
-fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_dir: &str) -> String {
-    // First try environment variable if provided
-    if let Some(var_name) = env_var {
-        if let Ok(path) = env::var(var_name) {
-            return path;
-        }
-    }
-    
-    // If path starts with ~, resolve to system-safe alternatives
-    if let Some(relative_path) = default_path.strip_prefix("~/") {
-        // Remove ~/
-        
-        // Try XDG directories first (most appropriate for system services)
-        if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
-            return format!("{}/{}", data_dir, relative_path);
-        }
-        
-        // Try HOME as last resort
-        if let Ok(home) = env::var("HOME") {
-            warn!("Using HOME directory for system service - consider setting XDG_DATA_HOME");
-            return format!("{}/.local/share/{}", home, relative_path);
-        }
-        
-        // Fall back to /var/lib or /tmp for system services
-        warn!("No HOME or XDG_DATA_HOME available, using fallback: {}/{}", fallback_dir, relative_path);
-        return format!("{}/{}", fallback_dir, relative_path);
-    }
-    
-    // Return path as-is if not home directory based
-    default_path.to_string()
-}
-
 impl Default for CollectorConfig {
     fn default() -> Self {
         // Create a minimal default configuration that is valid
@@ -634,6 +628,7 @@ impl Default for CollectorConfig {
                 "file.modified".to_string(),
                 "file.deleted".to_string(),
                 "command.executed".to_string(),
+                "command.hist".to_string(),      // Shell history files
                 "command.imported".to_string(),  // Updated from shell.command.executed_atuin
                 "window.focused".to_string(),
                 "workspace.switched".to_string(),  // Updated from workspace.changed

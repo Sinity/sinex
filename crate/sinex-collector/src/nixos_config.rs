@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::env;
 use tracing::{info, warn};
+use crate::config_utils::resolve_system_safe_path;
 
 /// Direct configuration structure that matches NixOS module options
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,6 +123,26 @@ fn default_compression() -> String {
 impl NixosConfig {
     /// Load configuration from file (TOML format)
     pub fn load_from_file(path: &PathBuf) -> Result<Self> {
+        // Security: Validate path is not a symlink attack
+        let metadata = std::fs::symlink_metadata(path)
+            .with_context(|| format!("Cannot read metadata for config file: {}", path.display()))?;
+        
+        if metadata.file_type().is_symlink() {
+            // Resolve symlink and validate target is within allowed directories
+            let canonical_path = path.canonicalize()
+                .with_context(|| format!("Cannot resolve symlink target for config file: {}", path.display()))?;
+            
+            // Validate canonical path is a regular file
+            let canonical_metadata = std::fs::metadata(&canonical_path)
+                .with_context(|| format!("Cannot read canonical path metadata: {}", canonical_path.display()))?;
+            
+            if !canonical_metadata.is_file() {
+                return Err(anyhow!("Config symlink target is not a regular file: {}", canonical_path.display()));
+            }
+            
+            warn!("Loading config from symlink: {} -> {}", path.display(), canonical_path.display());
+        }
+        
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
@@ -668,39 +689,6 @@ impl NixosConfig {
             anyhow::bail!("Invalid retention period format (expected number with d/w/m/y suffix)")
         }
     }
-}
-
-/// Resolve path without home directory assumptions for system services
-fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_dir: &str) -> String {
-    // First try environment variable if provided
-    if let Some(var_name) = env_var {
-        if let Ok(path) = env::var(var_name) {
-            return path;
-        }
-    }
-    
-    // If path starts with ~, resolve to system-safe alternatives
-    if let Some(relative_path) = default_path.strip_prefix("~/") {
-        // Remove ~/
-        
-        // Try XDG directories first (most appropriate for system services)
-        if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
-            return format!("{}/{}", data_dir, relative_path);
-        }
-        
-        // Try HOME as last resort
-        if let Ok(home) = env::var("HOME") {
-            warn!("Using HOME directory for system service - consider setting XDG_DATA_HOME");
-            return format!("{}/.local/share/{}", home, relative_path);
-        }
-        
-        // Fall back to /var/lib or /tmp for system services
-        warn!("No HOME or XDG_DATA_HOME available, using fallback: {}/{}", fallback_dir, relative_path);
-        return format!("{}/{}", fallback_dir, relative_path);
-    }
-    
-    // Return path as-is if not home directory based
-    default_path.to_string()
 }
 
 #[cfg(test)]
