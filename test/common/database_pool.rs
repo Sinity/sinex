@@ -4,7 +4,7 @@
 //! Databases are cleaned BEFORE being given to a test, not after.
 
 use crate::common::prelude::*;
-use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use once_cell::sync::Lazy;
 use std::time::Duration;
@@ -12,6 +12,7 @@ use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
+static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Template database name cached for the current test process  
 static TEMPLATE_DB_NAME: OnceLock<String> = OnceLock::new();
@@ -51,6 +52,7 @@ pub struct TestDatabase {
     name: String,
     pool: DbPool,
     slot: Arc<DatabaseSlot>,
+    lock_id: i64, // Store advisory lock ID for cleanup
 }
 
 impl TestDatabase {
@@ -65,39 +67,36 @@ impl TestDatabase {
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        // Mark slot as available
-        let thread_id = std::thread::current().id();
-        eprintln!("🔓 Thread {:?} releasing database slot: {}", thread_id, self.name);
+        // Release the PostgreSQL advisory lock
+        let lock_id = self.lock_id;
+        let pool_clone = self.pool.clone();
         
-        // Close the connection pool synchronously
-        // We spawn a blocking task to handle the async pool closure
-        if let Ok(mut pool_opt) = self.slot.pool.lock() {
-            if let Some(pool) = pool_opt.take() {
-                // Use a channel to wait for the pool to close
-                let (tx, rx) = std::sync::mpsc::channel();
-                
-                // Spawn a task to close the pool
-                std::thread::spawn(move || {
-                    // Create a new runtime for the cleanup
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(async {
-                        pool.close().await;
-                        // Give a small grace period for any final operations
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                    });
-                    let _ = tx.send(());
-                });
-                
-                // Wait for the pool to close with a timeout
-                match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-                    Ok(_) => {
-                        eprintln!("✅ Pool closed successfully for slot {}", self.name);
-                    }
-                    Err(_) => {
-                        eprintln!("⚠️  Timeout waiting for pool to close for slot {}", self.name);
-                    }
+        eprintln!("🔓 Releasing database slot: {} (lock_id: {})", self.name, lock_id);
+        
+        // We need to release the advisory lock before closing the pool
+        // Use a blocking task to handle this
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                // Release the advisory lock
+                match sqlx::query("SELECT pg_advisory_unlock($1)")
+                    .bind(lock_id)
+                    .execute(&pool_clone)
+                    .await
+                {
+                    Ok(_) => eprintln!("✅ Released advisory lock {}", lock_id),
+                    Err(e) => eprintln!("⚠️  Failed to release advisory lock {}: {}", lock_id, e),
                 }
-            }
+                
+                // Then close the pool
+                pool_clone.close().await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            });
+        }).join().unwrap_or_else(|_| eprintln!("⚠️  Cleanup thread panicked"));
+        
+        // Clear the pool reference
+        if let Ok(mut pool_opt) = self.slot.pool.lock() {
+            *pool_opt = None;
         }
         
         // Record when this slot was released
@@ -105,6 +104,7 @@ impl Drop for TestDatabase {
             *last_released = Some(std::time::Instant::now());
         }
         
+        // Mark as not in use (for intra-process coordination)
         self.slot.in_use.store(false, Ordering::Release);
     }
 }
@@ -238,94 +238,102 @@ impl DatabasePool {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
         
-        // Start from a rotating slot to distribute load better
-        static SLOT_COUNTER: AtomicU32 = AtomicU32::new(0);
-        let start_index = SLOT_COUNTER.fetch_add(1, Ordering::Relaxed) as usize % self.slots.len();
+        // Use process ID and random offset to reduce contention
+        let pid = std::process::id();
+        let random_offset = rand::random::<usize>();
+        let start_index = (pid as usize + random_offset) % self.slots.len();
+        eprintln!("🎲 Process {} starting from index: {}", pid, start_index);
         
+        // We need to try to acquire databases with PostgreSQL advisory locks
+        // to ensure inter-process coordination
         loop {
-            // Iterate through slots starting from random position
+            // Iterate through slots starting from our position
             for i in 0..self.slots.len() {
                 let slot_index = (start_index + i) % self.slots.len();
                 let slot = &self.slots[slot_index];
-                let was_in_use = slot.in_use.swap(true, Ordering::AcqRel);
-                if !was_in_use {
-                    // Check if slot is in cooldown period
-                    // No cooldown needed - we'll ensure proper cleanup instead
-                    
-                    // Got a slot! Record when it was acquired
-                    if let Ok(mut last_acquired) = slot.last_acquired.lock() {
-                        *last_acquired = Some(std::time::Instant::now());
-                    }
-                    
-                    let thread_id = std::thread::current().id();
-                    // Count how many slots are currently in use
-                    let in_use_count = self.slots.iter()
-                        .filter(|s| s.in_use.load(Ordering::Acquire))
-                        .count();
-                    eprintln!("🔑 Thread {:?} acquired database slot: {} ({}/{} slots in use)", 
-                              thread_id, slot.name, in_use_count, self.slots.len());
-                    
-                    // Create a fresh pool for this test
-                    let pool = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(15)
-                        .acquire_timeout(Duration::from_secs(10))
-                        .connect(&slot.url)
-                        .await?;
-                    
-                    // Store the pool in the slot
-                    if let Ok(mut pool_opt) = slot.pool.lock() {
-                        *pool_opt = Some(pool.clone());
-                    }
-                    
-                    // Verify we're connected to the right database
-                    let db_name: String = sqlx::query_scalar("SELECT current_database()")
-                        .fetch_one(&pool)
-                        .await?;
-                    if db_name != slot.name {
-                        eprintln!("⚠️  WARNING: Expected database {} but connected to {}", slot.name, db_name);
-                    }
-                    
-                    // Clean it before use
-                    let clean_start = std::time::Instant::now();
-                    match clean_database(&pool, &slot.name).await {
-                        Ok(_) => {
-                            let clean_time = clean_start.elapsed();
-                            if clean_time.as_millis() > 100 {
-                                eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
-                            }
-                            return Ok(TestDatabase {
-                                name: slot.name.clone(),
-                                pool: pool.clone(),
-                                slot: slot.clone(),
-                            });
+                
+                // Try to connect to this database
+                let pool = match sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(15)
+                    .acquire_timeout(Duration::from_secs(2))  // Shorter timeout for faster iteration
+                    .connect(&slot.url)
+                    .await 
+                {
+                    Ok(pool) => pool,
+                    Err(_) => continue, // Try next slot
+                };
+                
+                // Try to acquire an advisory lock for this database
+                // Use a unique lock ID based on the slot index
+                let lock_id = 1000 + slot_index as i64;
+                let lock_acquired: bool = sqlx::query_scalar(
+                    "SELECT pg_try_advisory_lock($1)"
+                )
+                .bind(lock_id)
+                .fetch_one(&pool)
+                .await?;
+                
+                if !lock_acquired {
+                    // Another process has this database, try next
+                    pool.close().await;
+                    continue;
+                }
+                
+                // We got the lock! This database is ours for the duration of the test
+                eprintln!("🔑 Process {} acquired database slot: {} with advisory lock {}", 
+                          pid, slot.name, lock_id);
+                
+                // Store lock info in the slot for cleanup
+                slot.in_use.store(true, Ordering::Release);
+                if let Ok(mut pool_opt) = slot.pool.lock() {
+                    *pool_opt = Some(pool.clone());
+                }
+                
+                // Clean it before use
+                let clean_start = std::time::Instant::now();
+                match clean_database(&pool, &slot.name).await {
+                    Ok(_) => {
+                        let clean_time = clean_start.elapsed();
+                        if clean_time.as_millis() > 100 {
+                            eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
                         }
-                        Err(e) => {
-                            eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
-                            // Close the pool we just created
-                            pool.close().await;
-                            if let Ok(mut pool_opt) = slot.pool.lock() {
-                                *pool_opt = None;
-                            }
-                            slot.in_use.store(false, Ordering::Release);
+                        return Ok(TestDatabase {
+                            name: slot.name.clone(),
+                            pool: pool.clone(),
+                            slot: slot.clone(),
+                            lock_id,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
+                        // Release the advisory lock
+                        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                            .bind(lock_id)
+                            .execute(&pool)
+                            .await;
+                        pool.close().await;
+                        if let Ok(mut pool_opt) = slot.pool.lock() {
+                            *pool_opt = None;
                         }
+                        slot.in_use.store(false, Ordering::Release);
                     }
                 }
             }
             
             attempts += 1;
-            if attempts > 1000 {
+            if attempts > 100 {
                 let total_time = start_time.elapsed();
-                return Err(anyhow::anyhow!("Failed to acquire database after 1000 attempts ({:.1?}) - all {} slots in use", total_time, self.slots.len()));
+                return Err(anyhow::anyhow!("Failed to acquire database after {} attempts ({:.1?})", attempts, total_time));
             }
             
             // Log warning after many attempts
-            if attempts % 50 == 0 {
+            if attempts % 10 == 0 {
                 let elapsed = start_time.elapsed();
-                eprintln!("⚠️  Waiting for database slot (attempt {}, {:.1?} elapsed). All {} slots in use.", attempts, elapsed, self.slots.len());
+                eprintln!("⚠️  Process {} waiting for database slot (attempt {}, {:.1?} elapsed)", pid, attempts, elapsed);
             }
             
-            // All slots in use, wait a bit
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // All slots in use, wait a bit before retrying
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }

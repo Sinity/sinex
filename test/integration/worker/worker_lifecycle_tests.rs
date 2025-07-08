@@ -63,16 +63,10 @@ async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
     let queue_ids = worker_test_utils::setup_test_worker(pool, "test_agent", 1).await?;
     let _queue_id = queue_ids[0];
 
-    // Process the item
-    let item = sqlx::query_as::<_, WorkQueueItem>(
-            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts,
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
-             FROM sinex_schemas.work_queue
-             WHERE target_agent_name = $1 AND status = 'pending'"
-        )
-        .bind("test_agent")
-        .fetch_one(pool)
-        .await?;
+    // Process the item using the proper query function
+    let item = sinex_db::queries::get_next_work_item(pool, "test_agent")
+        .await?
+        .expect("Should have work item for test_agent");
 
     processor.process_event(pool, &item).await?;
 
@@ -90,15 +84,9 @@ async fn test_event_processor_failure_handling(ctx: TestContext) -> TestResult {
 
     let _queue_id = insert_test_work_item(pool, "test_agent").await?;
 
-    let item = sqlx::query_as::<_, WorkQueueItem>(
-            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts,
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
-             FROM sinex_schemas.work_queue
-             WHERE target_agent_name = $1 AND status = 'pending'"
-        )
-        .bind("test_agent")
-        .fetch_one(pool)
-        .await?;
+    let item = sinex_db::queries::get_next_work_item(pool, "test_agent")
+        .await?
+        .expect("Should have work item for test_agent");
 
     let result = processor.process_event(pool, &item).await;
     assert!(result.is_err());
@@ -159,27 +147,20 @@ async fn test_multiple_processors_different_agents(ctx: TestContext) -> TestResu
     let count_b = processor_b.process_count.clone();
 
     // Insert items for each agent
+    eprintln!("DEBUG: About to insert test work items...");
     let _queue_id_a = insert_test_work_item(pool, "agent_a").await?;
+    eprintln!("DEBUG: Inserted item for agent_a");
     let _queue_id_b = insert_test_work_item(pool, "agent_b").await?;
+    eprintln!("DEBUG: Inserted item for agent_b");
 
-    // Get and process items for each agent
-    let item_a = sqlx::query_as::<_, WorkQueueItem>(
-            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts,
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
-             FROM sinex_schemas.work_queue
-             WHERE target_agent_name = 'agent_a'"
-        )
-        .fetch_one(pool)
-        .await?;
+    // Get and process items for each agent using the proper query function
+    let item_a = sinex_db::queries::get_next_work_item(pool, "agent_a")
+        .await?
+        .expect("Should have work item for agent_a");
 
-    let item_b = sqlx::query_as::<_, WorkQueueItem>(
-            "SELECT queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts,
-                    last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason
-             FROM sinex_schemas.work_queue
-             WHERE target_agent_name = 'agent_b'"
-        )
-        .fetch_one(pool)
-        .await?;
+    let item_b = sinex_db::queries::get_next_work_item(pool, "agent_b")
+        .await?
+        .expect("Should have work item for agent_b");
 
     processor_a.process_event(pool, &item_a).await?;
     processor_b.process_event(pool, &item_b).await?;
