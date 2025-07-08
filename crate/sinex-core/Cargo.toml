@@ -57,3 +57,12 @@ sanitize-filename = "0.5"
 fastcdc = "3.1"
 blake3 = "1.5"
 
+# For SQLite helpers
+rusqlite = { version = "0.30", features = ["bundled"] }
+
+# For retry helpers (jitter)
+rand = "0.8"
+
+# For file watcher abstraction
+notify = "6.0"
+
