@@ -90,28 +90,15 @@ pub use crate::common::timing_optimization::wait_helpers::{
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
-pub use sinex_db::events::{
-    insert_event_with_validator as insert_raw_event,
+pub use sinex_db::queries::{
+    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items,
+    complete_work_queue_item, fail_work_queue_item, insert_raw_event,
 };
-pub use sinex_db::work_queue::{
-    claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
-};
-pub use sinex_db::metrics_queries::{
-    calculate_queue_depth_metrics,
-};
-// Note: Some legacy test functions may need migration
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_database_state, assert_eq_with_context,
     assert_event_inserted_with_context, assert_events_equivalent, assert_validation_passes,
     assert_with_context, assert_with_validation, TestAssertionBatch,
-};
-
-// ===== Consolidated Assertions =====
-pub use crate::common::consolidated_assertions::{
-    assert_event_inserted_and_retrievable, assert_work_queue_flow_complete,
-    assert_concurrent_processing, assert_event_queries_work, assert_event_ordering,
-    assert_payload_validation, assert_batch_consistency, create_event_batch,
 };
 // ===== Configuration Testing =====
 // pub use crate::common::config_test_utils::{

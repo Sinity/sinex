@@ -1,0 +1,86 @@
+//! Fully working example of the new test infrastructure
+
+// use crate::common::database_helpers;
+use crate::common::prelude::*;
+
+/// Simplest possible test that actually works
+#[sinex_test]
+async fn test_without_macro(ctx: TestContext) -> TestResult {
+    // Get shared pool
+    // Removed: using ctx.pool() directly instead
+
+    // Run a simple query
+    let result = sqlx::query_scalar!("SELECT 1 + 1 as sum")
+        .fetch_one(ctx.pool())
+        .await?;
+    pretty_assertions::assert_eq!(result, Some(2));
+
+    println!("✅ Basic test works without macro!");
+    Ok(())
+}
+
+/// Test using the new macro - simplified version
+#[sinex_test]
+async fn test_with_new_macro(ctx: TestContext) -> TestResult {
+    // The macro should have injected TestContext with a pool
+    println!("✅ Macro injected TestContext!");
+    println!("✅ Test name: {}", ctx.test_name());
+
+    // Simple database query
+    let result = sqlx::query_scalar!("SELECT 2 + 2 as sum")
+        .fetch_one(ctx.pool())
+        .await?;
+    pretty_assertions::assert_eq!(result, Some(4));
+
+    println!("✅ Database query through TestContext works!");
+
+    // Test event creation helpers
+    let event = ctx.filesystem_event("/test/file.txt");
+    println!("✅ Event builder works: {:?}", event.event_type);
+
+    // Insert the event
+    ctx.insert_event(&event).await?;
+    println!("✅ Event insertion works!");
+
+    // Verify it exists
+    let count = ctx.event_count().await?;
+    assert!(count >= 1);
+    println!("✅ Event count: {}", count);
+
+    Ok(())
+}
+
+/// Example of test that would use transactions (when properly implemented)
+#[sinex_test]
+async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
+    // For now, this uses the shared pool approach
+    // In the future, this would use actual transaction isolation
+
+    let initial_count = ctx.event_count().await?;
+    eprintln!("DEBUG: Initial count in database: {}", initial_count);
+
+    // Let's try with 3 events to reproduce the original issue
+    let events_to_insert = 3;
+    
+    // Create some test events
+    for i in 0..events_to_insert {
+        let event = ctx
+            .event_builder("test", "example")
+            .payload(serde_json::json!({ "index": i }))
+            .build();
+        ctx.insert_event(&event).await?;
+    }
+
+    let new_count = ctx.event_count().await?;
+    eprintln!("DEBUG: After inserting {} events, total count: {}", events_to_insert, new_count);
+    eprintln!("DEBUG: Difference: {} (expected {})", new_count - initial_count, events_to_insert);
+    
+    pretty_assertions::assert_eq!(new_count - initial_count, events_to_insert);
+
+    println!("✅ Multiple event insertion works!");
+
+    // Note: Without real transaction support, these events persist
+    // With proper transaction support, they would be rolled back
+
+    Ok(())
+}

@@ -20,7 +20,8 @@ pub mod backpressure_test;
 /// Basic collector functionality tests
 pub mod basic_collector_test;
 
-// Configuration management tests - consolidated to configuration_test.rs
+/// Configuration management tests
+pub mod config_tests;
 
 /// Hot reload functionality tests
 pub mod hot_reload_test;
