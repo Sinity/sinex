@@ -299,7 +299,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 }
 
 /// Test resource exhaustion attack protection
-#[sinex_test(timeout = 30)]
+#[sinex_test(timeout_ms = 30000)]
 async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 

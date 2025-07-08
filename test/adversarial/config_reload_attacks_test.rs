@@ -5,7 +5,7 @@ use std::fs;
 use std::os::unix;
 // Removed unused imports
 
-#[sinex_test]
+#[sinex_test(timeout_ms = 10000)]
 async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -137,7 +137,7 @@ enabled_events = ["file.cre
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout_ms = 10000)]
 async fn test_config_directory_swap_attack(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_dir = temp_dir.path().join("config");
@@ -212,7 +212,7 @@ exfiltrate_to = "https://evil.com/steal"
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout_ms = 10000)]
 async fn test_config_race_condition_memory_leak(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");
@@ -309,7 +309,7 @@ timestamp = "{}"
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_test(timeout_ms = 10000)]
 async fn test_config_hot_reload_during_event_processing(ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
     let config_path = temp_dir.path().join("config.toml");

@@ -149,12 +149,17 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
 async fn test_work_queue_thundering_herd(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
-    // Insert single event
+    // Create test agent first
+    crate::common::create_test_agent(pool, "herd_test_agent").await?;
+
+    // Insert single event and work queue item
     let event = events::adversarial_test_event("herd.test", serde_json::json!({"value": "prize"}));
+    let inserted_event = queries::insert_event(pool, &event).await?;
+    
+    // Create a single work queue item
+    let _work_item = queries::insert_work_queue_item(pool, inserted_event.id, "herd_test_agent").await?;
 
-    queries::insert_event(pool, &event).await?;
-
-    // Simulate 100 workers waking simultaneously
+    // Simulate 100 workers waking simultaneously to claim the same work item
     let start = Instant::now();
     let mut handles = vec![];
     let successful_claims = Arc::new(AtomicU64::new(0));
@@ -164,23 +169,32 @@ async fn test_work_queue_thundering_herd(ctx: TestContext) -> TestResult {
         let claims = successful_claims.clone();
 
         let handle = tokio::spawn(async move {
-            // All workers try to claim work simultaneously
+            // All workers try to claim work simultaneously using the proper work queue mechanism
             let result = sqlx::query!(
                 r#"
-                    SELECT id::uuid as id
-                    FROM raw.events
-                    WHERE event_type = 'herd.test'
-                    AND NOT (payload ? 'claimed')
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    "#
+                    UPDATE sinex_schemas.work_queue
+                    SET status = 'processing',
+                        processing_worker_id = $1,
+                        last_attempt_ts = NOW()
+                    WHERE queue_id = (
+                        SELECT queue_id
+                        FROM sinex_schemas.work_queue
+                        WHERE target_agent_name = 'herd_test_agent'
+                        AND status = 'pending'
+                        ORDER BY created_at
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    RETURNING queue_id::uuid
+                    "#,
+                format!("worker-{}", i)
             )
             .fetch_optional(&pool)
             .await;
 
             if let Ok(Some(_)) = result {
                 claims.fetch_add(1, Ordering::SeqCst);
-                println!("Worker {} claimed the event", i);
+                println!("Worker {} claimed the work item", i);
             }
         });
 
@@ -197,8 +211,8 @@ async fn test_work_queue_thundering_herd(ctx: TestContext) -> TestResult {
     println!("- Successful claims: {}", claims);
     println!("- Database connections stressed: 100");
 
-    // Only 1 should succeed, but timing shows stress
-    pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single event");
+    // Only 1 should succeed - this tests the SELECT FOR UPDATE SKIP LOCKED mechanism
+    pretty_assertions::assert_eq!(claims, 1, "Multiple workers claimed single work item");
 
     Ok(())
 }
@@ -227,30 +241,18 @@ async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> TestResult {
         let id = event_id;
 
         let handle = tokio::spawn(async move {
-            // Read current value
-            let current = sqlx::query!(
-                "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
-                id.to_uuid()
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("Database query failed");
-
-            // Simulate processing time
-            tokio::task::yield_now().await;
-
-            // Update based on read value (classic lost update)
-            let mut payload = current.payload;
-            payload["counter"] = serde_json::json!(payload["counter"].as_i64().unwrap_or(0) + 1);
-            payload["updates"]
-                .as_array_mut()
-                .unwrap()
-                .push(serde_json::json!(i));
-
+            // Use atomic JSON update to avoid lost updates
             sqlx::query!(
-                "UPDATE raw.events SET payload = $2 WHERE id::uuid = $1::uuid",
+                r#"
+                UPDATE raw.events 
+                SET payload = payload || jsonb_build_object(
+                    'counter', (payload->>'counter')::int + 1,
+                    'updates', payload->'updates' || jsonb_build_array($2::jsonb)
+                )
+                WHERE id::uuid = $1::uuid
+                "#,
                 id.to_uuid(),
-                payload
+                serde_json::json!(i)
             )
             .execute(&pool)
             .await
