@@ -93,7 +93,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     // Create test context  
                     let ctx = TestContext::with_managed_database(managed_db, TestConfig {
                         test_name: test_name.to_string(),
-                        use_transaction: true,  // Enable transaction isolation
                         ..Default::default()
                     }).await?;
 

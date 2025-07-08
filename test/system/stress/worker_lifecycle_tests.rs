@@ -164,10 +164,10 @@ impl RaceConditionWorker {
             "UPDATE sinex_schemas.work_queue
              SET status = 'succeeded',
                  processed_at = NOW(),
-                 processing_worker_id = $2::uuid::ulid
+                 processing_worker_id = $2
              WHERE queue_id = $1::uuid::ulid",
             Ulid::from_str(queue_id)?.to_uuid(),
-            Ulid::from_str(&self.worker_id)?.to_uuid()
+            &self.worker_id
         )
         .execute(&self.pool)
         .await?;
@@ -218,21 +218,21 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     for i in 0..race_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload)
-             VALUES ($1::uuid::ulid, $2, $3, $4)",
+            "INSERT INTO raw.events (id, source, event_type, payload, host)
+             VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.race_condition",
             "race_item",
-            json!({"race_item": i})
+            json!({"race_item": i}),
+            "test-host"
         )
         .execute(pool)
         .await?;
-
         let queue_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue
              (queue_id, raw_event_id, target_agent_name, max_attempts, status)
-             VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 3, 'pending')",
+             VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
             agent_name

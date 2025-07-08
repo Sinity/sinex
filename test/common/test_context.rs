@@ -41,8 +41,6 @@ pub struct TestConfig {
     pub verbose: bool,
     /// Test name for identification
     pub test_name: String,
-    /// Use transaction isolation for this test
-    pub use_transaction: bool,
 }
 
 impl Default for TestConfig {
@@ -52,7 +50,6 @@ impl Default for TestConfig {
             pool_size: 5,
             verbose: false,
             test_name: "unnamed_test".to_string(),
-            use_transaction: false,
         }
     }
 }
