@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use sinex_db::{
-    models::WorkQueueItem, queries::upsert_agent_manifest, DbPool, DbPoolRef, JsonValue,
+    models::WorkQueueItem, agent::upsert_agent_manifest, DbPool, DbPoolRef, JsonValue,
 };
 use sinex_promo_worker::{
     create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter,
@@ -74,7 +74,7 @@ struct ExampleProcessor {
 impl EventProcessor for ExampleProcessor {
     async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()> {
         // Use consolidated query function
-        let event = sinex_db::queries::get_event_by_id(pool, item.raw_event_id).await?;
+        let event = sinex_db::events::get_event_by_id(pool, item.raw_event_id).await?;
 
         info!(
             agent = %self.agent_name,
@@ -124,15 +124,16 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
         pool,
         agent_name,
         version,
-        "running",
-        "promoter",
         Some("Example promotion worker that logs events"),
-        Some(serde_json::json!({
+        "promoter",
+        serde_json::json!({}),
+        serde_json::json!({
             "sinex.agent.heartbeat": [{"type": "heartbeat"}]
-        })),
-        Some(serde_json::json!({
+        }),
+        serde_json::json!({
             "raw.events_feed_all": [{"note": "Subscribes to all events for demo purposes"}]
-        })),
+        }),
+        serde_json::json!({})
     )
     .await?;
 

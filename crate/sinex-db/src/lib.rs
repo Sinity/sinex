@@ -1,10 +1,10 @@
 pub mod models;
 // Re-export RawEvent and RawEventBuilder from sinex-core for type unification
 pub use sinex_core::{RawEvent, RawEventBuilder};
-pub mod enhanced_queries;
+// pub mod enhanced_queries; // Removed - superseded by *_correct modules
 pub mod metrics;
 pub mod pool;
-pub mod queries;
+// pub mod queries; // Removed - superseded by domain-specific modules
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
@@ -15,53 +15,36 @@ pub mod artifacts_correct;
 pub mod annotations_correct;
 pub mod knowledge_graph_correct;
 
-// Domain-specific query modules (clean API pattern)
-pub mod events_queries;
-pub mod work_queue_queries;
-pub mod agent_queries;
-pub mod dlq_queries;
+// Domain-specific query modules
+pub mod events;
+pub mod work_queue;
+pub mod agent;
+pub mod metrics_queries;
 
-// Re-export commonly used types and query functions
-pub use queries::{
-    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items, complete_work_item,
-    complete_work_queue_item, fail_work_item, fail_work_queue_item, get_event_by_id,
-    get_events_by_source, get_events_by_type, get_events_in_time_range, get_next_work_item,
-    get_recent_events, insert_raw_event, refresh_routing_cache, run_batch_router, QueueDepthMetric,
-};
+// Old queries module removed - all functions migrated to domain-specific modules
 
-// Re-export domain-specific query functions (clean API pattern)
-pub use events_queries::{
-    insert_event, get_event_by_id as get_event_by_id_new, get_recent_events as get_recent_events_new,
-    get_events_by_source as get_events_by_source_new, get_events_by_type as get_events_by_type_new,
-    get_events_in_time_range as get_events_in_time_range_new, CreateEventInput,
+// Re-export domain-specific query functions
+pub use events::{
+    get_event_by_id, 
+    insert_event_with_validator,
 };
-pub use work_queue_queries::{
-    add_to_work_queue as add_to_work_queue_new, claim_work_queue_items as claim_work_queue_items_new,
-    get_next_work_item as get_next_work_item_new, complete_work_queue_item as complete_work_queue_item_new,
-    fail_work_queue_item as fail_work_queue_item_new, fail_work_queue_item_permanently as fail_work_queue_item_permanently_new,
-    calculate_queue_depth_metrics as calculate_queue_depth_metrics_new, AddWorkInput,
-    QueueDepthMetric as QueueDepthMetricNew,
+pub use work_queue::{
+    claim_work_queue_items,
+    complete_work_queue_item,
+    fail_work_queue_item,
+    insert_dlq_event,
 };
-pub use agent_queries::{
-    upsert_agent_manifest as upsert_agent_manifest_new, update_agent_heartbeat as update_agent_heartbeat_new,
-    get_agent_manifest, get_all_agent_manifests, get_active_agents, update_agent_status,
-    UpsertAgentManifestInput,
+pub use agent::{
+    upsert_agent_manifest,
+    update_agent_heartbeat,
 };
-pub use dlq_queries::{
-    insert_dlq_event as insert_dlq_event_new, get_retryable_dlq_events_for_agent as get_retryable_dlq_events_for_agent_new,
-    get_retryable_dlq_events as get_retryable_dlq_events_new, update_dlq_retry_attempt as update_dlq_retry_attempt_new,
-    resolve_dlq_event as resolve_dlq_event_new, get_dlq_stats as get_dlq_stats_new,
-    get_dlq_events_by_category, CreateDlqEventInput,
+pub use metrics_queries::{
+    calculate_queue_depth_metrics,
+    QueueDepthMetrics,
 };
 
 
-// Re-export enhanced queries with error context
-pub use enhanced_queries::{
-    insert_event_with_context, get_event_by_id_with_context, claim_work_queue_items_with_context,
-    complete_work_queue_item_with_context, fail_work_queue_item_with_context,
-    update_agent_heartbeat_with_context, insert_dlq_event_with_context,
-    get_recent_events_with_context, database_health_check_with_context,
-};
+// Enhanced queries have been removed - functionality moved to domain modules
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
@@ -78,7 +61,11 @@ pub mod prelude {
         // EventAnnotation, CreateAnnotationInput,
         // Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
     };
-    pub use crate::queries::*;
+    // Use domain-specific modules
+    pub use crate::events::*;
+    pub use crate::work_queue::*;
+    pub use crate::agent::*;
+    pub use crate::metrics_queries::*;
     pub use crate::query_helpers::{
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,

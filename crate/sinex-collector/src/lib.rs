@@ -101,7 +101,7 @@ pub async fn output_event(
             }
 
             // Insert into database
-            match sinex_db::queries::insert_event_with_validator(pool, event, None).await {
+            match sinex_db::events::insert_event_with_validator(pool, event, None).await {
                 Ok(_) => {
                     debug!("Inserted event: {} {}", event.source, event.event_type);
                 }
