@@ -318,8 +318,14 @@ async fn collect_system_info() -> Result<SystemInfo> {
 
 fn get_available_disk_space() -> Result<f64> {
     use nix::sys::statvfs::statvfs;
+    use std::env;
 
-    let stat = statvfs("/var/lib/sinex")?;
+    // Allow configurable data directory for disk space checks
+    let data_dir = env::var("SINEX_DATA_DIR")
+        .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{}/sinex", d)))
+        .unwrap_or_else(|_| "/var/lib/sinex".to_string());
+
+    let stat = statvfs(data_dir.as_str())?;
     let available_bytes = stat.blocks_available() * stat.block_size();
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }

@@ -35,7 +35,7 @@ async fn test_agent_heartbeat_generation(ctx: TestContext) -> TestResult {
         "INSERT INTO raw.events (id, source, event_type, host, payload)
          VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(&event_id.to_string())
+    .bind(event_id.to_string())
     .bind("sinex.agent.heartbeat_test_agent")
     .bind("agent.heartbeat")
     .bind("test_host")
@@ -327,7 +327,7 @@ async fn test_heartbeat_frequency_monitoring(ctx: TestContext) -> TestResult {
     .unwrap();
 
     // Insert heartbeats at irregular intervals
-    let intervals = vec![60, 65, 55, 120, 58, 62]; // seconds
+    let intervals = [60, 65, 55, 120, 58, 62]; // seconds
     let mut cumulative_time = 0;
 
     for (i, interval) in intervals.iter().enumerate() {
@@ -378,7 +378,7 @@ async fn test_heartbeat_frequency_monitoring(ctx: TestContext) -> TestResult {
     // Check for irregular interval (the 120 second gap)
     let max_interval = intervals.iter().map(|(i,)| *i).max().unwrap();
     assert!(
-        max_interval >= 119 && max_interval <= 121,
+        (119..=121).contains(&max_interval),
         "Should detect the 120 second gap"
     );
 

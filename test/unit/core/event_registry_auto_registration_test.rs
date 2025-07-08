@@ -4,7 +4,7 @@ use sinex_core::unified_collector::EventRegistryBuilder;
 /// Test that demonstrates auto-registration pattern working
 #[test]
 fn test_auto_registration_pattern() -> TestResult {
-    let mut builder = EventRegistryBuilder::new();
+    let builder = EventRegistryBuilder::new();
     
     // Before auto-registration, builder should be empty
     let empty_registry = builder.build();
@@ -16,7 +16,7 @@ fn test_auto_registration_pattern() -> TestResult {
     let registry = builder.build();
     
     // After auto-registration, we should have filesystem events
-    assert!(registry.event_types.len() > 0);
+    assert!(!registry.event_types.is_empty());
     
     // Verify specific filesystem events are registered
     assert!(registry.has_event("file.created"));
@@ -106,18 +106,13 @@ fn test_deduplication_behavior() -> TestResult {
     Ok(())
 }
 
-/// Test that demonstrates the value of auto-registration by comparing with manual registry
+/// Test that demonstrates the value of auto-registration
 #[test]
-fn test_auto_vs_manual_consistency() -> TestResult {
-    // Create registry with auto-registration
-    let mut auto_builder = EventRegistryBuilder::new();
-    sinex_events_fs::register_events(&mut auto_builder);
-    let auto_registry = auto_builder.build();
+fn test_auto_registration_completeness() -> TestResult {
+    // Create registry with auto-registration (this is now the production approach)
+    let auto_registry = create_registry();
     
-    // Create manual registry (current approach)
-    let manual_registry = create_registry();
-    
-    // Print what auto-registration found vs manual for debugging
+    // Print what auto-registration found for debugging
     println!("Auto-registered filesystem events:");
     for &event in auto_registry.event_types {
         if event.starts_with("file.") || event.starts_with("dir.") {
@@ -125,29 +120,18 @@ fn test_auto_vs_manual_consistency() -> TestResult {
         }
     }
     
-    println!("Manual registry filesystem events:");
-    for &event in manual_registry.event_types {
-        if event.starts_with("file.") || event.starts_with("dir.") {
-            println!("  - {}", event);
-        }
-    }
-    
-    // The key insight: auto-registration should include all filesystem events
-    // This test documents what auto-registration provides vs manual maintenance
+    // The key insight: auto-registration finds all events defined in the crates
     let auto_fs_events: Vec<_> = auto_registry.event_types.iter()
         .filter(|e| e.starts_with("file.") || e.starts_with("dir."))
         .collect();
     
-    let manual_fs_events: Vec<_> = manual_registry.event_types.iter()
-        .filter(|e| e.starts_with("file.") || e.starts_with("dir."))
-        .collect();
+    // Should have discovered multiple filesystem events automatically
+    assert!(auto_fs_events.len() >= 6, 
+        "Auto-registration should discover at least 6 filesystem events, found {}", 
+        auto_fs_events.len());
     
-    // Document the difference this demonstrates the value of auto-registration
-    if auto_fs_events.len() != manual_fs_events.len() {
-        println!("Auto-registration found {} filesystem events, manual has {}",
-            auto_fs_events.len(), manual_fs_events.len());
-        println!("This demonstrates why auto-registration eliminates manual maintenance!");
-    }
+    println!("Auto-registration found {} filesystem events - no manual maintenance needed!",
+        auto_fs_events.len());
     
     // Auto-registered events should have schemas
     for &event in auto_registry.event_types {
@@ -155,6 +139,13 @@ fn test_auto_vs_manual_consistency() -> TestResult {
         assert!(auto_schema.is_some(), 
             "Auto-registered event {} missing schema", event);
     }
+    
+    // Verify comprehensive coverage of event crates
+    let all_sources: Vec<_> = auto_registry.all_sources();
+    assert!(all_sources.contains(&"fs"), "Should include filesystem source");
+    assert!(all_sources.contains(&"clipboard"), "Should include clipboard source");
+    assert!(all_sources.contains(&"shell.kitty"), "Should include shell source");
+    assert!(all_sources.contains(&"wm.hyprland"), "Should include window manager source");
     
     Ok(())
 }

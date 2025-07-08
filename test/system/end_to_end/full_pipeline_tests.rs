@@ -208,7 +208,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
     // Wait for pipeline completion using timing utilities
     // First wait for all events to be generated and stored
     wait_for_filtered_event_count(
-        &pool,
+        pool,
         "source = $1",
         &["pipeline_test"],
         events_to_generate as i64,
@@ -219,7 +219,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
 
     // Then wait for work queue to be empty (all processed)
     wait_for_work_queue_count(
-        &pool, 0, // Empty queue
+        pool, 0, // Empty queue
         10,
     )
     .await
@@ -251,7 +251,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
 
     // Verify database state using timing utilities
     let raw_event_count = wait_for_filtered_event_count(
-        &pool,
+        pool,
         "source = $1",
         &["pipeline_test"],
         events_to_generate as i64,
@@ -264,7 +264,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
 
     // Wait for derived events to be processed
     let derived_event_count = wait_for_filtered_event_count(
-        &pool,
+        pool,
         "source = $1",
         &["pipeline_test_derived"],
         events_to_generate as i64,

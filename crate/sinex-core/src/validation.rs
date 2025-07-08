@@ -313,7 +313,7 @@ mod tests {
         for _ in 0..40 {
             deep.push_str(r#""a":{"#);
         }
-        deep.push_str("1");
+        deep.push('1');
         for _ in 0..40 {
             deep.push('}');
         }

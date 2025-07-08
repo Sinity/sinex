@@ -5,10 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{error, info};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
 };
 
 // ============================================================================
@@ -20,13 +19,13 @@ use sinex_core::{
 pub struct DbusSignalPayload {
     /// Bus type (session or system)
     pub bus: String,
-    /// Sender (e.g., :1.234 or org.freedesktop.Notifications)
+    /// Sender (e.g., :1.234 or org.mpris.MediaPlayer2.spotify)
     pub sender: String,
-    /// Object path (e.g., /org/freedesktop/Notifications)
+    /// Object path (e.g., /org/mpris/MediaPlayer2)
     pub path: String,
-    /// Interface (e.g., org.freedesktop.Notifications)
+    /// Interface (e.g., org.mpris.MediaPlayer2.Player)
     pub interface: String,
-    /// Signal name (e.g., NotificationClosed)
+    /// Signal name (e.g., PropertiesChanged)
     pub signal: String,
     /// Signal arguments as JSON
     pub args: JsonValue,
@@ -325,7 +324,12 @@ impl Default for DbusConfig {
 
 pub struct DbusMonitor {
     config: DbusConfig,
+    #[allow(dead_code)] // Used by create_event method
+    event_factory: EventFactory,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for DbusMonitor {}
 
 #[async_trait]
 impl EventSource for DbusMonitor {
@@ -334,12 +338,13 @@ impl EventSource for DbusMonitor {
     const SOURCE_NAME: &'static str = sources::DBUS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing D-Bus monitor");
-        Ok(Self { config })
+        Ok(Self { 
+            config,
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
+        })
     }
 
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
@@ -384,13 +389,19 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
     info!("Connecting to {} bus", bus_type);
 
     let (resource, conn) = if bus_type == "session" {
-        connection::new_session_sync().map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to connect to session bus: {}", e))
-        })?
+        connection::new_session_sync().map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to connect to session bus: {}", e)))
+                .with_operation("monitor_dbus")
+                .with_context("bus_type", "session")
+                .build()
+        )?
     } else {
-        connection::new_system_sync().map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to connect to system bus: {}", e))
-        })?
+        connection::new_system_sync().map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to connect to system bus: {}", e)))
+                .with_operation("monitor_dbus")
+                .with_context("bus_type", "system")
+                .build()
+        )?
     };
 
     // Spawn the connection resource
@@ -402,14 +413,22 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
 
     // Add match rules for all message types we want to capture
     let signal_rule = MatchRule::new().with_type(dbus::message::MessageType::Signal);
-    conn.add_match(signal_rule).await.map_err(|e| {
-        sinex_core::CoreError::Other(format!("Failed to add signal match rule: {}", e))
-    })?;
+    conn.add_match(signal_rule).await.map_err(|e| 
+        ErrorContext::new(CoreError::Configuration(format!("Failed to add signal match rule: {}", e)))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", bus_type)
+            .with_context("rule_type", "signal")
+            .build()
+    )?;
 
     let method_rule = MatchRule::new().with_type(dbus::message::MessageType::MethodCall);
-    conn.add_match(method_rule).await.map_err(|e| {
-        sinex_core::CoreError::Other(format!("Failed to add method call match rule: {}", e))
-    })?;
+    conn.add_match(method_rule).await.map_err(|e| 
+        ErrorContext::new(CoreError::Configuration(format!("Failed to add method call match rule: {}", e)))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", bus_type)
+            .with_context("rule_type", "method_call")
+            .build()
+    )?;
 
     // Clone values we need for the async context
     let bus_type = bus_type.to_string();
@@ -504,21 +523,12 @@ async fn process_extracted_message(
     match msg_type {
         MessageType::Signal => {
             // Extract specialized events based on interface
+
             if config.extract_notifications
                 && interface == "org.freedesktop.Notifications"
                 && member == "Notify"
             {
-                let payload = NotificationPayload {
-                    app_name: "Unknown".to_string(),
-                    summary: args.to_string(),
-                    body: String::new(),
-                    urgency: 1,
-                    timeout: -1,
-                    actions: vec![],
-                    hints: HashMap::new(),
-                    timestamp: Utc::now(),
-                };
-
+                let payload = parse_notification_args(&args);
                 let event = create_event(
                     SystemNotification::EVENT_NAME,
                     serde_json::to_value(payload)?,
@@ -535,7 +545,7 @@ async fn process_extracted_message(
                     .and_then(|s| s.split('.').next_back())
                     .unwrap_or("unknown");
 
-                let payload = MediaPlaybackPayload {
+                let mut payload = parse_mpris_properties(&args).unwrap_or_else(|| MediaPlaybackPayload {
                     player: player.to_string(),
                     player_instance: sender.clone().unwrap_or_default(),
                     status: "Unknown".to_string(),
@@ -557,7 +567,11 @@ async fn process_extracted_message(
                     can_seek: false,
                     art_url: None,
                     timestamp: Utc::now(),
-                };
+                });
+                
+                // Set player info that we can extract from the sender
+                payload.player = player.to_string();
+                payload.player_instance = sender.clone().unwrap_or_default();
 
                 let event = create_event(
                     MediaPlaybackChanged::EVENT_NAME,
@@ -753,46 +767,188 @@ async fn process_extracted_message(
     Ok(())
 }
 
-// TODO: These functions are placeholder implementations for future D-Bus event extraction features
-#[allow(dead_code)]
-fn extract_notification_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("Notify").unwrap() {
-            // For now, create a basic notification event
-            // Full D-Bus argument parsing would be more complex
-            let payload = NotificationPayload {
-                app_name: "Unknown".to_string(),
-                summary: format!("{:?}", msg),
-                body: String::new(),
-                urgency: 1,
-                timeout: -1,
-                actions: vec![],
-                hints: HashMap::new(),
-                timestamp: Utc::now(),
-            };
 
-            let event = create_event(
-                SystemNotification::EVENT_NAME,
-                serde_json::to_value(payload)?,
-            );
-            return Ok(Some(event));
-        }
+fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
+    let mut args = Vec::new();
+    let mut iter = msg.iter_init();
+    
+    while iter.next() {
+        args.push(parse_dbus_argument(&mut iter));
     }
-    Ok(None)
+    
+    JsonValue::Array(args)
 }
 
-#[allow(dead_code)]
-fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
-            // Extract media player state changes
-            // This is simplified - real implementation would parse the properties
-            let sender = msg.sender().map(|s| s.to_string()).unwrap_or_default();
-            let player = sender.split('.').next_back().unwrap_or("unknown");
+fn parse_dbus_argument(iter: &mut dbus::arg::Iter) -> JsonValue {
+    use dbus::arg::ArgType;
+    
+    match iter.arg_type() {
+        // Basic types
+        ArgType::String => {
+            iter.get::<&str>()
+                .map(|s| JsonValue::String(s.to_string()))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Int32 => {
+            iter.get::<i32>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::UInt32 => {
+            iter.get::<u32>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Int64 => {
+            iter.get::<i64>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::UInt64 => {
+            iter.get::<u64>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Int16 => {
+            iter.get::<i16>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::UInt16 => {
+            iter.get::<u16>()
+                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Boolean => {
+            iter.get::<bool>()
+                .map(JsonValue::Bool)
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Double => {
+            iter.get::<f64>()
+                .and_then(serde_json::Number::from_f64)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null)
+        }
+        ArgType::Byte => {
+            iter.get::<u8>()
+                .map(|b| JsonValue::Number(serde_json::Number::from(b)))
+                .unwrap_or(JsonValue::Null)
+        }
+        
+        // Array type
+        ArgType::Array => {
+            parse_dbus_array(iter)
+        }
+        
+        // Dictionary (array of dict entries)
+        ArgType::DictEntry => {
+            parse_dbus_dict_entry(iter)
+        }
+        
+        // Variant type
+        ArgType::Variant => {
+            parse_dbus_variant(iter)
+        }
+        
+        // Struct type
+        ArgType::Struct => {
+            parse_dbus_struct(iter)
+        }
+        
+        // ObjectPath 
+        ArgType::ObjectPath => {
+            iter.get::<dbus::Path>()
+                .map(|p| JsonValue::String(p.to_string()))
+                .unwrap_or(JsonValue::Null)
+        }
+        
+        // Signature
+        ArgType::Signature => {
+            iter.get::<dbus::Signature>()
+                .map(|s| JsonValue::String(s.to_string()))
+                .unwrap_or(JsonValue::Null)
+        }
+        
+        // Unix FD - convert to number
+        ArgType::UnixFd => {
+            JsonValue::String("UnixFd".to_string())
+        }
+        
+        // Invalid or unsupported
+        ArgType::Invalid => JsonValue::Null,
+    }
+}
 
-            let payload = MediaPlaybackPayload {
-                player: player.to_string(),
-                player_instance: sender.clone(),
+fn parse_dbus_array(iter: &mut dbus::arg::Iter) -> JsonValue {
+    let mut array_values = Vec::new();
+    
+    // Recursively iterate through array elements
+    if let Some(mut array_iter) = iter.recurse(dbus::arg::ArgType::Array) {
+        while array_iter.next() {
+            array_values.push(parse_dbus_argument(&mut array_iter));
+        }
+    }
+    
+    JsonValue::Array(array_values)
+}
+
+fn parse_dbus_dict_entry(iter: &mut dbus::arg::Iter) -> JsonValue {
+    let mut dict_obj = serde_json::Map::new();
+    
+    if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry) {
+        // Dict entry has exactly 2 elements: key and value
+        if dict_iter.next() {
+            let key = parse_dbus_argument(&mut dict_iter);
+            if dict_iter.next() {
+                let value = parse_dbus_argument(&mut dict_iter);
+                
+                // Use key as string key for JSON object
+                let key_str = match key {
+                    JsonValue::String(s) => s,
+                    _ => format!("{:?}", key),
+                };
+                
+                dict_obj.insert(key_str, value);
+            }
+        }
+    }
+    
+    JsonValue::Object(dict_obj)
+}
+
+fn parse_dbus_variant(iter: &mut dbus::arg::Iter) -> JsonValue {
+    // Variant contains a single value of any type
+    if let Some(mut variant_iter) = iter.recurse(dbus::arg::ArgType::Variant) {
+        if variant_iter.next() {
+            return parse_dbus_argument(&mut variant_iter);
+        }
+    }
+    
+    JsonValue::Null
+}
+
+fn parse_dbus_struct(iter: &mut dbus::arg::Iter) -> JsonValue {
+    let mut struct_values = Vec::new();
+    
+    if let Some(mut struct_iter) = iter.recurse(dbus::arg::ArgType::Struct) {
+        while struct_iter.next() {
+            struct_values.push(parse_dbus_argument(&mut struct_iter));
+        }
+    }
+    
+    JsonValue::Array(struct_values)
+}
+
+
+
+fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
+    // MPRIS PropertiesChanged args: interface_name, changed_properties, invalidated_properties
+    if let JsonValue::Array(arg_array) = args {
+        if let Some(changed_props) = arg_array.get(1) {
+            let mut payload = MediaPlaybackPayload {
+                player: "unknown".to_string(),
+                player_instance: String::new(),
                 status: "Unknown".to_string(),
                 track_id: None,
                 title: None,
@@ -813,242 +969,182 @@ fn extract_media_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
                 art_url: None,
                 timestamp: Utc::now(),
             };
+            
+            if let JsonValue::Array(props) = changed_props {
+                // Parse property changes - with improved D-Bus parsing, each entry is a dictionary object
+                for prop_entry in props {
+                    if let JsonValue::Object(obj) = prop_entry {
+                        for (key, value) in obj {
+                            match key.as_str() {
+                                "PlaybackStatus" => {
+                                    payload.status = value.as_str().unwrap_or("Unknown").to_string();
+                                }
+                                "Metadata" => {
+                                    if let Some(metadata) = parse_mpris_metadata(value) {
+                                        payload.title = metadata.get("xesam:title").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        payload.artist = metadata.get("xesam:artist").and_then(|v| v.as_array()).map(|arr| 
+                                            arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()
+                                        );
+                                        payload.album = metadata.get("xesam:album").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        payload.track_number = metadata.get("xesam:trackNumber").and_then(|v| v.as_i64()).map(|i| i as i32);
+                                        payload.length = metadata.get("mpris:length").and_then(|v| v.as_i64());
+                                        payload.art_url = metadata.get("mpris:artUrl").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    }
+                                }
+                                "Volume" => {
+                                    payload.volume = value.as_f64();
+                                }
+                                "Position" => {
+                                    payload.position = value.as_i64();
+                                }
+                                "LoopStatus" => {
+                                    payload.loop_status = value.as_str().map(|s| s.to_string());
+                                }
+                                "Shuffle" => {
+                                    payload.shuffle = value.as_bool();
+                                }
+                                "CanGoNext" => {
+                                    payload.can_go_next = value.as_bool().unwrap_or(false);
+                                }
+                                "CanGoPrevious" => {
+                                    payload.can_go_previous = value.as_bool().unwrap_or(false);
+                                }
+                                "CanPlay" => {
+                                    payload.can_play = value.as_bool().unwrap_or(false);
+                                }
+                                "CanPause" => {
+                                    payload.can_pause = value.as_bool().unwrap_or(false);
+                                }
+                                "CanSeek" => {
+                                    payload.can_seek = value.as_bool().unwrap_or(false);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Some(payload)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
 
-            let event = create_event(
-                MediaPlaybackChanged::EVENT_NAME,
-                serde_json::to_value(payload)?,
-            );
-            return Ok(Some(event));
+fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
+    // With improved D-Bus parsing, metadata is now a proper dictionary array
+    if let JsonValue::Array(dict_entries) = metadata_value {
+        let mut metadata = HashMap::new();
+        
+        // Each entry is now a dictionary object with key-value pairs
+        for entry in dict_entries {
+            if let JsonValue::Object(obj) = entry {
+                for (key, value) in obj {
+                    metadata.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        
+        Some(metadata)
+    } else {
+        None
+    }
+}
+
+fn parse_notification_args(args: &JsonValue) -> NotificationPayload {
+    // Notification arguments: app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout
+    if let JsonValue::Array(arg_array) = args {
+        let app_name = arg_array.first()
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        
+        let summary = arg_array.get(3)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let body = arg_array.get(4)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        let actions = arg_array.get(5)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect())
+            .unwrap_or_default();
+        
+        let hints = arg_array.get(6)
+            .and_then(parse_notification_hints)
+            .unwrap_or_default();
+        
+        let timeout = arg_array.get(7)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1) as i32;
+        
+        let urgency = hints.get("urgency")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u8;
+        
+        NotificationPayload {
+            app_name,
+            summary,
+            body,
+            urgency,
+            timeout,
+            actions,
+            hints,
+            timestamp: Utc::now(),
+        }
+    } else {
+        NotificationPayload {
+            app_name: "Unknown".to_string(),
+            summary: "Failed to parse".to_string(),
+            body: String::new(),
+            urgency: 1,
+            timeout: -1,
+            actions: vec![],
+            hints: HashMap::new(),
+            timestamp: Utc::now(),
         }
     }
-    Ok(None)
 }
 
-#[allow(dead_code)]
-fn extract_power_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        let event_type = match member.as_ref() {
-            "PrepareForSleep" => Some("sleep"),
-            "PrepareForShutdown" => Some("shutdown"),
-            "PowerProfileChanged" => Some("profile_changed"),
-            _ => None,
-        };
-
-        if let Some(event_type) = event_type {
-            let payload = PowerEventPayload {
-                event_type: event_type.to_string(),
-                details: message_args_to_json(msg),
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(PowerEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
+fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, JsonValue>> {
+    // With improved D-Bus parsing, hints are now a proper dictionary array
+    if let JsonValue::Array(dict_entries) = hints_value {
+        let mut hints = HashMap::new();
+        
+        // Each entry is now a dictionary object with key-value pairs
+        for entry in dict_entries {
+            if let JsonValue::Object(obj) = entry {
+                for (key, value) in obj {
+                    hints.insert(key.clone(), value.clone());
+                }
+            }
         }
+        
+        Some(hints)
+    } else {
+        None
     }
-    Ok(None)
 }
 
-#[allow(dead_code)]
-fn extract_hardware_event(msg: &dbus::Message, interface: &str) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
-            let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-
-            let (device_type, event_type) = if interface.contains("UDisks2") {
-                ("disk", "changed")
-            } else if interface.contains("UPower") {
-                ("battery", "changed")
-            } else {
-                ("unknown", "changed")
-            };
-
-            let payload = HardwareEventPayload {
-                device_type: device_type.to_string(),
-                event_type: event_type.to_string(),
-                device_path: path,
-                device_name: None,
-                vendor: None,
-                model: None,
-                serial: None,
-                properties: HashMap::new(),
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(HardwareEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
+impl DbusMonitor {
+    #[allow(dead_code)] // Helper method for future event creation
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
+        self.event_factory.create_event(event_type, payload)
     }
-    Ok(None)
 }
 
-#[allow(dead_code)]
-fn extract_session_event(msg: &dbus::Message, interface: &str) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        let event_type = match (interface, member.as_ref()) {
-            (_, "Lock") => Some("locked"),
-            (_, "Unlock") => Some("unlocked"),
-            (_, "IdleChanged") => Some("idle"),
-            (_, "ActiveChanged") => Some("active"),
-            _ => None,
-        };
-
-        if let Some(event_type) = event_type {
-            let payload = SessionEventPayload {
-                event_type: event_type.to_string(),
-                session_id: msg.path().map(|p| p.to_string()),
-                idle_time_ms: None,
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(SessionEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-fn extract_bluetooth_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("PropertiesChanged").unwrap() {
-            let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-            let device_address = path.split('/').next_back().unwrap_or("unknown");
-
-            let payload = BluetoothEventPayload {
-                event_type: "changed".to_string(),
-                device_address: device_address.to_string(),
-                device_name: None,
-                device_class: None,
-                rssi: None,
-                connected: false,
-                paired: false,
-                trusted: false,
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(BluetoothEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-fn extract_network_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        let event_type = match member.as_ref() {
-            "StateChanged" => Some("state_changed"),
-            "DeviceAdded" => Some("device_added"),
-            "DeviceRemoved" => Some("device_removed"),
-            "ActiveConnectionAdded" => Some("connected"),
-            "ActiveConnectionRemoved" => Some("disconnected"),
-            _ => None,
-        };
-
-        if let Some(event_type) = event_type {
-            let payload = NetworkEventPayload {
-                event_type: event_type.to_string(),
-                interface: "unknown".to_string(),
-                connection_type: "unknown".to_string(),
-                ssid: None,
-                ip_address: None,
-                state: "unknown".to_string(),
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(NetworkEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-fn extract_screensaver_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("ActiveChanged").unwrap() {
-            let payload = ScreenSaverEventPayload {
-                active: true, // Would need to parse args
-                locked: false,
-                idle_time_ms: None,
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(ScreenSaverEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-fn extract_mount_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        let event_type = match member.as_ref() {
-            "Mount" => Some("mounted"),
-            "Unmount" => Some("unmounted"),
-            _ => None,
-        };
-
-        if let Some(event_type) = event_type {
-            let path = msg.path().map(|p| p.to_string()).unwrap_or_default();
-
-            let payload = MountEventPayload {
-                event_type: event_type.to_string(),
-                device: path,
-                mount_point: "unknown".to_string(),
-                filesystem: "unknown".to_string(),
-                label: None,
-                uuid: None,
-                size_bytes: None,
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(MountEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(dead_code)]
-fn extract_policykit_event(msg: &dbus::Message) -> Result<Option<RawEvent>> {
-    if let Some(member) = msg.member() {
-        if member == dbus::strings::Member::new("CheckAuthorization").unwrap() {
-            let payload = PolicyKitEventPayload {
-                action_id: "unknown".to_string(),
-                subject_pid: 0,
-                subject_uid: 0,
-                subject_executable: None,
-                requesting_user: None,
-                authorized: false,
-                challenge_occurred: false,
-                timestamp: Utc::now(),
-            };
-
-            let event = create_event(PolicyKitEvent::EVENT_NAME, serde_json::to_value(payload)?);
-            return Ok(Some(event));
-        }
-    }
-    Ok(None)
-}
-
-fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
-    // For now, just return debug representation
-    // A full implementation would parse all D-Bus argument types
-    JsonValue::String(format!("{:?}", msg))
-}
-
+// Helper function that creates events using EventFactory pattern
 fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: DbusMonitor::SOURCE_NAME.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now()),
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload,
-    }
+    let event_factory = EventFactory::new(DbusMonitor::SOURCE_NAME);
+    event_factory.create_event(event_type, payload)
 }

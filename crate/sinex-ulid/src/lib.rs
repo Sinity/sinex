@@ -58,7 +58,10 @@ impl Ulid {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let mut state = MONOTONIC_STATE.lock().unwrap();
+        let mut state = MONOTONIC_STATE.lock().unwrap_or_else(|poisoned| {
+            // If the mutex is poisoned, clear it and start fresh
+            poisoned.into_inner()
+        });
 
         let random_part = if now_ms == state.last_timestamp {
             // Same millisecond: increment the random component to maintain ordering

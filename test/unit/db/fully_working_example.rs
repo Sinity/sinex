@@ -57,9 +57,13 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
     // In the future, this would use actual transaction isolation
 
     let initial_count = ctx.event_count().await?;
+    eprintln!("DEBUG: Initial count in database: {}", initial_count);
 
+    // Let's try with 3 events to reproduce the original issue
+    let events_to_insert = 3;
+    
     // Create some test events
-    for i in 0..3 {
+    for i in 0..events_to_insert {
         let event = ctx
             .event_builder("test", "example")
             .payload(serde_json::json!({ "index": i }))
@@ -68,7 +72,10 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
     }
 
     let new_count = ctx.event_count().await?;
-    pretty_assertions::assert_eq!(new_count - initial_count, 3);
+    eprintln!("DEBUG: After inserting {} events, total count: {}", events_to_insert, new_count);
+    eprintln!("DEBUG: Difference: {} (expected {})", new_count - initial_count, events_to_insert);
+    
+    pretty_assertions::assert_eq!(new_count - initial_count, events_to_insert);
 
     println!("✅ Multiple event insertion works!");
 

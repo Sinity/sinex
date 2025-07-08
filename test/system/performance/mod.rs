@@ -47,7 +47,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 
     // Verify count using timing utility
     let count =
-        wait_for_filtered_event_count(&ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, 10)
+        wait_for_filtered_event_count(ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, 10)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to verify event count: {}", e))?;
 
@@ -66,7 +66,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
     // Insert test events
     for i in 0..100 {
         queries::insert_raw_event(
-            &ctx.pool(),
+            ctx.pool(),
             "concurrent_test",
             "process_me",
             "test-host",
@@ -168,7 +168,7 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
     // Insert test data
     for i in 0..1000 {
         queries::insert_raw_event(
-            &ctx.pool(),
+            ctx.pool(),
             "latency_test",
             if i % 2 == 0 { "type_a" } else { "type_b" },
             "test-host",

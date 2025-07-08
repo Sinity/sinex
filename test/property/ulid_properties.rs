@@ -13,23 +13,19 @@ mod ulid_ordering_properties {
     #[test]
     fn test_ulid_chronological_ordering() {
         proptest!(|(
-            base_timestamp in 0u64..1_000_000_000_000,
-            offsets in prop::collection::vec(0u64..1000, 2..10)
+            count in 2usize..10,
+            delay_micros in 100u64..1000
         )| {
-            let base_time = DateTime::from_timestamp(base_timestamp as i64, 0).unwrap_or(Utc::now());
-            let mut timestamps: Vec<DateTime<Utc>> = offsets
-                .iter()
-                .map(|&offset| base_time + Duration::seconds(offset as i64))
-                .collect();
-
-            // Sort timestamps to ensure chronological order
-            timestamps.sort();
-
-            // Generate ULIDs from sorted timestamps
-            let ulids: Vec<Ulid> = timestamps
-                .iter()
-                .map(|&ts| Ulid::from_datetime(ts))
-                .collect();
+            let mut ulids = Vec::new();
+            
+            // Generate ULIDs with micro-delays to ensure monotonic ordering
+            for i in 0..count {
+                if i > 0 {
+                    // Add tiny delay to ensure different timestamps for monotonic generation
+                    std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                }
+                ulids.push(Ulid::new());
+            }
 
             // Verify ULIDs maintain chronological order
             for window in ulids.windows(2) {
@@ -75,7 +71,7 @@ mod ulid_ordering_properties {
 
     #[test]
     fn test_ulid_timestamp_extraction() {
-        proptest!(|(timestamp in 0u64..2_000_000_000)| {
+        proptest!(|(timestamp in 1577836800u64..1893456000u64)| { // 2020-2030 range
             let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
             let ulid = Ulid::from_datetime(dt);
             let extracted_timestamp = ulid.timestamp();

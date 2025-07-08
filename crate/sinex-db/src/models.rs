@@ -284,3 +284,168 @@ pub struct AgentHeartbeat {
     pub dlq_size: u64,
     pub version: String,
 }
+
+// ============================================================================
+// Artifacts API Models
+// ============================================================================
+
+/// Core artifact representing conceptual documents/items
+/// Maps to core.artifacts table
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Artifact {
+    #[sqlx(rename = "id")]
+    pub artifact_id: Ulid,
+    #[sqlx(rename = "type")]
+    pub artifact_type: String,
+    pub title: String,
+    pub source_url: Option<String>,
+    pub original_path: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub checksum: Option<String>,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub deleted_at: OptionalTimestamp,
+    pub created_from_event_id: Option<Ulid>,
+    pub blob_id: Option<Ulid>,
+}
+
+/// Artifact content version
+/// Maps to core.artifact_contents table
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ArtifactContent {
+    #[sqlx(rename = "id")]
+    pub content_id: Ulid,
+    pub artifact_id: Ulid,
+    pub version: i32,
+    #[sqlx(rename = "content")]
+    pub content_text: String,
+    #[sqlx(rename = "content_type")]
+    pub content_format: String,
+    pub extracted_text: Option<String>,
+    pub word_count: Option<i32>,
+    pub char_count: Option<i32>,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
+    pub created_from_event_id: Option<Ulid>,
+}
+
+/// Input for creating a new artifact
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateArtifactInput {
+    pub artifact_type: String,
+    pub title: String,
+    pub source_url: Option<String>,
+    pub original_path: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub checksum: Option<String>,
+    pub metadata: Option<JsonValue>,
+    pub created_from_event_id: Option<Ulid>,
+    pub blob_id: Option<Ulid>,
+}
+
+/// Input for creating artifact content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateArtifactContentInput {
+    pub artifact_id: Ulid,
+    pub version: Option<i32>,
+    pub content_text: String,
+    pub content_format: String,
+    pub extracted_text: Option<String>,
+    pub metadata: Option<JsonValue>,
+    pub created_from_event_id: Option<Ulid>,
+}
+
+// ============================================================================
+// Event Annotations API Models
+// ============================================================================
+
+/// Event annotation
+/// Maps to core.event_annotations table
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EventAnnotation {
+    #[sqlx(rename = "id")]
+    pub annotation_id: Ulid,
+    pub event_id: Ulid,
+    pub annotation_type: String,
+    pub content: String,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub created_by: String,
+}
+
+/// Input for creating an annotation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAnnotationInput {
+    pub event_id: Ulid,
+    pub annotation_type: String,
+    pub content: String,
+    pub metadata: Option<JsonValue>,
+    pub created_by: String,
+}
+
+// ============================================================================
+// Knowledge Graph API Models
+// ============================================================================
+
+/// Knowledge graph entity
+/// Maps to core.entities table
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Entity {
+    #[sqlx(rename = "id")]
+    pub entity_id: Ulid,
+    #[sqlx(rename = "type")]
+    pub entity_type: String,
+    pub name: String,
+    pub canonical_name: String,
+    pub aliases: Vec<String>,
+    pub description: Option<String>,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub merged_into_id: Option<Ulid>,
+}
+
+/// Relationship between entities
+/// Maps to core.entity_relations table
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EntityRelation {
+    #[sqlx(rename = "id")]
+    pub relation_id: Ulid,
+    pub from_entity_id: Ulid,
+    pub to_entity_id: Ulid,
+    pub relation_type: String,
+    pub strength: Option<f64>,
+    pub metadata: JsonValue,
+    pub valid_from: Timestamp,
+    pub valid_until: OptionalTimestamp,
+    pub created_at: Timestamp,
+    pub created_from_event_id: Option<Ulid>,
+}
+
+/// Input for creating an entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEntityInput {
+    pub entity_type: String,
+    pub name: String,
+    pub canonical_name: Option<String>,
+    pub aliases: Option<Vec<String>>,
+    pub description: Option<String>,
+    pub metadata: Option<JsonValue>,
+}
+
+/// Input for creating a relation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRelationInput {
+    pub from_entity_id: Ulid,
+    pub to_entity_id: Ulid,
+    pub relation_type: String,
+    pub strength: Option<f64>,
+    pub metadata: Option<JsonValue>,
+    pub valid_from: OptionalTimestamp,
+    pub valid_until: OptionalTimestamp,
+    pub created_from_event_id: Option<Ulid>,
+}

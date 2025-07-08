@@ -20,8 +20,9 @@
 //! ```
 
 use crate::common::database_pool::TestDatabase;
-use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+// Event builders moved to sinex-core
 use crate::common::prelude::*;
+use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
     wait_for_work_queue_count,
@@ -152,6 +153,13 @@ impl TestContext {
 
     /// Get count of events
     pub async fn event_count(&self) -> Result<i64> {
+        // Debug: verify which database we're querying
+        let db_name = sqlx::query_scalar!("SELECT current_database()")
+            .fetch_one(self.pool())
+            .await?
+            .unwrap_or_else(|| "unknown".to_string());
+        eprintln!("  [event_count] Querying database: {}", db_name);
+        
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
             .fetch_one(self.pool())
             .await?;

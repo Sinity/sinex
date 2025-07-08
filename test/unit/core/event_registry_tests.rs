@@ -82,8 +82,8 @@ async fn test_event_registry_get_source_events(_ctx: TestContext) -> TestResult 
         "Terminal source should have events"
     );
     assert!(
-        shell_events.contains(&"command.executed"),
-        "Terminal should contain command.executed event"
+        shell_events.contains(&"command.started"),
+        "Terminal should contain command.started event"
     );
 
     // Test non-existent source
@@ -147,7 +147,7 @@ async fn test_event_registry_event_type_properties(_ctx: TestContext) -> TestRes
     let schema = registry.schema_for_event("file.created");
     assert!(schema.is_some(), "Should find schema for file.created");
 
-    // Test command.executed event type
+    // Test command.executed event type (provided by shell.atuin)
     let cmd_source = registry.source_for_event("command.executed");
     assert!(
         cmd_source.is_some(),
@@ -155,8 +155,20 @@ async fn test_event_registry_event_type_properties(_ctx: TestContext) -> TestRes
     );
     pretty_assertions::assert_eq!(
         cmd_source.unwrap(),
+        "shell.atuin",
+        "command.executed should map to shell.atuin"
+    );
+    
+    // Test command.started event type (provided by shell.kitty)
+    let kitty_source = registry.source_for_event("command.started");
+    assert!(
+        kitty_source.is_some(),
+        "Should find source for command.started"
+    );
+    pretty_assertions::assert_eq!(
+        kitty_source.unwrap(),
         "shell.kitty",
-        "command.executed should map to shell.kitty"
+        "command.started should map to shell.kitty"
     );
     Ok(())
 }
@@ -289,8 +301,8 @@ async fn test_event_registry_concurrent_access(_ctx: TestContext) -> TestResult 
     for handle in handles {
         let result = handle.join().unwrap();
         assert!(
-            result == "fs" || result == "shell.kitty",
-            "Source should be filesystem or shell.kitty, got: {}",
+            result == "fs" || result == "shell.atuin",
+            "Source should be filesystem or shell.atuin, got: {}",
             result
         );
     }
@@ -323,16 +335,24 @@ async fn test_event_registry_with_real_events(_ctx: TestContext) -> TestResult {
         }
     }
 
-    let shell_events = ["command.executed", "session.started", "session.ended"];
+    // Test different shell events and their correct sources
+    let test_cases = [
+        ("command.executed", "shell.atuin"),
+        ("session.started", "shell.recording"),
+        ("session.ended", "shell.recording"),
+        ("command.started", "shell.kitty"),
+        ("command.completed", "shell.kitty"),
+    ];
 
-    for event_name in shell_events {
+    for (event_name, expected_source) in test_cases {
         let source = registry.source_for_event(event_name);
         if source.is_some() {
             pretty_assertions::assert_eq!(
                 source.unwrap(),
-                "shell.kitty",
-                "Terminal event {} should map to shell.kitty source",
-                event_name
+                expected_source,
+                "Terminal event {} should map to {} source",
+                event_name,
+                expected_source
             );
         }
     }

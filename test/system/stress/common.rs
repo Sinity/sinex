@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// Comprehensive metrics for tracking concurrency stress patterns
 #[derive(Debug)]
@@ -219,12 +220,13 @@ impl StressTestUtils {
             });
 
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload)
-                 VALUES ($1::uuid::ulid, $2, $3, $4)",
+                "INSERT INTO raw.events (id, source, event_type, payload, host)
+                 VALUES ($1::uuid, $2, $3, $4, $5)",
                 event_id.to_uuid(),
                 source,
                 event_type,
-                payload
+                payload,
+                "test-host"
             )
             .execute(pool)
             .await?;

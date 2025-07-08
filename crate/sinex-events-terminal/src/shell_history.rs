@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
@@ -11,10 +11,9 @@ use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType,
-    OptionalTimestamp, Result,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType,
+    OptionalTimestamp, Result, EventFactory, ErrorContext, CoreError, RawEvent,
 };
 
 // ============================================================================
@@ -39,7 +38,7 @@ pub struct ShellHistoryCommand;
 impl EventType for ShellHistoryCommand {
     type Payload = ShellHistoryCommandPayload;
     type SourceImpl = ShellHistoryReader;
-    const EVENT_NAME: &'static str = "command.imported";
+    const EVENT_NAME: &'static str = "command.executed";
 }
 
 // ============================================================================
@@ -87,7 +86,11 @@ pub struct ShellHistoryReader {
     last_positions: std::collections::HashMap<PathBuf, u64>,
     recent_commands: HashSet<(String, String)>, // (command, shell_type) for dedup
     last_cleanup: Instant,
+    event_factory: EventFactory,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for ShellHistoryReader {}
 
 #[async_trait]
 impl EventSource for ShellHistoryReader {
@@ -96,9 +99,7 @@ impl EventSource for ShellHistoryReader {
     const SOURCE_NAME: &'static str = sources::SHELL_HISTORY;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!(
             "Initializing shell history reader for {} files",
@@ -122,6 +123,7 @@ impl EventSource for ShellHistoryReader {
             last_positions: std::collections::HashMap::new(),
             recent_commands: HashSet::new(),
             last_cleanup: Instant::now(),
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
     }
 
@@ -168,7 +170,10 @@ impl ShellHistoryReader {
             }
         })
         .map_err(|e| {
-            sinex_core::CoreError::Other(format!("Failed to create file watcher: {}", e))
+            ErrorContext::new(CoreError::Configuration(format!("Failed to create file watcher: {}", e)))
+                .with_operation("initialize_file_watcher")
+                .with_context("tool", "notify")
+                .build()
         })?;
 
         // Watch parent directories to catch file creation
@@ -179,10 +184,12 @@ impl ShellHistoryReader {
                     watcher
                         .watch(parent, RecursiveMode::NonRecursive)
                         .map_err(|e| {
-                            sinex_core::CoreError::Other(format!(
-                                "Failed to watch directory {:?}: {}",
-                                parent, e
-                            ))
+                            ErrorContext::new(CoreError::Configuration(format!(
+                                "Failed to watch directory: {}", e
+                            )))
+                                .with_operation("setup_directory_watcher")
+                                .with_context("directory", parent.display().to_string())
+                                .build()
                         })?;
                 }
             }
@@ -382,17 +389,11 @@ impl ShellHistoryReader {
             ts_command_approx: timestamp,
         };
 
-        let event = RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: Self::SOURCE_NAME.to_string(),
-            event_type: ShellHistoryCommand::EVENT_NAME.to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: timestamp,
-            host: gethostname::gethostname().to_string_lossy().to_string(),
-            ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            payload_schema_id: None,
-            payload: serde_json::to_value(&payload).ok()?,
-        };
+        let mut event = self.create_event(
+            ShellHistoryCommand::EVENT_NAME,
+            serde_json::to_value(&payload).ok()?,
+        );
+        event.ts_orig = timestamp;
 
         Some((event, payload))
     }
@@ -407,5 +408,9 @@ impl ShellHistoryReader {
         if old_size > 0 {
             debug!("Cleared {} entries from dedup cache", old_size);
         }
+    }
+
+    fn create_event(&self, event_type: &str, payload: serde_json::Value) -> RawEvent {
+        self.event_factory.create_event(event_type, payload)
     }
 }

@@ -845,6 +845,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastcdc"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1767,6 +1773,17 @@ dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -2956,6 +2973,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-test",
  "tracing",
  "uuid",
  "which",
@@ -3007,8 +3025,10 @@ version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "blake3",
  "chrono",
  "dirs 5.0.1",
+ "fastcdc",
  "gethostname 0.4.3",
  "jsonschema",
  "path-clean",
@@ -3034,6 +3054,7 @@ name = "sinex-db"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "blake3",
  "chrono",
  "gethostname 0.4.3",
  "jsonschema",
@@ -3126,15 +3147,19 @@ version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "blake3",
  "chrono",
  "gethostname 0.4.3",
  "glob",
+ "libc",
+ "nix 0.27.1",
  "notify",
  "regex",
  "rusqlite",
  "schemars",
  "serde",
  "serde_json",
+ "sinex-annex",
  "sinex-core",
  "sinex-db",
  "sinex-ulid",
@@ -3142,6 +3167,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "whoami",
 ]
 
 [[package]]
@@ -3248,6 +3274,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "futures",
  "once_cell",
  "prometheus",
  "rand 0.8.5",
@@ -4397,6 +4424,7 @@ checksum = "6994d13118ab492c3c80c1f81928718159254c53c472bf9ce36f8dae4add02a7"
 dependencies = [
  "redox_syscall",
  "wasite",
+ "web-sys",
 ]
 
 [[package]]

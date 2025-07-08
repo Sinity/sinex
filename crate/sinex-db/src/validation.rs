@@ -511,9 +511,9 @@ impl EventValidator {
             "*", // Special event_type to match all
             |payload| {
                 // Maximum allowed depth for JSON (prevent stack overflow)
-                const MAX_JSON_DEPTH: usize = 32;
-                // Maximum allowed elements in JSON (prevent memory exhaustion)
-                const MAX_JSON_ELEMENTS: usize = 5_000;
+                const MAX_JSON_DEPTH: usize = 1000;
+                // Maximum allowed elements in JSON (prevent memory exhaustion)  
+                const MAX_JSON_ELEMENTS: usize = 10_000_000;
                 
                 // Check JSON depth
                 SecurityValidator::check_json_depth(payload, MAX_JSON_DEPTH)

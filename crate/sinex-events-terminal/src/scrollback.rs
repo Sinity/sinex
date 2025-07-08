@@ -9,11 +9,11 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
-use sinex_core::RawEvent;
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp,
+    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
+    Result, Timestamp, chunking::ChunkingService, EventFactory, ErrorContext, CoreError, RawEvent,
 };
+use sinex_annex::{GitAnnex, AnnexConfig};
 
 // ============================================================================
 // Event Payloads
@@ -26,8 +26,18 @@ pub struct TerminalScrollbackCapturedPayload {
     pub terminal_type: String, // "kitty"
     pub cwd: String,
     pub window_title: String,
-    pub scrollback_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_text: Option<String>, // Only for small content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_chunks: Option<Vec<serde_json::Value>>, // For chunked large content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_annex_path: Option<String>, // Path in git-annex for large content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_annex_key: Option<String>, // Git-annex key for large content
     pub scrollback_lines: usize,
+    pub scrollback_size_bytes: u64,
+    pub is_chunked: bool,
+    pub chunk_count: Option<u32>,
     pub includes_screen: bool,
     pub has_ansi_codes: bool,
     pub timestamp: Timestamp,
@@ -52,14 +62,14 @@ pub struct TerminalScrollbackCaptured;
 impl EventType for TerminalScrollbackCaptured {
     type Payload = TerminalScrollbackCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "output.captured";
+    const EVENT_NAME: &'static str = "scrollback.full";
 }
 
 pub struct CommandOutputCaptured;
 impl EventType for CommandOutputCaptured {
     type Payload = CommandOutputCapturedPayload;
     type SourceImpl = ScrollbackCapture;
-    const EVENT_NAME: &'static str = "output.captured";
+    const EVENT_NAME: &'static str = "command.output";
 }
 
 // ============================================================================
@@ -78,35 +88,61 @@ pub struct ScrollbackConfig {
     pub include_ansi_codes: bool,
     /// Capture command output separately (requires shell integration)
     pub capture_command_output: bool,
-    /// Save scrollback to files
-    pub save_to_files: bool,
-    /// Directory for scrollback files
-    pub scrollback_dir: PathBuf,
+    /// Git-annex repository path for storing large scrollback content
+    #[serde(default)]
+    pub git_annex_repo: Option<PathBuf>,
+    /// Automatically store large scrollback content in git-annex
+    #[serde(default)]
+    pub auto_annex: bool,
+    /// Threshold for storing in git-annex instead of database (bytes)
+    #[serde(default = "default_annex_threshold")]
+    pub annex_threshold_bytes: usize,
     /// Capture scrollback on command execution
     #[serde(default)]
     pub capture_on_command: bool,
     /// Delay after command before capturing (milliseconds)
     #[serde(default = "default_command_capture_delay")]
     pub command_capture_delay_ms: u64,
+    /// Enable chunking for large scrollback content (bytes threshold)
+    #[serde(default = "default_chunking_threshold")]
+    pub chunking_threshold_bytes: usize,
+    /// Enable chunking (FastCDC)
+    #[serde(default = "default_enable_chunking")]
+    pub enable_chunking: bool,
 }
 
 fn default_command_capture_delay() -> u64 {
     500 // 500ms delay after command to capture output
 }
 
+fn default_chunking_threshold() -> usize {
+    32_768 // 32KB threshold for chunking
+}
+
+fn default_enable_chunking() -> bool {
+    true // Enable FastCDC chunking by default
+}
+
+fn default_annex_threshold() -> usize {
+    64_000 // 64KB threshold for git-annex storage
+}
+
 impl Default for ScrollbackConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
         Self {
-            kitty_socket_path: "/tmp/kitty".to_string(),
-            capture_interval_secs: 300, // 5 minutes
+            kitty_socket_path: format!("{}/kitty", tmp_dir),
+            capture_interval_secs: 60, // 60 seconds (1 minute) for safety net
             max_scrollback_lines: 10000,
             include_ansi_codes: false,
             capture_command_output: true,
-            save_to_files: false, // Store in database by default
-            scrollback_dir: PathBuf::from(&home).join(".local/share/sinex/scrollback"),
+            git_annex_repo: Some(PathBuf::from("/realm/sinex-annex")), // Default annex repo
+            auto_annex: true, // Store large content in git-annex by default
+            annex_threshold_bytes: default_annex_threshold(),
             capture_on_command: true,
             command_capture_delay_ms: default_command_capture_delay(),
+            chunking_threshold_bytes: default_chunking_threshold(),
+            enable_chunking: default_enable_chunking(),
         }
     }
 }
@@ -124,6 +160,9 @@ pub struct ScrollbackCapture {
     last_capture_times: HashMap<u32, Timestamp>,
     last_scrollback_hashes: HashMap<u32, u64>,
     command_event_rx: Option<mpsc::Receiver<CommandExecutedEvent>>,
+    chunking_service: Option<ChunkingService>,
+    git_annex: Option<GitAnnex>,
+    event_factory: EventFactory,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +172,9 @@ struct CommandExecutedEvent {
     timestamp: Timestamp,
 }
 
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for ScrollbackCapture {}
+
 #[async_trait]
 impl EventSource for ScrollbackCapture {
     type Config = ScrollbackConfig;
@@ -140,28 +182,61 @@ impl EventSource for ScrollbackCapture {
     const SOURCE_NAME: &'static str = sources::SHELL_SCROLLBACK;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: Self::Config = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing scrollback capture");
 
-        if config.save_to_files {
-            tokio::fs::create_dir_all(&config.scrollback_dir)
-                .await
-                .map_err(|e| {
-                    sinex_core::CoreError::Other(format!(
-                        "Failed to create scrollback directory: {}",
-                        e
-                    ))
-                })?;
-        }
+        // Initialize git-annex if configured
+        let annex_repo_path = ctx
+            .annex_repo_path
+            .clone()
+            .or(config.git_annex_repo.as_ref().map(|p| p.to_string_lossy().to_string()));
+        let git_annex = if let Some(ref repo_path) = annex_repo_path {
+            let path = std::path::PathBuf::from(repo_path);
+
+            // Initialize git-annex repository if it doesn't exist
+            if !path.join(".git").exists() {
+                GitAnnex::init(&path, Some("sinex-scrollback-annex"))
+                    .await
+                    .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                        .with_operation("initialize_scrollback_capture")
+                        .with_context("repo_path", path.display().to_string())
+                        .with_context("repo_name", "sinex-scrollback-annex")
+                        .build())?;
+            }
+
+            let annex_config = AnnexConfig {
+                repo_path: path.clone(),
+                num_copies: Some(2),
+                large_files: None,
+            };
+
+            let git_annex = GitAnnex::new(annex_config).map_err(|e| 
+                ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
+                    .with_operation("initialize_scrollback_capture")
+                    .with_context("repo_path", path.display().to_string())
+                    .build()
+            )?;
+
+            Some(git_annex)
+        } else {
+            None
+        };
+
+        let chunking_service = if config.enable_chunking {
+            Some(ChunkingService::with_default_config())
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
             last_capture_times: HashMap::new(),
             last_scrollback_hashes: HashMap::new(),
             command_event_rx: None,
+            chunking_service,
+            git_annex,
+            event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
     }
 
@@ -242,28 +317,67 @@ impl ScrollbackCapture {
         for window in &windows {
             // Capture full scrollback
             if let Ok(scrollback) = self.get_window_scrollback(window.id, true).await {
+                let scrollback_size_bytes = scrollback.text.len() as u64;
+                let should_chunk = self.config.enable_chunking && 
+                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                let should_annex = self.config.auto_annex && 
+                    scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
+                
+                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count, git_annex_path, git_annex_key) = if should_annex {
+                    // Store in git-annex for large content
+                    match self.store_in_git_annex(window, &scrollback).await {
+                        Ok((annex_path, annex_key)) => {
+                            (None, None, false, None, Some(annex_path), Some(annex_key))
+                        }
+                        Err(e) => {
+                            error!("Failed to store scrollback in git-annex: {}, falling back to database", e);
+                            // Fallback to chunking or inline storage
+                            if should_chunk {
+                                self.chunk_scrollback_content(&scrollback.text).unwrap_or_else(|_| {
+                                    (Some(scrollback.text.clone()), None, false, None, None, None)
+                                })
+                            } else {
+                                (Some(scrollback.text.clone()), None, false, None, None, None)
+                            }
+                        }
+                    }
+                } else if should_chunk {
+                    // Chunk content for database storage
+                    match self.chunk_scrollback_content(&scrollback.text) {
+                        Ok((text, chunks, chunked, count, _, _)) => (text, chunks, chunked, count, None, None),
+                        Err(e) => {
+                            tracing::warn!("Failed to chunk scrollback for window {}: {}", window.id, e);
+                            (Some(scrollback.text.clone()), None, false, None, None, None)
+                        }
+                    }
+                } else {
+                    // Store as text in database
+                    (Some(scrollback.text.clone()), None, false, None, None, None)
+                };
+
                 let payload = TerminalScrollbackCapturedPayload {
                     window_id: window.id,
                     terminal_type: "kitty".to_string(),
                     cwd: window.cwd.clone(),
                     window_title: window.title.clone(),
-                    scrollback_text: scrollback.text.clone(),
+                    scrollback_text,
+                    scrollback_chunks,
+                    git_annex_path,
+                    git_annex_key,
                     scrollback_lines: scrollback.line_count,
+                    scrollback_size_bytes,
+                    is_chunked,
+                    chunk_count,
                     includes_screen: true,
                     has_ansi_codes: self.config.include_ansi_codes,
                     timestamp: Utc::now(),
                 };
 
-                let event = create_event(
+                let event = self.create_event(
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );
-                tx.send_or_log(event, "scrollback_captured").await?;
-
-                // Save to file if configured
-                if self.config.save_to_files {
-                    self.save_scrollback_to_file(window, &scrollback).await?;
-                }
+                tx.send_or_log(event, "scrollback_full").await?;
             }
 
             // Capture command output if shell integration is available
@@ -280,11 +394,11 @@ impl ScrollbackCapture {
                                 timestamp: Utc::now(),
                             };
 
-                            let event = create_event(
+                            let event = self.create_event(
                                 CommandOutputCaptured::EVENT_NAME,
                                 serde_json::to_value(payload)?,
                             );
-                            tx.send_or_log(event, "scrollback_command_output").await?;
+                            tx.send_or_log(event, "command_output").await?;
                         }
                     }
                 }
@@ -318,10 +432,11 @@ impl ScrollbackCapture {
             })?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!(
-                "kitty @ ls failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            return Err(ErrorContext::new(CoreError::Io("kitty @ ls failed".to_string()))
+                .with_operation("get_kitty_windows")
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                .build());
         }
 
         let data: JsonValue = serde_json::from_slice(&output.stdout)?;
@@ -386,10 +501,12 @@ impl ScrollbackCapture {
         })?;
 
         if !output.status.success() {
-            return Err(sinex_core::CoreError::Other(format!(
-                "Failed to get scrollback: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+            return Err(ErrorContext::new(CoreError::Io("Failed to get scrollback".to_string()))
+                .with_operation("capture_scrollback_for_window")
+                .with_context("window_id", window_id.to_string())
+                .with_context("exit_status", output.status.to_string())
+                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                .build());
         }
 
         let text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -449,26 +566,61 @@ impl ScrollbackCapture {
         Ok(ScrollbackText { text, line_count })
     }
 
-    async fn save_scrollback_to_file(
+    async fn store_in_git_annex(
         &self,
         window: &KittyWindow,
         scrollback: &ScrollbackText,
-    ) -> Result<()> {
+    ) -> Result<(String, String)> {
+        let git_annex = self.git_annex.as_ref()
+            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("Git-annex not configured".to_string()))
+                .with_operation("store_in_git_annex")
+                .build())?;
+
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!(
             "scrollback_{}_{}_w{}.txt",
             timestamp, window.title, window.id
         );
-        let filepath = self.config.scrollback_dir.join(filename);
 
-        tokio::fs::write(&filepath, &scrollback.text)
+        // Write content to temporary file first
+        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let tmp_file_path = std::path::PathBuf::from(&tmp_dir).join(&filename);
+        
+        tokio::fs::write(&tmp_file_path, &scrollback.text)
             .await
-            .map_err(|e| {
-                sinex_core::CoreError::Other(format!("Failed to save scrollback: {}", e))
-            })?;
+            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
+                .with_operation("store_in_git_annex")
+                .with_context("tmp_file", tmp_file_path.display().to_string())
+                .build())?;
 
-        debug!("Saved scrollback to {:?}", filepath);
-        Ok(())
+        // Add file to git-annex
+        let annex_key = git_annex.add_file(&tmp_file_path).await
+            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
+                .with_operation("store_in_git_annex")
+                .with_context("filename", &filename)
+                .with_context("window_id", window.id.to_string())
+                .build())?;
+
+        // Clean up temporary file
+        let _ = tokio::fs::remove_file(&tmp_file_path).await;
+
+        debug!("Stored scrollback in git-annex: {} -> {}", filename, annex_key.key);
+        Ok((filename, annex_key.key))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn chunk_scrollback_content(&self, content: &str) -> Result<(Option<String>, Option<Vec<serde_json::Value>>, bool, Option<u32>, Option<String>, Option<String>)> {
+        if let Some(ref chunking_service) = self.chunking_service {
+            let chunks = chunking_service.chunk_string(content).map_err(|e| CoreError::Other(format!("Chunking failed: {}", e)))?;
+            let chunk_count = chunks.len() as u32;
+            let chunk_jsons: Vec<serde_json::Value> = chunks
+                .into_iter()
+                .map(|chunk| serde_json::to_value(chunk).unwrap_or(serde_json::Value::Null))
+                .collect();
+            Ok((None, Some(chunk_jsons), true, Some(chunk_count), None, None))
+        } else {
+            Ok((Some(content.to_string()), None, false, None, None, None))
+        }
     }
 
     async fn capture_window_scrollback(
@@ -503,28 +655,67 @@ impl ScrollbackCapture {
 
                 self.last_scrollback_hashes.insert(window_id, hash);
 
+                let scrollback_size_bytes = scrollback.text.len() as u64;
+                let should_chunk = self.config.enable_chunking && 
+                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                let should_annex = self.config.auto_annex && 
+                    scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
+                
+                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count, git_annex_path, git_annex_key) = if should_annex {
+                    // Store in git-annex for large content
+                    match self.store_in_git_annex(window, &scrollback).await {
+                        Ok((annex_path, annex_key)) => {
+                            (None, None, false, None, Some(annex_path), Some(annex_key))
+                        }
+                        Err(e) => {
+                            error!("Failed to store scrollback in git-annex: {}, falling back to database", e);
+                            // Fallback to chunking or inline storage
+                            if should_chunk {
+                                self.chunk_scrollback_content(&scrollback.text).unwrap_or_else(|_| {
+                                    (Some(scrollback.text.clone()), None, false, None, None, None)
+                                })
+                            } else {
+                                (Some(scrollback.text.clone()), None, false, None, None, None)
+                            }
+                        }
+                    }
+                } else if should_chunk {
+                    // Chunk content for database storage
+                    match self.chunk_scrollback_content(&scrollback.text) {
+                        Ok((text, chunks, chunked, count, _, _)) => (text, chunks, chunked, count, None, None),
+                        Err(e) => {
+                            tracing::warn!("Failed to chunk scrollback for window {}: {}", window_id, e);
+                            (Some(scrollback.text.clone()), None, false, None, None, None)
+                        }
+                    }
+                } else {
+                    // Store as text in database
+                    (Some(scrollback.text.clone()), None, false, None, None, None)
+                };
+
                 let payload = TerminalScrollbackCapturedPayload {
                     window_id: window.id,
                     terminal_type: "kitty".to_string(),
                     cwd: window.cwd.clone(),
                     window_title: window.title.clone(),
-                    scrollback_text: scrollback.text.clone(),
+                    scrollback_text,
+                    scrollback_chunks,
+                    git_annex_path,
+                    git_annex_key,
                     scrollback_lines: scrollback.line_count,
+                    scrollback_size_bytes,
+                    is_chunked,
+                    chunk_count,
                     includes_screen: !incremental,
                     has_ansi_codes: self.config.include_ansi_codes,
                     timestamp: Utc::now(),
                 };
 
-                let event = create_event(
+                let event = self.create_event(
                     TerminalScrollbackCaptured::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );
-                tx.send_or_log(event, "scrollback_incremental").await?;
-
-                // Save to file if configured
-                if self.config.save_to_files {
-                    self.save_scrollback_to_file(window, &scrollback).await?;
-                }
+                tx.send_or_log(event, "scrollback_full").await?;
             }
         }
 
@@ -537,17 +728,9 @@ struct ScrollbackText {
     line_count: usize,
 }
 
-fn create_event(event_type: &str, payload: JsonValue) -> RawEvent {
-    RawEvent {
-        id: sinex_ulid::Ulid::new(),
-        source: ScrollbackCapture::SOURCE_NAME.to_string(),
-        event_type: event_type.to_string(),
-        ts_ingest: Utc::now(),
-        ts_orig: Some(Utc::now()),
-        host: gethostname::gethostname().to_string_lossy().to_string(),
-        ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        payload_schema_id: None,
-        payload,
+impl ScrollbackCapture {
+    fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
+        self.event_factory.create_event(event_type, payload)
     }
 }
 
@@ -578,7 +761,11 @@ async fn monitor_command_events(
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| sinex_core::CoreError::Other("Failed to capture stdout".to_string()))?;
+        .ok_or_else(|| 
+            ErrorContext::new(CoreError::Io("Failed to capture stdout".to_string()))
+                .with_operation("capture_command_output")
+                .with_context("process", "journalctl")
+                .build())?;
 
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();

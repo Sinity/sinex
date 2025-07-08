@@ -2,7 +2,7 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 95% (Full database schema, indexes, vector support, triggers - only API layer missing)
+**Implementation**: 90% (Full database schema, indexes, vector support, triggers - missing Rust models and CRUD API layer)
 **Dependencies**: `pgx_ulid` extension, `pgvector` extension, `raw.events` table
 **Blocks**: Annotation agents, event interpretation workflows, collaborative tagging
 

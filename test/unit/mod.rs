@@ -94,3 +94,11 @@ pub mod model;
 
 /// Tests for event ingestion logic
 pub mod ingestor;
+
+/// Tests for terminal event sources
+pub mod terminal;
+
+/// Tests for new API modules
+pub mod artifacts_api_test;
+pub mod annotations_api_test;
+pub mod knowledge_graph_api_test;

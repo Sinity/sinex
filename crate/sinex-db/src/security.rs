@@ -28,7 +28,7 @@ impl SecurityValidator {
         }
         
         // Decode URL-encoded sequences
-        let decoded = urlencoding::decode(input).unwrap_or_else(|_| Cow::Borrowed(input));
+        let decoded = urlencoding::decode(input).unwrap_or(Cow::Borrowed(input));
         
         // Double decode to catch double-encoded attempts
         let double_decoded = urlencoding::decode(&decoded).unwrap_or_else(|_| decoded.clone());

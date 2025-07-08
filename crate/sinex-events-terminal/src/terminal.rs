@@ -51,8 +51,9 @@ pub struct KittyConfig {
 
 impl Default for KittyConfig {
     fn default() -> Self {
+        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
         Self {
-            socket_path: "/tmp/kitty".to_string(),
+            socket_path: format!("{}/kitty", tmp_dir),
             polling_interval_secs: 2,
         }
     }

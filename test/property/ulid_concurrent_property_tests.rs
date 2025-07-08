@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 /// Test concurrent ULID generation properties
 /// This extends the existing ULID tests with concurrent scenarios
-
+/// 
 /// Generate a strategy for controlling concurrent ULID generation
 fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
     (

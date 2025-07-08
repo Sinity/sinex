@@ -4,7 +4,7 @@
 //! Databases are cleaned BEFORE being given to a test, not after.
 
 use crate::common::prelude::*;
-use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use once_cell::sync::Lazy;
 use std::time::Duration;
@@ -12,6 +12,7 @@ use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
+static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Template database name cached for the current test process  
 static TEMPLATE_DB_NAME: OnceLock<String> = OnceLock::new();
@@ -51,6 +52,7 @@ pub struct TestDatabase {
     name: String,
     pool: DbPool,
     slot: Arc<DatabaseSlot>,
+    lock_id: i64, // Store advisory lock ID for cleanup
 }
 
 impl TestDatabase {
@@ -65,7 +67,44 @@ impl TestDatabase {
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        // Mark slot as available
+        // Release the PostgreSQL advisory lock
+        let lock_id = self.lock_id;
+        let pool_clone = self.pool.clone();
+        
+        eprintln!("🔓 Releasing database slot: {} (lock_id: {})", self.name, lock_id);
+        
+        // We need to release the advisory lock before closing the pool
+        // Use a blocking task to handle this
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                // Release the advisory lock
+                match sqlx::query("SELECT pg_advisory_unlock($1)")
+                    .bind(lock_id)
+                    .execute(&pool_clone)
+                    .await
+                {
+                    Ok(_) => eprintln!("✅ Released advisory lock {}", lock_id),
+                    Err(e) => eprintln!("⚠️  Failed to release advisory lock {}: {}", lock_id, e),
+                }
+                
+                // Then close the pool
+                pool_clone.close().await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            });
+        }).join().unwrap_or_else(|_| eprintln!("⚠️  Cleanup thread panicked"));
+        
+        // Clear the pool reference
+        if let Ok(mut pool_opt) = self.slot.pool.lock() {
+            *pool_opt = None;
+        }
+        
+        // Record when this slot was released
+        if let Ok(mut last_released) = self.slot.last_released.lock() {
+            *last_released = Some(std::time::Instant::now());
+        }
+        
+        // Mark as not in use (for intra-process coordination)
         self.slot.in_use.store(false, Ordering::Release);
     }
 }
@@ -73,8 +112,13 @@ impl Drop for TestDatabase {
 /// A slot in the database pool
 struct DatabaseSlot {
     name: String,
-    pool: DbPool,
+    url: String,  // Store URL instead of pool to create fresh connections
+    pool: std::sync::Mutex<Option<DbPool>>,  // Current pool if in use
     in_use: AtomicBool,
+    // Track when the slot was acquired to help debug issues
+    last_acquired: std::sync::Mutex<Option<std::time::Instant>>,
+    // Track when the slot was released for cooldown
+    last_released: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 /// The global database pool
@@ -95,7 +139,7 @@ impl DatabasePool {
         
         // Create admin connection
         let admin_pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(3)
+            .max_connections(10)  // Increased for parallel database creation
             .connect(&config.admin_url)
             .await?;
         
@@ -160,14 +204,10 @@ impl DatabasePool {
                 
                 drop(conn);
                 
-                // Create connection pool
+                // Store URL for later pool creation
                 let url = base_url.replace("/sinex_dev", &format!("/{}", name));
-                let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(5)
-                    .connect(&url)
-                    .await?;
                 
-                Result::<_, anyhow::Error>::Ok((name, pool))
+                Result::<_, anyhow::Error>::Ok((name, url))
             });
             
             tasks.push(task);
@@ -175,11 +215,14 @@ impl DatabasePool {
         
         // Wait for all databases to be created
         for task in tasks {
-            let (name, pool) = task.await??;
+            let (name, url) = task.await??;
             slots.push(Arc::new(DatabaseSlot {
                 name,
-                pool,
+                url,
+                pool: std::sync::Mutex::new(None),
                 in_use: AtomicBool::new(false),
+                last_acquired: std::sync::Mutex::new(None),
+                last_released: std::sync::Mutex::new(None),
             }));
         }
         
@@ -194,75 +237,309 @@ impl DatabasePool {
     async fn acquire(&self) -> Result<TestDatabase> {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
+        
+        // Use process ID and random offset to reduce contention
+        let pid = std::process::id();
+        let random_offset = rand::random::<usize>();
+        let start_index = (pid as usize + random_offset) % self.slots.len();
+        eprintln!("🎲 Process {} starting from index: {}", pid, start_index);
+        
+        // We need to try to acquire databases with PostgreSQL advisory locks
+        // to ensure inter-process coordination
         loop {
-            for slot in &self.slots {
-                if !slot.in_use.swap(true, Ordering::AcqRel) {
-                    // Got a slot! Clean it before use
-                    let clean_start = std::time::Instant::now();
-                    match clean_database(&slot.pool).await {
-                        Ok(_) => {
-                            let clean_time = clean_start.elapsed();
-                            if clean_time.as_millis() > 100 {
-                                eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
-                            }
-                            return Ok(TestDatabase {
-                                name: slot.name.clone(),
-                                pool: slot.pool.clone(),
-                                slot: slot.clone(),
-                            });
+            // Iterate through slots starting from our position
+            for i in 0..self.slots.len() {
+                let slot_index = (start_index + i) % self.slots.len();
+                let slot = &self.slots[slot_index];
+                
+                // Try to connect to this database
+                let pool = match sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(15)
+                    .acquire_timeout(Duration::from_secs(2))  // Shorter timeout for faster iteration
+                    .connect(&slot.url)
+                    .await 
+                {
+                    Ok(pool) => pool,
+                    Err(_) => continue, // Try next slot
+                };
+                
+                // Try to acquire an advisory lock for this database
+                // Use a unique lock ID based on the slot index
+                let lock_id = 1000 + slot_index as i64;
+                let lock_acquired: bool = sqlx::query_scalar(
+                    "SELECT pg_try_advisory_lock($1)"
+                )
+                .bind(lock_id)
+                .fetch_one(&pool)
+                .await?;
+                
+                if !lock_acquired {
+                    // Another process has this database, try next
+                    pool.close().await;
+                    continue;
+                }
+                
+                // We got the lock! This database is ours for the duration of the test
+                eprintln!("🔑 Process {} acquired database slot: {} with advisory lock {}", 
+                          pid, slot.name, lock_id);
+                
+                // Store lock info in the slot for cleanup
+                slot.in_use.store(true, Ordering::Release);
+                if let Ok(mut pool_opt) = slot.pool.lock() {
+                    *pool_opt = Some(pool.clone());
+                }
+                
+                // Clean it before use
+                let clean_start = std::time::Instant::now();
+                match clean_database(&pool, &slot.name).await {
+                    Ok(_) => {
+                        let clean_time = clean_start.elapsed();
+                        if clean_time.as_millis() > 100 {
+                            eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
                         }
-                        Err(e) => {
-                            eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
-                            slot.in_use.store(false, Ordering::Release);
+                        return Ok(TestDatabase {
+                            name: slot.name.clone(),
+                            pool: pool.clone(),
+                            slot: slot.clone(),
+                            lock_id,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
+                        // Release the advisory lock
+                        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                            .bind(lock_id)
+                            .execute(&pool)
+                            .await;
+                        pool.close().await;
+                        if let Ok(mut pool_opt) = slot.pool.lock() {
+                            *pool_opt = None;
                         }
+                        slot.in_use.store(false, Ordering::Release);
                     }
                 }
             }
             
             attempts += 1;
-            if attempts > 1000 {
+            if attempts > 100 {
                 let total_time = start_time.elapsed();
-                return Err(anyhow::anyhow!("Failed to acquire database after 1000 attempts ({:.1?}) - all {} slots in use", total_time, self.slots.len()));
+                return Err(anyhow::anyhow!("Failed to acquire database after {} attempts ({:.1?})", attempts, total_time));
             }
             
             // Log warning after many attempts
-            if attempts % 50 == 0 {
+            if attempts % 10 == 0 {
                 let elapsed = start_time.elapsed();
-                eprintln!("⚠️  Waiting for database slot (attempt {}, {:.1?} elapsed). All {} slots in use.", attempts, elapsed, self.slots.len());
+                eprintln!("⚠️  Process {} waiting for database slot (attempt {}, {:.1?} elapsed)", pid, attempts, elapsed);
             }
             
-            // All slots in use, wait a bit
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // All slots in use, wait a bit before retrying
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }
 
 /// Clean a database for reuse
-async fn clean_database(pool: &DbPool) -> Result<()> {
-    // Clean in proper dependency order based on foreign key constraints
-    // First clean tables that reference other tables
-    let cleanup_queries = [
-        "DELETE FROM sinex_schemas.work_queue",
-        "DELETE FROM core.event_annotations", 
-        "DELETE FROM core.event_artifact_refs",
-        "DELETE FROM core.event_relations",
-        "DELETE FROM core.event_cluster_members",
-        "DELETE FROM core.artifact_event_sources",
-        "DELETE FROM core.event_embeddings",
-        "DELETE FROM core.artifact_embeddings",
-        "DELETE FROM core.artifact_contents",
-        "DELETE FROM core.artifact_tags",
-        "DELETE FROM core.artifact_relations", 
-        "DELETE FROM core.entity_relations",
-        "DELETE FROM core.artifacts",
-        "DELETE FROM raw.events",
-        "DELETE FROM sinex_schemas.agent_manifests",
-    ];
+async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
+    eprintln!("🧹 Cleaning database: {}", db_name);
     
-    for query in cleanup_queries {
-        let _ = sqlx::query(query).execute(pool).await;
+    // First, disable FK checks for the cleanup session
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(pool)
+        .await?;
+    
+    // Try to use TRUNCATE for non-hypertables (much faster and more thorough)
+    let truncate_result = sqlx::query(r#"
+        TRUNCATE TABLE 
+            core.event_annotations,
+            core.event_artifact_refs,
+            core.event_relations,
+            core.event_cluster_members,
+            core.artifact_event_sources,
+            core.event_embeddings,
+            core.entity_relations,
+            core.artifact_embeddings,
+            core.artifact_contents,
+            core.artifact_tags,
+            core.artifact_relations,
+            core.entities,
+            core.artifacts,
+            core.event_clusters,
+            sinex_schemas.work_queue,
+            sinex_schemas.agent_manifests
+        CASCADE
+    "#)
+    .execute(pool)
+    .await;
+    
+    if let Err(e) = truncate_result {
+        eprintln!("  ⚠️  TRUNCATE failed ({}), falling back to DELETE", e);
+        
+        // Fall back to DELETE in dependency order
+        let delete_queries = [
+            // First, delete from tables that reference raw.events
+            "DELETE FROM core.event_annotations",
+            "DELETE FROM core.event_artifact_refs",
+            "DELETE FROM core.event_relations",
+            "DELETE FROM core.event_cluster_members",
+            "DELETE FROM core.artifact_event_sources",
+            "DELETE FROM core.event_embeddings",
+            
+            // Delete from tables that reference entities
+            "DELETE FROM core.entity_relations",
+            
+            // Delete from artifact-related tables
+            "DELETE FROM core.artifact_embeddings",
+            "DELETE FROM core.artifact_contents",
+            "DELETE FROM core.artifact_tags",
+            "DELETE FROM core.artifact_relations",
+            
+            // Delete from work queue
+            "DELETE FROM sinex_schemas.work_queue",
+            "DELETE FROM sinex_schemas.agent_manifests",
+            
+            // Finally, delete from primary tables
+            "DELETE FROM core.entities",
+            "DELETE FROM core.artifacts",
+            "DELETE FROM core.event_clusters",
+        ];
+        
+        for query in delete_queries {
+            match sqlx::query(query).execute(pool).await {
+                Ok(result) => {
+                    let rows = result.rows_affected();
+                    if rows > 0 {
+                        let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
+                        eprintln!("  🧹 Deleted {} rows from {}", rows, table_name);
+                    }
+                }
+                Err(e) => {
+                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
+                    eprintln!("  ⚠️  Failed to delete from {}: {}", table_name, e);
+                }
+            }
+        }
+    } else {
+        eprintln!("  ✅ Tables truncated successfully");
     }
     
+    // Handle raw.events separately (hypertable cannot be truncated)
+    match sqlx::query("DELETE FROM raw.events").execute(pool).await {
+        Ok(result) => {
+            let rows = result.rows_affected();
+            if rows > 0 {
+                eprintln!("  🧹 Deleted {} rows from raw.events", rows);
+            }
+        }
+        Err(e) => {
+            eprintln!("  ⚠️  Failed to delete from raw.events: {}", e);
+            // Try TimescaleDB-specific cleanup
+            match sqlx::query("SELECT drop_chunks('raw.events', older_than => INTERVAL '0 seconds')")
+                .execute(pool)
+                .await 
+            {
+                Ok(_) => eprintln!("  🧹 Dropped all chunks from raw.events"),
+                Err(e2) => eprintln!("  ⚠️  Failed to drop chunks: {}", e2),
+            }
+        }
+    }
+    
+    // Re-enable FK checks
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(pool)
+        .await?;
+    
+    // Verification with detailed output
+    let verification_queries = [
+        ("raw.events", "SELECT COUNT(*) FROM raw.events"),
+        ("core.event_annotations", "SELECT COUNT(*) FROM core.event_annotations"),
+        ("core.entities", "SELECT COUNT(*) FROM core.entities"),
+        ("core.entity_relations", "SELECT COUNT(*) FROM core.entity_relations"),
+        ("core.artifacts", "SELECT COUNT(*) FROM core.artifacts"),
+        ("core.artifact_relations", "SELECT COUNT(*) FROM core.artifact_relations"),
+        ("core.artifact_contents", "SELECT COUNT(*) FROM core.artifact_contents"),
+    ];
+    
+    let mut all_clean = true;
+    let mut remaining_counts = Vec::new();
+    
+    for (table_name, query) in verification_queries {
+        let count: i64 = sqlx::query_scalar(query)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+        
+        if count > 0 {
+            all_clean = false;
+            remaining_counts.push((table_name, count));
+        }
+    }
+    
+    if !all_clean {
+        eprintln!("  ❌ CRITICAL: Database {} not fully cleaned!", db_name);
+        for (table, count) in &remaining_counts {
+            eprintln!("     - {} has {} rows remaining", table, count);
+        }
+        
+        // Try one final aggressive cleanup
+        eprintln!("  🔧 Final cleanup attempt...");
+        
+        // Disable all constraints
+        sqlx::query("SET session_replication_role = 'replica'")
+            .execute(pool)
+            .await?;
+        
+        // Use CASCADE DELETE on primary tables to force cleanup
+        let cascade_queries = [
+            "DELETE FROM raw.events CASCADE",
+            "DELETE FROM core.entities CASCADE",
+            "DELETE FROM core.artifacts CASCADE",
+            "DELETE FROM core.event_clusters CASCADE",
+        ];
+        
+        for query in cascade_queries {
+            match sqlx::query(query).execute(pool).await {
+                Ok(result) => {
+                    if result.rows_affected() > 0 {
+                        eprintln!("     🧹 CASCADE deleted from {}", 
+                                 query.split_whitespace().nth(2).unwrap_or("unknown"));
+                    }
+                }
+                Err(e) => {
+                    // CASCADE might not be supported, try without
+                    let non_cascade = query.replace(" CASCADE", "");
+                    let _ = sqlx::query(&non_cascade).execute(pool).await;
+                }
+            }
+        }
+        
+        // Re-enable constraints
+        sqlx::query("SET session_replication_role = 'origin'")
+            .execute(pool)
+            .await?;
+        
+        // Final verification
+        all_clean = true;
+        for (table_name, query) in verification_queries {
+            let count: i64 = sqlx::query_scalar(query)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            
+            if count > 0 {
+                all_clean = false;
+                eprintln!("     ❌ {} STILL has {} rows!", table_name, count);
+            }
+        }
+        
+        if !all_clean {
+            return Err(anyhow::anyhow!(
+                "Database {} cleanup failed - tables still contain data", 
+                db_name
+            ));
+        }
+    }
+    
+    eprintln!("  ✅ Database cleanup verified - all tables empty");
     Ok(())
 }
 
@@ -385,11 +662,11 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
     
     let template_pool_future = async {
         let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(15)  // Increased for template database setup
             .min_connections(1)
             .max_lifetime(Duration::from_secs(300))
             .idle_timeout(Duration::from_secs(10))
-            .acquire_timeout(Duration::from_secs(5))
+            .acquire_timeout(Duration::from_secs(15))  // Increased for parallel template operations
             .connect(&template_url)
             .await?;
 
@@ -580,7 +857,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
     // Apply a reasonable timeout
     match tokio::time::timeout(Duration::from_secs(20), optimization_future).await {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e.into()),
+        Ok(Err(e)) => Err(e),
         Err(_) => {
             eprintln!("⚠️  Template optimization timed out after 20s, continuing anyway");
             Ok(()) // Don't fail, optimizations are optional

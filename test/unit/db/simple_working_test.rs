@@ -43,8 +43,10 @@ async fn test_event_builders_work(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
+    // ORIGINAL VERSION - Let's see why this fails
     // Get initial count
     let initial_count = ctx.event_count().await?;
+    eprintln!("Initial event count: {}", initial_count);
 
     // Insert some events
     for i in 0..5 {
@@ -57,6 +59,9 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
 
     // Verify they exist in our transaction
     let new_count = ctx.event_count().await?;
+    eprintln!("New event count: {}", new_count);
+    eprintln!("Difference: {} (expected 5)", new_count - initial_count);
+    
     pretty_assertions::assert_eq!(new_count - initial_count, 5);
 
     // Note: These will be rolled back after the test

@@ -89,6 +89,60 @@ async fn test_x(ctx: TestContext) -> TestResult {
 }
 ```
 
+## Database Insert Patterns
+
+### CRITICAL: ULID/UUID Handling in SQLx
+
+**For raw.events table (ULID columns):**
+```rust
+// CORRECT - Generate ULID and insert with explicit cast
+let event_id = Ulid::new();
+sqlx::query!(
+    "INSERT INTO raw.events (id, source, event_type, host, payload)
+     VALUES ($1::uuid, $2, $3, $4, $5)",
+    event_id.to_uuid(),
+    source, event_type, host, payload
+)
+
+// ALTERNATIVE - Let database generate ULID automatically (for preflight tests)
+sqlx::query!(
+    "INSERT INTO raw.events (source, event_type, host, payload)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id::uuid as \"id!\"",
+    source, event_type, host, payload
+)
+
+// INCORRECT - Don't pass ULID directly to sqlx::query!
+// This fails: "unsupported type ulid for param"
+sqlx::query!("... VALUES ($1, ...)", event_id) // ❌ FAILS
+```
+
+**For work_queue table (ULID foreign keys):**
+```rust
+// CORRECT - Convert ULID to UUID for foreign key reference
+sqlx::query!(
+    "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
+     VALUES ($1::uuid, $2)",
+    event_id.to_uuid(),  // Convert ULID to UUID
+    agent_name
+)
+
+// CORRECT - Alternative: Use ULID with explicit cast
+sqlx::query!(
+    "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
+     VALUES ($1::uuid::ulid, $2)",
+    event_id.to_uuid(),
+    agent_name
+)
+```
+
+**Key Rules:**
+1. **Never pass raw ULID to sqlx::query!** - SQLx macro doesn't support ULID type
+2. **Always use `.to_uuid()` on ULID before passing to SQLx**
+3. **Let database auto-generate ULIDs when inserting events** - Use RETURNING clause
+4. **For foreign keys: ULID fields require UUID conversion**
+5. **For TEXT fields (like processing_worker_id): Pass as String, not ULID**
+
 ## Architecture Details
 
 ### EventSource trait

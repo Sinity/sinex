@@ -149,7 +149,7 @@ async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestRe
     }
 
     // Test 2: Simulate health checks for all components
-    test_component_health_checks(&monitor, &pool).await?;
+    test_component_health_checks(&monitor, pool).await?;
 
     // Test 3: Test failure detection and recovery
     test_failure_detection_and_recovery(&monitor).await?;
@@ -354,7 +354,7 @@ async fn check_worker_health(pool: &DbPool) -> Result<HealthStatus> {
     {
         Ok(_) => {
             // Test worker operations by checking if we can claim work
-            match queries::claim_work_queue_items(&pool, "health-check-agent", "health-worker", 0)
+            match queries::claim_work_queue_items(pool, "health-check-agent", "health-worker", 0)
                 .await
             {
                 Ok(_) => Ok(HealthStatus::Healthy),

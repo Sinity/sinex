@@ -78,7 +78,7 @@ impl CoverageTracker {
         tracker
             .edge_cases
             .entry(category.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(case.to_string());
     }
 

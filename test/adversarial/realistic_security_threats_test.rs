@@ -442,17 +442,17 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let connection_attack_duration = connection_attack_start.elapsed();
 
     // Test 3: Query complexity attack (expensive operations)
-    let complexity_attacks = vec![
+    let complexity_attacks = [
         // Cartesian product attack
         "SELECT COUNT(*) FROM sinex_schemas.agent_manifests a1, sinex_schemas.agent_manifests a2, sinex_schemas.agent_manifests a3",
 
-
+        // Complex regex attack
         "SELECT COUNT(*) FROM raw.events WHERE source ~ '.*a.*b.*c.*d.*e.*f.*g.*h.*i.*j.*'",
 
-
+        // Expensive sort attack
         "SELECT * FROM raw.events ORDER BY payload::text, source, event_type, host LIMIT 1000000",
 
-
+        // Recursive CTE attack
         "WITH RECURSIVE attack(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM attack WHERE n < 100000) SELECT COUNT(*) FROM attack",
     ];
 
@@ -536,7 +536,7 @@ async fn test_configuration_injection_protection(_ctx: TestContext) -> TestResul
     fs::create_dir_all(&config_dir)?;
 
     // Test malicious TOML injection in configuration
-    let malicious_configs = vec![
+    let malicious_configs = [
         // Command injection in file paths
         r#"
         [event_sources.filesystem]
@@ -643,7 +643,7 @@ async fn test_malicious_payload_sanitization(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test various malicious payload patterns
-    let malicious_payloads = vec![
+    let malicious_payloads = [
         // Script injection attempts
         json!({
             "user_input": "<script>alert('xss')</script>",

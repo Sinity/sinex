@@ -124,7 +124,7 @@ async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> TestResul
 
     // Wait for tasks to complete
     let _ = stream_task.await?;
-    let _ = receiver_task.await?;
+    receiver_task.await?;
 
     // Verify results
     let events = received_events.lock().await;

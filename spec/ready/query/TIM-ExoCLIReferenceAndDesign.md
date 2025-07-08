@@ -21,9 +21,44 @@ exo [GLOBAL_OPTIONS] <COMMAND> [SUBCOMMAND_OPTIONS] [ARGS...]
 ```
 *   **Global Options:** `--config <PATH>`, `--db-url <URL>`, `--output-format <json|yaml|table|csv>`, `--verbose, -v`, `--quiet, -q`, `--version`, `--help, -h`.
 
-## 3. Key Subcommands (Outline & Examples - Details TBD by Implementation)
+## 🚀 PHASE 1 ENHANCEMENT STATUS
+**Current Foundation**: 2000+ lines of working functionality with rich output formatting
+**Target**: Enhanced query templates + complete autocomplete + interactive building
+**Implementation**: Week 2 focus (Monday-Thursday)
 
-*(This section will eventually become a detailed reference, auto-generated or manually written based on the `clap` (Rust) or similar CLI framework definitions. For now, it's an outline matching the STAD's prior CLI command list.)*
+## 3. Enhanced Query Templates & Smart Shortcuts
+
+*Alternative to EQL complexity - leveraging existing 95% complete database infrastructure*
+
+### **Smart Query Templates**
+```bash
+# Smart shortcuts with sophisticated backend
+exo recent hyprland                    # Last hour hyprland events
+exo errors --agent promotion-worker    # Agent-specific error analysis  
+exo activity --around "15:30" --window 10m  # Context-aware time queries
+exo related --to-event 01JZBC... --context 5m  # Event correlation
+
+# Template system with parameter substitution
+exo query --template debug-session --params "agent=worker,time=2h"
+exo query --save-as daily-summary --source hyprland --event-type window.focused
+```
+
+### **Dynamic Database Autocomplete**
+```bash
+# All commands support dynamic completion from live database
+exo query --source <TAB>     # Shows: hyprland, filesystem, clipboard...
+exo agent status <TAB>       # Shows: sinex-collector, promotion-worker...
+exo dlq show 01J<TAB>        # Completes ULID from database
+```
+
+### **Interactive Query Building**
+```bash
+# fzf-powered discoverability using rich database
+exo --interactive             # Guided query building
+exo explore                   # Visual dashboard-like interface
+```
+
+## 3. Key Subcommands (Enhanced Implementation Details)
 
 ### 3.1. `exo log`
     *   Purpose: Manually log a raw event or a predefined meta-event.
@@ -92,19 +127,62 @@ exo [GLOBAL_OPTIONS] <COMMAND> [SUBCOMMAND_OPTIONS] [ARGS...]
     *   `exo embed find-similar-to-text "query text"`
     *   `exo embed queue-artifact <ARTIFACT_ID>` (for `EmbeddingAgent`)
 
-### 3.12. `exo dlq`
-    *   Manage `core.dead_letter_queue`.
-    *   `exo dlq list [--status pending_review]`
-    *   `exo dlq replay <DLQ_ID>`
-    *   `exo dlq update-status <DLQ_ID> --new-status resolved_manual`
+### 3.12. `exo dlq` *(Enhanced - Phase 1 Priority)*
+    *   Manage `core.dead_letter_queue` - leveraging existing 85% complete DLQ infrastructure.
+    *   `exo dlq list [--status pending_review|failed|resolved]`
+    *   `exo dlq replay <DLQ_ID> [--force]`
+    *   `exo dlq update-status <DLQ_ID> --status resolved_manual`
+    *   `exo dlq stats [--since "1 day ago"]` *(New)*
 
-### 3.13. `exo system`
-    *   System-level operations.
-    *   `exo system health`
-    *   `exo system backup-db` (triggers `pgBackRest` job)
+### 3.13. `exo system` *(Enhanced - Phase 1 Priority)*
+    *   System-level operations - leveraging existing 85% complete monitoring infrastructure.
+    *   `exo system health [--component database|monitoring|services]`
+    *   `exo system stats [--detailed]` *(New)*
+    *   `exo system backup [--verify]` *(Enhanced)*
     *   `exo system integrity-check --component <db|annex|links>`
 
-## 4. Shell Completions
+### 3.14. `exo query` *(Enhanced - Phase 1 Core)*
+    *   Advanced query interface with templates and SQL support.
+    *   `exo query --sql "SELECT COUNT(*) FROM raw.events WHERE source = 'fs'"`
+    *   `exo query --time-range "last 2 hours" --source fs --event-type file.created`
+    *   `exo query --export-csv /tmp/events.csv --limit 1000` *(New)*
+    *   `exo query --template debug-session --params "agent=worker,time=2h"` *(New)*
 
-Shell completion scripts (for Bash, Zsh, Fish) will be generated from the CLI definition (e.g., by `clap_complete` in Rust).
+## 4. Enhanced Shell Completions *(Phase 1 Core Feature)*
+
+### **Dynamic Database Completion**
+```python
+# cli/completion.py
+import argcomplete
+from rich.completion import Completer
+
+class DatabaseCompleter(Completer):
+    def get_completions(self, document, complete_event):
+        if document.text.endswith('--source '):
+            return query_db("SELECT DISTINCT source FROM raw.events ORDER BY source")
+        elif document.text.endswith('--event-type '):
+            current_source = extract_source_from_command(document.text)
+            return query_db(
+                "SELECT DISTINCT event_type FROM raw.events WHERE source = ? ORDER BY event_type",
+                [current_source]
+            )
+        elif document.text.endswith('--agent '):
+            return query_db("SELECT DISTINCT agent_name FROM sinex_schemas.agent_manifests")
+
+# Integration with argparse/click
+@click.option('--source', shell_complete=source_completer)
+@click.option('--event-type', shell_complete=event_type_completer) 
+@click.option('--agent', shell_complete=agent_completer)
+```
+
+### **Installation & Configuration**
+```bash
+# Generate completion scripts
+./cli/exo.py --completion-bash > /etc/bash_completion.d/exo
+./cli/exo.py --completion-zsh > ~/.zsh/completions/_exo
+./cli/exo.py --completion-fish > ~/.config/fish/completions/exo.fish
+
+# Register completions
+echo 'eval "$(register-python-argcomplete exo)"' >> ~/.bashrc
+```
 

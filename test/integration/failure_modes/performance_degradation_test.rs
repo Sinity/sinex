@@ -435,7 +435,7 @@ async fn test_io_saturation_handling() -> TestResult {
         "Should have completed at least some I/O operations"
     );
     assert!(
-        sorted_latencies.len() > 0,
+        !sorted_latencies.is_empty(),
         "Should have collected latency measurements"
     );
 
@@ -574,7 +574,7 @@ async fn test_resource_usage_patterns() {
         tokio::task::yield_now().await;
     }
 
-    let detected_pattern = monitor.pattern_detected.read().await.clone();
+    let detected_pattern = *monitor.pattern_detected.read().await;
     let samples = monitor.samples.read().await.clone();
 
     println!("\nResource usage pattern analysis:");

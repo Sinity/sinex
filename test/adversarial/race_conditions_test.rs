@@ -224,7 +224,7 @@ async fn test_concurrent_metadata_lost_update(ctx: TestContext) -> TestResult {
 
     for i in 0..10 {
         let pool = pool.clone();
-        let id = event_id.clone();
+        let id = event_id;
 
         let handle = tokio::spawn(async move {
             // Read current value

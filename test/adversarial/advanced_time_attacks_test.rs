@@ -28,11 +28,9 @@ async fn test_event_processing_during_dst_change(_ctx: TestContext) -> TestResul
         );
 
         // During DST gap, times might be ambiguous or shifted
-        if label.contains("transition") || label.contains("gap") {
-            if time_diff > 3600 {
-                // More than 1 hour difference
-                println!("DST ISSUE: Large time shift detected for {}", label);
-            }
+        if (label.contains("transition") || label.contains("gap")) && time_diff > 3600 {
+            // More than 1 hour difference
+            println!("DST ISSUE: Large time shift detected for {}", label);
         }
     }
 
