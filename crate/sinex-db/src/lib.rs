@@ -15,12 +15,43 @@ pub mod artifacts_correct;
 pub mod annotations_correct;
 pub mod knowledge_graph_correct;
 
+// Domain-specific query modules (clean API pattern)
+pub mod events_queries;
+pub mod work_queue_queries;
+pub mod agent_queries;
+pub mod dlq_queries;
+
 // Re-export commonly used types and query functions
 pub use queries::{
     add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items, complete_work_item,
     complete_work_queue_item, fail_work_item, fail_work_queue_item, get_event_by_id,
     get_events_by_source, get_events_by_type, get_events_in_time_range, get_next_work_item,
     get_recent_events, insert_raw_event, refresh_routing_cache, run_batch_router, QueueDepthMetric,
+};
+
+// Re-export domain-specific query functions (clean API pattern)
+pub use events_queries::{
+    insert_event, get_event_by_id as get_event_by_id_new, get_recent_events as get_recent_events_new,
+    get_events_by_source as get_events_by_source_new, get_events_by_type as get_events_by_type_new,
+    get_events_in_time_range as get_events_in_time_range_new, CreateEventInput,
+};
+pub use work_queue_queries::{
+    add_to_work_queue as add_to_work_queue_new, claim_work_queue_items as claim_work_queue_items_new,
+    get_next_work_item as get_next_work_item_new, complete_work_queue_item as complete_work_queue_item_new,
+    fail_work_queue_item as fail_work_queue_item_new, fail_work_queue_item_permanently as fail_work_queue_item_permanently_new,
+    calculate_queue_depth_metrics as calculate_queue_depth_metrics_new, AddWorkInput,
+    QueueDepthMetric as QueueDepthMetricNew,
+};
+pub use agent_queries::{
+    upsert_agent_manifest as upsert_agent_manifest_new, update_agent_heartbeat as update_agent_heartbeat_new,
+    get_agent_manifest, get_all_agent_manifests, get_active_agents, update_agent_status,
+    UpsertAgentManifestInput,
+};
+pub use dlq_queries::{
+    insert_dlq_event as insert_dlq_event_new, get_retryable_dlq_events_for_agent as get_retryable_dlq_events_for_agent_new,
+    get_retryable_dlq_events as get_retryable_dlq_events_new, update_dlq_retry_attempt as update_dlq_retry_attempt_new,
+    resolve_dlq_event as resolve_dlq_event_new, get_dlq_stats as get_dlq_stats_new,
+    get_dlq_events_by_category, CreateDlqEventInput,
 };
 
 
