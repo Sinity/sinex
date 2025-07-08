@@ -30,7 +30,7 @@ register_events! {
     "command.executed" => (shell.atuin, CommandExecutedAtuinPayload),
     
     // Command execution (discovered from history files)
-    "command.executed" => (shell.history, ShellHistoryCommandPayload),
+    "command.hist" => (shell.history, ShellHistoryCommandPayload),
     
     // Real-time terminal events from Kitty
     "command.started" => (shell.kitty, KittyCommandExecutedPayload),

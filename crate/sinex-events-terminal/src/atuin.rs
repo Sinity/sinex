@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
@@ -13,6 +12,7 @@ use tracing::{debug, error, info, warn};
 use sinex_core::{
     sources, ChannelSenderExt, DbPoolRef, EventSender, EventSource, EventSourceBase,
     EventSourceContext, EventType, Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
+    SqliteConnection, SqliteStatementExt, SqliteQueryBuilder, QueryResultExt,
 };
 use sinex_db::DbPool;
 
@@ -165,16 +165,7 @@ impl AtuinDbReader {
         let db_path = self.config.db_path.clone();
 
         tokio::task::spawn_blocking(move || -> Result<i64> {
-            let conn = rusqlite::Connection::open_with_flags(
-                &db_path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )
-            .map_err(|e| 
-                ErrorContext::new(CoreError::Database(format!("Failed to open Atuin database: {}", e)))
-                    .with_operation("get_atuin_total_count")
-                    .with_context("db_path", db_path.display().to_string())
-                    .with_context("access_mode", "read_only")
-                    .build())?;
+            let conn = SqliteConnection::open_readonly(&db_path, "get_atuin_total_count")?;
 
             let count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
@@ -229,7 +220,7 @@ impl AtuinDbReader {
     }
 
     async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
-        let (notify_tx, mut notify_rx) = mpsc::channel(100);
+        let (notify_tx, mut notify_rx) = mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
         let db_path = self.config.db_path.clone();
 
         // Set up file watcher
@@ -308,16 +299,7 @@ impl AtuinDbReader {
         let entries = tokio::task::spawn_blocking(move || -> Result<Vec<AtuinHistoryEntry>> {
             debug!("Opening Atuin database at {:?}", db_path);
 
-            let conn = rusqlite::Connection::open_with_flags(
-                &db_path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )
-            .map_err(|e| 
-                ErrorContext::new(CoreError::Database(format!("Failed to open Atuin database: {}", e)))
-                    .with_operation("poll_atuin_history")
-                    .with_context("db_path", db_path.display().to_string())
-                    .with_context("access_mode", "read_only")
-                    .build())?;
+            let conn = SqliteConnection::open_readonly(&db_path, "poll_atuin_history")?;
 
             // Log the total number of entries if this is the first run
             if last_timestamp.is_none() {
@@ -358,12 +340,7 @@ impl AtuinDbReader {
                 LIMIT ?1"
             };
 
-            let mut stmt = conn.prepare(query).map_err(|e| 
-                ErrorContext::new(CoreError::Database(format!("Failed to prepare query: {}", e)))
-                    .with_operation("poll_atuin_history")
-                    .with_context("db_path", db_path.display().to_string())
-                    .with_context("query_type", if last_timestamp.is_some() { "incremental" } else { "initial" })
-                    .build())?;
+            let mut stmt = conn.prepare_with_context(query, "poll_atuin_history")?;
 
             let result: Vec<AtuinHistoryEntry> = if let Some(ref last_ts) = last_timestamp {
                 stmt.query_map(rusqlite::params![last_ts, batch_size], |row| {
@@ -378,20 +355,18 @@ impl AtuinDbReader {
                         hostname: row.get(7)?,
                     })
                 })
-                .map_err(|e| 
-                    ErrorContext::new(CoreError::Database(format!("Failed to query history: {}", e)))
-                        .with_operation("poll_atuin_history")
-                        .with_context("query_type", "incremental")
-                        .with_context("last_timestamp", last_ts.to_string())
-                        .with_context("batch_size", batch_size.to_string())
-                        .build())?
+                .with_context(
+                    SqliteQueryBuilder::new("poll_atuin_history")
+                        .query_type("incremental")
+                        .context("last_timestamp", last_ts)
+                        .context("batch_size", batch_size)
+                )?
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| 
-                    ErrorContext::new(CoreError::Database(format!("Failed to read history entry: {}", e)))
-                        .with_operation("poll_atuin_history")
-                        .with_context("query_type", "incremental")
-                        .with_context("last_timestamp", last_ts.to_string())
-                        .build())?
+                .with_context(
+                    SqliteQueryBuilder::new("poll_atuin_history")
+                        .query_type("incremental")
+                        .context("last_timestamp", last_ts)
+                )?
             } else {
                 stmt.query_map(rusqlite::params![batch_size], |row| {
                     Ok(AtuinHistoryEntry {
@@ -405,18 +380,16 @@ impl AtuinDbReader {
                         hostname: row.get(7)?,
                     })
                 })
-                .map_err(|e| 
-                    ErrorContext::new(CoreError::Database(format!("Failed to query history: {}", e)))
-                        .with_operation("poll_atuin_history")
-                        .with_context("query_type", "initial")
-                        .with_context("batch_size", batch_size.to_string())
-                        .build())?
+                .with_context(
+                    SqliteQueryBuilder::new("poll_atuin_history")
+                        .query_type("initial")
+                        .context("batch_size", batch_size)
+                )?
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| 
-                    ErrorContext::new(CoreError::Database(format!("Failed to read history entry: {}", e)))
-                        .with_operation("poll_atuin_history")
-                        .with_context("query_type", "initial")
-                        .build())?
+                .with_context(
+                    SqliteQueryBuilder::new("poll_atuin_history")
+                        .query_type("initial")
+                )?
             };
 
             Ok(result)
@@ -458,11 +431,7 @@ impl AtuinDbReader {
     fn convert_to_event(&self, entry: AtuinHistoryEntry) -> Result<RawEvent> {
         // Convert nanosecond timestamp to DateTime
         // Atuin stores timestamps in nanoseconds since Unix epoch
-        let ts_end = DateTime::from_timestamp(
-            entry.timestamp_ns / 1_000_000_000,
-            (entry.timestamp_ns % 1_000_000_000) as u32,
-        )
-        .unwrap_or_else(Utc::now);
+        let ts_end = sinex_core::timestamp_nanos_to_datetime(entry.timestamp_ns);
 
         // Debug log to check timestamp conversion
         debug!(

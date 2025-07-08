@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::DateTime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -481,7 +480,7 @@ impl JournalMonitor {
             .to_string();
 
         // Parse timestamp
-        let timestamp = DateTime::from_timestamp_micros(timestamp_us)
+        let timestamp = sinex_core::timestamp_micros_to_datetime(timestamp_us)
             .ok_or_else(|| 
                 ErrorContext::new(CoreError::Validation("Invalid timestamp".to_string()))
                     .with_operation("parse_journal_entry")

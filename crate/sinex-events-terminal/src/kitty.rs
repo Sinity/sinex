@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{
     EventType, EventSource, EventSourceBase, EventSourceContext, EventSender, 
-    Result, EventFactory, ErrorContext, CoreError, BackoffHelper,
+    Result, EventFactory, ErrorContext, CoreError, BackoffHelper, timeouts, ChannelSenderExt,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -274,7 +274,7 @@ impl KittyEventSource {
     async fn discover_kitty_socket(&mut self) -> Result<String> {
         // Try common socket locations with configurable tmp directory
         let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let current_uid = unsafe { libc::getuid() };
+        let current_uid = nix::unistd::getuid();
         let socket_candidates = vec![
             format!("{}/kitty_socket_{}", tmp_dir, std::process::id()),
             format!("{}/kitty-{}.sock", tmp_dir, whoami::username()),
@@ -334,7 +334,7 @@ impl KittyEventSource {
         if let Some(start) = response_str.find('{') {
             if let Some(end) = response_str.rfind('}') {
                 let json_str = &response_str[start..=end];
-                return Ok(serde_json::from_str(json_str)?);
+                return sinex_core::parse_json_value(json_str, "Kitty response", "send_kitty_command");
             }
         }
 
@@ -460,12 +460,7 @@ impl KittyEventSource {
                     serde_json::to_value(process_payload)?,
                 );
                 
-                tx.send(process_event).await
-                    .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
-                        .with_operation("process_window_commands")
-                        .with_context("event_type", "process.changed")
-                        .with_context("window_id", &window_id)
-                        .build())?;
+                tx.send_or_log(process_event, "kitty_process_changed").await?;
                 
                 // Update stored process state
                 self.process_states.insert(window_id.clone(), current_process_info);
@@ -509,13 +504,7 @@ impl KittyEventSource {
                             serde_json::to_value(completion_payload)?,
                         );
                         
-                        tx.send(completion_event).await
-                            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
-                                .with_operation("process_window_commands")
-                                .with_context("event_type", "command.completed")
-                                .with_context("window_id", &window_id)
-                                .with_context("command", &command_text)
-                                .build())?;
+                        tx.send_or_log(completion_event, "kitty_command_completed").await?;
                         
                         // Update state
                         window_state.last_command = Some(command_text);
@@ -574,12 +563,7 @@ impl KittyEventSource {
                     serde_json::to_value(tab_focused_payload)?,
                 );
                 
-                tx.send(tab_focused_event).await
-                    .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
-                        .with_operation("process_tab_focus_changes")
-                        .with_context("event_type", "tab.focused")
-                        .with_context("tab_id", focused_tab_id)
-                        .build())?;
+                tx.send_or_log(tab_focused_event, "kitty_tab_focused").await?;
                 
                 // Update last focused tab
                 self.last_focused_tab = Some(focused_tab_id.clone());
@@ -623,13 +607,7 @@ impl KittyEventSource {
                 serde_json::to_value(incremental_payload)?,
             );
 
-            tx.send(scrollback_event).await
-                .map_err(|e| ErrorContext::new(CoreError::Io(format!("Channel send failed: {}", e)))
-                    .with_operation("capture_incremental_scrollback")
-                    .with_context("event_type", "scrollback.incremental")
-                    .with_context("window_id", &window_id)
-                    .with_context("line_count", current_line_count.to_string())
-                    .build())?;
+            tx.send_or_log(scrollback_event, "kitty_scrollback_incremental").await?;
             
             tracing::debug!("Captured {} new lines for window {}", current_line_count - previous_line_count, window_id);
         }
@@ -673,7 +651,7 @@ impl EventSource for KittyEventSource {
 
 
         let mut last_scrollback_capture = SystemTime::now();
-        let scrollback_interval = Duration::from_secs(180); // 3 minute intervals for incremental scrollback
+        let scrollback_interval = timeouts::KITTY_SCROLLBACK_INTERVAL; // 3 minute intervals for incremental scrollback
 
         loop {
             match self.get_kitty_tabs_and_windows().await {

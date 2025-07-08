@@ -12,7 +12,7 @@ use tracing::{debug, error, info};
 
 use sinex_core::{
     event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType,
-    RawEvent, Result, EventFactory,
+    RawEvent, Result, EventFactory, timeouts, filesystem,
 };
 
 // ============================================================================
@@ -175,7 +175,7 @@ impl FilesystemMonitor {
 
     /// Clean up old rename operations that didn't complete
     async fn cleanup_old_rename_operations() {
-        const RENAME_TIMEOUT: Duration = Duration::from_secs(5);
+        const RENAME_TIMEOUT: Duration = timeouts::RENAME_OPERATION_TIMEOUT;
         
         if let Ok(mut tracker) = RENAME_TRACKER.lock() {
             let now = Instant::now();
@@ -579,7 +579,7 @@ impl EventSource for FilesystemMonitor {
 
         // Start rename cleanup task to handle orphaned rename operations
         tokio::task::spawn(async {
-            let mut cleanup_interval = tokio::time::interval(Duration::from_secs(30));
+            let mut cleanup_interval = tokio::time::interval(filesystem::CLEANUP_INTERVAL);
             loop {
                 cleanup_interval.tick().await;
                 Self::cleanup_old_rename_operations().await;
@@ -588,7 +588,7 @@ impl EventSource for FilesystemMonitor {
 
         // Keep the watcher alive
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            tokio::time::sleep(filesystem::WATCHER_KEEPALIVE_INTERVAL).await;
         }
     }
 }

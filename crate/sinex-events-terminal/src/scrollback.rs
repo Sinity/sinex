@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 
 use sinex_core::{
     sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp, chunking::ChunkingService, EventFactory, ErrorContext, CoreError, RawEvent,
+    Result, Timestamp, chunking::ChunkingService, EventFactory, ErrorContext, CoreError, RawEvent, timeouts,
 };
 use sinex_annex::{GitAnnex, AnnexConfig};
 
@@ -132,7 +132,7 @@ impl Default for ScrollbackConfig {
         let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
         Self {
             kitty_socket_path: format!("{}/kitty", tmp_dir),
-            capture_interval_secs: 60, // 60 seconds (1 minute) for safety net
+            capture_interval_secs: timeouts::KITTY_SCROLLBACK_INTERVAL.as_secs(), // 3 minutes for safety net
             max_scrollback_lines: 10000,
             include_ansi_codes: false,
             capture_command_output: true,
@@ -247,7 +247,7 @@ impl EventSource for ScrollbackCapture {
 
         // Set up command event channel if capture_on_command is enabled
         let (cmd_tx, _cmd_rx) = if self.config.capture_on_command {
-            let (tx, rx) = mpsc::channel(100);
+            let (tx, rx) = mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
             self.command_event_rx = Some(rx);
             (Some(tx), true)
         } else {
