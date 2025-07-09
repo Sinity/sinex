@@ -11,7 +11,8 @@
 use crate::common::prelude::*;
 use sinex_core::{
     event_type_constants, sources, typed_event_types, CoreError, 
-    Result as CoreResult, RawEventBuilder, unified_collector::EventRegistryBuilder
+    Result as CoreResult, RawEventBuilder, unified_collector::EventRegistryBuilder,
+    EventSource, EventSourceContext
 };
 use chrono::{DateTime, Utc};
 use std::io;
@@ -290,6 +291,209 @@ async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
+/// Test error chain propagation - critical for debugging
+#[sinex_test]
+async fn test_error_chain_propagation(_ctx: TestContext) -> TestResult {
+    fn inner_operation() -> CoreResult<String> {
+        Err(CoreError::Database("Connection lost".to_string()))
+    }
+
+    fn middle_operation() -> CoreResult<String> {
+        inner_operation().map_err(|e| CoreError::Other(format!("Middle layer: {}", e)))
+    }
+
+    fn outer_operation() -> CoreResult<String> {
+        middle_operation().map_err(|e| CoreError::Other(format!("Outer layer: {}", e)))
+    }
+
+    let result = outer_operation();
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Outer layer"));
+    assert!(error_msg.contains("Middle layer"));
+    assert!(error_msg.contains("Connection lost"));
+    Ok(())
+}
+
+/// Test error display implementation - ensures proper formatting
+#[sinex_test]
+async fn test_error_display_implementation(_ctx: TestContext) -> TestResult {
+    let errors = vec![
+        (
+            CoreError::Database("Connection timeout".to_string()),
+            "Database error: Connection timeout",
+        ),
+        (
+            CoreError::Serialization("Invalid JSON".to_string()),
+            "Serialization error: Invalid JSON",
+        ),
+        (
+            CoreError::Validation("Invalid input".to_string()),
+            "Validation error: Invalid input",
+        ),
+        (
+            CoreError::Configuration("Missing config".to_string()),
+            "Configuration error: Missing config",
+        ),
+        (
+            CoreError::Io("File not found".to_string()),
+            "IO error: File not found",
+        ),
+        (
+            CoreError::Other("Unknown error".to_string()),
+            "Other error: Unknown error",
+        ),
+    ];
+
+    for (error, expected) in errors {
+        pretty_assertions::assert_eq!(error.to_string(), expected);
+    }
+    Ok(())
+}
+
+/// Test error propagation across thread boundaries - critical for concurrency
+#[sinex_test]
+async fn test_error_propagation_across_tasks(_ctx: TestContext) -> TestResult {
+    use tokio::task;
+
+    let handle = task::spawn(async {
+        // Simulate work that fails
+        Err::<String, CoreError>(CoreError::Database("Task failed".to_string()))
+    });
+
+    let result = handle.await;
+    assert!(result.is_ok()); // Join succeeded
+
+    let inner_result = result.unwrap();
+    assert!(inner_result.is_err());
+    assert!(matches!(inner_result, Err(CoreError::Database(_))));
+    Ok(())
+}
+
+/// Test validation error propagation
+#[sinex_test]
+async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
+    fn validate_event_type(event_type: &str) -> CoreResult<()> {
+        if event_type.is_empty() {
+            return Err(CoreError::Validation(
+                "Event type cannot be empty".to_string(),
+            ));
+        }
+        if !event_type.contains('.') {
+            return Err(CoreError::Validation(
+                "Event type must contain a dot separator".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    // Test empty event type
+    let result = validate_event_type("");
+    assert!(matches!(result, Err(CoreError::Validation(msg)) if msg.contains("empty")));
+
+    // Test invalid format
+    let result = validate_event_type("invalid");
+    assert!(matches!(result, Err(CoreError::Validation(msg)) if msg.contains("dot separator")));
+
+    // Test valid event type
+    let result = validate_event_type("system.startup");
+    assert!(result.is_ok());
+    Ok(())
+}
+
+/// Test EventSource error propagation in async context
+#[derive(Debug)]
+struct FailingEventSource;
+
+#[async_trait]
+impl EventSource for FailingEventSource {
+    type Config = serde_json::Value;
+    const SOURCE_NAME: &'static str = "failing_source";
+
+    async fn initialize(_ctx: EventSourceContext) -> CoreResult<Self> {
+        // Simulate initialization failure
+        Err(CoreError::Configuration(
+            "Missing required field".to_string(),
+        ))
+    }
+
+    async fn stream_events(&mut self, _tx: mpsc::Sender<RawEvent>) -> CoreResult<()> {
+        Err(CoreError::Io("Stream failed".to_string()))
+    }
+}
+
+#[sinex_test]
+async fn test_event_source_error_propagation(_ctx: TestContext) -> TestResult {
+    let ctx_local = event_sources::test_context(json!({}));
+    let result = FailingEventSource::initialize(ctx_local).await;
+
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        CoreError::Configuration(msg) => {
+            pretty_assertions::assert_eq!(msg, "Missing required field")
+        }
+        _ => panic!("Expected Configuration error"),
+    }
+    Ok(())
+}
+
+// =============================================================================
+// RAW EVENT BUILDER EDGE CASES
+// =============================================================================
+
+/// Test RawEventBuilder with empty payload - critical edge case
+#[sinex_test]
+async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
+    let event = RawEventBuilder::new(sources::SINEX, "system.startup", json!({})).build();
+
+    pretty_assertions::assert_eq!(event.payload, json!({}));
+    pretty_assertions::assert_eq!(event.source, sources::SINEX);
+    pretty_assertions::assert_eq!(event.event_type, "system.startup");
+    Ok(())
+}
+
+/// Test RawEventBuilder ULID ordering in tight loop - critical for time ordering
+#[sinex_test]
+async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
+    let mut events = Vec::new();
+
+    // Create events in rapid succession
+    for i in 0..10 {
+        let event =
+            RawEventBuilder::new(sources::SINEX, "test.sequence", json!({"sequence": i})).build();
+        events.push(event);
+
+        // Small delay to ensure timestamp progression
+        std::thread::sleep(std::time::Duration::from_micros(100));
+    }
+
+    // ULIDs should be in ascending order
+    for i in 1..events.len() {
+        assert!(events[i].id.to_string() > events[i - 1].id.to_string());
+        assert!(events[i].ts_ingest >= events[i - 1].ts_ingest);
+    }
+    Ok(())
+}
+
+/// Test RawEventBuilder multiple builds - verify independence
+#[sinex_test]
+async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult {
+    // Create two events with same configuration
+    let event1 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
+    let event2 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
+
+    // Events should have different IDs and timestamps
+    pretty_assertions::assert_ne!(event1.id, event2.id);
+    assert!(event2.ts_ingest >= event1.ts_ingest);
+
+    // But same content
+    pretty_assertions::assert_eq!(event1.source, event2.source);
+    pretty_assertions::assert_eq!(event1.event_type, event2.event_type);
+    pretty_assertions::assert_eq!(event1.payload, event2.payload);
+    Ok(())
+}
+
 // =============================================================================
 // EVENT REGISTRY TESTS
 // =============================================================================
@@ -456,6 +660,86 @@ fn test_auto_registration_builder_pattern() -> TestResult {
     assert!(!registry.event_types.is_empty());
     assert!(registry.event_types.contains(&"file.created"));
     assert!(registry.event_types.contains(&"command.executed"));
+    
+    Ok(())
+}
+
+/// Test event registry deduplication behavior - critical for plugin architecture
+#[test]
+fn test_event_registry_deduplication_behavior() -> TestResult {
+    let mut builder = EventRegistryBuilder::new();
+    
+    // Simulate registering the same event type from different sources
+    builder.add_event_type(
+        "test.event",
+        "source1",
+        || {
+            let gen = schemars::gen::SchemaGenerator::default();
+            gen.into_root_schema_for::<serde_json::Value>()
+        }
+    );
+    
+    builder.add_event_type(
+        "test.event",
+        "source2", 
+        || {
+            let gen = schemars::gen::SchemaGenerator::default();
+            gen.into_root_schema_for::<serde_json::Value>()
+        }
+    );
+    
+    let registry = builder.build();
+    
+    // Event type should appear only once in the list
+    let event_count = registry.event_types.iter().filter(|&&e| e == "test.event").count();
+    assert_eq!(event_count, 1);
+    
+    // But both source mappings should be preserved
+    let sources_for_event: Vec<_> = registry.event_to_source
+        .iter()
+        .filter(|(event, _)| *event == "test.event")
+        .map(|(_, source)| *source)
+        .collect();
+    
+    assert!(sources_for_event.contains(&"source1"));
+    assert!(sources_for_event.contains(&"source2"));
+    assert_eq!(sources_for_event.len(), 2);
+    
+    Ok(())
+}
+
+/// Test event registry concurrent access safety
+#[sinex_test]
+async fn test_event_registry_concurrent_access(_ctx: TestContext) -> TestResult {
+    use std::sync::Arc;
+    use tokio::task;
+    
+    let registry = Arc::new(create_registry());
+    let mut handles = vec![];
+    
+    // Spawn multiple tasks that read from the registry concurrently
+    for i in 0..10 {
+        let registry_clone = Arc::clone(&registry);
+        let handle = task::spawn(async move {
+            // Read operations should be thread-safe
+            let _event_types = registry_clone.all_event_types();
+            let _source = registry_clone.source_for_event("file.created");
+            let _valid = registry_clone.is_valid_event_type("command.executed");
+            
+            // Return task number to verify all completed
+            i
+        });
+        handles.push(handle);
+    }
+    
+    // Wait for all tasks to complete
+    let results = futures::future::join_all(handles).await;
+    
+    // All tasks should complete successfully
+    assert_eq!(results.len(), 10);
+    for (i, result) in results.into_iter().enumerate() {
+        assert_eq!(result.unwrap(), i);
+    }
     
     Ok(())
 }
