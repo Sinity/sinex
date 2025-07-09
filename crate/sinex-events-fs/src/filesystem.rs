@@ -7,6 +7,7 @@ use sinex_core::{EventSender, Timestamp};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
@@ -143,21 +144,14 @@ struct RenameOperation {
     cookie: Option<u32>,
 }
 
-// Global rename tracking for improved rename detection
-// Using parking_lot for better performance than std::sync
-use std::sync::{Arc, Mutex};
-use std::sync::LazyLock;
-
-static RENAME_TRACKER: LazyLock<Arc<Mutex<HashMap<u32, RenameOperation>>>> = 
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-
 /// File system monitor using the notify crate (inotify on Linux)
 pub struct FilesystemMonitor {
     config: FilesystemConfig,
     watch_roots: Vec<PathBuf>,
     #[allow(dead_code)] // Used in async context where struct field access is limited
     event_factory: EventFactory,
-    // Rename detection state (moved to static tracking in process_notify_event_static)
+    // Instance-based rename tracking for better isolation and testability
+    rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
 }
 
 // Legacy alias for compatibility
@@ -169,15 +163,16 @@ impl FilesystemMonitor {
             config,
             watch_roots: Vec::new(),
             event_factory: EventFactory::new(sources::FS),
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
 
     /// Clean up old rename operations that didn't complete
-    async fn cleanup_old_rename_operations() {
+    fn cleanup_old_rename_operations(rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>) {
         const RENAME_TIMEOUT: Duration = timeouts::RENAME_OPERATION_TIMEOUT;
         
-        if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+        if let Ok(mut tracker) = rename_tracker.lock() {
             let now = Instant::now();
             let mut to_remove = Vec::new();
             
@@ -201,6 +196,7 @@ impl FilesystemMonitor {
         config: &FilesystemConfig,
         watch_roots: &[PathBuf],
         event_factory: &EventFactory,
+        rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>,
     ) -> Option<RawEvent> {
         let path = event.paths.first()?;
         let path_str = path.to_string_lossy().to_string();
@@ -362,7 +358,7 @@ impl FilesystemMonitor {
                                     cookie: Some(cookie_u32),
                                 };
                                 
-                                if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+                                if let Ok(mut tracker) = rename_tracker.lock() {
                                     tracker.insert(cookie_u32, rename_op);
                                     debug!("Tracked rename FROM: {} with cookie {}", path.display(), cookie_u32);
                                 }
@@ -376,7 +372,7 @@ impl FilesystemMonitor {
                                 let cookie_u32 = 0u32; // Default cookie value
                                         
                                 // Look for matching FROM operation
-                                if let Ok(mut tracker) = RENAME_TRACKER.lock() {
+                                if let Ok(mut tracker) = rename_tracker.lock() {
                                     if let Some(rename_op) = tracker.remove(&cookie_u32) {
                                         debug!("Completed rename: {} -> {} with cookie {}", 
                                               rename_op.source_path.display(), 
@@ -554,13 +550,14 @@ impl EventSource for FilesystemMonitor {
         let event_tx = tx.clone();
         let watch_roots = self.watch_roots.clone();
         let event_factory = EventFactory::new(sources::FS);
+        let rename_tracker = self.rename_tracker.clone();
 
         tokio::task::spawn_blocking(move || {
             for result in notify_rx {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(raw_event) = Self::process_notify_event_static(&event, &config, &watch_roots, &event_factory) {
+                            if let Some(raw_event) = Self::process_notify_event_static(&event, &config, &watch_roots, &event_factory, &rename_tracker) {
                                 if let Err(e) = event_tx.blocking_send(raw_event) {
                                     error!("Failed to send event: {}", e);
                                     return;
@@ -578,11 +575,12 @@ impl EventSource for FilesystemMonitor {
         });
 
         // Start rename cleanup task to handle orphaned rename operations
-        tokio::task::spawn(async {
+        let cleanup_tracker = self.rename_tracker.clone();
+        tokio::task::spawn(async move {
             let mut cleanup_interval = tokio::time::interval(filesystem::CLEANUP_INTERVAL);
             loop {
                 cleanup_interval.tick().await;
-                Self::cleanup_old_rename_operations().await;
+                Self::cleanup_old_rename_operations(&cleanup_tracker);
             }
         });
 
