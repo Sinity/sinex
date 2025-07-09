@@ -242,7 +242,7 @@ impl DirectoryManager {
                 .with_mode(0o755),
             DirectoryConfig::new(&log_dir, "Log files")
                 .with_mode(0o755),
-            DirectoryConfig::new(format!("{}/shell", data_dir), "Shell history fallback")
+            DirectoryConfig::new(format!("{}/shell", data_dir), "Shell history")
                 .with_mode(0o700) // More restrictive for shell data
                 .with_required(false), // Optional
         ]

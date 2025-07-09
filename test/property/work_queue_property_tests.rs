@@ -1,9 +1,9 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use sinex_db::queries::{
-    claim_work_queue_items, complete_work_queue_item, create_test_agent, insert_raw_event,
-    insert_work_queue_item,
+    create_test_agent, insert_raw_event, insert_work_queue_item,
 };
+use sinex_db::work_queue_correct::{claim_work_queue_items, complete_work_queue_item};
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinSet;
 

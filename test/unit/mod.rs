@@ -98,7 +98,11 @@ pub mod ingestor;
 /// Tests for terminal event sources
 pub mod terminal;
 
-/// Tests for new API modules
-pub mod artifacts_api_test;
-pub mod annotations_api_test;
-pub mod knowledge_graph_api_test;
+/// Tests for preflight verification
+pub mod preflight_test;
+
+/// Tests for API layer functionality
+pub mod api_test;
+
+/// Tests for configuration validation and management
+pub mod configuration_test;

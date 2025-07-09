@@ -182,6 +182,26 @@ impl CoreError {
     pub fn has_context_key(&self, key: &str) -> bool {
         self.to_string().contains(&format!("{}: ", key))
     }
+    
+    /// Quick error creation for missing required items
+    pub fn missing(item_type: &str, item_name: &str) -> Self {
+        Self::Validation(format!("Missing {}: {}", item_type, item_name))
+    }
+    
+    /// Quick error creation for invalid values
+    pub fn invalid(field: &str, value: impl Display, reason: &str) -> Self {
+        Self::Validation(format!("Invalid {} '{}': {}", field, value, reason))
+    }
+    
+    /// Quick error creation for not found items
+    pub fn not_found(item_type: &str, identifier: impl Display) -> Self {
+        Self::Validation(format!("{} not found: {}", item_type, identifier))
+    }
+    
+    /// Quick error creation for timeout
+    pub fn timeout(operation: &str, duration: std::time::Duration) -> Self {
+        Self::Other(format!("{} timed out after {:?}", operation, duration))
+    }
 }
 
 // Helper for capturing stack traces

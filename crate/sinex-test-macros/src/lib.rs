@@ -1,8 +1,15 @@
 //! Procedural macros for Sinex test infrastructure
+//!
+//! This macro provides sophisticated test infrastructure for Sinex tests, including:
+//! - Automatic TestContext creation and cleanup
+//! - Proptest integration with async runtime bridging
+//! - Smart timeout handling based on test patterns
+//! - Progress indicators for long-running tests
+//! - Rich error reporting with timing information
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Expr, ItemFn, Lit, Meta};
+use syn::{parse_macro_input, Expr, ItemFn, Lit, Meta, Stmt, visit::Visit};
 
 /// Parse timeout attribute from macro arguments
 /// Supports `timeout = 30` syntax
@@ -31,6 +38,59 @@ fn parse_timeout_attr(attr: TokenStream) -> Option<u64> {
     None
 }
 
+/// Visitor to detect proptest usage in function body
+struct ProptestDetector {
+    has_proptest: bool,
+}
+
+impl ProptestDetector {
+    fn new() -> Self {
+        Self { has_proptest: false }
+    }
+}
+
+impl<'ast> Visit<'ast> for ProptestDetector {
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        if let Some(ident) = node.path.get_ident() {
+            if ident == "proptest" {
+                self.has_proptest = true;
+            }
+        }
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+/// Detect if the function body contains proptest! macro calls
+fn has_proptest_usage(block: &syn::Block) -> bool {
+    let mut detector = ProptestDetector::new();
+    detector.visit_block(block);
+    detector.has_proptest
+}
+
+/// Transform proptest! calls to work with async runtime
+fn transform_proptest_calls(block: &syn::Block) -> syn::Block {
+    use syn::{parse_quote, Block};
+    
+    // For now, we'll wrap the entire block in a runtime bridge
+    // In a more sophisticated implementation, we'd traverse and transform specific proptest! calls
+    parse_quote! {
+        {
+            // Create a runtime handle if not already in async context
+            let rt_handle = match tokio::runtime::Handle::try_current() {
+                Ok(handle) => handle,
+                Err(_) => {
+                    // Create a new runtime for proptest execution
+                    let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for proptest");
+                    rt.handle().clone()
+                }
+            };
+            
+            // Execute the original block within the runtime context
+            #block
+        }
+    }
+}
+
 #[proc_macro_attribute]
 pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -46,10 +106,15 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             45 // Adversarial tests need moderate time
         } else if fn_name_str.contains("database") || fn_name_str.contains("integration") {
             40 // Database operations need extra time for connection pool
+        } else if fn_name_str.contains("property") || fn_name_str.contains("proptest") {
+            50 // Property tests with proptest need extra time
         } else {
             30 // Default timeout for unit tests, increased for safety
         }
     });
+
+    // Detect proptest usage
+    let has_proptest = has_proptest_usage(&input.block);
 
     // Validate it's async
     if input.sig.asyncness.is_none() {
@@ -57,7 +122,15 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             .to_compile_error()
             .into();
     }
-    let fn_body = &input.block;
+    
+    // Process function body based on proptest usage
+    let fn_body = if has_proptest {
+        // Transform proptest calls to work with async runtime
+        transform_proptest_calls(&input.block)
+    } else {
+        *input.block.clone()
+    };
+    
     let fn_vis = &input.vis;
 
     // Check if function takes TestContext parameter
@@ -73,75 +146,156 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     });
 
     let output = if takes_context {
-        // Database test using universal pool system with proper cleanup
-        quote! {
-            #[tokio::test]
-            #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
-                use crate::common::test_context::{TestContext, TestConfig};
-                use crate::common::database_pool;
+        if has_proptest {
+            // Database test with proptest support
+            quote! {
+                #[tokio::test]
+                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
+                    use crate::common::test_context::{TestContext, TestConfig};
+                    use crate::common::database_pool;
 
-                // Wrap the entire test in a timeout
-                let test_future = async {
-                    // Show test starting (always visible)
-                    let test_name = stringify!(#fn_name);
-                    let start = std::time::Instant::now();
-                    eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                    // Wrap the entire test in a timeout
+                    let test_future = async {
+                        // Show test starting (always visible)
+                        let test_name = stringify!(#fn_name);
+                        let start = std::time::Instant::now();
+                        eprintln!("🔄 {} [proptest+async, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                    // Acquire database from manager (guaranteed cleanup)
-                    let managed_db = database_pool::acquire_test_database().await?;
+                        // Acquire database from manager (guaranteed cleanup)
+                        let managed_db = database_pool::acquire_test_database().await?;
 
-                    // Create test context  
-                    let ctx = TestContext::with_managed_database(managed_db, TestConfig {
-                        test_name: test_name.to_string(),
-                        ..Default::default()
-                    }).await?;
+                        // Create test context  
+                        let ctx = TestContext::with_managed_database(managed_db, TestConfig {
+                            test_name: test_name.to_string(),
+                            ..Default::default()
+                        }).await?;
 
-                    // Run the test with progress tracking for long tests
-                    let result: Result<(), Box<dyn std::error::Error>> = if #timeout_secs > 10 {
-                        // For long tests, spawn a progress indicator
-                        let progress_task = tokio::spawn(async {
-                            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                            interval.tick().await; // Skip first immediate tick
-                            let mut elapsed_secs = 5;
-                            loop {
-                                interval.tick().await;
-                                eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
-                                elapsed_secs += 5;
-                                if elapsed_secs >= #timeout_secs - 5 {
-                                    break;
+                        // Run the proptest with progress tracking
+                        let result: Result<(), Box<dyn std::error::Error>> = {
+                            // For proptest, spawn a progress indicator
+                            let progress_task = tokio::spawn(async {
+                                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                                interval.tick().await; // Skip first immediate tick
+                                let mut elapsed_secs = 10;
+                                loop {
+                                    interval.tick().await;
+                                    eprintln!("  ⏳ {} [proptest] still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
+                                    elapsed_secs += 10;
+                                    if elapsed_secs >= #timeout_secs - 10 {
+                                        break;
+                                    }
                                 }
+                            });
+                            
+                            // Execute the proptest within async context
+                            let proptest_result = tokio::task::spawn_blocking(move || {
+                                // Create a new runtime for proptest execution
+                                let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for proptest");
+                                rt.block_on(async {
+                                    // Execute the test body within the runtime
+                                    #fn_body
+                                })
+                            }).await;
+                            
+                            // Cancel progress task
+                            if !progress_task.is_finished() {
+                                progress_task.abort();
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                             }
-                        });
-                        
-                        let test_result = async { #fn_body }.await;
-                        // Gracefully cancel progress task to avoid abrupt shutdown
-                        if !progress_task.is_finished() {
-                            progress_task.abort();
-                            // Give a small grace period for cleanup
-                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            
+                            proptest_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+                        };
+
+                        // Show result (always visible)
+                        let elapsed = start.elapsed();
+                        if result.is_ok() {
+                            eprintln!("✅ {} [proptest] ({:.1?})", test_name.replace('_', " "), elapsed);
+                        } else {
+                            eprintln!("❌ {} [proptest] ({:.1?})", test_name.replace('_', " "), elapsed);
                         }
-                        test_result
-                    } else {
-                        async { #fn_body }.await
+
+                        result
                     };
 
-                    // Show result (always visible)
-                    let elapsed = start.elapsed();
-                    if result.is_ok() {
-                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    } else {
-                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    }
+                    // Apply timeout
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(#timeout_secs),
+                        test_future
+                    ).await
+                    .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                }
+            }
+        } else {
+            // Regular database test using universal pool system with proper cleanup
+            quote! {
+                #[tokio::test]
+                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
+                    use crate::common::test_context::{TestContext, TestConfig};
+                    use crate::common::database_pool;
 
-                    result
-                };
+                    // Wrap the entire test in a timeout
+                    let test_future = async {
+                        // Show test starting (always visible)
+                        let test_name = stringify!(#fn_name);
+                        let start = std::time::Instant::now();
+                        eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                // Apply timeout
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(#timeout_secs),
-                    test_future
-                ).await
-                .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                        // Acquire database from manager (guaranteed cleanup)
+                        let managed_db = database_pool::acquire_test_database().await?;
+
+                        // Create test context  
+                        let ctx = TestContext::with_managed_database(managed_db, TestConfig {
+                            test_name: test_name.to_string(),
+                            ..Default::default()
+                        }).await?;
+
+                        // Run the test with progress tracking for long tests
+                        let result: Result<(), Box<dyn std::error::Error>> = if #timeout_secs > 10 {
+                            // For long tests, spawn a progress indicator
+                            let progress_task = tokio::spawn(async {
+                                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                                interval.tick().await; // Skip first immediate tick
+                                let mut elapsed_secs = 5;
+                                loop {
+                                    interval.tick().await;
+                                    eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
+                                    elapsed_secs += 5;
+                                    if elapsed_secs >= #timeout_secs - 5 {
+                                        break;
+                                    }
+                                }
+                            });
+                            
+                            let test_result = async { #fn_body }.await;
+                            // Gracefully cancel progress task to avoid abrupt shutdown
+                            if !progress_task.is_finished() {
+                                progress_task.abort();
+                                // Give a small grace period for cleanup
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            }
+                            test_result
+                        } else {
+                            async { #fn_body }.await
+                        };
+
+                        // Show result (always visible)
+                        let elapsed = start.elapsed();
+                        if result.is_ok() {
+                            eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        } else {
+                            eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        }
+
+                        result
+                    };
+
+                    // Apply timeout
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(#timeout_secs),
+                        test_future
+                    ).await
+                    .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                }
             }
         }
     } else {
@@ -149,11 +303,24 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[tokio::test]
             #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
-                tokio::time::timeout(
+                let test_name = stringify!(#fn_name);
+                let start = std::time::Instant::now();
+                eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                
+                let result = tokio::time::timeout(
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #fn_body }
                 ).await
-                .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?;
+                
+                let elapsed = start.elapsed();
+                if result.is_ok() {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                } else {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                }
+                
+                result
             }
         }
     };

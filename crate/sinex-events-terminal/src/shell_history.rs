@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::DateTime;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
@@ -38,7 +37,7 @@ pub struct ShellHistoryCommand;
 impl EventType for ShellHistoryCommand {
     type Payload = ShellHistoryCommandPayload;
     type SourceImpl = ShellHistoryReader;
-    const EVENT_NAME: &'static str = "command.executed";
+    const EVENT_NAME: &'static str = "command.hist";
 }
 
 // ============================================================================
@@ -151,7 +150,7 @@ impl EventSource for ShellHistoryReader {
 
 impl ShellHistoryReader {
     async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
-        let (notify_tx, mut notify_rx) = mpsc::channel(100);
+        let (notify_tx, mut notify_rx) = mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
         let watched_files = self.config.history_files.clone();
 
         // Set up file watchers
@@ -360,7 +359,7 @@ impl ShellHistoryReader {
                 let meta_parts: Vec<&str> = parts[0].split(':').collect();
                 if meta_parts.len() >= 2 {
                     if let Ok(ts) = meta_parts[1].trim().parse::<i64>() {
-                        let timestamp = DateTime::from_timestamp(ts, 0);
+                        let timestamp = Some(sinex_core::timestamp_to_datetime(ts));
                         (parts[1].to_string(), timestamp)
                     } else {
                         (parts[1].to_string(), None)

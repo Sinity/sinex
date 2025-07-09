@@ -58,9 +58,7 @@ pub struct WorkQueueItem {
     pub failure_reason: Option<String>,  // New: Detailed failure information
 }
 
-/// Legacy alias for backward compatibility during transition
-#[deprecated(note = "Use WorkQueueItem instead")]
-pub type PromotionQueueItem = WorkQueueItem;
+// Legacy type alias removed
 
 /// Status values for work queue
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,7 +91,6 @@ impl From<String> for QueueStatus {
             "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
             "failed_retryable" => Self::FailedRetryable,
-            "completed" => Self::Succeeded, // Map legacy to succeeded
             _ => Self::Pending,
         }
     }
@@ -107,7 +104,6 @@ impl From<&str> for QueueStatus {
             "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
             "failed_retryable" => Self::FailedRetryable,
-            "completed" => Self::Succeeded, // Map legacy to succeeded
             _ => Self::Pending,
         }
     }

@@ -4,15 +4,14 @@
 //! a wide range of inputs, providing more comprehensive testing than
 //! example-based tests.
 
-// Core property tests
-pub mod event_registry_property_tests;
-pub mod json_schema_property_tests;
-pub mod raw_event_property_tests;
-pub mod ulid_concurrent_property_tests;
-// pub mod ulid_ordering_property_tests;  // Temporarily disabled
+// Consolidated property tests
+pub mod event_property_test;
+pub mod queue_property_test;
+pub mod schema_property_test;
+pub mod ulid_property_test;
+
+// Legacy property tests (kept for reference)
 pub mod property_tests;
-pub mod ulid_properties;
-pub mod work_queue_property_tests; // Moved from root level
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;

@@ -331,22 +331,7 @@ impl ComponentHeartbeat {
         (0, 0, None)
     }
 
-    /// Determine health status based on current metrics (legacy method)
-    #[allow(dead_code)] // Legacy method kept for compatibility
-    fn determine_health_status(
-        memory_usage_mb: u32,
-        cpu_usage_percent: f32,
-        errors_last_hour: u32,
-    ) -> HealthStatus {
-        let conditions = HealthCheckConditions::default();
-        Self::determine_health_status_with_conditions(
-            memory_usage_mb,
-            cpu_usage_percent,
-            errors_last_hour,
-            0, // uptime not considered in legacy method
-            &conditions,
-        ).unwrap_or(HealthStatus::Failed)
-    }
+    // Legacy method removed
 
     /// Determine health status using condition-based logic with comprehensive validation
     fn determine_health_status_with_conditions(

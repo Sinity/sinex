@@ -18,12 +18,16 @@ let
 in
 {
   imports = [
+    # Core configuration modules
     ./database.nix
     ./event-sources.nix
     ./blob-storage.nix
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
+    
+    # New consolidated service management (recommended)
+    ./services
   ];
 
   options.services.sinex = {
@@ -303,8 +307,8 @@ in
     ];
 
 
-    # System integration (simplified from original)
-    systemd.services = {
+    # Legacy service definitions (deprecated - use consolidated service management)
+    systemd.services = mkIf (!cfg.serviceManagement.consolidatedMode or true) {
       sinex-unified-collector = {
         description = "Sinex Unified Event Collector";
         wantedBy = [ "multi-user.target" ];
@@ -672,7 +676,8 @@ in
     };
 
     # DLQ cleanup timer
-    systemd.timers.sinex-dlq-cleanup = mkIf (cfg.unifiedCollector.dlq.enable && cfg.unifiedCollector.dlq.cleanup.enable) {
+    # Legacy timer definitions (deprecated - use consolidated service management)
+    systemd.timers.sinex-dlq-cleanup = mkIf ((!cfg.serviceManagement.consolidatedMode or true) && cfg.unifiedCollector.dlq.enable && cfg.unifiedCollector.dlq.cleanup.enable) {
       description = "Sinex DLQ Cleanup Timer";
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -682,8 +687,8 @@ in
       };
     };
 
-    # Coordinated update service
-    systemd.services.sinex-update = mkIf cfg.update.enable {
+    # Legacy coordinated update service (deprecated - use consolidated service management)
+    systemd.services.sinex-update = mkIf ((!cfg.serviceManagement.consolidatedMode or true) && cfg.update.enable) {
       description = "Sinex Coordinated Update";
       serviceConfig = {
         Type = "oneshot";
