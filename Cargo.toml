@@ -53,6 +53,7 @@ sinex-events-fs = { path = "crate/sinex-events-fs" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
+sinex-preflight = { path = "crate/sinex-preflight" }
 
 # Testing dependencies needed for integration tests
 futures = "0.3"

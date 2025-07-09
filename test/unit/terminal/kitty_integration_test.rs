@@ -3,6 +3,7 @@ use sinex_events_terminal::kitty::{
     KittyTabCreated, KittyTabFocused, KittyTabClosed, KittyProcessChanged,
     KittyCommandCompletedPayload,
     KittyTabCreatedPayload, KittyProcessChangedPayload,
+    KittyEventSource, KittyConfig, KittyProcessInfo,
 };
 use sinex_core::{EventSource, EventSourceContext, EventType};
 
@@ -36,7 +37,6 @@ fn test_kitty_config_serialization() {
 #[test]
 fn test_kitty_event_types() {
     // Verify event type constants
-    assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.started");
     assert_eq!(KittyCommandCompleted::EVENT_NAME, "command.completed");
     assert_eq!(KittyScrollbackIncremental::EVENT_NAME, "content.streamed");
     assert_eq!(KittyTabCreated::EVENT_NAME, "tab.created");
@@ -48,24 +48,30 @@ fn test_kitty_event_types() {
 
 #[test]
 fn test_kitty_payload_serialization() {
-    // Test KittyCommandExecutedPayload
-    let command_payload = KittyCommandExecutedPayload {
+    // Test KittyCommandCompletedPayload
+    let command_payload = KittyCommandCompletedPayload {
         command: "ls -la".to_string(),
+        command_output: "file1.txt\nfile2.txt".to_string(),
         working_directory: Some("/home/user".to_string()),
         kitty_window_id: "123".to_string(),
         kitty_tab_id: "456".to_string(),
         exit_status: Some(0),
         execution_time_ms: Some(250),
-        prompt_detected: true,
-        scrollback_hash: Some("abc123".to_string()),
+        output_size_bytes: 23,
+        output_line_count: 2,
+        shell_integration_used: true,
+        completion_timestamp: "2024-01-01T12:00:00Z".to_string(),
     };
     
     let serialized = serde_json::to_string(&command_payload).expect("Should serialize");
-    let deserialized: KittyCommandExecutedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
+    let deserialized: KittyCommandCompletedPayload = serde_json::from_str(&serialized).expect("Should deserialize");
     
     assert_eq!(command_payload.command, deserialized.command);
+    assert_eq!(command_payload.command_output, deserialized.command_output);
     assert_eq!(command_payload.working_directory, deserialized.working_directory);
     assert_eq!(command_payload.exit_status, deserialized.exit_status);
+    assert_eq!(command_payload.output_size_bytes, deserialized.output_size_bytes);
+    assert_eq!(command_payload.shell_integration_used, deserialized.shell_integration_used);
     
     // Test KittyTabCreatedPayload
     let tab_payload = KittyTabCreatedPayload {

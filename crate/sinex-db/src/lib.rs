@@ -43,6 +43,28 @@ pub use metrics_queries::{
     calculate_queue_depth_metrics,
     QueueDepthMetrics,
 };
+pub use annotations::{
+    create_annotation,
+    get_annotations_for_event,
+    get_annotation_by_id,
+    update_annotation_content,
+    delete_annotation,
+    get_recent_annotations,
+};
+pub use artifacts::{
+    create_artifact,
+    get_artifact_by_id,
+    get_recent_artifacts,
+};
+pub use knowledge_graph::{
+    create_entity,
+    create_relation,
+    get_entity_by_id,
+    get_entities_by_type,
+    get_entity_relations,
+    get_relation_by_id,
+    search_entities,
+};
 
 
 // Enhanced queries have been removed - functionality moved to domain modules
@@ -57,10 +79,10 @@ pub use query_helpers::{
 pub mod prelude {
     pub use crate::models::{
         AgentManifest, DlqErrorCategory, DlqEvent, EventPayloadSchema, QueueStatus, WorkQueueItem,
-        // New API models (temporarily disabled)
-        // Artifact, ArtifactContent, CreateArtifactInput, CreateArtifactContentInput,
-        // EventAnnotation, CreateAnnotationInput,
-        // Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
+        // New API models (now enabled)
+        Artifact, ArtifactContent, CreateArtifactInput, CreateArtifactContentInput,
+        EventAnnotation, CreateAnnotationInput,
+        Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
     };
     // Use domain-specific modules
     pub use crate::events::*;
@@ -71,10 +93,10 @@ pub mod prelude {
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
     };
-    // New API services (temporarily disabled)
-    // pub use crate::artifacts::ArtifactsService;
-    // pub use crate::annotations::{AnnotationsService, AnnotationStats, AnnotationTypeCount};
-    // pub use crate::knowledge_graph::{KnowledgeGraphService, EntitySubgraph, GraphStats, EntityTypeCount};
+    // New API services (now enabled)
+    pub use crate::artifacts::*;
+    pub use crate::annotations::*;
+    pub use crate::knowledge_graph::*;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp, PoolConfig};
     pub use anyhow::Result;
     pub use sinex_core::{RawEvent, RawEventBuilder};

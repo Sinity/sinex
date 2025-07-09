@@ -3,6 +3,7 @@ use sinex_events_terminal::kitty::{
     KittyCommandCompleted, KittyScrollbackIncremental,
     KittyTabFocused, KittyProcessChanged, KittyCommandCompletedPayload, 
     KittyScrollbackIncrementalPayload, KittyTabFocusedPayload, KittyProcessChangedPayload,
+    KittyEventSource, KittyProcessInfo,
 };
 use sinex_core::{EventSource, EventSourceContext, EventType};
 use serde_json::json;

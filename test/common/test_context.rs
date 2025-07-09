@@ -169,7 +169,7 @@ impl TestContext {
 
     /// Insert an event into the database
     pub async fn insert_event(&self, event: &RawEvent) -> TestResult {
-        queries::insert_event(self.pool(), event).await?;
+        sinex_db::events::insert_event_with_validator(self.pool(), event, None).await?;
         self.created_events.lock().await.push(event.id);
         Ok(())
     }
@@ -184,12 +184,12 @@ impl TestContext {
 
     /// Query recent events
     pub async fn query_events(&self) -> Result<Vec<DbRawEvent>> {
-        queries::get_recent_events(self.pool(), 1000).await
+        crate::common::get_recent_events(self.pool(), 1000).await
     }
 
     /// Query events by source
     pub async fn query_events_by_source(&self, source: &str) -> Result<Vec<DbRawEvent>> {
-        queries::get_events_by_source(self.pool(), source, 1000).await
+        crate::common::get_events_by_type(self.pool(), source, 1000).await
     }
 
     /// Get count of events

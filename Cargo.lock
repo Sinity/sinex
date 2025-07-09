@@ -2945,6 +2945,7 @@ dependencies = [
  "sinex-events-fs",
  "sinex-events-system",
  "sinex-events-terminal",
+ "sinex-preflight",
  "sinex-test-macros",
  "sinex-ulid",
  "sinex-worker",

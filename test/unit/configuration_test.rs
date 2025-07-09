@@ -348,8 +348,8 @@ async fn test_event_type_constants(_ctx: TestContext) -> TestResult {
     // Test event type constants are properly defined
     use sinex_core::event_type_constants;
     
-    assert!(!event_type_constants::FILESYSTEM_FILE_CREATED.is_empty());
-    assert!(!event_type_constants::TERMINAL_COMMAND_EXECUTED.is_empty());
+    assert!(!event_type_constants::filesystem::FILE_CREATED.is_empty());
+    assert!(!event_type_constants::shell::COMMAND_EXECUTED.is_empty());
     
     Ok(())
 }

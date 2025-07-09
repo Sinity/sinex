@@ -634,7 +634,7 @@ async fn test_complex_nested_schema_validation(ctx: TestContext) -> TestResult {
 async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
     // Test 1: Valid event should work
     let valid_event = RawEventBuilder::new(
-        sources::FS,
+        "fs",
         event_type_constants::filesystem::FILE_CREATED,
         json!({
             "path": "/test/valid.txt",
@@ -685,7 +685,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 
     let _schema_id = schema_test_utils::register_test_schema(
         ctx.pool(),
-        sources::FS,
+        "fs",
         event_type_constants::filesystem::FILE_CREATED,
         fs_schema,
     )
@@ -693,7 +693,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 
     // Valid event
     let valid_event = RawEventBuilder::new(
-        sources::FS,
+        "fs",
         event_type_constants::filesystem::FILE_CREATED,
         json!({
             "path": "/test/valid.txt",
@@ -706,7 +706,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 
     // Invalid event - missing required field
     let invalid_event = RawEventBuilder::new(
-        sources::FS,
+        "fs",
         event_type_constants::filesystem::FILE_CREATED,
         json!({
             "size": 1024

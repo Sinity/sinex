@@ -74,7 +74,7 @@ async fn test_kitty_event_types(_ctx: TestContext) -> TestResult {
     assert_eq!(KittyTabFocused::EVENT_NAME, "tab.focused");
     assert_eq!(KittyTabClosed::EVENT_NAME, "tab.closed");
     assert_eq!(KittyProcessChanged::EVENT_NAME, "process.changed");
-    assert_eq!(KittyEventSource::SOURCE_NAME, "terminal.kitty");
+    assert_eq!(KittyEventSource::SOURCE_NAME, "shell.kitty");
     Ok(())
 }
 
@@ -238,9 +238,9 @@ async fn test_scrollback_config_serialization(_ctx: TestContext) -> TestResult {
 /// Test scrollback event type constants
 #[sinex_test]
 async fn test_scrollback_event_types(_ctx: TestContext) -> TestResult {
-    assert_eq!(TerminalScrollbackCaptured::EVENT_NAME, "output.captured");
+    assert_eq!(TerminalScrollbackCaptured::EVENT_NAME, "scrollback.full");
     assert_eq!(CommandOutputCaptured::EVENT_NAME, "command.output");
-    assert_eq!(ScrollbackCapture::SOURCE_NAME, "terminal.scrollback");
+    assert_eq!(ScrollbackCapture::SOURCE_NAME, "shell.scrollback");
     Ok(())
 }
 

@@ -22,20 +22,20 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     let wm_event =
         RawEventBuilder::new("wm.hyprland", "window.focus", json!({"window_id": 123})).build();
 
-    queries::insert_event(ctx.pool(), &fs_event).await?;
-    queries::insert_event(ctx.pool(), &terminal_event).await?;
-    queries::insert_event(ctx.pool(), &wm_event).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &fs_event, None).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &terminal_event, None).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &wm_event, None).await?;
 
     // Query events by source
-    let fs_events = queries::get_events_by_source(ctx.pool(), "fs", 10).await?;
+    let fs_events = get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(!fs_events.is_empty());
     assert!(fs_events.iter().all(|e| e.source == "fs"));
 
-    let shell_events = queries::get_events_by_source(ctx.pool(), "shell.kitty", 10).await?;
+    let shell_events = get_events_by_source(ctx.pool(), "shell.kitty", 10).await?;
     assert!(!shell_events.is_empty());
     assert!(shell_events.iter().all(|e| e.source == "shell.kitty"));
 
-    let wm_events = queries::get_events_by_source(ctx.pool(), "wm.hyprland", 10).await?;
+    let wm_events = get_events_by_source(ctx.pool(), "wm.hyprland", 10).await?;
     assert!(!wm_events.is_empty());
     assert!(wm_events.iter().all(|e| e.source == "wm.hyprland"));
 
@@ -66,18 +66,18 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    queries::insert_event(ctx.pool(), &create_event).await?;
-    queries::insert_event(ctx.pool(), &modify_event).await?;
-    queries::insert_event(ctx.pool(), &delete_event).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &create_event, None).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &modify_event, None).await?;
+    sinex_db::events::insert_event_with_validator(ctx.pool(), &delete_event, None).await?;
 
     // Query events by type
-    let created_events = queries::get_events_by_type(ctx.pool(), "file.created", 10).await?;
+    let created_events = get_events_by_type(ctx.pool(), "file.created", 10).await?;
     assert!(!created_events.is_empty());
     assert!(created_events
         .iter()
         .all(|e| e.event_type == "file.created"));
 
-    let modified_events = queries::get_events_by_type(ctx.pool(), "file.modified", 10).await?;
+    let modified_events = get_events_by_type(ctx.pool(), "file.modified", 10).await?;
     assert!(!modified_events.is_empty());
     assert!(modified_events
         .iter()
@@ -89,7 +89,7 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = queries::upsert_agent_manifest(
+    let _agent = sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
         "test_agent",
         "1.0.0",

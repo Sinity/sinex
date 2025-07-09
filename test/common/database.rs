@@ -146,7 +146,7 @@ pub trait TestPoolExt {
 
 impl TestPoolExt for TestPool {
     async fn insert_test_event(&self, event: &RawEvent) -> Result<Ulid> {
-        let inserted_event = queries::insert_event(&self.inner, event).await?;
+        let inserted_event = sinex_db::events::insert_event_with_validator(&self.inner, event, None).await?;
         Ok(inserted_event.id)
     }
 

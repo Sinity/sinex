@@ -555,12 +555,75 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     Ok(exists.exists)
 }
 
+/// Helper for getting recent events
+pub async fn get_recent_events(pool: &DbPool, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        ORDER BY ts_ingest DESC
+        LIMIT $1
+        "#,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+        });
+    }
+    Ok(events)
+}
+
+/// Helper for getting events by type
+pub async fn get_events_by_type(pool: &DbPool, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        WHERE event_type = $1
+        ORDER BY ts_ingest DESC
+        LIMIT $2
+        "#,
+        event_type,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+        });
+    }
+    Ok(events)
+}
+
 /// Helper for getting a single event by ID
 pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> {
-    let event = sqlx::query_as!(
-        RawEvent,
+    let record = sqlx::query!(
         r#"
-        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
         FROM raw.events
         WHERE id::uuid = $1
         "#,
@@ -569,15 +632,24 @@ pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> 
     .fetch_one(pool)
     .await?;
 
-    Ok(event)
+    Ok(RawEvent {
+        id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+        source: record.source,
+        event_type: record.event_type,
+        host: record.host,
+        payload: record.payload,
+        ts_ingest: record.ts_ingest,
+        ts_orig: record.ts_orig,
+        ingestor_version: record.ingestor_version,
+        payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+    })
 }
 
 /// Helper for getting events by source
 pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
-    let events = sqlx::query_as!(
-        RawEvent,
+    let records = sqlx::query!(
         r#"
-        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
         FROM raw.events
         WHERE source = $1
         ORDER BY ts_ingest DESC
@@ -589,6 +661,20 @@ pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Re
     .fetch_all(pool)
     .await?;
 
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest,
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+        });
+    }
     Ok(events)
 }
 
