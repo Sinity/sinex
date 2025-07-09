@@ -3020,6 +3020,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-config"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "sinex-errors",
+ "toml",
+]
+
+[[package]]
 name = "sinex-core"
 version = "0.4.2"
 dependencies = [
@@ -3073,6 +3085,15 @@ dependencies = [
  "tracing",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "sinex-errors"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3251,6 +3272,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "sinex-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gethostname 0.4.3",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
 ]
 
 [[package]]
