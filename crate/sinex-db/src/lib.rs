@@ -34,6 +34,14 @@ pub use work_queue::{
     complete_work_queue_item,
     fail_work_queue_item,
     insert_dlq_event,
+    // Compatibility functions for old queries API
+    get_next_work_item,
+    get_work_item_by_id,
+    get_dlq_items,
+    add_to_work_queue_detailed,
+    fail_work_item,
+    complete_work_item,
+    insert_event,
 };
 pub use agent::{
     upsert_agent_manifest,

@@ -1,4 +1,5 @@
 use crate::common::prelude::*;
+use crate::common::create_test_agent;
 use proptest::prelude::*;
 use sinex_db::{
     events::insert_event_with_validator as insert_event_with_validator,

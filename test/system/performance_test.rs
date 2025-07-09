@@ -211,7 +211,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
         let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
-                queries::crate::common::insert_event_with_validator(
+                sinex_db::events::insert_event_with_validator(
                     &pool,
                     &format!("perf_test_{}", i),
                     &format!("test_event_{}", j),
@@ -260,7 +260,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult {
     // Insert test events
     for i in 0..100 {
-        queries::crate::common::insert_event_with_validator(
+        sinex_db::events::insert_event_with_validator(
             ctx.pool(),
             "concurrent_test",
             "process_me",
@@ -309,7 +309,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                     tokio::task::yield_now().await;
 
                     // Mark as processed
-                    queries::crate::common::insert_event_with_validator(
+                    sinex_db::events::insert_event_with_validator(
                         &pool,
                         "concurrent_test",
                         "processed",
@@ -362,7 +362,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
 async fn test_query_latency(ctx: TestContext) -> TestResult {
     // Insert test data
     for i in 0..1000 {
-        queries::crate::common::insert_event_with_validator(
+        sinex_db::events::insert_event_with_validator(
             ctx.pool(),
             "latency_test",
             if i % 2 == 0 { "type_a" } else { "type_b" },
@@ -544,7 +544,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                         tokio::time::sleep(Duration::from_millis(1)).await;
 
                         // Mark as processed
-                        queries::crate::common::insert_event_with_validator(
+                        sinex_db::events::insert_event_with_validator(
                             &pool_clone,
                             "scaling_test",
                             "processed",

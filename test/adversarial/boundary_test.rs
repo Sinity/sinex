@@ -192,7 +192,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
             json!({"operation_id": i})
         ).build();
         
-        match queries::crate::common::insert_event_with_validator(
+        match sinex_db::events::insert_event_with_validator(
             &mut *tx,
             &event.source,
             &event.event_type,

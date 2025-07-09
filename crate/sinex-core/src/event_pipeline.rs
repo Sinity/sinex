@@ -490,6 +490,7 @@ impl PipelineStage for DistributionStage {
 
 /// Complete event processing pipeline
 pub struct EventPipeline {
+    #[allow(dead_code)]
     config: PipelineConfig,
     validation_stage: ValidationStage,
     enrichment_stage: EnrichmentStage,

@@ -368,13 +368,16 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     let event_id = event.id;
     
     let input = CreateArtifactInput {
-        event_id,
+        created_from_event_id: Some(event_id),
         artifact_type: "screenshot".to_string(),
-        content_type: "image/png".to_string(),
-        size_bytes: 1024,
-        storage_path: "/artifacts/screenshot_123.png".to_string(),
+        title: "Screenshot".to_string(),
+        mime_type: Some("image/png".to_string()),
+        size_bytes: Some(1024),
+        original_path: Some("/artifacts/screenshot_123.png".to_string()),
         metadata: Some(json!({"width": 1920, "height": 1080})),
-        created_by: "screenshot_service".to_string(),
+        source_url: None,
+        checksum: None,
+        blob_id: None,
     };
 
     let artifact = create_artifact(ctx.pool(), input).await?;
@@ -397,13 +400,16 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     let event_id = event.id;
     
     let input = CreateArtifactInput {
-        event_id,
+        created_from_event_id: Some(event_id),
         artifact_type: "log_file".to_string(),
-        content_type: "text/plain".to_string(),
-        size_bytes: 2048,
-        storage_path: "/artifacts/log_456.txt".to_string(),
+        title: "Log File".to_string(),
+        mime_type: Some("text/plain".to_string()),
+        size_bytes: Some(2048),
+        original_path: Some("/artifacts/log_456.txt".to_string()),
         metadata: Some(json!({"lines": 150, "encoding": "utf-8"})),
-        created_by: "log_service".to_string(),
+        source_url: None,
+        checksum: None,
+        blob_id: None,
     };
 
     let created_artifact = create_artifact(ctx.pool(), input).await?;

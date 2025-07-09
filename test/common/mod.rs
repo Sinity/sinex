@@ -43,6 +43,7 @@ pub mod event_builders;
 pub use crate::common::prelude::*;
 use sinex_core::{sources, EventFactory, event_type_constants};
 use sinex_db::events as db_events;
+use sinex_db::query_helpers::{uuid_to_ulid, ulid_to_uuid};
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -572,15 +573,15 @@ pub async fn get_recent_events(pool: &DbPool, limit: i64) -> Result<Vec<RawEvent
     let mut events = Vec::new();
     for record in records {
         events.push(RawEvent {
-            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             host: record.host,
             payload: record.payload,
-            ts_ingest: record.ts_ingest,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
             ts_orig: record.ts_orig,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         });
     }
     Ok(events)
@@ -605,15 +606,15 @@ pub async fn get_events_by_type(pool: &DbPool, event_type: &str, limit: i64) -> 
     let mut events = Vec::new();
     for record in records {
         events.push(RawEvent {
-            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             host: record.host,
             payload: record.payload,
-            ts_ingest: record.ts_ingest,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
             ts_orig: record.ts_orig,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         });
     }
     Ok(events)
@@ -633,15 +634,15 @@ pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> 
     .await?;
 
     Ok(RawEvent {
-        id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+        id: uuid_to_ulid(record.id),
         source: record.source,
         event_type: record.event_type,
         host: record.host,
         payload: record.payload,
-        ts_ingest: record.ts_ingest,
+        ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
         ts_orig: record.ts_orig,
         ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
     })
 }
 
@@ -664,15 +665,15 @@ pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Re
     let mut events = Vec::new();
     for record in records {
         events.push(RawEvent {
-            id: Ulid::from_bytes(record.id.as_bytes().try_into().unwrap()),
+            id: uuid_to_ulid(record.id),
             source: record.source,
             event_type: record.event_type,
             host: record.host,
             payload: record.payload,
-            ts_ingest: record.ts_ingest,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
             ts_orig: record.ts_orig,
             ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(|uuid| Ulid::from_bytes(uuid.as_bytes().try_into().unwrap())),
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         });
     }
     Ok(events)

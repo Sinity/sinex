@@ -121,8 +121,8 @@ impl JsonToTypedAdapter {
 /// Example of how to set up the migration
 pub async fn setup_hybrid_collection() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create channels
-    let (json_tx, json_rx) = mpsc::channel::<RawEvent>(1000);
-    let (typed_tx, typed_rx) = typed_event_channel();
+    let (_json_tx, json_rx) = mpsc::channel::<RawEvent>(1000);
+    let (_typed_tx, typed_rx) = typed_event_channel();
     let (output_tx, mut output_rx) = mpsc::channel::<RawEvent>(2000);
     
     // Create hybrid collector

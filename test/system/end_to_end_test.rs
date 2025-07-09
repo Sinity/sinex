@@ -1507,7 +1507,7 @@ async fn test_full_pipeline_end_to_end(ctx: TestContext) -> TestResult {
         events_to_generate,
         generation_rate: 50,
     };
-    let ctx = events::test_context(serde_json::to_value(config)?);
+    let ctx = crate::common::event_sources::test_context(serde_json::to_value(config)?);
     let mut source = PipelineTestSource::initialize(ctx).await?;
     let source_events_generated = source.events_generated.clone();
 
