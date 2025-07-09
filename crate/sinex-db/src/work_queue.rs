@@ -197,3 +197,31 @@ pub async fn insert_dlq_event(
         resolved_by: record.resolved_by,
     })
 }
+
+/// Add an event to the work queue
+pub async fn add_to_work_queue(
+    pool: DbPoolRef<'_>,
+    event_id: Ulid,
+    agent_name: &str,
+    max_attempts: i32,
+) -> Result<Ulid> {
+    let queue_id = Ulid::new();
+    let event_uuid = ulid_to_uuid(event_id);
+    let queue_uuid = ulid_to_uuid(queue_id);
+    
+    sqlx::query!(
+        r#"
+        INSERT INTO sinex_schemas.work_queue 
+        (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
+        VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, 'pending', 0, $4, NOW())
+        "#,
+        queue_uuid,
+        event_uuid,
+        agent_name,
+        max_attempts
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(queue_id)
+}

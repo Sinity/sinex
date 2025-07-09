@@ -879,7 +879,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestRes
 
     // Simulate TTL cleanup (normally done by background job)
     let cleaned_up = sqlx::query!(
-        "DELETE FROM sinex_schemas.work_queue WHERE status = 'succeeded' AND processed_at < now() - interval '7 days' RETURNING queue_id"
+        "DELETE FROM sinex_schemas.work_queue WHERE status = 'succeeded' AND processed_at < now() - interval '7 days' RETURNING queue_id::text"
     )
     .fetch_all(ctx.pool())
     .await?;
@@ -976,7 +976,7 @@ async fn test_routing_cache_basic_functionality(ctx: TestContext) -> TestResult 
 
     // Query work queue to verify routing logic
     let work_items = sqlx::query!(
-        "SELECT queue_id, target_agent_name FROM sinex_schemas.work_queue WHERE raw_event_id = $1::uuid::ulid",
+        "SELECT queue_id::text, target_agent_name FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
         event_id.to_uuid()
     )
     .fetch_all(pool)

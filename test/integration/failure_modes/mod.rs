@@ -7,12 +7,5 @@
 //! - Performance degradation
 //!
 //! Each test is designed to verify graceful degradation and recovery.
-
-pub mod channel_backpressure_test;
-pub mod config_reload_test;
-pub mod connection_pool_test;
-pub mod database_failures_test;
-pub mod filesystem_failures_test;
-pub mod network_timeout_test;
-pub mod performance_degradation_test;
-pub mod worker_orphan_test;
+//!
+//! Failure mode tests have been consolidated into ../failure_modes_test.rs

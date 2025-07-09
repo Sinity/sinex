@@ -3,6 +3,7 @@
 use crate::error::{ServiceError, ServiceResult};
 use sinex_annex::BlobManager;
 use sinex_db::{artifacts, DbPool};
+use sinex_db::models::CreateArtifactInput;
 use std::sync::Arc;
 
 pub struct ContentService {
@@ -30,27 +31,32 @@ impl ContentService {
             .map_err(|e| ServiceError::OperationFailed(format!("Blob storage failed: {}", e)))?;
         
         // Create artifact record
-        let artifact = artifacts::create_artifact(
+        let _artifact = artifacts::create_artifact(
             &self.pool,
-            &blob_metadata.annex_key,
-            &blob_metadata.blob_id.to_string(),
-            source,
-            blob_metadata.size_bytes as i64,
-            None, // No associated event yet
+            CreateArtifactInput {
+                artifact_type: "blob".to_string(),
+                title: filename.to_string(),
+                source_url: None,
+                original_path: Some(filename.to_string()),
+                mime_type: Some(content_type.to_string()),
+                size_bytes: Some(blob_metadata.size_bytes),
+                checksum: Some(blob_metadata.checksum_sha256.clone()),
+                metadata: Some(serde_json::json!({
+                    "annex_key": blob_metadata.annex_key,
+                    "source": source,
+                })),
+                created_from_event_id: None,
+                blob_id: Some(blob_metadata.blob_id),
+            },
         )
         .await?;
         
-        Ok(artifact.annex_key)
+        Ok(blob_metadata.annex_key)
     }
     
     /// Retrieve content by annex key
     pub async fn retrieve_content(&self, annex_key: &str) -> ServiceResult<Vec<u8>> {
-        // First check if artifact exists
-        let artifact = artifacts::get_artifact_by_annex_key(&self.pool, annex_key)
-            .await?
-            .ok_or_else(|| ServiceError::NotFound(format!("Artifact not found: {}", annex_key)))?;
-        
-        // Retrieve from blob storage
+        // Retrieve from blob storage directly
         self.blob_manager
             .retrieve_content(annex_key)
             .await

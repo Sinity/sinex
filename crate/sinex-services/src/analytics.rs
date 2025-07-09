@@ -1,8 +1,9 @@
 //! Analytics service for event analysis and insights
 
-use crate::error::{ServiceError, ServiceResult};
+use crate::error::ServiceResult;
 use sinex_db::DbPool;
 use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::postgres::types::PgInterval;
 use std::collections::HashMap;
 
 pub struct AnalyticsService {
@@ -50,6 +51,12 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+        let interval = PgInterval {
+            months: 0,
+            days: 0,
+            microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
+        };
+        
         let rows = sqlx::query!(
             r#"
             SELECT 
@@ -60,8 +67,8 @@ impl AnalyticsService {
             ORDER BY count DESC
             LIMIT $2
             "#,
-            format!("{} minutes", bucket_size_minutes),
-            limit
+            interval,
+            limit as i64
         )
         .fetch_all(&self.pool)
         .await?;

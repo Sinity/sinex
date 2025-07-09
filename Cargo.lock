@@ -3020,6 +3020,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-config"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "sinex-core"
 version = "0.4.2"
 dependencies = [
@@ -3241,6 +3252,26 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-services"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sinex-annex",
+ "sinex-core",
+ "sinex-db",
+ "sinex-ulid",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

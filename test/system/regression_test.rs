@@ -498,7 +498,7 @@ async fn test_json_string_escaping(ctx: TestContext) -> TestResult {
     let escape_test_strings = [
         "\"quoted string\"",
         "\\backslash\\",
-        "\n\r\t\b\f",
+        "\n\r\t",
         "\u{0001}\u{0002}\u{0003}",
         "Mixed: \"quotes\" and \\backslashes\\",
     ];

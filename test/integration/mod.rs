@@ -86,24 +86,6 @@ pub mod failure_modes;
 pub mod infrastructure;
 
 // === Specific Integration Tests ===
-
-/// Query interface functionality testing
-pub mod query_interface_test;
-
-/// System startup coordination testing
-pub mod full_system_startup_test;
-
-/// Failure recovery mechanism testing
-pub mod failure_recovery_integration_test;
-
-/// Health monitoring integration testing
-pub mod health_monitoring_integration_test;
-
-/// Git Annex storage integration testing
-pub mod git_annex_full_integration_test;
-
-
-/// Deployment validation testing
-pub mod deployment_validation_test;
+// These tests have been consolidated into their respective test files
 
 

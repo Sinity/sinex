@@ -50,7 +50,7 @@ pub use sinex_core::{
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
     prelude::{AgentManifest, QueueStatus, WorkQueueItem},
-    queries, run_migrations, DbPool, RawEvent,
+    run_migrations, DbPool, RawEvent,
 };
 pub use sinex_ulid::Ulid;
 // ===== Async Runtime =====
@@ -90,9 +90,10 @@ pub use crate::common::timing_optimization::wait_helpers::{
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
-pub use sinex_db::queries::{
-    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items,
-    complete_work_queue_item, fail_work_queue_item, insert_raw_event,
+pub use sinex_db::{
+    work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item, fail_work_queue_item},
+    events::insert_event_with_validator as insert_raw_event,
+    metrics_queries::calculate_queue_depth_metrics,
 };
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{

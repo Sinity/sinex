@@ -14,16 +14,7 @@
 //! - Error handling and recovery
 //! - Performance under load
 
-/// Consolidated event source tests
-/// 
-/// This module consolidates tests from:
-/// - atuin_tests.rs (Atuin shell history integration)
-/// - atuin_tests_real.rs (Real Atuin integration tests)
-/// - event_source_tests.rs (Generic event source functionality)
-/// - kitty_comprehensive_test.rs (Comprehensive Kitty terminal tests)
-/// - lifecycle_management_test.rs (Event source lifecycle management)
-/// - terminal_tests.rs (Terminal event source tests)
-pub mod event_sources_test;
+// Event source tests are in the individual files in this directory
 
 /// Legacy event source tests (kept for reference)
 pub mod atuin_tests;

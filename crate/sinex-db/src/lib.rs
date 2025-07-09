@@ -29,6 +29,7 @@ pub use events::{
     insert_event_with_validator,
 };
 pub use work_queue::{
+    add_to_work_queue,
     claim_work_queue_items,
     complete_work_queue_item,
     fail_work_queue_item,

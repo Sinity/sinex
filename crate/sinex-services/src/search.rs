@@ -1,6 +1,6 @@
 //! Search service for querying events and content
 
-use crate::error::{ServiceError, ServiceResult};
+use crate::error::ServiceResult;
 use sinex_db::DbPool;
 use sinex_ulid::Ulid;
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,7 @@ impl SearchService {
         let results = rows
             .into_iter()
             .filter_map(|(event_id, source, event_type, timestamp, payload, score)| {
-                event_id.and_then(|id| Ulid::from_string(&id).ok()).map(|ulid| {
+                event_id.and_then(|id| id.parse::<Ulid>().ok()).map(|ulid| {
                     SearchResult {
                         event_id: ulid,
                         source,

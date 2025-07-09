@@ -1,7 +1,8 @@
 //! Personal Knowledge Management (PKM) service
 
-use crate::error::{ServiceError, ServiceResult};
-use sinex_db::{annotations, knowledge_graph, DbPool};
+use crate::error::ServiceResult;
+use sinex_db::{annotations, knowledge_graph, DbPool, ulid_to_uuid};
+use sinex_db::models::{CreateAnnotationInput, CreateEntityInput, CreateRelationInput};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 
@@ -29,7 +30,7 @@ impl PkmService {
         
         let annotation = annotations::create_annotation(
             &self.pool,
-            annotations::CreateAnnotationInput {
+            CreateAnnotationInput {
                 event_id,
                 annotation_type: "note".to_string(),
                 content: content.to_string(),
@@ -39,7 +40,7 @@ impl PkmService {
         )
         .await?;
         
-        Ok(annotation.id)
+        Ok(annotation.annotation_id)
     }
     
     /// Create knowledge graph entities from event
@@ -53,16 +54,20 @@ impl PkmService {
         for (name, entity_type) in entities {
             let entity = knowledge_graph::create_entity(
                 &self.pool,
-                knowledge_graph::CreateEntityInput {
-                    name,
+                CreateEntityInput {
                     entity_type,
-                    properties: serde_json::json!({}),
-                    source_event_id: Some(event_id),
+                    name,
+                    canonical_name: None,
+                    aliases: None,
+                    description: None,
+                    metadata: Some(serde_json::json!({
+                        "source_event_id": event_id.to_string()
+                    })),
                 },
             )
             .await?;
             
-            entity_ids.push(entity.id);
+            entity_ids.push(entity.entity_id);
         }
         
         Ok(entity_ids)
@@ -76,18 +81,22 @@ impl PkmService {
         relationship_type: &str,
         properties: HashMap<String, serde_json::Value>,
     ) -> ServiceResult<Ulid> {
-        let relationship = knowledge_graph::create_relationship(
+        let relationship = knowledge_graph::create_relation(
             &self.pool,
-            knowledge_graph::CreateRelationshipInput {
+            CreateRelationInput {
                 from_entity_id,
                 to_entity_id,
-                relationship_type: relationship_type.to_string(),
-                properties: serde_json::json!(properties),
+                relation_type: relationship_type.to_string(),
+                strength: None,
+                metadata: Some(serde_json::json!(properties)),
+                valid_from: None,
+                valid_until: None,
+                created_from_event_id: None,
             },
         )
         .await?;
         
-        Ok(relationship.id)
+        Ok(relationship.relation_id)
     }
     
     /// Search for similar events based on content
@@ -99,9 +108,10 @@ impl PkmService {
         // This is a simplified implementation
         // In a real system, you'd use vector embeddings or full-text search
         
+        let event_uuid = ulid_to_uuid(event_id);
         let event = sqlx::query!(
-            "SELECT source, event_type FROM raw.events WHERE id = $1::uuid",
-            event_id.to_uuid()
+            "SELECT source, event_type FROM raw.events WHERE id::uuid = $1",
+            event_uuid
         )
         .fetch_one(&self.pool)
         .await?;
@@ -110,29 +120,33 @@ impl PkmService {
             r#"
             SELECT id::text as event_id, 
                    CASE 
-                     WHEN source = $1 AND event_type = $2 THEN 1.0
-                     WHEN source = $1 THEN 0.8
-                     WHEN event_type = $2 THEN 0.6
-                     ELSE 0.4
-                   END as similarity
+                     WHEN source = $1 AND event_type = $2 THEN 1.0::float8
+                     WHEN source = $1 THEN 0.8::float8
+                     WHEN event_type = $2 THEN 0.6::float8
+                     ELSE 0.4::float8
+                   END as "similarity!"
             FROM raw.events
-            WHERE id != $3::uuid
-            ORDER BY similarity DESC
+            WHERE id::uuid != $3
+            ORDER BY CASE 
+                     WHEN source = $1 AND event_type = $2 THEN 1.0::float8
+                     WHEN source = $1 THEN 0.8::float8
+                     WHEN event_type = $2 THEN 0.6::float8
+                     ELSE 0.4::float8
+                   END DESC
             LIMIT $4
             "#,
             event.source,
             event.event_type,
-            event_id.to_uuid(),
-            limit
+            event_uuid,
+            limit as i64
         )
         .fetch_all(&self.pool)
         .await?;
         
         Ok(similar
             .into_iter()
-            .filter_map(|r| match (r.event_id, r.similarity) {
-                (Some(id), Some(sim)) => Ulid::from_string(&id).ok().map(|ulid| (ulid, sim)),
-                _ => None,
+            .filter_map(|r| {
+                r.event_id.and_then(|id| id.parse::<Ulid>().ok().map(|ulid| (ulid, r.similarity)))
             })
             .collect())
     }
