@@ -71,7 +71,8 @@ pub use crate::common::event_builders::EventBuilder;
 // Database helpers
 // NEW: Unified database access
 // pub use crate::common::create_test_db_pool;
-pub use crate::common::database::TestPoolExt;
+// Database pool access
+pub use crate::common::database_pool::acquire_test_database;
 pub use crate::common::database_helpers::{
     create_test_event,
     // create_test_agent, purge_old_work_queue_items - available but unused currently

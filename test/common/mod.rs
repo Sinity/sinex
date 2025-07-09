@@ -23,14 +23,8 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
-// Unified database access
-pub mod database;
-
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;
-
-// Consolidated test assertions and utilities
-pub mod consolidated_assertions;
 
 // Unified test context for all tests
 pub mod test_context;
@@ -53,8 +47,7 @@ pub fn test_database_url() -> String {
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<DbPool> {
-    let test_pool = database::TestPool::with_strategy(database::CleanupStrategy::None).await?;
-    Ok(test_pool.pool().clone())
+    database_pool::acquire_test_database().await
 }
 
 /// Insert any event into database (renamed for clarity)

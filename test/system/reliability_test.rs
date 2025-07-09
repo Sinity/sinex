@@ -20,7 +20,7 @@
 //! - **Resource usage**: High CPU/memory usage, significant database load
 //! - **Dependencies**: Full system integration with external services
 
-use crate::common::database::{CleanupStrategy, TestPool};
+use crate::common::database_pool::acquire_test_database;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 // use sinex_db::events::insert_event_with_validator as insert_event_with_validator; // Unused import removed
@@ -42,11 +42,11 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         Ulid::new().to_string().to_lowercase()
     );
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+    let base_pool = acquire_test_database().await?;
 
     // Create test database
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(base_pool.pool())
+        .execute(&base_pool)
         .await?;
 
     let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
@@ -223,7 +223,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(base_pool.pool())
+        .execute(&base_pool)
         .await
         .ok();
 
@@ -792,10 +792,10 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         Ulid::new().to_string().to_lowercase()
     );
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+    let base_pool = acquire_test_database().await?;
 
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(base_pool.pool())
+        .execute(&base_pool)
         .await?;
 
     let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
@@ -1114,7 +1114,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(base_pool.pool())
+        .execute(&base_pool)
         .await
         .ok();
 

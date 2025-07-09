@@ -106,3 +106,12 @@ pub mod api_test;
 
 /// Tests for configuration validation and management
 pub mod configuration_test;
+
+/// Consolidated database unit tests
+pub mod database_test;
+
+/// Consolidated terminal unit tests  
+pub mod terminal_test;
+
+/// Consolidated ULID unit tests
+pub mod ulid_test;
