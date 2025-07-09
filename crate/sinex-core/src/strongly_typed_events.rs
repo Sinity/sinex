@@ -395,6 +395,223 @@ pub fn typed_event_channel() -> (TypedEventSender, TypedEventReceiver) {
     tokio::sync::mpsc::unbounded_channel()
 }
 
+// ============================================================================
+// Event Builder Helpers
+// ============================================================================
+
+/// Helper methods for creating typed filesystem events
+pub struct TypedFilesystemEventBuilder {
+    source: String,
+}
+
+impl TypedFilesystemEventBuilder {
+    pub fn new(source: impl Into<String>) -> Self {
+        Self { source: source.into() }
+    }
+    
+    pub fn file_created(self, path: impl Into<String>, size: u64, permissions: Option<u32>) -> EventEnvelope {
+        let payload = FileCreatedPayload {
+            path: path.into(),
+            size,
+            created_at: Utc::now(),
+            permissions,
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "file.created", payload).build();
+        EventEnvelope::FileCreated(event)
+    }
+    
+    pub fn file_modified(self, path: impl Into<String>, size: u64, modification_type: impl Into<String>) -> EventEnvelope {
+        let payload = FileModifiedPayload {
+            path: path.into(),
+            size,
+            modified_at: Utc::now(),
+            modification_type: modification_type.into(),
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "file.modified", payload).build();
+        EventEnvelope::FileModified(event)
+    }
+    
+    pub fn file_deleted(self, path: impl Into<String>) -> EventEnvelope {
+        let payload = FileDeletedPayload {
+            path: path.into(),
+            deleted_at: Utc::now(),
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "file.deleted", payload).build();
+        EventEnvelope::FileDeleted(event)
+    }
+    
+    pub fn file_moved(self, path: impl Into<String>, old_path: Option<String>) -> EventEnvelope {
+        let payload = FileMovedPayload {
+            path: path.into(),
+            old_path,
+            moved_at: Utc::now(),
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "file.moved", payload).build();
+        EventEnvelope::FileMoved(event)
+    }
+    
+    pub fn dir_created(self, path: impl Into<String>, permissions: Option<u32>) -> EventEnvelope {
+        let payload = DirCreatedPayload {
+            path: path.into(),
+            created_at: Utc::now(),
+            permissions,
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "dir.created", payload).build();
+        EventEnvelope::DirCreated(event)
+    }
+    
+    pub fn dir_deleted(self, path: impl Into<String>) -> EventEnvelope {
+        let payload = DirDeletedPayload {
+            path: path.into(),
+            deleted_at: Utc::now(),
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "dir.deleted", payload).build();
+        EventEnvelope::DirDeleted(event)
+    }
+}
+
+/// Helper methods for creating typed terminal events
+pub struct TypedTerminalEventBuilder {
+    source: String,
+}
+
+impl TypedTerminalEventBuilder {
+    pub fn new(source: impl Into<String>) -> Self {
+        Self { source: source.into() }
+    }
+    
+    pub fn command_executed(
+        self,
+        command: impl Into<String>,
+        working_directory: Option<String>,
+        exit_status: Option<i32>,
+        execution_time_ms: Option<u64>,
+        shell_type: Option<String>,
+    ) -> EventEnvelope {
+        let payload = CommandExecutedPayload {
+            command: command.into(),
+            working_directory,
+            exit_status,
+            execution_time_ms,
+            shell_type,
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "command.executed", payload).build();
+        EventEnvelope::CommandExecuted(event)
+    }
+    
+    pub fn session_started(
+        self,
+        session_id: impl Into<String>,
+        terminal_type: impl Into<String>,
+        shell: impl Into<String>,
+        working_directory: impl Into<String>,
+    ) -> EventEnvelope {
+        let payload = SessionStartedPayload {
+            session_id: session_id.into(),
+            terminal_type: terminal_type.into(),
+            shell: shell.into(),
+            working_directory: working_directory.into(),
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "session.started", payload).build();
+        EventEnvelope::SessionStarted(event)
+    }
+}
+
+/// Helper methods for creating typed clipboard events
+pub struct TypedClipboardEventBuilder {
+    source: String,
+}
+
+impl TypedClipboardEventBuilder {
+    pub fn new(source: impl Into<String>) -> Self {
+        Self { source: source.into() }
+    }
+    
+    pub fn content_copied(
+        self,
+        content_type: impl Into<String>,
+        content_size: u64,
+        text_preview: Option<String>,
+        content_hash: Option<String>,
+        source_app: Option<String>,
+    ) -> EventEnvelope {
+        let payload = ClipboardCopiedPayload {
+            content_type: content_type.into(),
+            content_size,
+            text_preview,
+            content_hash,
+            source_app,
+        };
+        
+        let event = TypedEventBuilder::new(self.source, "copied", payload).build();
+        EventEnvelope::ContentCopied(event)
+    }
+}
+
+// ============================================================================
+// Migration Adapters
+// ============================================================================
+
+/// Adapter to convert typed events to JSON events during migration
+pub struct TypedToJsonAdapter {
+    typed_rx: TypedEventReceiver,
+    json_tx: crate::EventSender,
+}
+
+impl TypedToJsonAdapter {
+    pub fn new(typed_rx: TypedEventReceiver, json_tx: crate::EventSender) -> Self {
+        Self { typed_rx, json_tx }
+    }
+    
+    /// Run the adapter, converting typed events to JSON events
+    pub async fn run(mut self) -> crate::Result<()> {
+        while let Some(envelope) = self.typed_rx.recv().await {
+            let json_event = envelope.to_json_event();
+            if let Err(e) = self.json_tx.send(json_event).await {
+                return Err(crate::CoreError::Other(format!("Failed to send converted event: {}", e)));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Adapter for legacy event sources during migration
+pub struct LegacyEventSourceAdapter<S: crate::EventSource> {
+    inner: S,
+}
+
+impl<S: crate::EventSource> LegacyEventSourceAdapter<S> {
+    pub fn new(source: S) -> Self {
+        Self { inner: source }
+    }
+    
+    pub async fn run_with_adapter(mut self, json_tx: crate::EventSender) -> crate::Result<()> {
+        // Create typed channel
+        let (typed_tx, typed_rx) = typed_event_channel();
+        
+        // Create and spawn adapter
+        let adapter = TypedToJsonAdapter::new(typed_rx, json_tx.clone());
+        let adapter_handle = tokio::spawn(adapter.run());
+        
+        // Run the legacy source (it will still send JSON events)
+        let result = self.inner.stream_events(json_tx).await;
+        
+        // Shutdown adapter
+        drop(typed_tx);
+        let _ = adapter_handle.await;
+        
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

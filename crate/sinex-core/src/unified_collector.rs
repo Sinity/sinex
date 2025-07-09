@@ -81,6 +81,29 @@ pub trait EventSource: Send + Sync + 'static {
     }
 }
 
+/// Trait for strongly-typed event sources (new architecture)
+#[async_trait]
+pub trait TypedEventSource: Send + Sync + 'static {
+    /// Configuration type for this source
+    type Config: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static;
+
+    /// Canonical source name
+    const SOURCE_NAME: &'static str;
+
+    /// Initialize the source with context containing config and shared resources
+    async fn initialize(ctx: crate::EventSourceContext) -> Result<Self>
+    where
+        Self: Sized;
+
+    /// Stream strongly-typed events
+    async fn stream_events(&mut self, tx: crate::strongly_typed_events::TypedEventSender) -> Result<()>;
+
+    /// Graceful shutdown
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// Trait to support both single sources and tuples of sources
 pub trait EventSourceProvider: Send + Sync + 'static {
     const SOURCE_NAME: &'static str;
