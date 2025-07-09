@@ -13,7 +13,7 @@ use sinex_core::{
     sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
     Result, Timestamp, chunking::ChunkingService, EventFactory, ErrorContext, CoreError, RawEvent, timeouts,
 };
-use sinex_annex::{GitAnnex, AnnexConfig};
+use sinex_annex::{BlobManager, AnnexConfig};
 
 // ============================================================================
 // Event Payloads
@@ -161,7 +161,7 @@ pub struct ScrollbackCapture {
     last_scrollback_hashes: HashMap<u32, u64>,
     command_event_rx: Option<mpsc::Receiver<CommandExecutedEvent>>,
     chunking_service: Option<ChunkingService>,
-    git_annex: Option<GitAnnex>,
+    blob_manager: Option<BlobManager>,
     event_factory: EventFactory,
 }
 
@@ -186,41 +186,48 @@ impl EventSource for ScrollbackCapture {
 
         info!("Initializing scrollback capture");
 
-        // Initialize git-annex if configured
+        // Initialize BlobManager if configured with both annex path and database
         let annex_repo_path = ctx
             .annex_repo_path
             .clone()
             .or(config.git_annex_repo.as_ref().map(|p| p.to_string_lossy().to_string()));
-        let git_annex = if let Some(ref repo_path) = annex_repo_path {
-            let path = std::path::PathBuf::from(repo_path);
+            
+        let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
+            (Some(repo_path), Some(db_pool)) => {
+                let path = std::path::PathBuf::from(repo_path);
 
-            // Initialize git-annex repository if it doesn't exist
-            if !path.join(".git").exists() {
-                GitAnnex::init(&path, Some("sinex-scrollback-annex"))
-                    .await
-                    .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
-                        .with_operation("initialize_scrollback_capture")
-                        .with_context("repo_path", path.display().to_string())
-                        .with_context("repo_name", "sinex-scrollback-annex")
-                        .build())?;
+                // Initialize git-annex repository if it doesn't exist
+                if !path.join(".git").exists() {
+                    use sinex_annex::GitAnnex;
+                    GitAnnex::init(&path, Some("sinex-scrollback-annex"))
+                        .await
+                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                            .with_operation("initialize_scrollback_capture")
+                            .with_context("repo_path", path.display().to_string())
+                            .with_context("repo_name", "sinex-scrollback-annex")
+                            .build())?;
+                }
+
+                let annex_config = AnnexConfig {
+                    repo_path: path.clone(),
+                    num_copies: Some(2),
+                    large_files: None,
+                };
+
+                match BlobManager::new(annex_config, db_pool.clone()) {
+                    Ok(manager) => Some(manager),
+                    Err(e) => {
+                        error!("Failed to create BlobManager: {}. Large scrollback content will not be stored.", e);
+                        None
+                    }
+                }
             }
-
-            let annex_config = AnnexConfig {
-                repo_path: path.clone(),
-                num_copies: Some(2),
-                large_files: None,
-            };
-
-            let git_annex = GitAnnex::new(annex_config).map_err(|e| 
-                ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
-                    .with_operation("initialize_scrollback_capture")
-                    .with_context("repo_path", path.display().to_string())
-                    .build()
-            )?;
-
-            Some(git_annex)
-        } else {
-            None
+            _ => {
+                if annex_repo_path.is_some() && ctx.db_pool.is_none() {
+                    info!("Git-annex path configured but no database connection available. Large scrollback content will not be stored.");
+                }
+                None
+            }
         };
 
         let chunking_service = if config.enable_chunking {
@@ -235,7 +242,7 @@ impl EventSource for ScrollbackCapture {
             last_scrollback_hashes: HashMap::new(),
             command_event_rx: None,
             chunking_service,
-            git_annex,
+            blob_manager,
             event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
     }
@@ -571,8 +578,8 @@ impl ScrollbackCapture {
         window: &KittyWindow,
         scrollback: &ScrollbackText,
     ) -> Result<(String, String)> {
-        let git_annex = self.git_annex.as_ref()
-            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("Git-annex not configured".to_string()))
+        let blob_manager = self.blob_manager.as_ref()
+            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("BlobManager not configured".to_string()))
                 .with_operation("store_in_git_annex")
                 .build())?;
 
@@ -582,30 +589,21 @@ impl ScrollbackCapture {
             timestamp, window.title, window.id
         );
 
-        // Write content to temporary file first
-        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let tmp_file_path = std::path::PathBuf::from(&tmp_dir).join(&filename);
-        
-        tokio::fs::write(&tmp_file_path, &scrollback.text)
-            .await
-            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
-                .with_operation("store_in_git_annex")
-                .with_context("tmp_file", tmp_file_path.display().to_string())
-                .build())?;
-
-        // Add file to git-annex
-        let annex_key = git_annex.add_file(&tmp_file_path).await
-            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
+        // Use BlobManager to ingest content directly
+        let metadata = blob_manager.ingest_from_bytes(
+            scrollback.text.as_bytes(),
+            &filename,
+            "text/plain"
+        ).await
+            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to ingest scrollback content: {}", e)))
                 .with_operation("store_in_git_annex")
                 .with_context("filename", &filename)
                 .with_context("window_id", window.id.to_string())
                 .build())?;
 
-        // Clean up temporary file
-        let _ = tokio::fs::remove_file(&tmp_file_path).await;
-
-        debug!("Stored scrollback in git-annex: {} -> {}", filename, annex_key.key);
-        Ok((filename, annex_key.key))
+        debug!("Stored scrollback via BlobManager: {} -> {} (blob_id: {})", 
+                filename, metadata.annex_key, metadata.blob_id);
+        Ok((filename, metadata.annex_key))
     }
 
     #[allow(clippy::type_complexity)]
