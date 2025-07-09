@@ -8,42 +8,52 @@
 //! - Basic database operations and transactions
 //! - TimescaleDB hypertable functionality
 //! - ULID primary key integration
-
-#![allow(dead_code)]
 //! - JSON schema validation with pg_jsonschema
 //! - Work queue operations and TTL
 //! - Connection pool edge cases and limits
 //! - Query performance and optimization
 //! - Data integrity and consistency
+//!
+//! # Migration Status
+//! This module is being consolidated from 10 separate test files into a single
+//! comprehensive test file. The individual test files are being phased out in favor
+//! of the consolidated approach.
 
-/// Core database integration tests
+#![allow(dead_code)]
+
+// CONSOLIDATED: All database integration tests are now in the parent directory
+// as ../database_test.rs. This provides better organization and reduces
+// test file fragmentation.
+
+// Legacy test modules - these will be removed once migration is complete
+/// Core database integration tests (LEGACY - being consolidated)
 pub mod database_integration_tests;
 
-/// TimescaleDB-specific functionality tests
+/// TimescaleDB-specific functionality tests (LEGACY - being consolidated)
 pub mod timescaledb_tests;
 
-/// ULID integration and conversion tests
+/// ULID integration and conversion tests (LEGACY - being consolidated)
 pub mod ulid_integration_tests;
 
-/// JSON schema validation tests (pg_jsonschema)
+/// JSON schema validation tests (LEGACY - being consolidated)
 pub mod jsonschema_validation_tests;
 
-/// Schema validation and management tests
+/// Schema validation and management tests (LEGACY - being consolidated)
 pub mod schema_validation_tests;
 
-/// Work queue functionality tests
+/// Work queue functionality tests (LEGACY - being consolidated)
 pub mod work_queue_tests;
 
-/// Work queue TTL and cleanup tests
+/// Work queue TTL and cleanup tests (LEGACY - being consolidated)
 pub mod work_queue_ttl_tests;
 
-/// Routing cache functionality tests
+/// Routing cache functionality tests (LEGACY - being consolidated)
 pub mod routing_cache_tests;
 
-/// Queue metrics and monitoring tests
+/// Queue metrics and monitoring tests (LEGACY - being consolidated)
 pub mod queue_metrics_tests;
 
-/// Connection pool edge cases and stress tests
+/// Connection pool edge cases and stress tests (LEGACY - being consolidated)
 pub mod connection_pool_edge_cases_test;
 
 /// Common utilities for database testing

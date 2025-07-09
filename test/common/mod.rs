@@ -554,6 +554,43 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     Ok(exists.exists)
 }
 
+/// Helper for getting a single event by ID
+pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> {
+    let event = sqlx::query_as!(
+        RawEvent,
+        r#"
+        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        FROM raw.events
+        WHERE id::uuid = $1
+        "#,
+        event_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(event)
+}
+
+/// Helper for getting events by source
+pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
+    let events = sqlx::query_as!(
+        RawEvent,
+        r#"
+        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        FROM raw.events
+        WHERE source = $1
+        ORDER BY ts_ingest DESC
+        LIMIT $2
+        "#,
+        source,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(events)
+}
+
 /// Macros for common test patterns
 #[macro_export]
 macro_rules! test_event_insertion {
@@ -866,9 +903,6 @@ pub mod resources {
 
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AgentManifest;
-pub use sinex_db::events::{
-    get_event_by_id,
-};
 // Note: Some query functions may need to be migrated to domain modules
 pub mod channel_test_utils;
 pub mod config_test_utils;

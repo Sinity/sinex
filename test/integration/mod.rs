@@ -59,6 +59,9 @@
 /// Database operations integrated with business logic
 pub mod database;
 
+/// Consolidated database integration tests (replaces database/*)
+pub mod database_test;
+
 /// Event collection and coordination testing
 pub mod collector;
 
