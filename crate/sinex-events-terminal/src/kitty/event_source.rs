@@ -12,23 +12,8 @@ use std::time::{Duration, SystemTime};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
 
-/// Configuration for Kitty event source
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KittyConfig {
-    pub poll_interval_seconds: u64,
-    pub socket_path: Option<String>,
-    pub enabled: bool,
-}
-
-impl Default for KittyConfig {
-    fn default() -> Self {
-        Self {
-            poll_interval_seconds: 5,
-            socket_path: None,
-            enabled: true,
-        }
-    }
-}
+use super::config::KittyConfig;
+use super::state::{KittyProcessInfo, KittyWindowState, KittyProcess, KittyWindow};
 
 /// Kitty terminal command completion event (command + output)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,13 +125,6 @@ pub struct KittyProcessChangedPayload {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct KittyProcessInfo {
-    pub pid: u32,
-    pub name: String,
-    pub cmdline: Option<String>,
-    pub parent_pid: Option<u32>,
-}
 
 /// Kitty scrollback incremental capture event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,29 +163,10 @@ pub struct KittyEventSource {
     operation_backoff: BackoffHelper,
 }
 
-#[derive(Debug, Clone)]
-struct KittyWindowState {
-    tab_id: String,
-    last_command: Option<String>,
-    last_prompt_time: Option<SystemTime>,
-}
 
 
 
-#[derive(Debug, Deserialize)]
-struct KittyWindow {
-    id: i64,
-    cwd: Option<String>,
-    foreground_processes: Vec<KittyProcess>,
-    last_cmd_exit_status: Option<i32>,
-    parent_tab_id: String,
-}
 
-#[derive(Debug, Deserialize)]
-struct KittyProcess {
-    pid: u32,
-    name: String,
-}
 
 impl KittyEventSource {
     pub fn new() -> Self {

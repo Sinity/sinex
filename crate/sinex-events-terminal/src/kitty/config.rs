@@ -1,10 +1,6 @@
-/// Configuration for Kitty event source
-/// 
-/// This module defines the configuration structure and defaults
-/// for the Kitty terminal monitor.
-
 use serde::{Deserialize, Serialize};
 
+/// Configuration for Kitty event source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KittyConfig {
     pub poll_interval_seconds: u64,

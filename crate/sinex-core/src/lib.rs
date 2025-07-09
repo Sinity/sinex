@@ -18,6 +18,7 @@ pub mod retry_helpers;
 pub mod sqlite_helpers;
 pub mod timestamp_helpers;
 pub mod unified_collector;
+pub mod unified_event_source;
 pub mod validation;
 pub mod validation_chains;
 pub mod wait_helpers;
@@ -68,6 +69,7 @@ pub use timestamp_helpers::{
     timestamp_micros_to_datetime, timestamp_nanos_to_datetime, parse_flexible_timestamp,
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
+pub use unified_event_source::{UnifiedEventSource, TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 pub use wait_helpers::{
