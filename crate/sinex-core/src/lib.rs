@@ -19,6 +19,7 @@ pub mod sqlite_helpers;
 pub mod timestamp_helpers;
 pub mod unified_collector;
 pub mod unified_event_source;
+pub mod strongly_typed_events;
 pub mod validation;
 pub mod validation_chains;
 pub mod wait_helpers;
@@ -70,6 +71,13 @@ pub use timestamp_helpers::{
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
 pub use unified_event_source::{UnifiedEventSource, TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder};
+pub use strongly_typed_events::{
+    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
+    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
+    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
+    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
+    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload
+};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 pub use wait_helpers::{
