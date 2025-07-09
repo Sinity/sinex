@@ -720,5 +720,197 @@ class TestErrorHandlingComprehensive:
             assert result.exit_code != 0
 
 
+class TestEventSummaryExtraction:
+    """Test event summary extraction logic."""
+    
+    def test_hyprland_summaries(self):
+        """Test Hyprland event summary extraction."""
+        # Window focused
+        summary = exo.extract_event_summary(
+            'hyprland',
+            'window_focused',
+            {
+                'app_class': 'firefox',
+                'window_title': 'GitHub - Very Long Title That Should Be Truncated'
+            }
+        )
+        assert 'firefox:' in summary
+        assert len(summary) <= 60
+        
+        # Workspace changed
+        summary = exo.extract_event_summary(
+            'hyprland',
+            'workspace_changed',
+            {'workspace_id': 3}
+        )
+        assert summary == 'Workspace 3'
+        
+        # State snapshot
+        summary = exo.extract_event_summary(
+            'hyprland',
+            'state_snapshot',
+            {
+                'clients': [1, 2, 3],
+                'workspaces': [1, 2]
+            }
+        )
+        assert '3 windows, 2 workspaces' in summary
+    
+    def test_kitty_summaries(self):
+        """Test Kitty terminal event summary extraction."""
+        summary = exo.extract_event_summary(
+            'terminal.kitty',
+            'command_executed',
+            {
+                'command_string': 'git commit -m "Very long commit message that should be truncated"',
+                'exit_code': 0
+            }
+        )
+        assert '[0]' in summary
+        assert 'git commit' in summary
+        assert len(summary) <= 60
+    
+    def test_filesystem_summaries(self):
+        """Test filesystem event summary extraction."""
+        # File created
+        summary = exo.extract_event_summary(
+            'filesystem',
+            'file_created',
+            {'path': '/home/user/documents/test.txt'}
+        )
+        assert summary == 'test.txt'
+        
+        # File renamed
+        summary = exo.extract_event_summary(
+            'filesystem',
+            'file_renamed',
+            {
+                'path': '/tmp/old_name.txt',
+                'new_path': '/tmp/new_name.txt'
+            }
+        )
+        assert summary == 'old_name.txt → new_name.txt'
+    
+    def test_sinex_summaries(self):
+        """Test Sinex agent event summary extraction."""
+        # Heartbeat
+        summary = exo.extract_event_summary(
+            'sinex',
+            'agent.heartbeat',
+            {
+                'agent_name': 'unified-collector',
+                'status': 'running'
+            }
+        )
+        assert summary == 'unified-collector: running'
+        
+        # Error
+        summary = exo.extract_event_summary(
+            'sinex',
+            'agent.error',
+            {
+                'agent_name': 'unified-collector',
+                'severity': 'warning'
+            }
+        )
+        assert summary == 'unified-collector [warning]'
+    
+    def test_fallback_summary(self):
+        """Test fallback summary extraction."""
+        # Unknown event with common fields
+        summary = exo.extract_event_summary(
+            'unknown',
+            'unknown_event',
+            {
+                'message': 'This is a test message',
+                'other_field': 'ignored'
+            }
+        )
+        assert summary == 'This is a test message'
+        
+        # No recognizable fields
+        summary = exo.extract_event_summary(
+            'unknown',
+            'unknown_event',
+            {'random': 'data'}
+        )
+        assert "{'random': 'data'}" in summary
+
+
+class TestJQFilter:
+    """Test JQ filter functionality."""
+    
+    @mock.patch('subprocess.run')
+    @mock.patch('tempfile.NamedTemporaryFile')
+    def test_apply_jq_filter_success(self, mock_temp, mock_run):
+        """Test successful JQ filter application."""
+        # Mock temp file
+        mock_file = mock.MagicMock()
+        mock_file.name = '/tmp/test.json'
+        mock_temp.return_value.__enter__.return_value = mock_file
+        
+        # Mock jq output
+        mock_run.return_value.stdout = '[{"filtered": "data"}]'
+        mock_run.return_value.check = True
+        
+        events = [
+            {'payload': {'original': 'data', 'extra': 'field'}}
+        ]
+        
+        result = exo.apply_jq_filter(events, '.filtered')
+        
+        assert len(result) == 1
+        assert result[0]['payload'] == {'filtered': 'data'}
+    
+    @mock.patch('subprocess.run')
+    def test_apply_jq_filter_error(self, mock_run):
+        """Test JQ filter error handling."""
+        mock_run.side_effect = Exception("JQ error")
+        
+        events = [{'payload': {'test': 'data'}}]
+        result = exo.apply_jq_filter(events, 'invalid')
+        
+        # Should return original events on error
+        assert result == events
+
+
+class TestTimeParsing:
+    """Test time parsing utilities."""
+    
+    def test_parse_time_delta(self):
+        """Test parsing time delta strings."""
+        assert exo.parse_time_delta('1h') == timedelta(hours=1)
+        assert exo.parse_time_delta('30m') == timedelta(minutes=30)
+        assert exo.parse_time_delta('2d') == timedelta(days=2)
+        assert exo.parse_time_delta('1w') == timedelta(weeks=1)
+        assert exo.parse_time_delta('45s') == timedelta(seconds=45)
+        
+        with pytest.raises(ValueError):
+            exo.parse_time_delta('1x')  # Invalid unit
+        
+        with pytest.raises(ValueError):
+            exo.parse_time_delta('abc')  # No number
+    
+    def test_parse_datetime(self):
+        """Test parsing datetime strings."""
+        # Full datetime
+        dt = exo.parse_datetime('2025-01-09 14:30:00')
+        assert dt.year == 2025
+        assert dt.month == 1
+        assert dt.day == 9
+        assert dt.hour == 14
+        assert dt.minute == 30
+        
+        # Time only (uses today's date)
+        dt = exo.parse_datetime('14:30')
+        assert dt.hour == 14
+        assert dt.minute == 30
+        assert dt.date() == datetime.now().date()
+        
+        # Invalid format
+        with pytest.raises(ValueError):
+            exo.parse_datetime('not-a-date')
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

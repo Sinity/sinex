@@ -65,12 +65,6 @@ pub mod database_test;
 /// Event collection and coordination testing
 pub mod collector;
 
-/// Event processing and work distribution testing
-pub mod worker;
-
-/// Event source implementation testing
-pub mod event_sources;
-
 /// Consolidated event source integration tests
 pub mod event_sources_test;
 
@@ -78,9 +72,6 @@ pub mod event_sources_test;
 pub mod agent;
 
 // === System Integration ===
-
-/// Failure handling across component boundaries
-pub mod failure_modes;
 
 /// Infrastructure component coordination
 pub mod infrastructure;

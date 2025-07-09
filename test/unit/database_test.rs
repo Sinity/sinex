@@ -13,6 +13,10 @@ use sinex_db::work_queue::claim_work_queue_items;
 use sinex_core::{typed_sources, typed_event_types};
 use sinex_db::validation::EventValidator;
 use sinex_db::models::*;
+use sinex_db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use std::sync::{Arc, atomic::{AtomicU32, AtomicBool}};
+use serde_json::json;
+use sqlx::types::Uuid;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -775,6 +779,674 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
     let _result = queries::insert_event(ctx.pool(), &invalid_event).await;
     // Result can be Ok or Err - we're testing that it handles it gracefully
 
+    Ok(())
+}
+
+// =============================================================================
+// DATABASE VERIFICATION TESTS (from database_verification_test.rs)
+// =============================================================================
+
+/// Test database connectivity verification
+#[sinex_test]
+async fn test_database_connectivity_verification(ctx: TestContext) -> TestResult {
+    let (status, details, messages) = sinex_preflight::database::verify_database_connectivity().await?;
+
+    assert_eq!(status, sinex_preflight::VerificationStatus::Pass);
+    assert!(!messages.is_empty());
+    assert!(messages.iter().any(|m| m.contains("Database connection established")));
+
+    // Check details structure
+    assert!(details.get("database_url").is_some());
+    assert!(details.get("postgresql_version").is_some());
+    assert!(details.get("connection_pool").is_some());
+
+    Ok(())
+}
+
+/// Test PostgreSQL extensions verification
+#[sinex_test]
+async fn test_postgresql_extensions_verification(ctx: TestContext) -> TestResult {
+    let (status, details, messages) = sinex_preflight::database::verify_postgresql_extensions().await?;
+
+    // Should pass or warn, depending on which extensions are available
+    assert!(matches!(status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));
+
+    // Should have checked for required extensions
+    let extensions = details.get("extensions").unwrap().as_object().unwrap();
+    assert!(extensions.contains_key("uuid-ossp"));
+    assert!(extensions.contains_key("timescaledb"));
+    assert!(extensions.contains_key("pg_jsonschema"));
+
+    Ok(())
+}
+
+/// Test migration readiness verification
+#[sinex_test]
+async fn test_migration_readiness_verification(ctx: TestContext) -> TestResult {
+    let (status, details, messages) = sinex_preflight::database::verify_migration_readiness().await?;
+
+    assert_eq!(status, sinex_preflight::VerificationStatus::Pass);
+    assert!(details.get("current_migrations").is_some());
+
+    Ok(())
+}
+
+/// Test database CRUD operations
+#[sinex_test]
+async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
+    // Use the existing helper functions that work correctly
+    let event = RawEventBuilder::new(
+        "unit-test-crud",
+        "test.crud_operations",
+        serde_json::json!({"test": "crud_operations"}),
+    )
+    .build();
+
+    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    let retrieved_event = queries::get_event_by_id(ctx.pool(), inserted_event.id).await?;
+    
+    assert_eq!(retrieved_event.source, "unit-test-crud");
+    assert_eq!(retrieved_event.event_type, "test.crud_operations");
+    
+    Ok(())
+}
+
+/// Test database transaction handling
+#[sinex_test]
+async fn test_database_transaction_handling(ctx: TestContext) -> TestResult {
+    let initial_count = ctx.event_count().await?;
+
+    // Test successful transaction by inserting an event
+    let event1 = RawEventBuilder::new(
+        "unit-test-tx",
+        "test.transaction",
+        serde_json::json!({"test": "commit"}),
+    )
+    .build();
+
+    ctx.insert_event(&event1).await?;
+
+    // Verify committed
+    let committed_count = ctx.event_count().await?;
+    assert_eq!(committed_count, initial_count + 1);
+
+    // Test that the event was actually inserted and is retrievable
+    let retrieved_event = queries::get_event_by_id(ctx.pool(), event1.id).await?;
+    assert_eq!(retrieved_event.source, "unit-test-tx");
+    assert_eq!(retrieved_event.event_type, "test.transaction");
+
+    Ok(())
+}
+
+/// Test database connection pool health
+#[sinex_test]
+async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+
+    // Test multiple connections from the pool
+    let mut connections = Vec::new();
+
+    for _ in 0..5 {
+        let conn = pool.acquire().await?;
+        connections.push(conn);
+    }
+
+    // All connections should be valid
+    assert_eq!(connections.len(), 5);
+
+    // Test that we can execute queries on all connections
+    for (i, conn) in connections.iter_mut().enumerate() {
+        let result = sqlx::query!("SELECT $1 as test_value", i as i32)
+            .fetch_one(&mut **conn)
+            .await?;
+
+        assert_eq!(result.test_value, Some(i as i32));
+    }
+
+    // Connections are automatically returned to pool when dropped
+    drop(connections);
+
+    // Verify pool is still functional
+    let final_test = sqlx::query!("SELECT 1 as test")
+        .fetch_one(pool)
+        .await?;
+
+    assert_eq!(final_test.test, Some(1));
+
+    Ok(())
+}
+
+/// Test database error handling
+#[sinex_test]
+async fn test_database_error_handling(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+
+    // Test handling of SQL syntax errors
+    let syntax_error = sqlx::query!("SELECT * FROM nonexistent_table_12345")
+        .fetch_optional(pool)
+        .await;
+
+    assert!(syntax_error.is_err(), "Should fail with syntax/table error");
+
+    // Test handling of constraint violations by creating an event and trying to insert a duplicate
+    let event = RawEventBuilder::new(
+        "unit-test-error",
+        "test.error_handling",
+        serde_json::json!({"test": "constraint"}),
+    )
+    .build();
+
+    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    
+    // Try to insert with same ID (should fail with constraint violation)
+    let duplicate_event = RawEvent {
+        id: inserted_event.id, // Same ID
+        source: "unit-test-error".to_string(),
+        event_type: "test.error_handling".to_string(),
+        ts_ingest: chrono::Utc::now(),
+        ts_orig: None,
+        host: "test_host".to_string(),
+        ingestor_version: None,
+        payload_schema_id: None,
+        payload: serde_json::json!({"test": "duplicate"}),
+    };
+
+    let constraint_error = queries::insert_event(ctx.pool(), &duplicate_event).await;
+    assert!(constraint_error.is_err(), "Should fail with constraint violation");
+
+    Ok(())
+}
+
+// =============================================================================
+// EVENTSOURCE TRAIT TESTS (from simple_ingestor_tests.rs)
+// =============================================================================
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct TestSourceConfig {
+    events_to_generate: u32,
+    generation_delay_ms: u64,
+    should_fail: bool,
+}
+
+impl Default for TestSourceConfig {
+    fn default() -> Self {
+        Self {
+            events_to_generate: 5,
+            generation_delay_ms: 10,
+            should_fail: false,
+        }
+    }
+}
+
+struct TestEventSource {
+    config: TestSourceConfig,
+    events_sent: Arc<AtomicU32>,
+    should_error: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl EventSource for TestEventSource {
+    type Config = TestSourceConfig;
+    const SOURCE_NAME: &'static str = "test_source";
+
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
+        let config: TestSourceConfig = serde_json::from_value(ctx.config).map_err(|e| {
+            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
+        })?;
+
+        Ok(Self {
+            config,
+            events_sent: Arc::new(AtomicU32::new(0)),
+            should_error: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    async fn stream_events(&mut self, tx: tokio::sync::mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
+        if self.config.should_fail {
+            return Err(sinex_core::CoreError::Other("Test failure".to_string()));
+        }
+
+        for i in 0..self.config.events_to_generate {
+            if self.should_error.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(sinex_core::CoreError::Other(
+                    "Test error during streaming".to_string(),
+                ));
+            }
+
+            let event = RawEventBuilder::new(
+                Self::SOURCE_NAME,
+                "test_event",
+                json!({"test": true, "sequence": i}),
+            ).build();
+
+            if tx.send(event).await.is_err() {
+                break; // Receiver dropped
+            }
+
+            self.events_sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(self.config.generation_delay_ms)).await;
+        }
+
+        // Keep running until shutdown
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+    }
+
+    async fn shutdown(&mut self) -> sinex_core::Result<()> {
+        Ok(())
+    }
+}
+
+/// Test EventSource trait initialization
+#[sinex_test]
+async fn test_event_source_initialization(ctx: TestContext) -> TestResult {
+    let config = TestSourceConfig {
+        events_to_generate: 10,
+        generation_delay_ms: 5,
+        should_fail: false,
+    };
+
+    let ctx_local = crate::common::event_sources::test_context(serde_json::to_value(&config)?);
+    let source = TestEventSource::initialize(ctx_local).await?;
+
+    pretty_assertions::assert_eq!(source.config.events_to_generate, 10);
+    pretty_assertions::assert_eq!(source.config.generation_delay_ms, 5);
+    assert!(!source.config.should_fail);
+
+    Ok(())
+}
+
+/// Test EventSource streaming with receiver drop
+#[sinex_test]
+async fn test_event_source_streaming(ctx: TestContext) -> TestResult {
+    let config = TestSourceConfig {
+        events_to_generate: 3,
+        generation_delay_ms: 50,
+        should_fail: false,
+    };
+
+    let ctx_local = crate::common::event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
+    let events_sent = source.events_sent.clone();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+
+    // Start streaming in background
+    let stream_handle = tokio::spawn(async move { source.stream_events(tx).await });
+
+    // Collect events
+    let mut events = Vec::new();
+    for _ in 0..3 {
+        if let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+    }
+
+    // Cancel streaming
+    stream_handle.abort();
+
+    pretty_assertions::assert_eq!(events.len(), 3);
+    pretty_assertions::assert_eq!(events_sent.load(std::sync::atomic::Ordering::SeqCst), 3);
+
+    // Verify event structure
+    for (i, event) in events.iter().enumerate() {
+        pretty_assertions::assert_eq!(event.source, "test_source");
+        pretty_assertions::assert_eq!(event.event_type, "test_event");
+        pretty_assertions::assert_eq!(event.payload["sequence"], i);
+    }
+
+    Ok(())
+}
+
+/// Test EventSource error handling
+#[sinex_test]
+async fn test_event_source_runtime_error(ctx: TestContext) -> TestResult {
+    let config = TestSourceConfig {
+        events_to_generate: 10,
+        generation_delay_ms: 10,
+        should_fail: false,
+    };
+
+    let ctx_local = crate::common::event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
+    let should_error = source.should_error.clone();
+    let events_sent = source.events_sent.clone();
+
+    let (tx, _rx) = tokio::sync::mpsc::channel(10);
+
+    let stream_handle = tokio::spawn(async move { source.stream_events(tx).await });
+
+    // Wait for some events to be generated
+    tokio::task::yield_now().await;
+
+    // Trigger error
+    should_error.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // Wait for error
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let result = stream_handle.await;
+    assert!(result.is_ok()); // Task completed (with error)
+
+    // Should have sent some events before error
+    let sent_count = events_sent.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(sent_count > 0 && sent_count < 10);
+
+    Ok(())
+}
+
+/// Test EventSource database integration
+#[sinex_test]
+async fn test_event_source_database_integration(ctx: TestContext) -> TestResult {
+    // Generate a unique event type for this test to avoid contamination
+    let test_id = Ulid::new().to_string();
+    let unique_event_type = format!("test_event_{}", &test_id[..8]);
+    
+    let config = TestSourceConfig {
+        events_to_generate: 2,
+        generation_delay_ms: 10,
+        should_fail: false,
+    };
+
+    let ctx_local = crate::common::event_sources::test_context(serde_json::to_value(&config)?);
+    let mut source = TestEventSource::initialize(ctx_local).await?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+
+    let stream_handle = tokio::spawn(async move { source.stream_events(tx).await });
+
+    // Receive and store events with our unique type
+    let mut inserted_count = 0;
+    for _ in 0..2 {
+        if let Some(mut event) = rx.recv().await {
+            // Modify the event type to be unique for this test
+            event.event_type = unique_event_type.clone();
+            
+            // Store in database using proper queries that handle ts_ingest correctly
+            let event_uuid = ulid_to_uuid(event.id);
+            sqlx::query!(
+                r#"
+                INSERT INTO raw.events (id, source, event_type, payload, host)
+                VALUES ($1::uuid, $2, $3, $4, $5)
+                "#,
+                event_uuid,
+                event.source,
+                event.event_type,
+                event.payload,
+                event.host
+            )
+            .execute(ctx.pool())
+            .await?;
+            inserted_count += 1;
+        }
+    }
+
+    stream_handle.abort();
+    
+    // Ensure we actually inserted 2 events
+    assert_eq!(inserted_count, 2, "Should have inserted 2 events");
+
+    // Verify events were stored - count only our unique event type
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE event_type = $1")
+            .bind(&unique_event_type)
+            .fetch_one(ctx.pool())
+            .await?;
+
+    // We inserted exactly 2 events with our unique type
+    assert_eq!(count, 2, "Should have exactly 2 events with type {}, found {}", unique_event_type, count);
+
+    Ok(())
+}
+
+// =============================================================================
+// RESOURCE VERIFICATION TESTS (from resource_verification_test.rs)
+// =============================================================================
+
+/// Test system resources verification
+#[sinex_test]
+async fn test_system_resources_verification(_ctx: TestContext) -> TestResult {
+    let (status, details, messages) = sinex_preflight::resources::verify_system_resources().await?;
+
+    // Should pass or warn in test environment
+    assert!(matches!(
+        status,
+        sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning
+    ));
+
+    // Should have checked various resources
+    assert!(details.get("memory").is_some());
+    assert!(details.get("disk").is_some());
+    assert!(details.get("cpu").is_some());
+    assert!(details.get("fs").is_some());
+
+    assert!(!messages.is_empty());
+
+    Ok(())
+}
+
+/// Test memory availability check
+#[sinex_test]
+async fn test_memory_availability_check(_ctx: TestContext) -> TestResult {
+    // We can't directly test the internal function, but we can test the overall verification
+    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+
+    let memory_info = details.get("memory").unwrap();
+
+    // Should have memory information
+    assert!(memory_info.get("total_gb").is_some());
+    assert!(memory_info.get("available_gb").is_some());
+    assert!(memory_info.get("usage_percent").is_some());
+    assert!(memory_info.get("meets_requirements").is_some());
+
+    // Available memory should be positive
+    let available_gb = memory_info["available_gb"].as_f64().unwrap();
+    assert!(available_gb > 0.0, "Available memory should be positive");
+
+    Ok(())
+}
+
+/// Test disk space check
+#[sinex_test]
+async fn test_disk_space_check(_ctx: TestContext) -> TestResult {
+    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+
+    let disk_info = details.get("disk").unwrap();
+    let paths = disk_info.get("paths").unwrap().as_object().unwrap();
+
+    // Should have checked some standard paths
+    for (path, info) in paths {
+        if let Some(total_gb) = info.get("total_gb").and_then(|v| v.as_f64()) {
+            assert!(total_gb > 0.0, "Total disk space should be positive for {}", path);
+        }
+
+        if let Some(available_gb) = info.get("available_gb").and_then(|v| v.as_f64()) {
+            assert!(available_gb >= 0.0, "Available disk space should be non-negative for {}", path);
+        }
+    }
+
+    Ok(())
+}
+
+/// Test CPU capacity check
+#[sinex_test]
+async fn test_cpu_capacity_check(_ctx: TestContext) -> TestResult {
+    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+
+    let cpu_info = details.get("cpu").unwrap();
+
+    // Should have CPU information
+    assert!(cpu_info.get("cpu_count").is_some());
+    assert!(cpu_info.get("load_average_1min").is_some());
+    assert!(cpu_info.get("meets_requirements").is_some());
+
+    // CPU count should be positive
+    let cpu_count = cpu_info["cpu_count"].as_u64().unwrap();
+    assert!(cpu_count > 0, "CPU count should be positive");
+
+    // Load average should be non-negative
+    let load_avg = cpu_info["load_average_1min"].as_f64().unwrap();
+    assert!(load_avg >= 0.0, "Load average should be non-negative");
+
+    Ok(())
+}
+
+/// Test filesystem permissions check
+#[sinex_test]
+async fn test_filesystem_permissions_check(_ctx: TestContext) -> TestResult {
+    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+
+    let filesystem_info = details.get("fs").unwrap();
+    let directories = filesystem_info.get("directories").unwrap().as_object().unwrap();
+
+    // Should have checked some directories
+    assert!(!directories.is_empty(), "Should have checked some directories");
+
+    for (dir_path, info) in directories {
+        // Each directory should have permission info
+        assert!(info.get("writable").is_some(), "Should check writability for {}", dir_path);
+
+        if let Some(error) = info.get("error") {
+            println!("Permission check warning for {}: {}", dir_path, error);
+        }
+    }
+
+    Ok(())
+}
+
+/// Test filesystem operations
+#[sinex_test]
+async fn test_filesystem_operations(_ctx: TestContext) -> TestResult {
+    // Test basic filesystem operations that the verification would perform
+    let temp_dir = tempfile::TempDir::new()?;
+    let test_file_path = temp_dir.path().join("test-file.txt");
+
+    // Test write
+    std::fs::write(&test_file_path, "test content")?;
+
+    // Test read
+    let content = std::fs::read_to_string(&test_file_path)?;
+    assert_eq!(content, "test content");
+
+    // Test metadata
+    let metadata = test_file_path.metadata()?;
+    assert!(metadata.is_file());
+    assert!(metadata.len() > 0);
+
+    // Test directory creation
+    let test_subdir = temp_dir.path().join("subdir");
+    std::fs::create_dir(&test_subdir)?;
+    assert!(test_subdir.exists());
+    assert!(test_subdir.is_dir());
+
+    // Cleanup is automatic with TempDir
+
+    Ok(())
+}
+
+// =============================================================================
+// MODEL TESTS (from model/mod.rs)
+// =============================================================================
+
+/// Test RawEvent validation
+#[sinex_test]
+async fn test_raw_event_validation(_ctx: TestContext) -> TestResult {
+    // Test RawEvent can be created with required fields
+    let event_id = Ulid::new();
+    let payload = json!({"test": "data"});
+
+    // This test validates that our core data structure works
+    // Note: Actual creation happens via database insert functions
+    assert!(
+        !event_id.to_string().is_empty(),
+        "Event ID should be valid ULID"
+    );
+    assert!(payload.is_object(), "Payload should be valid JSON object");
+
+    // Validate payload contains expected structure
+    assert!(
+        payload.get("test").is_some(),
+        "Payload should contain test data"
+    );
+    Ok(())
+}
+
+/// Test queue status transitions
+#[sinex_test]
+async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
+    // Test that queue status enum has all expected variants
+    use sinex_db::models::QueueStatus;
+
+    // Verify we can create each status
+    let statuses = [QueueStatus::Pending,
+        QueueStatus::Processing,
+        QueueStatus::Succeeded,
+        QueueStatus::Failed,
+        QueueStatus::FailedRetryable];
+
+    pretty_assertions::assert_eq!(statuses.len(), 5, "Should have all queue status variants");
+
+    // Verify status transitions make logical sense
+    // (This is more documentation than validation)
+    pretty_assertions::assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
+    pretty_assertions::assert_ne!(QueueStatus::Processing, QueueStatus::Succeeded);
+    Ok(())
+}
+
+/// Test ULID ordering property
+#[sinex_test]
+async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
+    // Test that ULID generation produces ordered values
+    let ulid1 = Ulid::new();
+    std::thread::sleep(std::time::Duration::from_millis(1)); // Ensure time progression
+    let ulid2 = Ulid::new();
+
+    assert!(ulid1 < ulid2, "ULIDs should be ordered by generation time");
+    assert!(
+        ulid1.to_string() < ulid2.to_string(),
+        "ULID string representations should be ordered"
+    );
+
+    // Verify ULID bytes are also ordered
+    assert!(
+        ulid1.to_bytes() < ulid2.to_bytes(),
+        "ULID byte representations should be ordered"
+    );
+    Ok(())
+}
+
+/// Test JSON payload constraints
+#[sinex_test]
+async fn test_json_payload_constraints(_ctx: TestContext) -> TestResult {
+    // Test various JSON payload structures that should be valid
+    let valid_payloads = vec![
+        json!({"event_type": "fs", "path": "/tmp/test"}),
+        json!({"event_type": "terminal", "command": "ls", "exit_code": 0}),
+        json!({"event_type": "window", "title": "Editor", "geometry": {"x": 0, "y": 0}}),
+        json!({"timestamp": 1234567890, "data": [1, 2, 3]}),
+        json!({}), // Empty payload should be valid
+    ];
+
+    for payload in valid_payloads {
+        assert!(
+            payload.is_object() || payload.is_array() || payload.is_null(),
+            "Payload should be valid JSON structure: {}",
+            payload
+        );
+    }
+
+    // Test that we can serialize/deserialize basic structures
+    let test_payload = json!({"test": "serialization", "number": 42});
+    let serialized = serde_json::to_string(&test_payload).expect("Should serialize");
+    let deserialized: serde_json::Value =
+        serde_json::from_str(&serialized).expect("Should deserialize");
+    pretty_assertions::assert_eq!(
+        test_payload,
+        deserialized,
+        "Serialization round-trip should preserve data"
+    );
     Ok(())
 }
 
