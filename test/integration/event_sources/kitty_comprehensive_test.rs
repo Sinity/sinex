@@ -1,9 +1,8 @@
 use crate::common::prelude::*;
 use sinex_events_terminal::kitty::{
-    KittyEventSource, KittyCommandCompleted, KittyCommandExecuted, KittyScrollbackIncremental,
+    KittyCommandCompleted, KittyScrollbackIncremental,
     KittyTabFocused, KittyProcessChanged, KittyCommandCompletedPayload, 
     KittyScrollbackIncrementalPayload, KittyTabFocusedPayload, KittyProcessChangedPayload,
-    KittyProcessInfo
 };
 use sinex_core::{EventSource, EventSourceContext, EventType};
 use serde_json::json;

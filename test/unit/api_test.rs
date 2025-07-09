@@ -10,14 +10,14 @@
 
 use crate::common::prelude::*;
 use sinex_db::{
-    annotations_correct::*,
-    artifacts_correct::*,
-    knowledge_graph_correct::*,
+    annotations,
+    artifacts, 
+    knowledge_graph,
     models::*,
 };
 use sinex_core::{
     ConfigExtractor, ConfigValidator, ConfigValue, MultiValidator, ValidationChain,
-    sources, typed_event_types, RawEventBuilder,
+    sources, event_type_constants, RawEventBuilder,
 };
 use std::collections::HashMap;
 use tempfile::TempDir;

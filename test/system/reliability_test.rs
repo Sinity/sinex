@@ -23,7 +23,7 @@
 use crate::common::database::{CleanupStrategy, TestPool};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_db::queries::insert_raw_event;
+use sinex_db::events::insert_event_with_validator as insert_raw_event;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================

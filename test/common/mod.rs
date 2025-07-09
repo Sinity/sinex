@@ -41,7 +41,7 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core::{sources, EventFactory, typed_event_types};
+use sinex_core::{sources, EventFactory, event_type_constants};
 use sinex_db::events as db_events;
 
 /// Get test database URL with fallback
@@ -83,7 +83,7 @@ pub mod events {
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         EventFactory::new(sources::SHELL_KITTY).create_event(
-            typed_event_types::shell::COMMAND_EXECUTED.as_str(),
+            event_type_constants::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -131,17 +131,17 @@ pub mod events {
 
     /// Create a test file created event
     pub fn file_created_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(typed_event_types::filesystem::FILE_CREATED.as_str(), path)
+        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
     }
 
     /// Create a test file modified event
     pub fn file_modified_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(typed_event_types::filesystem::FILE_MODIFIED.as_str(), path)
+        filesystem_event(event_type_constants::filesystem::FILE_MODIFIED, path)
     }
 
     /// Create a test agent heartbeat event
     pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(typed_event_types::sinex::AGENT_HEARTBEAT.as_str(), agent_name)
+        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
     }
 
     /// Create a test event for race condition testing
@@ -176,12 +176,12 @@ pub mod events {
 
     /// Create a quick filesystem event with default payload
     pub fn quick_filesystem_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(typed_event_types::filesystem::FILE_CREATED.as_str(), path)
+        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
     }
 
     /// Create a quick agent heartbeat with default payload
     pub fn quick_agent_heartbeat(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(typed_event_types::sinex::AGENT_HEARTBEAT.as_str(), agent_name)
+        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
     }
 
     /// Create test events for timing and ordering tests
@@ -397,7 +397,7 @@ pub mod generators {
     pub fn indexed_event(index: usize) -> sinex_db::RawEvent {
         match index % 3 {
             0 => events::filesystem_event(
-                typed_event_types::filesystem::FILE_CREATED.as_str(),
+                event_type_constants::filesystem::FILE_CREATED,
                 &file_path(&format!("file_{}", index)),
             ),
             1 => events::kitty_event(common_commands()[index % common_commands().len()]),
@@ -419,9 +419,9 @@ pub mod generators {
             "/home/user/.config/app/settings.toml",
             "/home/user/Downloads/image.png"];
 
-        let event_types = [typed_event_types::filesystem::FILE_CREATED.as_str(),
-            typed_event_types::filesystem::FILE_MODIFIED.as_str(),
-            typed_event_types::filesystem::FILE_DELETED.as_str()];
+        let event_types = [event_type_constants::filesystem::FILE_CREATED,
+            event_type_constants::filesystem::FILE_MODIFIED,
+            event_type_constants::filesystem::FILE_DELETED];
 
         (0..count)
             .map(|i| {
@@ -498,7 +498,7 @@ pub mod generators {
             };
             test_event_with_payload(
                 sources::FS,
-                typed_event_types::filesystem::FILE_MODIFIED.as_str(),
+                event_type_constants::filesystem::FILE_MODIFIED,
                 payload
             )
         }).collect()

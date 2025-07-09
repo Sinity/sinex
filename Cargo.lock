@@ -2927,6 +2927,7 @@ dependencies = [
  "lazy_static",
  "num_cpus",
  "once_cell",
+ "parking_lot",
  "pretty_assertions",
  "proptest",
  "rand 0.8.5",

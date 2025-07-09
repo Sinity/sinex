@@ -1,8 +1,8 @@
 pub mod clipboard;
 pub mod window_manager;
 
-// Re-export desktop event types
-pub use clipboard::{ClipboardChanged, ClipboardSelection, ClipboardChangedPayload, ClipboardSelectionPayload};
+// Re-export desktop event types and configs
+pub use clipboard::{ClipboardChanged, ClipboardSelection, ClipboardChangedPayload, ClipboardSelectionPayload, ClipboardConfig};
 pub use window_manager::{
     MonitorFocused, StateSnapshot, WindowClosed, WindowFocused, WindowMoved, WindowOpened,
     WorkspaceChanged, WindowFocusedPayload, WindowOpenedPayload, WindowClosedPayload, 
