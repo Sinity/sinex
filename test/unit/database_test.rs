@@ -18,29 +18,7 @@ use sinex_db::models::*;
 // BASIC DATABASE OPERATIONS
 // =============================================================================
 
-/// Test basic database connectivity and simple queries
-#[sinex_test]
-async fn test_database_connection(ctx: TestContext) -> TestResult {
-    // Test database connectivity with enhanced error context
-    let result: i32 = assert_database_state(
-        ctx.pool(),
-        async {
-            sqlx::query_scalar!("SELECT 1 as test_value")
-                .fetch_one(ctx.pool())
-                .await
-                .map(|opt| opt.unwrap_or(0))
-        },
-        "basic database connectivity test",
-    )
-    .await?;
-
-    // Use ValidationChain to validate the result
-    let result_validation =
-        assert_with_validation(result, "db_test_result").custom(|&val| val == 1, "should equal 1");
-
-    assert_validation_passes(result_validation)?;
-    Ok(())
-}
+// Database connection test removed - redundant with preflight and infrastructure tests
 
 /// Test basic event insertion using enhanced event builder
 #[sinex_test]
@@ -804,14 +782,7 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
 // LEGACY COMPATIBILITY TESTS
 // =============================================================================
 
-/// Test minimal macro functionality
-#[sinex_test]
-async fn test_minimal_macro(_ctx: TestContext) -> TestResult {
-    // Simple test to verify the macro works
-    let result = 1 + 1;
-    pretty_assertions::assert_eq!(result, 2);
-    Ok(())
-}
+// Minimal macro test removed - redundant with 502 other tests using #[sinex_test]
 
 /// Test streamlined validation demo
 #[sinex_test]

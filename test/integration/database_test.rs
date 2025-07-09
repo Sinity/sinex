@@ -32,28 +32,7 @@ use uuid::Uuid;
 /// Test basic event lifecycle: insert → retrieve → verify
 ///
 /// This is the most fundamental test - if this fails, nothing else works.
-/// Verifies:
-/// - Events can be inserted into raw.events table
-/// - ULID primary keys are properly handled
-/// - Event retrieval by ID works
-/// - All fields round-trip correctly
-#[sinex_test(timeout = 35)]
-async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
-    // Create a test event using our utilities
-    let event = RawEventBuilder::new("fs", "file.created", json!({"path": "/test/file.txt"})).build();
-
-    // Insert and verify using shared assertion helpers
-    let inserted_event = crate::common::insert_event_with_validator(ctx.pool(), &event, None).await?;
-    let event_id = inserted_event.id;
-
-    // Query it back using our helper that encapsulates the UUID conversion
-    let retrieved = get_event_by_id(ctx.pool(), event_id).await?;
-
-    // Verify it matches what we inserted (ignoring generated fields)
-    assertions::assert_events_equivalent(&retrieved, &event);
-
-    Ok(())
-}
+// Basic insert/retrieve test removed - redundant with test_batch_event_insertion
 
 /// Test batch insertion of multiple events
 #[sinex_test(timeout = 40)]
