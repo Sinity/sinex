@@ -562,7 +562,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
 
     let mut stored_ids = Vec::new();
     for event in collected.iter() {
-        let result = insert_raw_event(
+        let result = crate::common::insert_event_with_validator(
             ctx.pool(),
             &event.source,
             &event.event_type,
@@ -662,7 +662,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
     // Insert an event that will fail processing
     let bad_event = RawEventBuilder::new("test", "invalid.event", json!({"test": true})).build();
 
-    insert_raw_event(
+    crate::common::insert_event_with_validator(
         ctx.pool(),
         &bad_event.source,
         &bad_event.event_type,
@@ -716,7 +716,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
         .with_ingestor_version("0.1.0")
         .build();
 
-    insert_raw_event(
+    crate::common::insert_event_with_validator(
         ctx.pool(),
         &heartbeat_event.source,
         &heartbeat_event.event_type,

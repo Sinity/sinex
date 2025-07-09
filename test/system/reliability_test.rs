@@ -23,7 +23,7 @@
 use crate::common::database::{CleanupStrategy, TestPool};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_db::events::insert_event_with_validator as insert_raw_event;
+use sinex_db::events::insert_event_with_validator as insert_event_with_validator;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
@@ -115,7 +115,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Insert some events
         for i in 0..10 {
-            insert_raw_event(
+            crate::common::insert_event_with_validator(
                 &pool,
                 "startup.test",
                 "existing_data",
@@ -383,7 +383,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         let long_operation = tokio::spawn(async move {
             // Simulate long-running batch operation
             for i in 0..1000 {
-                insert_raw_event(
+                crate::common::insert_event_with_validator(
                     &pool,
                     "interrupted.shutdown",
                     "long_operation",
@@ -936,7 +936,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Insert test events
         let test_events = 50;
         for i in 0..test_events {
-            insert_raw_event(
+            crate::common::insert_event_with_validator(
                 &pool,
                 "migration.safety",
                 "data_preservation",
@@ -1173,7 +1173,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Define async functions for each operation
     async fn event_test(pool: DbPool) -> Result<(), anyhow::Error> {
-        let _event = insert_raw_event(
+        let _event = crate::common::insert_event_with_validator(
             &pool,
             "degradation.test",
             "connection_exhaustion",
@@ -1263,7 +1263,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     let recovery_start = Instant::now();
     let recovery_test = timeout(
         Duration::from_secs(5),
-        insert_raw_event(
+        crate::common::insert_event_with_validator(
             pool,
             "degradation.test",
             "recovery_test",
@@ -1391,7 +1391,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         tokio::spawn(async move {
             let mut processed = 0;
             while let Some(event_data) = rx.recv().await {
-                let result = insert_raw_event(
+                let result = crate::common::insert_event_with_validator(
                     &pool,
                     "resource.monitoring",
                     "memory_load_test",

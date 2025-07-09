@@ -9,6 +9,7 @@
 //! - Complex query operations
 
 use crate::common::prelude::*;
+use sinex_db::work_queue::claim_work_queue_items;
 use sinex_core::{typed_sources, typed_event_types};
 use sinex_db::validation::EventValidator;
 use sinex_db::models::*;
@@ -592,7 +593,8 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     pretty_assertions::assert_eq!(queue_item.max_attempts, 3);
 
     // Get next item for processing
-    let next_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    let items = claim_work_queue_items(ctx.pool(), "test_agent", "test_worker", 1).await?;
+    let next_item = items.into_iter().next();
     assert!(next_item.is_some());
 
     let item = next_item.unwrap();

@@ -13,8 +13,8 @@ async fn test_entity_crud_operations(ctx: TestContext) -> Result<()> {
     // Create some test events for source tracking
     let event1 = RawEventBuilder::new("kg.test", "entity.created", json!({})).build();
     let event2 = RawEventBuilder::new("kg.test", "entity.updated", json!({})).build();
-    insert_raw_event(ctx.pool(), &event1).await?;
-    insert_raw_event(ctx.pool(), &event2).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event1).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event2).await?;
 
     // Test entity creation
     let input = CreateEntityInput {

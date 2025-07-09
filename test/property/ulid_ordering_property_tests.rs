@@ -87,7 +87,7 @@ proptest! {
                     tokio::time::sleep(tokio::time::Duration::from_millis(time_gap_seconds * 100)).await;
                 }
 
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "property.ulid_ordering",
                     "ordering_test",
@@ -166,7 +166,7 @@ proptest! {
             let mut batch1_ulids = Vec::new();
 
             for i in 0..batch1_size {
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     &source_name,
                     "batch1_event",
@@ -195,7 +195,7 @@ proptest! {
             let mut batch2_ulids = Vec::new();
 
             for i in 0..batch2_size {
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     &source_name,
                     "batch2_event",
@@ -403,7 +403,7 @@ proptest! {
             for i in 0..num_relationships {
                 // Insert event with ULID
                 let event_ulid = Ulid::new();
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "property.fk_test",
                     "foreign_key_test",

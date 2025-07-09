@@ -166,7 +166,7 @@ async fn test_kitty_event_storage_and_retrieval(ctx: TestContext) -> TestResult 
     let event_id = insert_event(ctx.pool(), &command_event).await?;
     
     // Retrieve and verify
-    let retrieved = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = crate::common::get_event_by_id(ctx.pool(), event_id).await?;
     assert_eq!(retrieved.source, "shell.kitty");
     assert_eq!(retrieved.event_type, "command.completed");
     
@@ -183,7 +183,7 @@ async fn test_kitty_incremental_scrollback_storage(ctx: TestContext) -> TestResu
     let event_id = insert_event(ctx.pool(), &scrollback_event).await?;
     
     // Retrieve and verify content is actually stored
-    let retrieved = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = crate::common::get_event_by_id(ctx.pool(), event_id).await?;
     assert_eq!(retrieved.event_type, "content.streamed");
     
     // The payload should contain meaningful data (not just metadata)
@@ -210,7 +210,7 @@ async fn test_kitty_multiple_event_types_query(ctx: TestContext) -> TestResult {
     }
     
     // Query by source
-    let kitty_events = sinex_db::queries::get_events_by_source(ctx.pool(), "shell.kitty", 100).await?;
+    let kitty_events = crate::common::get_events_by_source(ctx.pool(), "shell.kitty", 100).await?;
     assert!(kitty_events.len() >= 4);
     
     // Verify we have all event types
@@ -247,7 +247,7 @@ async fn test_kitty_event_ordering_and_timing(ctx: TestContext) -> TestResult {
     }
     
     // Query events in order
-    let ordered_events = sinex_db::queries::get_events_by_source(ctx.pool(), "shell.kitty", 100).await?;
+    let ordered_events = crate::common::get_events_by_source(ctx.pool(), "shell.kitty", 100).await?;
     assert!(ordered_events.len() >= 4);
     
     // Verify command execution/completion pairs are properly ordered

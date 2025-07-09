@@ -93,7 +93,7 @@ pub mod utils {
         let timeout_duration = Duration::from_secs(timeout_secs);
 
         loop {
-            let events = sinex_db::queries::get_events_by_source(pool, source_name, 100).await?;
+            let events = crate::common::get_events_by_source(pool, source_name, 100).await?;
 
             if events.len() >= min_events {
                 return Ok(events);

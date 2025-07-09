@@ -29,7 +29,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     // Insert event to be claimed
     let event = events::race_test_event("race");
 
-    let inserted = db_events::insert_event_with_validator(pool, &event, None).await?;
+    let inserted = db_events::crate::common::insert_event_with_validator(pool, &event, None).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization

@@ -144,7 +144,7 @@ proptest! {
             let mut queue_ids = Vec::new();
             for i in 0..num_items {
                 // Insert raw event
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "test.property",
                     "property_test_event",
@@ -273,7 +273,7 @@ proptest! {
             create_test_agent(&pool, &agent_name, "High contention test agent").await.expect("DB operation failed");
 
             // Create exactly one item to maximize contention
-            let event = insert_raw_event(
+            let event = crate::common::insert_event_with_validator(
                 &pool,
                 "test.contention",
                 "contention_event",

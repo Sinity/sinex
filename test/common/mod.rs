@@ -330,7 +330,7 @@ pub mod assertions {
 
     /// Assert that an event was inserted successfully
     pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> Result<Ulid> {
-        let inserted = queries::insert_event(pool, event).await?;
+        let inserted = db_events::insert_event_with_validator(pool, event, None).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
     }
@@ -340,7 +340,7 @@ pub mod assertions {
         pool: &DbPool,
         event: &RawEvent,
     ) -> Result<(), anyhow::Error> {
-        let result = queries::insert_event(pool, event).await;
+        let result = db_events::insert_event_with_validator(pool, event, None).await;
         assert!(
             result.is_err(),
             "Expected event insertion to fail, but it succeeded"
@@ -689,6 +689,33 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
 pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> Result<Ulid> {
     let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     insert_event(pool, &event).await
+}
+
+/// Helper to emulate old insert_event_with_validator API signature
+#[allow(dead_code)]
+pub async fn insert_event_with_validator(
+    pool: &DbPool,
+    source: &str,
+    event_type: &str,
+    host: &str,
+    payload: serde_json::Value,
+    ts_orig: Option<chrono::DateTime<chrono::Utc>>,
+    ingestor_version: Option<&str>,
+    payload_schema_id: Option<sinex_ulid::Ulid>,
+) -> Result<RawEvent> {
+    let mut event = EventFactory::new(source).create_event(event_type, payload);
+    event.host = host.to_string();
+    if let Some(ts) = ts_orig {
+        event.ts_orig = Some(ts);
+    }
+    if let Some(version) = ingestor_version {
+        event.ingestor_version = Some(version.to_string());
+    }
+    if let Some(schema_id) = payload_schema_id {
+        event.payload_schema_id = Some(schema_id);
+    }
+    
+    db_events::insert_event_with_validator(pool, &event, None).await
 }
 
 /// Helper for creating agent with specific subscriptions

@@ -12,7 +12,7 @@ async fn test_annotations_crud_operations(ctx: TestContext) -> Result<()> {
 
     // Create a test event first
     let event = RawEventBuilder::new("test.source", "test.event", json!({"data": "test"})).build();
-    insert_raw_event(ctx.pool(), &event).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event).await?;
 
     // Test annotation creation
     let input = CreateAnnotationInput {
@@ -71,8 +71,8 @@ async fn test_annotations_by_type_and_search(ctx: TestContext) -> Result<()> {
     // Create test events
     let event1 = RawEventBuilder::new("test.source", "test.event1", json!({"data": "test1"})).build();
     let event2 = RawEventBuilder::new("test.source", "test.event2", json!({"data": "test2"})).build();
-    insert_raw_event(ctx.pool(), &event1).await?;
-    insert_raw_event(ctx.pool(), &event2).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event1).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event2).await?;
 
     // Create annotations of different types
     let annotations_data = vec![
@@ -162,7 +162,7 @@ async fn test_bulk_annotations_creation(ctx: TestContext) -> Result<()> {
     }).collect();
 
     for event in &events {
-        insert_raw_event(ctx.pool(), event).await?;
+        crate::common::insert_event_with_validator(ctx.pool(), event).await?;
     }
 
     // Create bulk annotation inputs
@@ -205,7 +205,7 @@ async fn test_annotation_statistics(ctx: TestContext) -> Result<()> {
     }).collect();
 
     for event in &events {
-        insert_raw_event(ctx.pool(), event).await?;
+        crate::common::insert_event_with_validator(ctx.pool(), event).await?;
     }
 
     // Create various annotations
@@ -318,7 +318,7 @@ async fn test_annotation_confidence_filtering(ctx: TestContext) -> Result<()> {
 
     // Create test event
     let event = RawEventBuilder::new("confidence.test", "confidence.event", json!({})).build();
-    insert_raw_event(ctx.pool(), &event).await?;
+    crate::common::insert_event_with_validator(ctx.pool(), &event).await?;
 
     // Create annotations with different confidence scores
     let confidence_levels = vec![0.1, 0.5, 0.7, 0.85, 0.95, 1.0];

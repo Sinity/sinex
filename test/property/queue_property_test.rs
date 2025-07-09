@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use sinex_db::{
-    events::insert_event_with_validator as insert_raw_event,
+    events::insert_event_with_validator as insert_event_with_validator,
     work_queue::{claim_work_queue_items, complete_work_queue_item, add_to_work_queue as insert_work_queue_item},
 };
 use std::sync::{Arc, Mutex};
@@ -153,7 +153,7 @@ async fn test_no_duplicate_dequeue_with_crashes(ctx: TestContext) -> TestResult 
             let mut queue_ids = Vec::new();
             for i in 0..num_items {
                 // Insert raw event
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "test.property",
                     "property_test_event",
@@ -279,7 +279,7 @@ async fn test_work_queue_consistency_under_high_contention(ctx: TestContext) -> 
             create_test_agent(&pool, &agent_name, "High contention test agent").await.expect("DB operation failed");
 
             // Create exactly one item to maximize contention
-            let event = insert_raw_event(
+            let event = crate::common::insert_event_with_validator(
                 &pool,
                 "test.contention",
                 "contention_event",
@@ -378,7 +378,7 @@ async fn test_work_queue_scalability_properties(ctx: TestContext) -> TestResult 
             let creation_start = Instant::now();
             
             for i in 0..queue_size {
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "test.scalability",
                     "scalability_event",
@@ -529,7 +529,7 @@ async fn test_work_queue_fifo_ordering_properties(ctx: TestContext) -> TestResul
             // Create items with controlled timing
             let mut created_ids = Vec::new();
             for i in 0..item_count {
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "test.ordering",
                     "ordering_event",
@@ -628,7 +628,7 @@ async fn test_work_queue_state_consistency_properties(ctx: TestContext) -> TestR
             // Create initial items
             let mut created_items = Vec::new();
             for i in 0..initial_items {
-                let event = insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     &pool,
                     "test.consistency",
                     "consistency_event",

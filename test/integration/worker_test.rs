@@ -255,7 +255,7 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items_to_create {
-            let event = insert_raw_event(
+            let event = crate::common::insert_event_with_validator(
                 &create_pool,
                 "algorithm.fairness_test",
                 "work_item",
@@ -408,7 +408,7 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
     let metrics = Arc::new(WorkDistributionMetrics::new(&worker_ids));
 
     for i in 0..work_items {
-        let event = insert_raw_event(
+        let event = crate::common::insert_event_with_validator(
             pool,
             "algorithm.contention_test",
             "high_contention_item",
@@ -533,7 +533,7 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
     for i in 0..20 {
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        let event = insert_raw_event(
+        let event = crate::common::insert_event_with_validator(
             pool,
             "algorithm.ordering_test",
             "ordered_item",
@@ -638,7 +638,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
     let mut queue_ids = Vec::new();
 
     for (max_attempts, case_name) in &retry_test_cases {
-        let event = insert_raw_event(
+        let event = crate::common::insert_event_with_validator(
             pool,
             "algorithm.retry_test",
             case_name,
@@ -733,7 +733,7 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
 
     // Test SELECT FOR UPDATE SKIP LOCKED respects max_attempts
     let test_queue_id = Ulid::new();
-    let event = insert_raw_event(
+    let event = crate::common::insert_event_with_validator(
         pool,
         "algorithm.retry_test",
         "skip_locked_test",
@@ -985,9 +985,8 @@ async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
     let _queue_id = queue_ids[0];
 
     // Process the item using the proper query function (setup_test_worker creates agent with _agent suffix)
-    let item = sinex_db::queries::get_next_work_item(pool, "test_agent")
-        .await?
-        .expect("Should have work item for test_agent");
+    let items = claim_work_queue_items(pool, "test_agent", "test_worker", 1).await?;
+    let item = items.into_iter().next().expect("Should have work item for test_agent");
 
     processor.process_event(pool, &item).await?;
 
@@ -1005,9 +1004,8 @@ async fn test_event_processor_failure_handling(ctx: TestContext) -> TestResult {
     let queue_ids = worker_test_utils::setup_test_worker(pool, "test", 1).await?;
     let _queue_id = queue_ids[0];
 
-    let item = sinex_db::queries::get_next_work_item(pool, "test_agent")
-        .await?
-        .expect("Should have work item for test_agent");
+    let items = claim_work_queue_items(pool, "test_agent", "test_worker", 1).await?;
+    let item = items.into_iter().next().expect("Should have work item for test_agent");
 
     let result = processor.process_event(pool, &item).await;
     assert!(result.is_err());

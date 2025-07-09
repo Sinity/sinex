@@ -28,7 +28,7 @@ use chrono::Utc;
 async fn create_and_insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> anyhow::Result<RawEvent> {
     let event = create_test_event(source, event_type).await;
     // Insert the event and return the inserted event (which has the actual DB ID)
-    let inserted_event = insert_raw_event(
+    let inserted_event = crate::common::insert_event_with_validator(
         pool,
         &event.source,
         &event.event_type,

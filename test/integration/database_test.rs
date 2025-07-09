@@ -43,7 +43,7 @@ async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new("fs", "file.created", json!({"path": "/test/file.txt"})).build();
 
     // Insert and verify using shared assertion helpers
-    let inserted_event = insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = crate::common::insert_event_with_validator(ctx.pool(), &event, None).await?;
     let event_id = inserted_event.id;
 
     // Query it back using our helper that encapsulates the UUID conversion
@@ -65,7 +65,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         let pool = ctx.pool().clone();
         let event = event.clone();
         tokio::spawn(async move {
-            insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
+            crate::common::insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
         })
     }).collect();
 
