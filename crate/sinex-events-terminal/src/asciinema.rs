@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -455,7 +455,7 @@ end
                     title: header.title,
                     env: header.env.unwrap_or_default(),
                     timestamp: if let Some(ts) = header.timestamp {
-                        DateTime::from_timestamp(ts as i64, 0).unwrap_or_else(Utc::now)
+                        sinex_core::timestamp_to_datetime(ts as i64)
                     } else {
                         Utc::now()
                     },
@@ -551,12 +551,7 @@ end
 
         // First line should be the header
         if let Ok(Some(line)) = lines.next_line().await {
-            serde_json::from_str(&line).map_err(|e| {
-                sinex_core::CoreError::serialization("Failed to parse asciinema header")
-                    .with_context("file_path", path.display())
-                    .with_source(e)
-                    .build()
-            })
+            sinex_core::parse_json_file(&line, path, "read_asciinema_header")
         } else {
             Err(ErrorContext::new(CoreError::Validation("No header found".to_string()))
                 .with_operation("parse_asciinema_header")

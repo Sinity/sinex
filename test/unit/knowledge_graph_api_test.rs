@@ -522,12 +522,12 @@ async fn test_complex_knowledge_graph_scenario(ctx: TestContext) -> TestResult {
 
     // Test entity type filtering - we may get more than our entities due to parallel tests
     let people = get_entities_by_type(ctx.pool(), "person", 100).await?;
-    assert!(people.len() >= 1, "Should have at least 1 person");
+    assert!(!people.is_empty(), "Should have at least 1 person");
     assert!(people.iter().any(|p| p.entity_id == developer.entity_id), 
             "Developer should be in person results");
 
     let projects = get_entities_by_type(ctx.pool(), "project", 100).await?;
-    assert!(projects.len() >= 1, "Should have at least 1 project");
+    assert!(!projects.is_empty(), "Should have at least 1 project");
     assert!(projects.iter().any(|p| p.entity_id == project.entity_id),
             "Project should be in project results");
 

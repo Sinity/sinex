@@ -83,22 +83,22 @@
 
 // === Complete System Validation ===
 
-/// End-to-end workflow testing
-pub mod end_to_end;
+/// Consolidated end-to-end workflow testing
+pub mod end_to_end_test;
 
-/// External system integration testing
-pub mod external;
+/// Consolidated external system integration testing
+pub mod external_test;
 
 // === System Characteristics ===
 
-/// Performance and load testing
-pub mod performance;
+/// Consolidated performance and load testing
+pub mod performance_test;
 
-/// Regression prevention testing
-pub mod regression;
+/// Consolidated regression prevention testing
+pub mod regression_test;
 
-/// Reliability and fault tolerance testing
-pub mod reliability;
+/// Consolidated reliability and fault tolerance testing
+pub mod reliability_test;
 
-/// Extreme load and stress testing
-pub mod stress;
+/// Consolidated extreme load and stress testing
+pub mod stress_test;

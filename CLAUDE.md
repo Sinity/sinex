@@ -169,6 +169,10 @@ async fn stream_events(&mut self, tx: EventSender) -> Result<()>
 - Process events asynchronously
 - Currently: promotion worker, health monitor
 
+### Code Quality
+- **Constants**: Use `sinex_core::{timeouts, limits, buffers, retry, filesystem}` instead of magic numbers
+- **Generic helpers**: Prefer extraction patterns over duplication (see collector.rs)
+
 ## Event Sources & Types
 
 ### Event Type System

@@ -3,15 +3,25 @@ pub mod channel_enhancements;
 pub mod chunking;
 pub mod config_extractors;
 pub mod config_helpers;
+pub mod constants;
 pub mod directory_manager;
 pub mod error_context;
 pub mod event;
 pub mod event_builders;
+pub mod event_pipeline;
 pub mod event_registry_macro;
 pub mod event_source_base;
+pub mod pipeline_integration;
 pub mod event_source_context;
+pub mod file_watcher;
 pub mod heartbeat;
+pub mod json_helpers;
+pub mod retry_helpers;
+pub mod sqlite_helpers;
+pub mod timestamp_helpers;
 pub mod unified_collector;
+pub mod unified_event_source;
+pub mod strongly_typed_events;
 pub mod validation;
 pub mod validation_chains;
 pub mod wait_helpers;
@@ -36,15 +46,46 @@ pub use config_helpers::{
     ConfigFactory, ConfigExtraction, ConfigMerger, 
     DatabaseConfig, CollectorConfig, ObservabilityConfig, SourcesConfig
 };
+pub use constants::{timeouts, limits, buffers, retry, filesystem};
 pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
 pub use event_builders::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
+pub use event_pipeline::{
+    EventPipeline, PipelineConfig, PipelineStage, StagedEvent, StageResult, StageMetrics, 
+    EventTiming, PipelineMetrics, ValidationStage, EnrichmentStage, StorageStage, DistributionStage,
+    StageTimeouts
+};
+pub use pipeline_integration::{PipelineAwareCollector, PipelineCollectorBuilder};
 pub use event_source_base::EventSourceBase;
 pub use event_source_context::EventSourceContext;
+pub use file_watcher::{
+    FileWatcher, FileWatcherBuilder, FileWatcherConfig, FileChangeEvent, FileChangeKind,
+};
 pub use heartbeat::{
     ComponentHeartbeat, HealthStatus, HeartbeatEmitter, MetricsProvider, SystemHealth,
 };
+pub use json_helpers::{
+    parse_json, parse_json_file, parse_json_value, extract_field, to_json_value,
+};
+pub use retry_helpers::{
+    retry_async, retry_simple, retry_with_predicate, RetryConfig, RetryBuilder,
+};
+pub use sqlite_helpers::{
+    SqliteConnection, SqliteStatementExt, SqliteQueryBuilder, QueryResultExt,
+};
+pub use timestamp_helpers::{
+    timestamp_to_datetime, timestamp_with_nanos_to_datetime, timestamp_millis_to_datetime,
+    timestamp_micros_to_datetime, timestamp_nanos_to_datetime, parse_flexible_timestamp,
+};
 pub use unified_collector::{EventOutput, EventSource, EventType};
+pub use unified_event_source::{UnifiedEventSource, TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder};
+pub use strongly_typed_events::{
+    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
+    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
+    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
+    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
+    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload
+};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 pub use wait_helpers::{

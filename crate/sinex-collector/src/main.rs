@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use sinex_collector::{nixos_config::NixosConfig, CollectorConfig, OutputConfig, UnifiedCollector};
+use sinex_collector::{nixos_config::NixosConfig, OutputConfig, UnifiedCollector};
 use sinex_core::DirectoryManager;
 use sinex_db::{create_pool, validation::EventValidator};
 use std::path::PathBuf;
@@ -63,20 +63,11 @@ async fn main() -> Result<()> {
 
     info!("Starting Sinex Collector");
 
-    // Load configuration - prioritize NixOS format, fall back to legacy
+    // Load configuration - NixOS format only
     let config = if let Some(path) = &args.config {
-        // Try to load as NixOS config first
-        match NixosConfig::load_from_file(path) {
-            Ok(nixos_config) => {
-                info!("Loaded NixOS configuration format");
-                nixos_config.to_legacy_config()?
-            }
-            Err(_) => {
-                // Fall back to legacy format
-                info!("Falling back to legacy configuration format");
-                CollectorConfig::load_from_file(path)?
-            }
-        }
+        let nixos_config = NixosConfig::load_from_file(path)?;
+        info!("Loaded NixOS configuration format");
+        nixos_config.to_collector_config()?
     } else if let Some(annex_repo) = &args.annex_repo {
         // Create minimal configuration from command line args
         info!("Creating configuration from command line arguments");
@@ -103,7 +94,7 @@ async fn main() -> Result<()> {
         }
 
         nixos_config.validate()?;
-        nixos_config.to_legacy_config()?
+        nixos_config.to_collector_config()?
     } else {
         anyhow::bail!(
             "Configuration required: either --config <file> or --annex-repo <path> must be provided"

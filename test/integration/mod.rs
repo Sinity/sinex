@@ -59,6 +59,9 @@
 /// Database operations integrated with business logic
 pub mod database;
 
+/// Consolidated database integration tests (replaces database/*)
+pub mod database_test;
+
 /// Event collection and coordination testing
 pub mod collector;
 
@@ -67,6 +70,9 @@ pub mod worker;
 
 /// Event source implementation testing
 pub mod event_sources;
+
+/// Consolidated event source integration tests
+pub mod event_sources_test;
 
 /// Agent lifecycle and communication testing
 pub mod agent;

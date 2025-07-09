@@ -265,7 +265,7 @@ impl CollectorMetrics {
 
         // Get database pool stats and queue depth
         let (db_pool_size, db_pool_idle, queue_depth) = if let Some(pool) = db_pool {
-            let queue_metrics = sinex_db::queries::calculate_queue_depth_metrics(pool).await.unwrap_or_default();
+            let queue_metrics = sinex_db::metrics_queries::calculate_queue_depth_metrics(pool).await.unwrap_or_default();
             let total_queue_depth: i64 = queue_metrics.iter().map(|m| m.queue_depth).sum();
             (pool.size(), pool.num_idle() as u32, total_queue_depth as u32)
         } else {
@@ -497,10 +497,7 @@ impl CollectorMetrics {
         });
     }
 
-    /// Increment error counter with basic tracking (legacy method)
-    pub fn record_error(&self, source: &str) {
-        self.record_error_with_context(source, None, None)
-    }
+    // Legacy method removed - use record_error_with_context instead
 
     /// Enhanced error recording with rich context and categorization
     pub fn record_error_with_context(

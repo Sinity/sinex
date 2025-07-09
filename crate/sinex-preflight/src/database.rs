@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
+use sinex_core::timeouts;
 
 use crate::VerificationStatus;
 
@@ -31,7 +32,7 @@ pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value
 
     // Test connection with timeout
     let pool = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        timeouts::TEST_DATABASE_TIMEOUT,
         PgPool::connect(&database_url),
     )
     .await
@@ -46,7 +47,7 @@ pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
         Err(_) => {
-            messages.push("✗ Database connection timeout (10s)".to_string());
+            messages.push(format!("✗ Database connection timeout ({}s)", timeouts::TEST_DATABASE_TIMEOUT.as_secs()));
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
     };

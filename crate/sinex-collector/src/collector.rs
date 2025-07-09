@@ -2,25 +2,25 @@ use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
     unified_collector::{EventRegistry, EventRegistryBuilder, EventSource},
-    ConfigValue, EventSender, EventSourceContext, JsonValue,
+    ConfigValue, EventSender, EventSourceContext, JsonValue, buffers,
 };
 use sinex_db::validation::EventValidator;
 use sinex_db::DbPool;
 use sinex_events_desktop::{
-    clipboard::{ClipboardConfig, ClipboardMonitor},
-    window_manager::{HyprlandConfig, HyprlandIPCMonitor},
+    clipboard::ClipboardMonitor,
+    window_manager::HyprlandIPCMonitor,
 };
-use sinex_events_fs::filesystem::{FilesystemConfig, FilesystemMonitor};
+use sinex_events_fs::filesystem::FilesystemMonitor;
 use sinex_events_system::{
-    dbus::{DbusConfig, DbusMonitor},
-    journal::{JournalConfig, JournalMonitor},
+    dbus::DbusMonitor,
+    journal::JournalMonitor,
 };
 use sinex_events_terminal::{
-    asciinema::{AsciinemaConfig, AsciinemaRecorder},
-    atuin::{AtuinConfig, AtuinDbReader},
-    kitty::{KittyConfig, KittyEventSource},
-    scrollback::{ScrollbackCapture, ScrollbackConfig},
-    shell_history::{ShellHistoryConfig, ShellHistoryReader},
+    asciinema::AsciinemaRecorder,
+    atuin::AtuinDbReader,
+    kitty::KittyEventSource,
+    scrollback::ScrollbackCapture,
+    shell_history::ShellHistoryReader,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -126,7 +126,7 @@ impl UnifiedCollector {
         info!("Starting unified collector");
 
         // Create channel for events
-        let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(10000);
+        let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(buffers::DEFAULT_EVENT_CHANNEL_SIZE);
 
         // Start metrics collection
         self.metrics
@@ -169,7 +169,7 @@ impl UnifiedCollector {
             .await
             {
                 error!("Failed to output event: {}", e);
-                self.metrics.record_error(&event.source);
+                self.metrics.record_error_with_context(&event.source, None, Some("output_event"));
             }
         }
 
@@ -262,310 +262,77 @@ impl UnifiedCollector {
     }
 
     async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting filesystem source");
-
-        // Get config for filesystem events
-        let config_json = self
-            .config
-            .event
-            .get("files")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(FilesystemConfig::default()).unwrap());
-
-        // Create context with database pool and config
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        // Add database pool if available
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        // Use global annex_repo_path from collector config
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        // Initialize the source
-        let mut source = FilesystemMonitor::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Filesystem source failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<FilesystemMonitor>("files", "filesystem", event_tx).await
     }
 
     async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting terminal source");
-
-        let config_json = self
-            .config
-            .event
-            .get("commands")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(KittyConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = KittyEventSource::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Terminal source failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<KittyEventSource>("commands", "terminal", event_tx).await
     }
 
     async fn start_window_manager_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting window manager source");
-
-        let config_json = self
-            .config
-            .event
-            .get("windows")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(HyprlandConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = HyprlandIPCMonitor::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Window manager source failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<HyprlandIPCMonitor>("windows", "window manager", event_tx).await
     }
 
     async fn start_atuin_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting atuin source");
-
-        let config_json = self
-            .config
-            .event
-            .get("shell.command.executed_atuin")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(AtuinConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = AtuinDbReader::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Atuin source failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<AtuinDbReader>("shell.command.executed_atuin", "atuin", event_tx).await
     }
 
     async fn start_shell_history_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting shell history source");
-
-        let config_json = self
-            .config
-            .event
-            .get("shell.history.command")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(ShellHistoryConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = ShellHistoryReader::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Shell history source failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<ShellHistoryReader>("shell.history.command", "shell history", event_tx).await
     }
 
     async fn start_asciinema_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting asciinema recorder");
-
-        let config_json = self
-            .config
-            .event
-            .get("terminal.asciinema")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(AsciinemaConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = AsciinemaRecorder::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Asciinema recorder failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<AsciinemaRecorder>("terminal.asciinema", "asciinema recorder", event_tx).await
     }
 
     async fn start_scrollback_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting scrollback capture");
-
-        let config_json = self
-            .config
-            .event
-            .get("terminal.scrollback")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(ScrollbackConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = ScrollbackCapture::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Scrollback capture failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<ScrollbackCapture>("terminal.scrollback", "scrollback capture", event_tx).await
     }
 
     async fn start_dbus_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting D-Bus monitor");
-
-        let config_json = self
-            .config
-            .event
-            .get("dbus")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(DbusConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
-
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = DbusMonitor::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("D-Bus monitor failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        self.start_event_source::<DbusMonitor>("dbus", "D-Bus monitor", event_tx).await
     }
 
     async fn start_clipboard_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting clipboard monitor");
+        self.start_event_source::<ClipboardMonitor>("clipboard", "clipboard", event_tx).await
+    }
 
-        let config_json = self
-            .config
-            .event
-            .get("clipboard")
-            .cloned()
+    async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
+        self.start_event_source::<JournalMonitor>("journal", "journal", event_tx).await
+    }
+
+    /// Generic helper to start any event source with consistent context setup
+    async fn start_event_source<T>(&self, 
+        config_key: &str, 
+        source_name: &str,
+        event_tx: EventSender
+    ) -> Result<JoinHandle<()>>
+    where
+        T: EventSource + Send + 'static,
+        T::Config: Default + serde::de::DeserializeOwned + serde::Serialize,
+    {
+        info!("Starting {} source", source_name);
+
+        let config_json = self.config.event.get(config_key).cloned()
             .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(ClipboardConfig::default()).unwrap());
+            .unwrap_or_else(|| serde_json::to_value(T::Config::default()).unwrap());
 
-        let mut ctx = EventSourceContext::new(config_json.clone());
+        let ctx = self.create_event_source_context(config_json);
+        let mut source = T::initialize(ctx).await?;
 
-        if let Some(pool) = &self.db_pool {
-            ctx = ctx.with_db_pool(pool.clone());
-        }
-
-        if let Some(annex_path) = &self.config.annex_repo_path {
-            ctx = ctx.with_annex_path(annex_path.clone());
-        }
-
-        let mut source = ClipboardMonitor::initialize(ctx).await?;
-
+        let source_name = source_name.to_string();
         let handle = tokio::spawn(async move {
             if let Err(e) = source.stream_events(event_tx).await {
-                error!("Clipboard monitor failed: {}", e);
+                error!("{} source failed: {}", source_name, e);
             }
         });
 
         Ok(handle)
     }
 
-    async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        info!("Starting journal monitor");
-
-        let config_json = self
-            .config
-            .event
-            .get("journal")
-            .cloned()
-            .map(toml_to_json)
-            .unwrap_or_else(|| serde_json::to_value(JournalConfig::default()).unwrap());
-
-        let mut ctx = EventSourceContext::new(config_json.clone());
+    /// Create consistent event source context with database pool and annex path
+    fn create_event_source_context(&self, config_json: serde_json::Value) -> EventSourceContext {
+        let mut ctx = EventSourceContext::new(config_json);
 
         if let Some(pool) = &self.db_pool {
             ctx = ctx.with_db_pool(pool.clone());
@@ -575,14 +342,6 @@ impl UnifiedCollector {
             ctx = ctx.with_annex_path(annex_path.clone());
         }
 
-        let mut source = JournalMonitor::initialize(ctx).await?;
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = source.stream_events(event_tx).await {
-                error!("Journal monitor failed: {}", e);
-            }
-        });
-
-        Ok(handle)
+        ctx
     }
 }

@@ -1,36 +1,50 @@
 pub mod models;
 // Re-export RawEvent and RawEventBuilder from sinex-core for type unification
 pub use sinex_core::{RawEvent, RawEventBuilder};
-pub mod enhanced_queries;
+// pub mod enhanced_queries; // Removed - superseded by *_correct modules
 pub mod metrics;
 pub mod pool;
-pub mod queries;
+// pub mod queries; // Removed - superseded by domain-specific modules
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
 pub mod validation;
 
-// New API modules (correctly implemented)
-pub mod artifacts_correct;
-pub mod annotations_correct;
-pub mod knowledge_graph_correct;
+// New API modules
+pub mod artifacts;
+pub mod annotations;
+pub mod knowledge_graph;
 
-// Re-export commonly used types and query functions
-pub use queries::{
-    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items, complete_work_item,
-    complete_work_queue_item, fail_work_item, fail_work_queue_item, get_event_by_id,
-    get_events_by_source, get_events_by_type, get_events_in_time_range, get_next_work_item,
-    get_recent_events, insert_raw_event, refresh_routing_cache, run_batch_router, QueueDepthMetric,
+// Domain-specific query modules
+pub mod events;
+pub mod work_queue;
+pub mod agent;
+pub mod metrics_queries;
+
+// Old queries module removed - all functions migrated to domain-specific modules
+
+// Re-export domain-specific query functions
+pub use events::{
+    get_event_by_id, 
+    insert_event_with_validator,
+};
+pub use work_queue::{
+    claim_work_queue_items,
+    complete_work_queue_item,
+    fail_work_queue_item,
+    insert_dlq_event,
+};
+pub use agent::{
+    upsert_agent_manifest,
+    update_agent_heartbeat,
+};
+pub use metrics_queries::{
+    calculate_queue_depth_metrics,
+    QueueDepthMetrics,
 };
 
 
-// Re-export enhanced queries with error context
-pub use enhanced_queries::{
-    insert_event_with_context, get_event_by_id_with_context, claim_work_queue_items_with_context,
-    complete_work_queue_item_with_context, fail_work_queue_item_with_context,
-    update_agent_heartbeat_with_context, insert_dlq_event_with_context,
-    get_recent_events_with_context, database_health_check_with_context,
-};
+// Enhanced queries have been removed - functionality moved to domain modules
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
@@ -47,7 +61,11 @@ pub mod prelude {
         // EventAnnotation, CreateAnnotationInput,
         // Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
     };
-    pub use crate::queries::*;
+    // Use domain-specific modules
+    pub use crate::events::*;
+    pub use crate::work_queue::*;
+    pub use crate::agent::*;
+    pub use crate::metrics_queries::*;
     pub use crate::query_helpers::{
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
@@ -68,7 +86,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
 use std::time::Duration;
 use std::env;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use serde::{Deserialize, Serialize};
 
 // Common type aliases for database operations
@@ -135,54 +153,25 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     Ok(pool)
 }
 
-/// Try to get database URL from environment with helpful error messages
-pub fn get_database_url_with_fallbacks() -> Result<String> {
-    // Try DATABASE_URL first
-    if let Ok(url) = env::var("DATABASE_URL") {
-        return Ok(url);
-    }
-
-    // Try common development patterns
-    let fallback_urls = vec![
-        "postgresql:///sinex_dev?host=/run/postgresql",
-        "postgresql://localhost/sinex_dev",
-        "postgresql://postgres:postgres@localhost/sinex",
-    ];
-
-    for url in &fallback_urls {
-        if std::process::Command::new("pg_isready")
-            .arg("-d")
-            .arg(url)
-            .arg("-q")
-            .output().is_ok()
-        {
-            warn!("DATABASE_URL not set, using fallback: {}", url);
-            warn!("For production, please set DATABASE_URL environment variable");
-            return Ok(url.to_string());
-        }
-    }
-
-    error!("DATABASE_URL environment variable is not set and no fallback database connection works");
-    error!("Please ensure PostgreSQL is running and set DATABASE_URL, for example:");
-    error!("  export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql");
-    error!("  export DATABASE_URL=postgresql://username:password@localhost/database_name");
-    
-    Err(anyhow::anyhow!(
-        "DATABASE_URL not set and no accessible PostgreSQL database found. \
-         Please set DATABASE_URL environment variable or ensure PostgreSQL is running \
-         with a database named 'sinex_dev' or 'sinex'."
-    ))
+/// Get database URL from environment - DATABASE_URL required
+pub fn get_database_url() -> Result<String> {
+    env::var("DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!(
+            "DATABASE_URL environment variable is required. Set it like: \
+             export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql"
+        )
+    })
 }
 
-/// Create a database connection pool with graceful fallbacks
-pub async fn create_pool_with_fallbacks() -> Result<DbPool> {
-    let database_url = get_database_url_with_fallbacks()?;
+/// Create a database connection pool
+pub async fn create_pool_strict() -> Result<DbPool> {
+    let database_url = get_database_url()?;
     create_pool(&database_url).await
 }
 
-/// Create a database connection pool with custom configuration and graceful fallbacks
-pub async fn create_pool_with_config_and_fallbacks(config: &PoolConfig) -> Result<DbPool> {
-    let database_url = get_database_url_with_fallbacks()?;
+/// Create a database connection pool with custom configuration
+pub async fn create_pool_with_config_strict(config: &PoolConfig) -> Result<DbPool> {
+    let database_url = get_database_url()?;
     create_pool_with_config(&database_url, config).await
 }
 
@@ -357,8 +346,7 @@ mod tests {
             QueueStatus::FailedRetryable
         );
 
-        // Test legacy mapping
-        assert_eq!(QueueStatus::from("completed"), QueueStatus::Succeeded);
+        // Test that invalid values default to Pending
 
         // Test unknown values default to Pending
         assert_eq!(QueueStatus::from("unknown"), QueueStatus::Pending);

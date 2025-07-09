@@ -4,7 +4,7 @@
 //! arbitrary sleeps and provide reliable synchronization patterns. All functions
 //! use exponential backoff and proper timeout handling.
 
-use crate::{DbPool, Result, CoreError};
+use crate::{DbPool, Result, CoreError, timeouts};
 use std::time::{Duration, Instant};
 
 /// Wait for database to be ready with a health check query
@@ -29,7 +29,7 @@ pub async fn wait_for_database_ready_with_timeout(
             Err(_) => {
                 // Use exponential backoff
                 let elapsed = start.elapsed();
-                let backoff = Duration::from_millis(10.min(elapsed.as_millis() as u64));
+                let backoff = timeouts::RETRY_INITIAL_DELAY.min(Duration::from_millis(elapsed.as_millis() as u64));
                 tokio::time::sleep(backoff).await;
             }
         }
@@ -92,7 +92,7 @@ pub async fn wait_for_worker_status(
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(timeouts::DEFAULT_TERMINAL_POLL_INTERVAL).await;
     }
 
     Err(CoreError::Database(format!("Worker {} status timeout: expected {}, timeout {}s", worker_name, expected_status, timeout_secs)))
@@ -217,7 +217,7 @@ pub async fn wait_for_agent_status(
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(timeouts::DEFAULT_TERMINAL_POLL_INTERVAL).await;
     }
 
     Err(CoreError::Database(format!("Agent '{}' status timeout: expected {}, timeout {}s", agent_name, expected_status, timeout_secs)))
@@ -339,7 +339,7 @@ mod tests {
 
         // Spawn task to set flag after delay
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(timeouts::DEFAULT_TERMINAL_POLL_INTERVAL).await;
             flag_clone.store(true, Ordering::Relaxed);
         });
 

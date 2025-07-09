@@ -1,7 +1,7 @@
 use crate::{calculate_backoff_secs, EventProcessor};
 use anyhow::Result;
 use chrono::{Duration, Utc};
-use sinex_db::queries::{
+use sinex_db::work_queue::{
     claim_work_queue_items, complete_work_queue_item, fail_work_queue_item, insert_dlq_event,
 };
 use sinex_db::DbPool;
@@ -218,7 +218,7 @@ impl Worker {
 
     /// Helper to fetch raw event by ID for DLQ (using consolidated query)
     async fn get_raw_event(&self, event_id: sinex_ulid::Ulid) -> Result<Option<RawEvent>> {
-        match sinex_db::queries::get_event_by_id(&self.pool, event_id).await {
+        match sinex_db::events::get_event_by_id(&self.pool, event_id).await {
             Ok(event) => Ok(Some(event)),
             Err(e) => {
                 // Check if it's a RowNotFound error by examining the error string

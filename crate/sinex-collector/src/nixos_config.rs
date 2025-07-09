@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::env;
 use tracing::{info, warn};
+use crate::config_utils::resolve_system_safe_path;
 
 /// Direct configuration structure that matches NixOS module options
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,6 +123,26 @@ fn default_compression() -> String {
 impl NixosConfig {
     /// Load configuration from file (TOML format)
     pub fn load_from_file(path: &PathBuf) -> Result<Self> {
+        // Security: Validate path is not a symlink attack
+        let metadata = std::fs::symlink_metadata(path)
+            .with_context(|| format!("Cannot read metadata for config file: {}", path.display()))?;
+        
+        if metadata.file_type().is_symlink() {
+            // Resolve symlink and validate target is within allowed directories
+            let canonical_path = path.canonicalize()
+                .with_context(|| format!("Cannot resolve symlink target for config file: {}", path.display()))?;
+            
+            // Validate canonical path is a regular file
+            let canonical_metadata = std::fs::metadata(&canonical_path)
+                .with_context(|| format!("Cannot read canonical path metadata: {}", canonical_path.display()))?;
+            
+            if !canonical_metadata.is_file() {
+                return Err(anyhow!("Config symlink target is not a regular file: {}", canonical_path.display()));
+            }
+            
+            warn!("Loading config from symlink: {} -> {}", path.display(), canonical_path.display());
+        }
+        
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
@@ -186,8 +207,8 @@ impl NixosConfig {
         Ok(())
     }
 
-    /// Convert to the legacy CollectorConfig format for backward compatibility
-    pub fn to_legacy_config(&self) -> Result<super::CollectorConfig> {
+    /// Convert to CollectorConfig format
+    pub fn to_collector_config(&self) -> Result<super::CollectorConfig> {
         let mut enabled_events = Vec::new();
         let event_config = HashMap::new();
         let mut flat_config = HashMap::new();
@@ -204,10 +225,10 @@ impl NixosConfig {
         if self.event_sources.terminal {
             enabled_events.extend(
                 [
-                    "command.executed",
-                    "shell.command.executed_atuin",
-                    "shell.history.command",
-                    "terminal.scrollback.captured",
+                    "command.completed",
+                    "command.imported",
+                    "command.hist",
+                    "output.captured",
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -220,7 +241,7 @@ impl NixosConfig {
                     "window.focused",
                     "window.opened",
                     "window.closed",
-                    "workspace.changed",
+                    "workspace.switched",
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -228,18 +249,23 @@ impl NixosConfig {
         }
 
         if self.event_sources.clipboard {
-            enabled_events.push("clipboard.content.changed".to_string());
+            enabled_events.extend(
+                ["copied", "selected"]
+                .iter()
+                .map(|s| s.to_string()),
+            );
         }
 
         if self.event_sources.system_events {
             enabled_events.extend(
                 [
-                    "dbus.signal",
-                    "system.notification",
-                    "media.playback.changed",
-                    "system.power.event",
-                    "hardware.device.event",
-                    "journal.entry",
+                    "signal.received",
+                    "notification.sent",
+                    "media.state_changed",
+                    "power.state_changed",
+                    "device.connected",
+                    "device.disconnected",
+                    "entry.written",
                 ]
                 .iter()
                 .map(|s| s.to_string()),
@@ -352,15 +378,15 @@ impl NixosConfig {
         // Auto-discover Atuin database
         if let Ok(atuin_config) = self.auto_discover_atuin_config() {
             flat_config.insert(
-                "event.shell_command_executed_atuin".to_string(),
+                "event.command_imported".to_string(),
                 atuin_config,
             );
         }
 
         // Auto-discover Kitty socket
         if let Ok(kitty_config) = self.auto_discover_kitty_config() {
-            flat_config.insert("event.command_executed".to_string(), kitty_config.clone());
-            flat_config.insert("event.terminal_scrollback".to_string(), kitty_config);
+            flat_config.insert("event.command_completed".to_string(), kitty_config.clone());
+            flat_config.insert("event.output_captured".to_string(), kitty_config);
         }
 
         // Shell history configuration
@@ -382,7 +408,7 @@ impl NixosConfig {
         );
 
         flat_config.insert(
-            "event.shell_history_command".to_string(),
+            "event.command_hist".to_string(),
             sinex_core::ConfigValue::Table(shell_config),
         );
         Ok(())
@@ -668,39 +694,6 @@ impl NixosConfig {
             anyhow::bail!("Invalid retention period format (expected number with d/w/m/y suffix)")
         }
     }
-}
-
-/// Resolve path without home directory assumptions for system services
-fn resolve_system_safe_path(default_path: &str, env_var: Option<&str>, fallback_dir: &str) -> String {
-    // First try environment variable if provided
-    if let Some(var_name) = env_var {
-        if let Ok(path) = env::var(var_name) {
-            return path;
-        }
-    }
-    
-    // If path starts with ~, resolve to system-safe alternatives
-    if let Some(relative_path) = default_path.strip_prefix("~/") {
-        // Remove ~/
-        
-        // Try XDG directories first (most appropriate for system services)
-        if let Ok(data_dir) = env::var("XDG_DATA_HOME") {
-            return format!("{}/{}", data_dir, relative_path);
-        }
-        
-        // Try HOME as last resort
-        if let Ok(home) = env::var("HOME") {
-            warn!("Using HOME directory for system service - consider setting XDG_DATA_HOME");
-            return format!("{}/.local/share/{}", home, relative_path);
-        }
-        
-        // Fall back to /var/lib or /tmp for system services
-        warn!("No HOME or XDG_DATA_HOME available, using fallback: {}/{}", fallback_dir, relative_path);
-        return format!("{}/{}", fallback_dir, relative_path);
-    }
-    
-    // Return path as-is if not home directory based
-    default_path.to_string()
 }
 
 #[cfg(test)]
