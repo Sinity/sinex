@@ -235,7 +235,7 @@ impl TestContext {
             source: row.source,
             event_type: row.event_type,
             payload: row.payload,
-            ts_ingest: row.ts_ingest,
+            ts_ingest: row.ts_ingest.expect("ts_ingest should not be null"),
             ts_orig: row.ts_orig,
             host: row.host,
             ingestor_version: row.ingestor_version,
@@ -321,7 +321,7 @@ impl TestContext {
         Fut: std::future::Future<Output = Result<bool>>,
     {
         wait_for_condition_or_timeout(condition, self.config.default_timeout.as_secs()).await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, e)) as Box<dyn std::error::Error>)
     }
 
     /// Wait a short time for processing (replaces arbitrary sleeps)

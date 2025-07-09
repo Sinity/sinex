@@ -43,7 +43,7 @@ pub mod event_builders;
 pub use crate::common::prelude::*;
 use sinex_core::{sources, EventFactory, event_type_constants};
 use sinex_db::events as db_events;
-use sinex_db::query_helpers::{uuid_to_ulid, ulid_to_uuid};
+use sinex_db::query_helpers::uuid_to_ulid;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -360,10 +360,10 @@ pub mod assertions {
             &manifest.version,
             manifest.description.as_deref(),
             &manifest.agent_type,
-            manifest.config_template_json.clone(),
-            manifest.produces_event_types.clone(),
-            manifest.subscribes_to_event_types.clone(),
-            manifest.required_capabilities.clone(),
+            manifest.config_template_json.clone().unwrap_or_default(),
+            manifest.produces_event_types.clone().unwrap_or_default(),
+            manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            manifest.required_capabilities.clone().unwrap_or_default(),
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
@@ -762,10 +762,10 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
-        manifest.config_template_json.clone(),
-        manifest.produces_event_types.clone(),
-        manifest.subscribes_to_event_types.clone(),
-        manifest.required_capabilities.clone(),
+        manifest.config_template_json.clone().unwrap_or_default(),
+        manifest.produces_event_types.clone().unwrap_or_default(),
+        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+        manifest.required_capabilities.clone().unwrap_or_default(),
     )
     .await?;
     Ok(())
@@ -821,10 +821,10 @@ pub async fn create_agent_with_subscriptions(
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
-        manifest.config_template_json.clone(),
-        manifest.produces_event_types.clone(),
-        manifest.subscribes_to_event_types.clone(),
-        manifest.required_capabilities.clone(),
+        manifest.config_template_json.clone().unwrap_or_default(),
+        manifest.produces_event_types.clone().unwrap_or_default(),
+        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+        manifest.required_capabilities.clone().unwrap_or_default(),
     )
     .await?;
 

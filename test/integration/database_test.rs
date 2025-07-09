@@ -19,7 +19,7 @@ use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_core::{RawEventBuilder};
-use sinex_db::events::insert_event_with_validator;
+// use sinex_db::events::insert_event_with_validator; // Unused import removed
 use sinex_db::models::WorkQueueItem;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};

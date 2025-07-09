@@ -2,7 +2,6 @@ use crate::common::prelude::*;
 use crate::common::create_test_agent;
 use proptest::prelude::*;
 use sinex_db::{
-    events::insert_event_with_validator as insert_event_with_validator,
     work_queue::{claim_work_queue_items, complete_work_queue_item, add_to_work_queue as insert_work_queue_item},
 };
 use std::sync::{Arc, Mutex};

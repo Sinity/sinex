@@ -248,12 +248,12 @@ impl Drop for TestDatabase {
         }).join().unwrap_or_else(|_| eprintln!("⚠️  Cleanup thread panicked"));
         
         // Clear the pool reference
-        if let Ok(mut pool_opt) = self.slot.pool.lock() {
-            *pool_opt = None;
-        }
+        let mut pool_opt = self.slot.pool.lock();
+        *pool_opt = None;
         
         // Record when this slot was released
-        if let Ok(mut last_released) = self.slot.last_released.lock() {
+        {
+            let mut last_released = self.slot.last_released.lock();
             *last_released = Some(std::time::Instant::now());
         }
         
@@ -372,10 +372,10 @@ impl DatabasePool {
             slots.push(Arc::new(DatabaseSlot {
                 name,
                 url,
-                pool: std::sync::Mutex::new(None),
+                pool: Mutex::new(None),
                 in_use: AtomicBool::new(false),
-                last_acquired: std::sync::Mutex::new(None),
-                last_released: std::sync::Mutex::new(None),
+                last_acquired: Mutex::new(None),
+                last_released: Mutex::new(None),
             }));
         }
         
@@ -438,7 +438,8 @@ impl DatabasePool {
                 
                 // Store lock info in the slot for cleanup
                 slot.in_use.store(true, Ordering::Release);
-                if let Ok(mut pool_opt) = slot.pool.lock() {
+                {
+                    let mut pool_opt = slot.pool.lock();
                     *pool_opt = Some(pool.clone());
                 }
                 
@@ -473,7 +474,8 @@ impl DatabasePool {
                             .execute(&pool)
                             .await;
                         pool.close().await;
-                        if let Ok(mut pool_opt) = slot.pool.lock() {
+                        {
+                            let mut pool_opt = slot.pool.lock();
                             *pool_opt = None;
                         }
                         slot.in_use.store(false, Ordering::Release);
@@ -1097,7 +1099,8 @@ pub async fn reset_pool() -> Result<()> {
     if let Some(pool) = pool_lock.take() {
         // Close all connections
         for slot in &pool.slots {
-            if let Ok(mut pool_opt) = slot.pool.lock() {
+            {
+                let mut pool_opt = slot.pool.lock();
                 if let Some(pool) = pool_opt.take() {
                     pool.close().await;
                 }
