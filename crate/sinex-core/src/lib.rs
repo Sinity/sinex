@@ -8,8 +8,10 @@ pub mod directory_manager;
 pub mod error_context;
 pub mod event;
 pub mod event_builders;
+pub mod event_pipeline;
 pub mod event_registry_macro;
 pub mod event_source_base;
+pub mod pipeline_integration;
 pub mod event_source_context;
 pub mod file_watcher;
 pub mod heartbeat;
@@ -48,6 +50,12 @@ pub use constants::{timeouts, limits, buffers, retry, filesystem};
 pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
 pub use event_builders::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
+pub use event_pipeline::{
+    EventPipeline, PipelineConfig, PipelineStage, StagedEvent, StageResult, StageMetrics, 
+    EventTiming, PipelineMetrics, ValidationStage, EnrichmentStage, StorageStage, DistributionStage,
+    StageTimeouts
+};
+pub use pipeline_integration::{PipelineAwareCollector, PipelineCollectorBuilder};
 pub use event_source_base::EventSourceBase;
 pub use event_source_context::EventSourceContext;
 pub use file_watcher::{
