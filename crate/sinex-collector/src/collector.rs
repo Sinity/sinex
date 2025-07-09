@@ -10,7 +10,7 @@ use sinex_events_desktop::{
     clipboard::ClipboardMonitor,
     window_manager::HyprlandIPCMonitor,
 };
-use sinex_events_fs::filesystem::FilesystemMonitor;
+use sinex_events_fs::TypedFilesystemAdapter;
 use sinex_events_system::{
     dbus::DbusMonitor,
     journal::JournalMonitor,
@@ -262,7 +262,7 @@ impl UnifiedCollector {
     }
 
     async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<FilesystemMonitor>("files", "filesystem", event_tx).await
+        self.start_event_source::<TypedFilesystemAdapter>("files", "filesystem", event_tx).await
     }
 
     async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {

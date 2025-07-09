@@ -137,11 +137,11 @@ impl Default for FilesystemConfig {
 
 /// Rename operation tracking
 #[derive(Debug, Clone)]
-struct RenameOperation {
-    source_path: PathBuf,
-    timestamp: Instant,
+pub struct RenameOperation {
+    pub source_path: PathBuf,
+    pub timestamp: Instant,
     #[allow(dead_code)] // Used in HashMap operations but not directly accessed
-    cookie: Option<u32>,
+    pub cookie: Option<u32>,
 }
 
 /// File system monitor using the notify crate (inotify on Linux)
