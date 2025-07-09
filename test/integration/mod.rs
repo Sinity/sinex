@@ -71,6 +71,9 @@ pub mod worker;
 /// Event source implementation testing
 pub mod event_sources;
 
+/// Consolidated event source integration tests
+pub mod event_sources_test;
+
 /// Agent lifecycle and communication testing
 pub mod agent;
 
