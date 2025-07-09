@@ -10,9 +10,9 @@
 use crate::common::prelude::*;
 use sinex_events_terminal::{
     kitty::{
-        KittyEventSource, KittyConfig, KittyCommandExecuted, KittyCommandCompleted, 
+        KittyEventSource, KittyConfig, KittyCommandCompleted, 
         KittyScrollbackIncremental, KittyTabCreated, KittyTabFocused, KittyTabClosed, 
-        KittyProcessChanged, KittyCommandExecutedPayload, KittyCommandCompletedPayload,
+        KittyProcessChanged, KittyCommandCompletedPayload,
         KittyTabCreatedPayload, KittyProcessChangedPayload, KittyProcessInfo,
     },
     scrollback::{
@@ -68,7 +68,6 @@ async fn test_kitty_config_serialization(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_kitty_event_types(_ctx: TestContext) -> TestResult {
     // Verify event type constants
-    assert_eq!(KittyCommandExecuted::EVENT_NAME, "command.started");
     assert_eq!(KittyCommandCompleted::EVENT_NAME, "command.completed");
     assert_eq!(KittyScrollbackIncremental::EVENT_NAME, "content.streamed");
     assert_eq!(KittyTabCreated::EVENT_NAME, "tab.created");
@@ -82,8 +81,8 @@ async fn test_kitty_event_types(_ctx: TestContext) -> TestResult {
 /// Test Kitty event payload serialization
 #[sinex_test]
 async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult {
-    // Test KittyCommandExecutedPayload
-    let cmd_payload = KittyCommandExecutedPayload {
+    // Test KittyCommandCompletedPayload
+    let cmd_payload = KittyCommandCompletedPayload {
         command: "ls -la".to_string(),
         cwd: "/home/user".to_string(),
         pid: 1234,
@@ -92,7 +91,7 @@ async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult
     };
     
     let serialized = serde_json::to_string(&cmd_payload)?;
-    let deserialized: KittyCommandExecutedPayload = serde_json::from_str(&serialized)?;
+    let deserialized: KittyCommandCompletedPayload = serde_json::from_str(&serialized)?;
     
     assert_eq!(cmd_payload.command, deserialized.command);
     assert_eq!(cmd_payload.cwd, deserialized.cwd);

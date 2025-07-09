@@ -304,8 +304,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
                         payload, 
                         '{counter}', 
                         ((payload->>'counter')::int + 1)::text::jsonb
-                    ),
-                    updated_at = NOW()
+                    )
                     WHERE id::uuid = $1::uuid
                     "#,
                     event_id.to_uuid()

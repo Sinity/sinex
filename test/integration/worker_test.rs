@@ -1,8 +1,8 @@
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_work_queue_status_count;
 use crate::common::worker_test_utils;
-use sinex_db::queries::insert_raw_event;
-use sinex_db::work_queue_correct::{claim_work_queue_items, complete_work_queue_item};
+use sinex_db::events::insert_event_with_validator;
+use sinex_db::work_queue::{claim_work_queue_items, complete_work_queue_item};
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{calculate_backoff_secs, EventProcessor, WorkerMetrics};
 use std::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};

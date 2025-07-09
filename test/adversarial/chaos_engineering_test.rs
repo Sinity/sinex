@@ -64,7 +64,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 updated_at: Utc::now(),
             };
 
-            match sinex_db::agent_correct::upsert_agent_manifest(
+            match sinex_db::agent::upsert_agent_manifest(
                 &pool_clone,
                 &manifest.agent_name,
                 &manifest.version,
@@ -170,7 +170,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
         updated_at: Utc::now(),
     };
     
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
@@ -269,7 +269,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
         
         let handle = tokio::spawn(async move {
             // Register agent
-            match sinex_db::agent_correct::upsert_agent_manifest(
+            match sinex_db::agent::upsert_agent_manifest(
                 &pool_clone,
                 &agent_name,
                 "1.0.0",

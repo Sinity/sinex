@@ -54,13 +54,13 @@ async fn test_configuration_precedence(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_configuration_security_validation(_ctx: TestContext) -> TestResult {
     // Test security constraints on configuration values
-    use sinex_collector::config::DatabaseConfig;
+    use sinex_collector::config::CollectorConfig;
     
-    let mut config = DatabaseConfig::default();
+    let mut config = CollectorConfig::default();
     
-    // Test invalid URLs are rejected
-    config.url = "invalid://not-a-url".to_string();
-    // Should validate URL format
+    // Test invalid annex repo paths are rejected
+    config.annex_repo_path = Some("../../../etc/passwd".to_string());
+    // Should validate path security
     
     Ok(())
 }
@@ -179,7 +179,7 @@ async fn test_clipboard_config_invalid_sizes(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_dbus_config_validation(_ctx: TestContext) -> TestResult {
     // Test D-Bus configuration validation
-    use sinex_events_system::DbusConfig;
+    use sinex_events_system::dbus::DbusConfig;
     
     let config = DbusConfig::default();
     assert!(config.signal_filters.is_empty() || !config.signal_filters.is_empty());
@@ -190,7 +190,7 @@ async fn test_dbus_config_validation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_dbus_config_invalid_filters(_ctx: TestContext) -> TestResult {
     // Test invalid D-Bus filters
-    use sinex_events_system::DbusConfig;
+    use sinex_events_system::dbus::DbusConfig;
     
     let mut config = DbusConfig::default();
     config.signal_filters = vec!["invalid::filter::pattern".to_string()];
@@ -206,7 +206,7 @@ async fn test_dbus_config_invalid_filters(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_kitty_config_validation(_ctx: TestContext) -> TestResult {
     // Test Kitty terminal configuration validation
-    use sinex_events_terminal::KittyConfig;
+    use sinex_events_terminal::kitty::KittyConfig;
     
     let config = KittyConfig::default();
     assert!(config.socket_paths.is_empty() || !config.socket_paths.is_empty());
@@ -217,7 +217,7 @@ async fn test_kitty_config_validation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_kitty_config_invalid_paths(_ctx: TestContext) -> TestResult {
     // Test invalid socket paths
-    use sinex_events_terminal::KittyConfig;
+    use sinex_events_terminal::kitty::KittyConfig;
     
     let mut config = KittyConfig::default();
     config.socket_paths = vec!["/invalid/socket/path".to_string()];
@@ -318,9 +318,9 @@ async fn test_command_output_payload(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_auto_registration_completeness(_ctx: TestContext) -> TestResult {
     // Test that auto-registration captures all event types
-    use sinex_collector::create_registry;
+    use sinex_collector::collector::create_registry_with_auto_registration;
     
-    let registry = create_registry();
+    let registry = create_registry_with_auto_registration();
     
     // Should contain all major event sources
     let sources = registry.get_all_sources();
@@ -332,9 +332,9 @@ async fn test_auto_registration_completeness(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_multiple_crate_registration(_ctx: TestContext) -> TestResult {
     // Test registration from multiple crates works
-    use sinex_collector::create_registry;
+    use sinex_collector::collector::create_registry_with_auto_registration;
     
-    let registry = create_registry();
+    let registry = create_registry_with_auto_registration();
     
     // Should have events from multiple crates
     let event_types = registry.get_all_event_types();

@@ -1,7 +1,7 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_db::queries::insert_raw_event;
+use sinex_db::events::insert_event_with_validator;
 use chrono::{Utc, DateTime, Duration as ChronoDuration};
 
 /// Generate a strategy for creating lists of ULIDs with controlled time gaps

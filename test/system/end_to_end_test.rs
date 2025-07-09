@@ -24,7 +24,9 @@ use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
 use sinex_core::RawEvent;
-use sinex_db::{models::*, queries, run_migrations};
+use sinex_db::{models::*, run_migrations};
+use sinex_db::events::insert_event_with_validator;
+use sinex_db::work_queue::add_to_work_queue;
 use sinex_worker::{worker::Worker, EventProcessor};
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
@@ -687,7 +689,7 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
     info!("Testing agent registration and heartbeats");
 
     let agent_name = "test-collector";
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
         agent_name,
         "0.1.0",

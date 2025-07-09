@@ -30,6 +30,7 @@ use crate::common::timing_optimization::wait_helpers::{
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use sinex_core::EventFactory;
+use sinex_db::query_helpers::uuid_to_ulid;
 
 /// Event builder factory for fluent API access
 pub struct EventBuilderFactory;
@@ -213,10 +214,9 @@ impl TestContext {
 
     /// Get an event by ID
     pub async fn get_event_by_id(&self, id: Ulid) -> Result<Option<DbRawEvent>> {
-        let event = sqlx::query_as!(
-            DbRawEvent,
+        let event = sqlx::query!(
             r#"SELECT 
-                id as "id!: Ulid",
+                id::uuid as "id!",
                 source,
                 event_type,
                 payload,
@@ -224,12 +224,23 @@ impl TestContext {
                 ts_orig,
                 host,
                 ingestor_version,
-                payload_schema_id
+                payload_schema_id::uuid
             FROM raw.events WHERE id::uuid = $1"#,
             id.to_uuid()
         )
         .fetch_optional(self.pool())
-        .await?;
+        .await?
+        .map(|row| DbRawEvent {
+            id: uuid_to_ulid(row.id),
+            source: row.source,
+            event_type: row.event_type,
+            payload: row.payload,
+            ts_ingest: row.ts_ingest,
+            ts_orig: row.ts_orig,
+            host: row.host,
+            ingestor_version: row.ingestor_version,
+            payload_schema_id: row.payload_schema_id.map(uuid_to_ulid),
+        });
         Ok(event)
     }
 

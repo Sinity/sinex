@@ -353,7 +353,7 @@ pub mod assertions {
         pool: &DbPool,
         manifest: &AgentManifest,
     ) -> Result<(), anyhow::Error> {
-        let result = sinex_db::agent_correct::upsert_agent_manifest(
+        let result = sinex_db::agent::upsert_agent_manifest(
             pool,
             &manifest.agent_name,
             &manifest.version,
@@ -669,7 +669,7 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
@@ -701,7 +701,7 @@ pub async fn create_agent_with_subscriptions(
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,

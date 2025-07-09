@@ -361,7 +361,7 @@ async fn test_event_source_database_integration(ctx: TestContext) -> TestResult 
             event.event_type = unique_event_type.clone();
             
             // Store in database using proper queries that handle ts_ingest correctly
-            use sinex_db::queries::insert_event;
+            use sinex_db::events::insert_event_with_validator as insert_event;
             insert_event(ctx.pool(), &event).await?;
             inserted_count += 1;
         }

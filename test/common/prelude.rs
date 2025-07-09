@@ -92,7 +92,7 @@ pub use crate::common::insert_event;
 // Query shortcuts
 pub use sinex_db::{
     work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item, fail_work_queue_item},
-    events::insert_event_with_validator as insert_raw_event,
+    events::{insert_event_with_validator, get_event_by_id},
     metrics_queries::calculate_queue_depth_metrics,
 };
 // ===== Enhanced Assertions =====

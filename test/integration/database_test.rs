@@ -18,7 +18,8 @@ use crate::common::prelude::*;
 use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
-use sinex_core::{event_type_constants, sources, RawEventBuilder};
+use sinex_core::{RawEventBuilder};
+use sinex_db::events::insert_event_with_validator;
 use sinex_db::models::WorkQueueItem;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -39,16 +40,14 @@ use uuid::Uuid;
 #[sinex_test(timeout = 35)]
 async fn test_insert_and_retrieve_event(ctx: TestContext) -> TestResult {
     // Create a test event using our utilities
-    let event = events::filesystem_event(
-        event_type_constants::filesystem::FILE_CREATED,
-        "/test/file.txt",
-    );
+    let event = RawEventBuilder::new("fs", "file.created", json!({"path": "/test/file.txt"})).build();
 
     // Insert and verify using shared assertion helpers
-    let event_id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
+    let inserted_event = insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let event_id = inserted_event.id;
 
     // Query it back using our helper that encapsulates the UUID conversion
-    let retrieved = common::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = get_event_by_id(ctx.pool(), event_id).await?;
 
     // Verify it matches what we inserted (ignoring generated fields)
     assertions::assert_events_equivalent(&retrieved, &event);
@@ -66,7 +65,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         let pool = ctx.pool().clone();
         let event = event.clone();
         tokio::spawn(async move {
-            assertions::assert_event_inserted(&pool, &event).await
+            insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
         })
     }).collect();
 
@@ -81,7 +80,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let verify_tasks: Vec<_> = inserted_ids.iter().map(|&id| {
         let pool = ctx.pool().clone();
         tokio::spawn(async move {
-            common::event_exists(&pool, id).await
+            get_event_by_id(&pool, id).await.map(|_| true).unwrap_or(false)
         })
     }).collect();
 
@@ -89,9 +88,11 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         assert!(task.await??);
     }
 
-    // Check total count
-    let count = common::get_event_count(ctx.pool()).await?;
-    assert!(count >= 10);
+    // Check total count - use basic query
+    let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
+        .fetch_one(ctx.pool())
+        .await?;
+    assert!(count.unwrap_or(0) >= 10);
 
     Ok(())
 }
