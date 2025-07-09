@@ -13,6 +13,7 @@ pub use kitty::{
     KittyTabFocused, KittyTabClosed, KittyProcessChanged,
     KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
     KittyTabCreatedPayload, KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
+    KittyEventSource, KittyConfig, KittyProcessInfo,
 };
 pub use scrollback::{CommandOutputCaptured, TerminalScrollbackCaptured, CommandOutputCapturedPayload, TerminalScrollbackCapturedPayload};
 pub use shell_history::{ShellHistoryCommand, ShellHistoryCommandPayload};
