@@ -774,6 +774,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
+name = "dunce"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,6 +801,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "envmnt"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d73999a2b8871e74c8b8bc23759ee9f3d85011b24fafc91a4b3b5c8cc8185501"
+dependencies = [
+ "fsio",
+ "indexmap 1.9.3",
 ]
 
 [[package]]
@@ -928,6 +944,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "fsio"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4944f16eb6a05b4b2b79986b4786867bb275f52882adea798f17cc2588f25b2"
+dependencies = [
+ "dunce",
 ]
 
 [[package]]
@@ -1130,7 +1155,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http 0.2.12",
- "indexmap",
+ "indexmap 2.9.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -1149,7 +1174,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http 1.3.1",
- "indexmap",
+ "indexmap 2.9.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -1165,6 +1190,12 @@ dependencies = [
  "cfg-if",
  "crunchy",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
@@ -1519,6 +1550,16 @@ name = "if_chain"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb56e1aa765b4b4f3aadfab769793b7087bb03a4ea4920644a6d238e2df5b9ed"
+
+[[package]]
+name = "indexmap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
+dependencies = [
+ "autocfg",
+ "hashbrown 0.12.3",
+]
 
 [[package]]
 name = "indexmap"
@@ -3147,6 +3188,7 @@ dependencies = [
  "serde_json",
  "sinex-core",
  "sinex-db",
+ "sinex-events",
  "sinex-events-desktop",
  "sinex-events-fs",
  "sinex-events-system",
@@ -3198,6 +3240,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sinex-events",
  "sinex-ulid",
  "sqlx",
  "tempfile",
@@ -3231,6 +3274,25 @@ dependencies = [
  "tokio-test",
  "tracing",
  "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-events"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "gethostname 0.4.3",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -3274,6 +3336,7 @@ dependencies = [
  "shellexpand",
  "sinex-core",
  "sinex-db",
+ "sinex-events",
  "sinex-ulid",
  "tokio",
  "tracing",
@@ -3403,6 +3466,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-identifiers"
+version = "0.4.2"
+dependencies = [
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "sinex-validation",
+ "sqlx",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-preflight"
 version = "0.1.0"
 dependencies = [
@@ -3428,6 +3506,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-service-base"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "gethostname 0.4.3",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "sinex-validation",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "sinex-services"
 version = "0.4.2"
 dependencies = [
@@ -3445,6 +3542,26 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "sinex-shell-integration"
+version = "0.4.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dirs 5.0.1",
+ "envmnt",
+ "nix 0.27.1",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "sinex-core",
+ "sinex-events-shell",
+ "sinex-ulid",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3470,6 +3587,22 @@ dependencies = [
  "thiserror 1.0.69",
  "ulid",
  "uuid",
+]
+
+[[package]]
+name = "sinex-validation"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "jsonschema",
+ "regex",
+ "serde",
+ "serde_json",
+ "sinex-ulid",
+ "thiserror 1.0.69",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3586,7 +3719,7 @@ dependencies = [
  "futures-util",
  "hashlink",
  "hex",
- "indexmap",
+ "indexmap 2.9.0",
  "log",
  "memchr",
  "once_cell",
@@ -4144,7 +4277,7 @@ version = "0.22.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "310068873db2c5b3e7659d2cc35d21855dbafa50d1ce336397c666e3cb08137e"
 dependencies = [
- "indexmap",
+ "indexmap 2.9.0",
  "serde",
  "serde_spanned",
  "toml_datetime",

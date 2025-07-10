@@ -9,6 +9,24 @@ use sinex_ulid::Ulid;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+// Re-export types from sinex-events for internal use
+use crate::{RawEvent, EventSender};
+
+// Define our own error type to avoid circular dependency on sinex-core
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum TypedEventError {
+    #[error("Channel send error: {0}")]
+    ChannelSend(String),
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+pub type TypedEventResult<T> = std::result::Result<T, TypedEventError>;
+
 // ============================================================================
 // Strongly-Typed RawEvent
 // ============================================================================
@@ -28,11 +46,11 @@ pub struct TypedRawEvent<P: Serialize> {
 
 impl<P: Serialize> TypedRawEvent<P> {
     /// Convert to JSON-based RawEvent for database storage
-    pub fn to_json_event(self) -> crate::RawEvent {
+    pub fn to_json_event(self) -> RawEvent {
         let payload_json = serde_json::to_value(&self.payload)
             .expect("Payload must be serializable to JSON");
         
-        crate::RawEvent {
+        RawEvent {
             id: self.id,
             source: self.source,
             event_type: self.event_type,
@@ -83,12 +101,12 @@ pub enum EventEnvelope {
     SystemStateChanged(TypedRawEvent<SystemStatePayload>),
     
     // Generic fallback for unknown events
-    Unknown(crate::RawEvent),
+    Unknown(RawEvent),
 }
 
 impl EventEnvelope {
     /// Convert to JSON-based RawEvent for database storage
-    pub fn to_json_event(self) -> crate::RawEvent {
+    pub fn to_json_event(self) -> RawEvent {
         match self {
             EventEnvelope::FileCreated(event) => event.to_json_event(),
             EventEnvelope::FileModified(event) => event.to_json_event(),
@@ -401,30 +419,31 @@ pub fn typed_event_channel() -> (TypedEventSender, TypedEventReceiver) {
 
 /// Adapter to enforce typed event pipeline while maintaining EventSource compatibility
 pub struct TypedEventPipelineAdapter {
-    json_tx: crate::EventSender,
+    json_tx: EventSender,
 }
 
 impl TypedEventPipelineAdapter {
     /// Create new adapter that enforces typed events
-    pub fn new(json_tx: crate::EventSender) -> Self {
+    pub fn new(json_tx: EventSender) -> Self {
         Self { json_tx }
     }
 
     /// Run adapter loop converting typed events to JSON for legacy systems
-    pub async fn run_adapter(self, mut typed_rx: TypedEventReceiver) -> crate::Result<()> {
+    pub async fn run_adapter(self, mut typed_rx: TypedEventReceiver) -> TypedEventResult<()> {
         while let Some(envelope) = typed_rx.recv().await {
             // Convert typed event to JSON for database/legacy systems
             let json_event = envelope.to_json_event();
             
             // Send to legacy pipeline
             self.json_tx.send(json_event).await
-                .map_err(|e| crate::CoreError::Other(format!("Failed to send converted event: {}", e)))?;
+                .map_err(|e| TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e)))?;
         }
         Ok(())
     }
 }
 
 /// Trait for sources that produce strongly-typed events (enforcement mechanism)
+/// Note: This is a simplified version that doesn't depend on sinex-core types
 #[async_trait::async_trait]
 pub trait EnforcedTypedEventSource: Send + Sync + 'static {
     /// Configuration type for this source
@@ -433,66 +452,22 @@ pub trait EnforcedTypedEventSource: Send + Sync + 'static {
     /// Canonical source name
     const SOURCE_NAME: &'static str;
 
-    /// Initialize the source with context containing config and shared resources
-    async fn initialize(ctx: crate::EventSourceContext) -> crate::Result<Self>
+    /// Initialize the source with config value
+    async fn initialize(config: serde_json::Value) -> TypedEventResult<Self>
     where
         Self: Sized;
 
     /// Stream ONLY typed events (enforcement: no RawEvent allowed)
-    async fn stream_typed_events(&mut self, tx: TypedEventSender) -> crate::Result<()>;
+    async fn stream_typed_events(&mut self, tx: TypedEventSender) -> TypedEventResult<()>;
 
     /// Graceful shutdown
-    async fn shutdown(&mut self) -> crate::Result<()> {
+    async fn shutdown(&mut self) -> TypedEventResult<()> {
         Ok(())
     }
 }
 
-/// Bridge adapter to make EnforcedTypedEventSource compatible with EventSource
-pub struct TypedSourceAdapter<T: EnforcedTypedEventSource> {
-    inner: T,
-}
-
-impl<T: EnforcedTypedEventSource> TypedSourceAdapter<T> {
-    pub fn new(inner: T) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl<T: EnforcedTypedEventSource> crate::EventSource for TypedSourceAdapter<T> {
-    type Config = T::Config;
-
-    const SOURCE_NAME: &'static str = T::SOURCE_NAME;
-
-    async fn initialize(ctx: crate::EventSourceContext) -> crate::Result<Self>
-    where
-        Self: Sized,
-    {
-        let inner = T::initialize(ctx).await?;
-        Ok(Self::new(inner))
-    }
-
-    async fn stream_events(&mut self, tx: crate::EventSender) -> crate::Result<()> {
-        // Create typed channel
-        let (typed_tx, typed_rx) = typed_event_channel();
-        
-        // Create adapter to convert typed events to JSON
-        let adapter = TypedEventPipelineAdapter::new(tx);
-        let adapter_handle = tokio::spawn(adapter.run_adapter(typed_rx));
-        
-        // Run typed source
-        let typed_result = self.inner.stream_typed_events(typed_tx).await;
-        
-        // Wait for adapter to finish
-        let _ = adapter_handle.await;
-        
-        typed_result
-    }
-
-    async fn shutdown(&mut self) -> crate::Result<()> {
-        self.inner.shutdown().await
-    }
-}
+// Note: TypedSourceAdapter removed to avoid circular dependency with sinex-core
+// It can be re-implemented in sinex-core if needed, using the TypedEventPipelineAdapter
 
 // ============================================================================
 // Event Builder Helpers
@@ -662,54 +637,28 @@ impl TypedClipboardEventBuilder {
 /// Adapter to convert typed events to JSON events during migration
 pub struct TypedToJsonAdapter {
     typed_rx: TypedEventReceiver,
-    json_tx: crate::EventSender,
+    json_tx: EventSender,
 }
 
 impl TypedToJsonAdapter {
-    pub fn new(typed_rx: TypedEventReceiver, json_tx: crate::EventSender) -> Self {
+    pub fn new(typed_rx: TypedEventReceiver, json_tx: EventSender) -> Self {
         Self { typed_rx, json_tx }
     }
     
     /// Run the adapter, converting typed events to JSON events
-    pub async fn run(mut self) -> crate::Result<()> {
+    pub async fn run(mut self) -> TypedEventResult<()> {
         while let Some(envelope) = self.typed_rx.recv().await {
             let json_event = envelope.to_json_event();
             if let Err(e) = self.json_tx.send(json_event).await {
-                return Err(crate::CoreError::Other(format!("Failed to send converted event: {}", e)));
+                return Err(TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e)));
             }
         }
         Ok(())
     }
 }
 
-/// Adapter for legacy event sources during migration
-pub struct LegacyEventSourceAdapter<S: crate::EventSource> {
-    inner: S,
-}
-
-impl<S: crate::EventSource> LegacyEventSourceAdapter<S> {
-    pub fn new(source: S) -> Self {
-        Self { inner: source }
-    }
-    
-    pub async fn run_with_adapter(mut self, json_tx: crate::EventSender) -> crate::Result<()> {
-        // Create typed channel
-        let (typed_tx, typed_rx) = typed_event_channel();
-        
-        // Create and spawn adapter
-        let adapter = TypedToJsonAdapter::new(typed_rx, json_tx.clone());
-        let adapter_handle = tokio::spawn(adapter.run());
-        
-        // Run the legacy source (it will still send JSON events)
-        let result = self.inner.stream_events(json_tx).await;
-        
-        // Shutdown adapter
-        drop(typed_tx);
-        let _ = adapter_handle.await;
-        
-        result
-    }
-}
+// Note: LegacyEventSourceAdapter removed to avoid circular dependency with sinex-core
+// It can be re-implemented in sinex-core if needed, using the TypedToJsonAdapter
 
 #[cfg(test)]
 mod tests {

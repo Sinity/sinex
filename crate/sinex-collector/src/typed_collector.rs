@@ -5,8 +5,10 @@
 
 use sinex_core::{
     EventSender, EventReceiver,
-    strongly_typed_events::{TypedEventSender, TypedEventReceiver, EventEnvelope, typed_event_channel},
     RawEvent,
+};
+use sinex_events::{
+    TypedEventSender, TypedEventReceiver, EventEnvelope, typed_event_channel,
 };
 use tokio::sync::mpsc;
 use tracing::{info, error};
@@ -154,7 +156,9 @@ mod tests {
     use super::*;
     use sinex_core::{
         RawEventBuilder,
-        strongly_typed_events::{TypedEventBuilder, FileCreatedPayload},
+    };
+    use sinex_events::{
+        TypedEventBuilder, FileCreatedPayload,
     };
     
     #[tokio::test]

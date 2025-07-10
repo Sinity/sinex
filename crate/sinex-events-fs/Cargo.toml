@@ -6,6 +6,7 @@ authors.workspace = true
 
 [dependencies]
 sinex-core = { path = "../sinex-core" }
+sinex-events = { path = "../sinex-events" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
 schemars = { version = "0.8", features = ["chrono"] }

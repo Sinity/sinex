@@ -91,28 +91,28 @@ pub trait EventSource: Send + Sync + 'static {
     }
 
     /// Create a filesystem event builder
-    fn filesystem(&self) -> crate::event_builders::FilesystemEventBuilder {
-        crate::event_builders::FilesystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    fn filesystem(&self) -> sinex_events::FilesystemEventBuilder {
+        sinex_events::FilesystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
     }
 
     /// Create a terminal event builder
-    fn terminal(&self) -> crate::event_builders::TerminalEventBuilder {
-        crate::event_builders::TerminalEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    fn terminal(&self) -> sinex_events::TerminalEventBuilder {
+        sinex_events::TerminalEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
     }
 
     /// Create a clipboard event builder
-    fn clipboard(&self) -> crate::event_builders::ClipboardEventBuilder {
-        crate::event_builders::ClipboardEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    fn clipboard(&self) -> sinex_events::ClipboardEventBuilder {
+        sinex_events::ClipboardEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
     }
 
     /// Create a window manager event builder
-    fn window_manager(&self) -> crate::event_builders::WindowManagerEventBuilder {
-        crate::event_builders::WindowManagerEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    fn window_manager(&self) -> sinex_events::WindowManagerEventBuilder {
+        sinex_events::WindowManagerEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
     }
 
     /// Create a system event builder
-    fn system(&self) -> crate::event_builders::SystemEventBuilder {
-        crate::event_builders::SystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    fn system(&self) -> sinex_events::SystemEventBuilder {
+        sinex_events::SystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
     }
 
     // ===== Metadata Helper Methods =====
@@ -143,7 +143,7 @@ pub trait TypedEventSource: Send + Sync + 'static {
         Self: Sized;
 
     /// Stream strongly-typed events
-    async fn stream_events(&mut self, tx: crate::strongly_typed_events::TypedEventSender) -> Result<()>;
+    async fn stream_events(&mut self, tx: crate::TypedEventSender) -> Result<()>;
 
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {

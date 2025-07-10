@@ -6,7 +6,7 @@
 
 use crate::unified_collector::EventSource;
 use crate::{CoreError, EventSender, EventSourceContext, RawEvent, RawEventBuilder, Result, JsonValue};
-use crate::event_builders::{
+use sinex_events::{
     FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder,
     WindowManagerEventBuilder, SystemEventBuilder
 };
