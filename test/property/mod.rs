@@ -6,6 +6,7 @@
 
 // Consolidated property tests
 pub mod event_property_test;
+pub mod event_model_fuzzing_test;
 pub mod queue_property_test;
 pub mod schema_property_test;
 pub mod ulid_property_test;
