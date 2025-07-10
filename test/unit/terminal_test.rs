@@ -368,7 +368,7 @@ async fn test_scrollback_capture_timing(_ctx: TestContext) -> TestResult {
     
     for config in timing_configs {
         assert!(config.capture_interval_secs > 0, "Capture interval must be positive");
-        assert!(config.command_capture_delay_ms >= 0, "Command capture delay must be non-negative");
+        // command_capture_delay_ms is u64, so always non-negative
         
         // Test serialization
         let serialized = serde_json::to_string(&config)?;

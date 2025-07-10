@@ -20,7 +20,6 @@ use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_core::{RawEventBuilder};
 // use sinex_db::events::insert_event_with_validator; // Unused import removed
-use sinex_db::models::WorkQueueItem;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
@@ -44,7 +43,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         let pool = ctx.pool().clone();
         let event = event.clone();
         tokio::spawn(async move {
-            crate::common::insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
+            sinex_db::events::insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
         })
     }).collect();
 
@@ -64,7 +63,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }).collect();
 
     for task in verify_tasks {
-        assert!(task.await??);
+        assert!(task.await?);
     }
 
     // Check total count - use basic query
@@ -788,10 +787,10 @@ async fn test_work_queue_basic_operations(ctx: TestContext) -> TestResult {
     let event_id = insert_event(ctx.pool(), &event).await?;
 
     // Add to work queue
-    let queue_item = add_to_work_queue(ctx.pool(), event_id, "test-agent", 3).await?;
+    let _queue_item = add_to_work_queue(ctx.pool(), event_id, "test-agent", 3).await?;
 
     // Claim the item
-    let claimed_items = claim_work_queue_items(ctx.pool(), "test-agent", 1).await?;
+    let claimed_items = claim_work_queue_items(ctx.pool(), "test-agent", "worker-1", 1).await?;
     assert_eq!(claimed_items.len(), 1);
 
     // Complete the item
@@ -844,7 +843,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestRes
     sqlx::query!(
         "UPDATE sinex_schemas.work_queue SET status = 'succeeded', processed_at = $1 WHERE queue_id = $2::uuid::ulid",
         old_timestamp,
-        old_queue_item.queue_id.to_uuid()
+        old_queue_item.to_uuid()
     )
     .execute(ctx.pool())
     .await?;
@@ -852,7 +851,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestRes
     sqlx::query!(
         "UPDATE sinex_schemas.work_queue SET status = 'succeeded', processed_at = $1 WHERE queue_id = $2::uuid::ulid",
         recent_timestamp,
-        recent_queue_item.queue_id.to_uuid()
+        recent_queue_item.to_uuid()
     )
     .execute(ctx.pool())
     .await?;
@@ -869,7 +868,7 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestRes
     // Verify recent item still exists
     let recent_exists = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE queue_id = $1::uuid::ulid",
-        recent_queue_item.queue_id.to_uuid()
+        recent_queue_item.to_uuid()
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -908,11 +907,11 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
     let metrics = calculate_queue_depth_metrics(pool).await?;
 
     // Verify metrics for each agent
-    let agent1_depth = metrics.get(agent1).unwrap_or(&0);
-    let agent2_depth = metrics.get(agent2).unwrap_or(&0);
+    let agent1_metric = metrics.iter().find(|m| m.target_agent_name == agent1);
+    let agent2_metric = metrics.iter().find(|m| m.target_agent_name == agent2);
 
-    assert_eq!(*agent1_depth, 2, "Agent 1 should have 2 items");
-    assert_eq!(*agent2_depth, 1, "Agent 2 should have 1 item");
+    assert_eq!(agent1_metric.map(|m| m.queue_depth).unwrap_or(0), 2, "Agent 1 should have 2 items");
+    assert_eq!(agent2_metric.map(|m| m.queue_depth).unwrap_or(0), 1, "Agent 2 should have 1 item");
 
     Ok(())
 }
@@ -1116,102 +1115,5 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
 // HELPER FUNCTIONS
 // =============================================================================
 
-/// Helper function that mimics the work queue operations
-async fn add_to_work_queue_helper(
-    _pool: &DbPool,
-    _raw_event_id: Ulid,
-    _target_agent_name: &str,
-    _max_attempts: i32,
-) -> Result<WorkQueueItem> {
-    // This function should now exist - but we're just using it for the test
-    Ok(WorkQueueItem {
-        queue_id: Ulid::new(),
-        raw_event_id: Ulid::new(),
-        target_agent_name: "test".to_string(),
-        status: "pending".to_string(),
-        attempts: 0,
-        max_attempts: 3,
-        last_attempt_ts: None,
-        next_retry_ts: None,
-        error_message_last: None,
-        created_at: Utc::now(),
-        processing_worker_id: None,
-        processed_at: None,
-        failure_reason: None,
-    })
-}
 
-/// Create test schema for validation
-async fn create_test_schema(
-    pool: &DbPool,
-    source: &str,
-    event_type: &str,
-    schema: serde_json::Value,
-) -> Result<Ulid> {
-    let schema_id = Ulid::new();
 
-    sqlx::query!(
-        r#"
-        INSERT INTO sinex_schemas.event_payload_schemas
-        (id, event_source, event_type, schema_version, json_schema_definition, description)
-        VALUES ($1::uuid::ulid, $2, $3, '1.0', $4, $5)
-        "#,
-        schema_id.to_uuid(),
-        source,
-        event_type,
-        schema,
-        format!("Test schema for {}.{}", source, event_type)
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(schema_id)
-}
-
-/// Verify TimescaleDB hypertable exists
-async fn verify_hypertable_exists(pool: &DbPool, table_name: &str) -> Result<bool> {
-    let exists = sqlx::query_scalar!(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM timescaledb_information.hypertables
-            WHERE hypertable_name = $1
-        )
-        "#,
-        table_name
-    )
-    .fetch_one(pool)
-    .await?
-    .unwrap_or(false);
-
-    Ok(exists)
-}
-
-/// Database connection statistics
-#[derive(Debug, Clone)]
-pub struct DatabaseConnectionStats {
-    pub total: i64,
-    pub active: i64,
-    pub idle: i64,
-}
-
-/// Get database connection statistics
-async fn get_connection_stats(pool: &DbPool) -> Result<DatabaseConnectionStats> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            COUNT(*) as total_connections,
-            COUNT(CASE WHEN state = 'active' THEN 1 END) as active_connections,
-            COUNT(CASE WHEN state = 'idle' THEN 1 END) as idle_connections
-        FROM pg_stat_activity
-        WHERE datname = current_database()
-        "#
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(DatabaseConnectionStats {
-        total: row.total_connections.unwrap_or(0),
-        active: row.active_connections.unwrap_or(0),
-        idle: row.idle_connections.unwrap_or(0),
-    })
-}

@@ -25,7 +25,6 @@
 // ===== Standard Library =====
 pub use std::collections::{HashMap, HashSet};
 pub use std::fmt::Debug;
-// pub use std::path::PathBuf; // Currently unused
 pub use std::str::FromStr;
 pub use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -68,15 +67,7 @@ pub use crate::common::{database_helpers, event_sources, events};
 // Event factory and builders - THE way to create events
 pub use sinex_core::{EventFactory, RawEventBuilder};
 pub use crate::common::event_builders::EventBuilder;
-// Database helpers
-// NEW: Unified database access
-// pub use crate::common::create_test_db_pool;
-// Database pool access
-pub use crate::common::database_pool::acquire_test_database;
-pub use crate::common::database_helpers::{
-    create_test_event,
-    // create_test_agent, purge_old_work_queue_items - available but unused currently
-};
+// Database helpers available in crate::common::database_helpers
 // Test macro - THE way to define tests
 pub use sinex_test_macros::sinex_test;
 // Test context - THE way to write tests (only import when needed)
@@ -97,26 +88,11 @@ pub use sinex_db::{
     metrics_queries::calculate_queue_depth_metrics,
 };
 // Test helper functions from common/mod.rs
-pub use crate::common::{get_events_by_type, get_events_by_source, get_recent_events, get_events_in_time_range};
+pub use crate::common::{get_events_by_type, get_recent_events, get_events_in_time_range};
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
-    assert_channel_send_success, assert_database_state, assert_eq_with_context,
+    assert_channel_send_success, assert_eq_with_context,
     assert_event_inserted_with_context, assert_events_equivalent, assert_validation_passes,
     assert_with_context, assert_with_validation, TestAssertionBatch,
 };
-// ===== Configuration Testing =====
-// pub use crate::common::config_test_utils::{
-//     extraction as config_extraction, scenarios as config_scenarios, test_configs,
-//     validation as config_validation, CollectorTestConfig, DatabaseTestConfig, SourcesTestConfig,
-//     TestConfigFactory,
-// };
-// ===== Channel Testing =====
-// pub use crate::common::channel_test_utils::{
-//     backpressure as channel_backpressure, behavior as channel_behavior,
-//     monitoring as channel_monitoring, performance as channel_performance,
-//     scenarios as channel_scenarios, ChannelHealthReport, ChannelPerformanceReport,
-//     TestChannelSetup,
-// };
-// ===== Assertion Enhancements =====
-// Use pretty_assertions for better diffs
 // ===== Constants =====

@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -436,8 +437,9 @@ fn test_ulid_ordering_property_in_memory() {
     });
 }
 
-#[sinex_test]
-async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         ulid_count in 3..15usize,
         time_gap_seconds in 1..10u64,
@@ -514,8 +516,9 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,
@@ -734,8 +737,9 @@ fn test_ulid_monotonic_property_with_rapid_generation() {
     });
 }
 
-#[sinex_test]
-async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         num_relationships in 1..10usize,
     )| {

@@ -9,7 +9,6 @@ use crate::DbPoolRef;
 use anyhow::Result;
 use sinex_core::Timestamp;
 use sinex_ulid::Ulid;
-// use sqlx::types::Uuid;  // Not needed with correct casting
 use crate::models::DlqEvent;
 use crate::JsonValue;
 

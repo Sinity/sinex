@@ -47,7 +47,8 @@ pub fn test_database_url() -> String {
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<DbPool> {
-    database_pool::acquire_test_database().await
+    let test_db = database_pool::acquire_test_database().await?;
+    Ok(test_db.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
@@ -777,10 +778,6 @@ pub fn create_test_event_with_payload(
     test_event_with_payload(source, event_type, payload)
 }
 
-/// Create a simple test event with source and type (legacy compatibility)
-pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
-    EventFactory::new(source).create_event(event_type, json!({"test": true}))
-}
 
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {

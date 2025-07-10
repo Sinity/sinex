@@ -52,7 +52,7 @@ async fn test_context_event_builders(ctx: TestContext) -> TestResult {
     ctx.insert_event(&fs_event).await?;
     
     // Test terminal event builder
-    let term_event = ctx.events().terminal().command("ls -la").exit_code(0).build();
+    let term_event = ctx.events().terminal().command("ls -la").exit_code(0).build_completed();
     ctx.insert_event(&term_event).await?;
     
     // Test clipboard event builder

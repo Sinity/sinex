@@ -132,8 +132,9 @@ async fn worker_with_crashes(
     Ok(())
 }
 
-#[sinex_test]
-async fn test_no_duplicate_dequeue_with_crashes(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_no_duplicate_dequeue_with_crashes() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         num_workers in 2..=8usize,
         num_items in 10..=50usize,
@@ -147,7 +148,7 @@ async fn test_no_duplicate_dequeue_with_crashes(ctx: TestContext) -> TestResult 
 
             // Create test agent
             let agent_name = format!("test_agent_{}", Ulid::new());
-            create_test_agent(&pool, &agent_name, "Test agent for property testing").await.expect("DB operation failed");
+            create_test_agent(&pool, &agent_name).await.expect("DB operation failed");
 
             // Create test events and work queue items
             let mut queue_ids = Vec::new();
@@ -169,9 +170,10 @@ async fn test_no_duplicate_dequeue_with_crashes(ctx: TestContext) -> TestResult 
                     &pool,
                     event.id,
                     &agent_name,
+                    3, // max_attempts
                 ).await.expect("DB operation failed");
 
-                queue_ids.push(queue_item.queue_id);
+                queue_ids.push(queue_item);
             }
 
             // Setup tracking
@@ -264,8 +266,9 @@ async fn test_no_duplicate_dequeue_with_crashes(ctx: TestContext) -> TestResult 
     Ok(())
 }
 
-#[sinex_test]
-async fn test_work_queue_consistency_under_high_contention(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_work_queue_consistency_under_high_contention() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         num_workers in 5..=15usize,
         items_per_batch in 1..=3usize,
@@ -276,7 +279,7 @@ async fn test_work_queue_consistency_under_high_contention(ctx: TestContext) -> 
             let pool = ctx.pool().clone();
 
             let agent_name = format!("contention_test_{}", Ulid::new());
-            create_test_agent(&pool, &agent_name, "High contention test agent").await.expect("DB operation failed");
+            create_test_agent(&pool, &agent_name).await.expect("DB operation failed");
 
             // Create exactly one item to maximize contention
             let event = crate::common::insert_event_with_validator(
@@ -290,8 +293,8 @@ async fn test_work_queue_consistency_under_high_contention(ctx: TestContext) -> 
                 None,
             ).await.expect("DB operation failed");
 
-            let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-            let _target_queue_id = queue_item.queue_id;
+            let queue_item = insert_work_queue_item(&pool, event.id, &agent_name, 3).await.expect("DB operation failed");
+            let _target_queue_id = queue_item;
 
             let tracker = ProcessingTracker::new();
 
@@ -359,8 +362,9 @@ async fn test_work_queue_consistency_under_high_contention(ctx: TestContext) -> 
 // Work Queue Performance Properties
 // =============================================================================
 
-#[sinex_test]
-async fn test_work_queue_scalability_properties(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         queue_size in 50..=500usize,
         worker_count in 2..=10usize,
@@ -371,7 +375,7 @@ async fn test_work_queue_scalability_properties(ctx: TestContext) -> TestResult 
             let pool = ctx.pool().clone();
 
             let agent_name = format!("scalability_test_{}", Ulid::new());
-            create_test_agent(&pool, &agent_name, "Scalability test agent").await.expect("DB operation failed");
+            create_test_agent(&pool, &agent_name).await.expect("DB operation failed");
 
             // Create many work queue items
             let mut queue_ids = Vec::new();
@@ -389,8 +393,8 @@ async fn test_work_queue_scalability_properties(ctx: TestContext) -> TestResult 
                     None,
                 ).await.expect("DB operation failed");
 
-                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-                queue_ids.push(queue_item.queue_id);
+                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name, 3).await.expect("DB operation failed");
+                queue_ids.push(queue_item);
             }
 
             let creation_time = creation_start.elapsed();
@@ -513,8 +517,9 @@ async fn test_work_queue_scalability_properties(ctx: TestContext) -> TestResult 
 // Queue Ordering Properties
 // =============================================================================
 
-#[sinex_test]
-async fn test_work_queue_fifo_ordering_properties(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_work_queue_fifo_ordering_properties() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         item_count in 10..=50usize,
         time_gap_ms in 10..=100u64,
@@ -524,7 +529,7 @@ async fn test_work_queue_fifo_ordering_properties(ctx: TestContext) -> TestResul
             let pool = ctx.pool().clone();
 
             let agent_name = format!("ordering_test_{}", Ulid::new());
-            create_test_agent(&pool, &agent_name, "Ordering test agent").await.expect("DB operation failed");
+            create_test_agent(&pool, &agent_name).await.expect("DB operation failed");
 
             // Create items with controlled timing
             let mut created_ids = Vec::new();
@@ -540,8 +545,8 @@ async fn test_work_queue_fifo_ordering_properties(ctx: TestContext) -> TestResul
                     None,
                 ).await.expect("DB operation failed");
 
-                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-                created_ids.push((queue_item.queue_id, i));
+                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name, 3).await.expect("DB operation failed");
+                created_ids.push((queue_item, i));
 
                 // Small delay to ensure different creation times
                 tokio::time::sleep(Duration::from_millis(time_gap_ms)).await;
@@ -611,8 +616,9 @@ async fn test_work_queue_fifo_ordering_properties(ctx: TestContext) -> TestResul
 // Queue State Consistency Properties
 // =============================================================================
 
-#[sinex_test]
-async fn test_work_queue_state_consistency_properties(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         initial_items in 5..=20usize,
         operations_per_worker in 3..=10usize,
@@ -623,7 +629,7 @@ async fn test_work_queue_state_consistency_properties(ctx: TestContext) -> TestR
             let pool = ctx.pool().clone();
 
             let agent_name = format!("consistency_test_{}", Ulid::new());
-            create_test_agent(&pool, &agent_name, "Consistency test agent").await.expect("DB operation failed");
+            create_test_agent(&pool, &agent_name).await.expect("DB operation failed");
 
             // Create initial items
             let mut created_items = Vec::new();
@@ -639,8 +645,8 @@ async fn test_work_queue_state_consistency_properties(ctx: TestContext) -> TestR
                     None,
                 ).await.expect("DB operation failed");
 
-                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name).await.expect("DB operation failed");
-                created_items.push(queue_item.queue_id);
+                let queue_item = insert_work_queue_item(&pool, event.id, &agent_name, 3).await.expect("DB operation failed");
+                created_items.push(queue_item);
             }
 
             // Spawn workers that claim, process, and sometimes fail

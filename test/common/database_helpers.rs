@@ -100,10 +100,6 @@ pub async fn setup_test_workload(
     Ok((event_ids, work_item_ids))
 }
 
-/// Create a simple test event
-pub async fn create_test_event(source: &str, event_type: &str) -> RawEvent {
-    EventFactory::new(source).create_event(event_type, json!({"test": true}))
-}
 
 /// Create a test agent with minimal fields
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<()> {

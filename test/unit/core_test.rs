@@ -14,7 +14,7 @@ use sinex_core::{
     Result as CoreResult, RawEventBuilder, unified_collector::EventRegistryBuilder,
     EventSource, EventSourceContext
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::io;
 
 // =============================================================================
@@ -258,10 +258,11 @@ async fn test_core_error_from_sql_error(_ctx: TestContext) -> TestResult {
 /// Test CoreError context chaining
 #[sinex_test]
 async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
-    let base_error = CoreError::validation("Base validation error");
-    let chained_error = base_error.with_context("field", "test_field");
+    let error_context = CoreError::validation("Base validation error")
+        .with_context("field", "test_field");
     
-    match chained_error {
+    let built_error = error_context.build();
+    match built_error {
         CoreError::Validation(msg) => {
             assert!(msg.contains("Base validation error"));
             assert!(msg.contains("test_field"));
@@ -274,9 +275,9 @@ async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
 /// Test CoreError result extension methods
 #[sinex_test]
 async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
-    let result: CoreResult<String> = Err(CoreError::validation("Test error"));
+    let result: CoreResult<String> = Err(CoreError::validation("Test error").build());
     
-    let extended_result = result.with_context("operation", "test_operation");
+    let extended_result = result.with_context(|| CoreError::validation("Test error").with_context("operation", "test_operation"));
     
     match extended_result {
         Err(CoreError::Validation(msg)) => {
@@ -795,7 +796,8 @@ async fn test_event_source_context_validation(_ctx: TestContext) -> TestResult {
 
     // Test configuration validation patterns
     let enabled = config["enabled"].as_bool().unwrap_or(false);
-    let paths = config["paths"].as_array().unwrap_or(&vec![]);
+    let default_paths = vec![];
+    let paths = config["paths"].as_array().unwrap_or(&default_paths);
     let timeout = config["timeout"].as_u64().unwrap_or(1000);
     let buffer_size = config["buffer_size"].as_u64().unwrap_or(512);
 
@@ -821,7 +823,8 @@ async fn test_event_source_context_defaults(_ctx: TestContext) -> TestResult {
 
     // Test extraction with defaults
     let enabled = minimal_config["enabled"].as_bool().unwrap_or(false);
-    let paths = minimal_config["paths"].as_array().unwrap_or(&vec![json!("/default")]);
+    let default_minimal_paths = vec![json!("/default")];
+    let paths = minimal_config["paths"].as_array().unwrap_or(&default_minimal_paths);
     let timeout = minimal_config["timeout"].as_u64().unwrap_or(5000);
     let buffer_size = minimal_config["buffer_size"].as_u64().unwrap_or(1024);
 

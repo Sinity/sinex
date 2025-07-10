@@ -587,7 +587,7 @@ impl EventSource for CrashingEventSource {
 
 #[sinex_test]
 async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_millis(200));
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -627,7 +627,7 @@ async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(10)); // Won't crash on time
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -661,7 +661,7 @@ async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_source_restart_after_crash(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = event_sources::test_context(json!({}));
     
     // First instance - will crash after 3 events
     let mut source1 = CrashingEventSource::new(Duration::from_secs(10))
@@ -749,7 +749,7 @@ async fn test_clipboard_monitor_initialization(_ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(5));
     let (tx, mut rx) = mpsc::channel(1000);
 
@@ -785,7 +785,7 @@ async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_source_memory_usage(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(2));
     let (tx, mut rx) = mpsc::channel(10); // Small buffer to test backpressure
 
@@ -989,43 +989,3 @@ pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Create mock event source for testing
-pub struct MockEventSource {
-    pub name: String,
-    pub events_to_generate: Vec<RawEvent>,
-    pub events_sent: Arc<AtomicUsize>,
-}
-
-impl MockEventSource {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            events_to_generate: Vec::new(),
-            events_sent: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    pub fn with_events(mut self, events: Vec<RawEvent>) -> Self {
-        self.events_to_generate = events;
-        self
-    }
-
-    pub async fn simulate_events(&self, tx: tokio::sync::mpsc::Sender<RawEvent>) -> Result<()> {
-        for event in &self.events_to_generate {
-            tx.send(event.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to send event: {}", e))?;
-
-            self.events_sent
-                .fetch_add(1, Ordering::SeqCst);
-
-            // Small delay to simulate realistic timing
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        Ok(())
-    }
-
-    pub fn events_sent_count(&self) -> usize {
-        self.events_sent.load(AtomicUsize::Ordering::SeqCst)
-    }
-}

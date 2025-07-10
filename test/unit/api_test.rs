@@ -15,14 +15,10 @@ use sinex_db::{
     create_entity, get_entities_by_type, create_relation, get_entity_relations,
     models::*,
 };
-// use sinex_core::{
-//     ConfigExtractor, MultiValidator, ValidationChain,
-// };
-// Unused imports removed
 
 // Helper function to create and insert a test event
 async fn create_and_insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> anyhow::Result<RawEvent> {
-    let event = create_test_event(source, event_type).await;
+    let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     // Insert the event and return the inserted event (which has the actual DB ID)
     let inserted_event = crate::common::insert_event_with_validator(
         pool,
@@ -675,7 +671,7 @@ async fn test_query_relationships(ctx: TestContext) -> TestResult {
         created_from_event_id: None,
     };
 
-    let relationship = create_relation(ctx.pool(), relationship_input).await?;
+    let _relationship = create_relation(ctx.pool(), relationship_input).await?;
 
     // Query relationships from user
     let relationships = get_entity_relations(ctx.pool(), user.entity_id).await?;
@@ -731,7 +727,7 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
 /// Test configuration validation with invalid input
 #[sinex_test]
 async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult {
-    let config = json!({
+    let _config = json!({
         "database": {
             "url": "",  // Invalid: empty URL
             "pool_size": -1  // Invalid: negative pool size
@@ -772,7 +768,7 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
 /// Test configuration validation with missing fields
 #[sinex_test]
 async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> TestResult {
-    let config = json!({
+    let _config = json!({
         "database": {
             "url": "postgresql://localhost/test"
             // Missing pool_size
@@ -802,7 +798,7 @@ async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> Test
 /// Test configuration validation with type conversion
 #[sinex_test]
 async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> TestResult {
-    let config = json!({
+    let _config = json!({
         "numbers": {
             "as_string": "42",
             "as_number": 42,
@@ -844,7 +840,7 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
 /// Test multi-validator functionality
 #[sinex_test]
 async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
-    let config = json!({
+    let _config = json!({
         "server": {
             "host": "localhost",
             "port": 8080,

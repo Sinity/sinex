@@ -9,10 +9,8 @@
 //! - Concurrent generation and ordering guarantees
 
 use crate::common::prelude::*;
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // =============================================================================
 // BIT LAYOUT VERIFICATION
@@ -176,7 +174,7 @@ async fn test_ulid_monotonic_performance_validation(_ctx: TestContext) -> TestRe
     let mut ordering_violations = 0;
     let mut all_ulids = Vec::new();
 
-    for batch_idx in 0..batches {
+    for _batch_idx in 0..batches {
         let mut batch_ulids = Vec::with_capacity(batch_size);
         for _ in 0..batch_size {
             batch_ulids.push(Ulid::new());
@@ -538,7 +536,7 @@ async fn test_ulid_uuid_conversion_compatibility(_ctx: TestContext) -> TestResul
     let ulid_bytes = ulid.to_bytes();
     let uuid_bytes = uuid.as_bytes();
     
-    pretty_assertions::assert_eq!(ulid_bytes, uuid_bytes, "ULID and UUID bytes should match");
+    pretty_assertions::assert_eq!(ulid_bytes, *uuid_bytes, "ULID and UUID bytes should match");
     
     // Verify round-trip conversion
     let restored_ulid = Ulid::from_uuid(uuid);

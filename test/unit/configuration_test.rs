@@ -14,7 +14,7 @@ async fn test_configuration_defaults(_ctx: TestContext) -> TestResult {
     // Test that default configurations are valid and complete
     use sinex_collector::config::CollectorConfig;
     
-    let config = CollectorConfig::default();
+    let _config = CollectorConfig::default();
     // TODO: Update field names to match actual CollectorConfig
     // assert!(config.unified_collector.is_some());
     // assert!(config.database.is_some());
@@ -31,7 +31,7 @@ async fn test_configuration_environment_override(_ctx: TestContext) -> TestResul
     std::env::set_var("SINEX_LOG_LEVEL", "debug");
     std::env::set_var("SINEX_DATABASE_POOL_SIZE", "50");
     
-    let config = CollectorConfig::load()?;
+    let _config = CollectorConfig::load()?;
     
     // Clean up
     std::env::remove_var("SINEX_LOG_LEVEL");
@@ -74,7 +74,7 @@ async fn test_configuration_type_coercion(_ctx: TestContext) -> TestResult {
     // Test string to number coercion
     std::env::set_var("SINEX_TIMEOUT", "30");
     
-    let config = CollectorConfig::load()?;
+    let _config = CollectorConfig::load()?;
     
     std::env::remove_var("SINEX_TIMEOUT");
     
@@ -221,7 +221,7 @@ async fn test_kitty_config_invalid_paths(_ctx: TestContext) -> TestResult {
     use sinex_events_terminal::kitty::KittyConfig;
     
     let mut config = KittyConfig::default();
-    config.socket_path = "/invalid/socket/path".to_string();
+    config.socket_path = Some("/invalid/socket/path".to_string());
     
     // Should validate socket paths exist or are creatable
     Ok(())

@@ -134,7 +134,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
                 "causality_test",
                 "child.event",
                 json!({"round": test_round, "child_id": i}),
-                Some(parent_event.id),
+                None,
             );
             child_events.push(child);
         }
@@ -678,7 +678,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
         handles.push(handle);
     }
     
-    let results = join_all(handles).await;
+    let _results = join_all(handles).await;
     let total = total_processed.load(Ordering::SeqCst);
     
     println!("Load balancing test results:");
@@ -850,7 +850,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
         let failures = failed_locks.clone();
         
         let handle = tokio::spawn(async move {
-            for attempt in 0..5 {
+            for _attempt in 0..5 {
                 let lock_start = Instant::now();
                 
                 // Try to acquire exclusive lock

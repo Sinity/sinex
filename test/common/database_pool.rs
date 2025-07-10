@@ -1115,7 +1115,7 @@ pub async fn reset_pool() -> Result<()> {
 }
 
 /// Initialize pool with custom configuration (for testing)
-pub async fn init_pool_with_config(config: PoolConfig) -> Result<()> {
+async fn _init_pool_with_config(config: PoolConfig) -> Result<()> {
     let mut pool_lock = POOL.lock().await;
     let pool = Arc::new(DatabasePool::new(config).await?);
     *pool_lock = Some(pool);
@@ -1123,7 +1123,7 @@ pub async fn init_pool_with_config(config: PoolConfig) -> Result<()> {
 }
 
 /// Get pool configuration (for debugging)
-pub fn get_pool_config() -> PoolConfig {
+fn _get_pool_config() -> PoolConfig {
     PoolConfig::default()
 }
 

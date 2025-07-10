@@ -283,7 +283,7 @@ async fn test_clipboard_source_health() -> Result<bool> {
 }
 
 async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
-    let test_event = create_test_event("worker_startup_test", "system.health_check").await;
+    let test_event = EventFactory::new("worker_startup_test").create_event("system.health_check", json!({"test": true}));
     let inserted_event_id = insert_event(pool, &test_event).await?;
 
     add_to_work_queue(pool, inserted_event_id, "test-agent", 3).await?;
@@ -378,7 +378,7 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
 }
 
 async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
-    let test_event = create_test_event("recovery_test", "system.test").await;
+    let test_event = EventFactory::new("recovery_test").create_event("system.test", json!({"test": true}));
     let insert_result = insert_event(pool, &test_event).await;
 
     assert!(
