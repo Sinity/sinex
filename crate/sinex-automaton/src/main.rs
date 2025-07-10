@@ -119,31 +119,19 @@ impl EventProcessor for ServiceBasedProcessor {
 
         // Route events based on source and type to appropriate service methods
         match (event.source.as_str(), event.event_type.as_str()) {
-            // Filesystem events might trigger content analysis
+            // Filesystem events - future content analysis
             ("fs", "file.created") | ("fs", "file.modified") => {
-                info!("Filesystem event detected - would trigger content analysis");
-                // In the future, this might:
-                // - Extract text from documents
-                // - Generate thumbnails for images
-                // - Index content for search
+                info!("Filesystem event detected - service layer available for future analysis");
             }
             
-            // Shell events might trigger command analysis
+            // Shell events - future command analysis
             ("shell.kitty", "command.executed") => {
-                info!("Command execution detected - would analyze command patterns");
-                // In the future, this might:
-                // - Extract command patterns
-                // - Build command frequency statistics
-                // - Detect workflow patterns
+                info!("Command execution detected - service layer available for future analysis");
             }
             
-            // Clipboard events might trigger entity extraction
+            // Clipboard events - future entity extraction
             ("clipboard", "copied") => {
-                info!("Clipboard event detected - would extract entities");
-                // In the future, this might:
-                // - Extract URLs, emails, code snippets
-                // - Create knowledge graph entities
-                // - Link to related events
+                info!("Clipboard event detected - service layer available for future analysis");
             }
             
             // Default: just log that we processed it
