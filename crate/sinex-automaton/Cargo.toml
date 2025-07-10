@@ -40,3 +40,5 @@ sd-notify = "0.4"
 
 [dev-dependencies]
 tokio-test = "0.4"
+sinex-test-macros = { path = "../sinex-test-macros" }
+futures = "0.3"
