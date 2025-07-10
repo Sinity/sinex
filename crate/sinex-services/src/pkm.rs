@@ -1,7 +1,7 @@
 //! Personal Knowledge Management (PKM) service
 
 use crate::error::ServiceResult;
-use sinex_db::{annotations, knowledge_graph, DbPool, ulid_to_uuid};
+use sinex_db::{annotations, knowledge_graph, DbPool};
 use sinex_db::models::{CreateAnnotationInput, CreateEntityInput, CreateRelationInput};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
@@ -43,8 +43,8 @@ impl PkmService {
         Ok(annotation.annotation_id)
     }
     
-    /// Create knowledge graph entities from event
-    pub async fn extract_entities(
+    /// Create knowledge graph entities from a provided list
+    pub async fn create_entities_from_list(
         &self,
         event_id: Ulid,
         entities: Vec<(String, String)>, // (name, type)
@@ -99,55 +99,4 @@ impl PkmService {
         Ok(relationship.relation_id)
     }
     
-    /// Search for similar events based on content
-    pub async fn find_similar_events(
-        &self,
-        event_id: Ulid,
-        limit: i32,
-    ) -> ServiceResult<Vec<(Ulid, f64)>> {
-        // This is a simplified implementation
-        // In a real system, you'd use vector embeddings or full-text search
-        
-        let event_uuid = ulid_to_uuid(event_id);
-        let event = sqlx::query!(
-            "SELECT source, event_type FROM raw.events WHERE id::uuid = $1",
-            event_uuid
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        
-        let similar = sqlx::query!(
-            r#"
-            SELECT id::text as event_id, 
-                   CASE 
-                     WHEN source = $1 AND event_type = $2 THEN 1.0::float8
-                     WHEN source = $1 THEN 0.8::float8
-                     WHEN event_type = $2 THEN 0.6::float8
-                     ELSE 0.4::float8
-                   END as "similarity!"
-            FROM raw.events
-            WHERE id::uuid != $3
-            ORDER BY CASE 
-                     WHEN source = $1 AND event_type = $2 THEN 1.0::float8
-                     WHEN source = $1 THEN 0.8::float8
-                     WHEN event_type = $2 THEN 0.6::float8
-                     ELSE 0.4::float8
-                   END DESC
-            LIMIT $4
-            "#,
-            event.source,
-            event.event_type,
-            event_uuid,
-            limit as i64
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        
-        Ok(similar
-            .into_iter()
-            .filter_map(|r| {
-                r.event_id.and_then(|id| id.parse::<Ulid>().ok().map(|ulid| (ulid, r.similarity)))
-            })
-            .collect())
-    }
 }
