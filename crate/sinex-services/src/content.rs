@@ -54,6 +54,17 @@ impl ContentService {
         Ok(blob_metadata.annex_key)
     }
     
+    /// Store content via BlobManager (convenience method for store_large_content)
+    pub async fn store_content(
+        &self,
+        content: &[u8],
+        filename: &str,
+        content_type: &str,
+        source: &str,
+    ) -> ServiceResult<String> {
+        self.store_large_content(content, filename, content_type, source).await
+    }
+
     /// Retrieve content by annex key
     pub async fn retrieve_content(&self, annex_key: &str) -> ServiceResult<Vec<u8>> {
         // Retrieve from blob storage directly
@@ -61,5 +72,25 @@ impl ContentService {
             .retrieve_content(annex_key)
             .await
             .map_err(|e| ServiceError::OperationFailed(format!("Content retrieval failed: {}", e)))
+    }
+
+    /// Get content metadata by blob ID
+    pub async fn get_content_metadata(&self, blob_id: sinex_ulid::Ulid) -> ServiceResult<sinex_annex::BlobMetadata> {
+        // Get blob metadata from blob manager
+        let blob_metadata = self.blob_manager
+            .get_blob_metadata(&blob_id)
+            .await
+            .map_err(|e| ServiceError::OperationFailed(format!("Failed to get blob metadata: {}", e)))?;
+        
+        Ok(blob_metadata)
+    }
+    
+    /// Verify content integrity by blob ID
+    pub async fn verify_content(&self, blob_id: sinex_ulid::Ulid) -> ServiceResult<bool> {
+        // Use blob manager verification
+        self.blob_manager
+            .verify_blob(&blob_id)
+            .await
+            .map_err(|e| ServiceError::OperationFailed(format!("Content verification failed: {}", e)))
     }
 }

@@ -10,16 +10,13 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     
     let s = s.trim();
     
-    if s.ends_with('s') {
-        let num_str = &s[..s.len()-1];
+    if let Some(num_str) = s.strip_suffix('s') {
         let seconds: u64 = num_str.parse().map_err(|_| "Invalid number format")?;
         Ok(Duration::from_secs(seconds))
-    } else if s.ends_with('m') {
-        let num_str = &s[..s.len()-1];
+    } else if let Some(num_str) = s.strip_suffix('m') {
         let minutes: u64 = num_str.parse().map_err(|_| "Invalid number format")?;
         Ok(Duration::from_secs(minutes * 60))
-    } else if s.ends_with('h') {
-        let num_str = &s[..s.len()-1];
+    } else if let Some(num_str) = s.strip_suffix('h') {
         let hours: u64 = num_str.parse().map_err(|_| "Invalid number format")?;
         Ok(Duration::from_secs(hours * 3600))
     } else {

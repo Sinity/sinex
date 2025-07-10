@@ -125,7 +125,8 @@ pub struct AsciinemaRecorder {
     config: AsciinemaConfig,
     active_sessions: Arc<Mutex<HashMap<PathBuf, RecordingSession>>>,
     processed_files: Arc<Mutex<Vec<PathBuf>>>,
-    #[allow(dead_code)] // Used in future event creation
+    blob_manager: Option<sinex_annex::BlobManager>,
+    #[allow(dead_code)]
     event_factory: EventFactory,
 }
 
@@ -154,10 +155,55 @@ impl EventSource for AsciinemaRecorder {
                         .build())?;
         }
 
+        // Initialize BlobManager if configured with both annex path and database
+        let annex_repo_path = ctx
+            .annex_repo_path
+            .clone()
+            .or(config.git_annex_repo.as_ref().map(|p| p.to_string_lossy().to_string()));
+            
+        let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
+            (Some(repo_path), Some(db_pool)) => {
+                let path = std::path::PathBuf::from(repo_path);
+
+                // Initialize git-annex repository if it doesn't exist
+                if !path.join(".git").exists() {
+                    use sinex_annex::GitAnnex;
+                    GitAnnex::init(&path, Some("sinex-asciinema-annex"))
+                        .await
+                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                            .with_operation("initialize_asciinema_recorder")
+                            .with_context("repo_path", path.display().to_string())
+                            .with_context("repo_name", "sinex-asciinema-annex")
+                            .build())?;
+                }
+
+                let annex_config = sinex_annex::AnnexConfig {
+                    repo_path: path.clone(),
+                    num_copies: Some(2),
+                    large_files: None,
+                };
+
+                match sinex_annex::BlobManager::new(annex_config, db_pool.clone()) {
+                    Ok(manager) => Some(manager),
+                    Err(e) => {
+                        error!("Failed to create BlobManager: {}. Asciinema recordings will not be stored.", e);
+                        None
+                    }
+                }
+            }
+            _ => {
+                if annex_repo_path.is_some() && ctx.db_pool.is_none() {
+                    info!("Git-annex path configured but no database connection available. Asciinema recordings will not be stored.");
+                }
+                None
+            }
+        };
+
         let recorder = Self {
             config,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
             processed_files: Arc::new(Mutex::new(Vec::new())),
+            blob_manager,
             event_factory: EventFactory::new(Self::SOURCE_NAME),
         };
 
@@ -501,13 +547,13 @@ end
                             git_annex_key: None,
                         };
 
-                        // Add to git-annex if configured
+                        // Add to git-annex if configured and BlobManager available
                         if self.config.auto_annex {
-                            if let Some(ref annex_repo) = self.config.git_annex_repo {
-                                match self.add_to_git_annex(annex_repo, path, &session_id).await {
-                                    Ok((annex_path, annex_key)) => {
-                                        payload.git_annex_path = Some(annex_path);
-                                        payload.git_annex_key = annex_key;
+                            if let Some(ref blob_manager) = self.blob_manager {
+                                match self.add_to_git_annex(blob_manager, path, &session_id).await {
+                                    Ok((filename, annex_key)) => {
+                                        payload.git_annex_path = Some(std::path::PathBuf::from(filename));
+                                        payload.git_annex_key = Some(annex_key);
                                     }
                                     Err(e) => {
                                         error!("Failed to add recording to git-annex: {}", e);
@@ -592,120 +638,36 @@ end
 
     async fn add_to_git_annex(
         &self,
-        annex_repo: &Path,
+        blob_manager: &sinex_annex::BlobManager,
         recording_path: &Path,
         session_id: &str,
-    ) -> Result<(PathBuf, Option<String>)> {
-        use tokio::process::Command;
-
-        // Create subdirectory for asciinema recordings
-        let asciinema_dir = annex_repo.join("asciinema");
-        tokio::fs::create_dir_all(&asciinema_dir)
-            .await
-            .map_err(|e| {
-                sinex_core::CoreError::io_error(&asciinema_dir)
-                    .with_operation("create_directory")
-                    .with_source(e)
-                    .build()
-            })?;
-
+    ) -> Result<(String, String)> {
         // Generate filename with timestamp and session ID
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!("recording_{}_{}.cast", timestamp, session_id);
-        let dest_path = asciinema_dir.join(&filename);
 
-        // Copy file to git-annex repository
-        tokio::fs::copy(recording_path, &dest_path)
-            .await
-            .map_err(|e| {
-                sinex_core::CoreError::io_error(recording_path)
-                    .with_operation("copy_file")
-                    .with_context("destination", dest_path.display())
-                    .with_source(e)
-                    .build()
-            })?;
-
-        // Add to git-annex
-        let output = Command::new("git")
-            .arg("annex")
-            .arg("add")
-            .arg(&filename)
-            .current_dir(&asciinema_dir)
-            .output()
+        // Use BlobManager to ingest the recording file
+        let metadata = blob_manager
+            .ingest_file(recording_path, Some(&filename))
             .await
             .map_err(|e| {
                 sinex_core::CoreError::processing_failed()
-                    .with_operation("git_annex_add")
-                    .with_context("file", filename.clone())
+                    .with_operation("ingest_recording")
+                    .with_context("file", recording_path.display())
+                    .with_context("filename", filename.clone())
                     .with_source(e)
                     .build()
             })?;
-
-        if !output.status.success() {
-            return Err(ErrorContext::new(CoreError::Io("git-annex add failed".to_string()))
-                .with_operation("move_to_git_annex")
-                .with_context("file_path", dest_path.display().to_string())
-                .with_context("exit_status", output.status.to_string())
-                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
-                .build());
-        }
-
-        // Commit the addition
-        let output = Command::new("git")
-            .arg("commit")
-            .arg("-m")
-            .arg(format!("Add asciinema recording {}", session_id))
-            .current_dir(&asciinema_dir)
-            .output()
-            .await
-            .map_err(|e| {
-                sinex_core::CoreError::processing_failed()
-                    .with_operation("git_commit")
-                    .with_context("file", filename.clone())
-                    .with_source(e)
-                    .build()
-            })?;
-
-        if !output.status.success() {
-            warn!(
-                "git commit failed (might be nothing to commit): {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        // Get the git-annex key for the file
-        let output = Command::new("git")
-            .arg("annex")
-            .arg("find")
-            .arg("--format=${key}")
-            .arg(&filename)
-            .current_dir(&asciinema_dir)
-            .output()
-            .await
-            .map_err(|e| {
-                sinex_core::CoreError::processing_failed()
-                    .with_operation("git_annex_get_key")
-                    .with_context("file", filename.clone())
-                    .with_source(e)
-                    .build()
-            })?;
-
-        let annex_key = if output.status.success() {
-            let key = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if key.is_empty() {
-                None
-            } else {
-                Some(key)
-            }
-        } else {
-            None
-        };
 
         info!(
-            "Added asciinema recording to git-annex: {} (key: {:?})",
-            filename, annex_key
+            "Successfully ingested recording via BlobManager: {} -> {} (blob_id: {}, key: {}):",
+            recording_path.display(),
+            filename,
+            metadata.blob_id,
+            metadata.annex_key
         );
-        Ok((dest_path, annex_key))
+
+        Ok((filename, metadata.annex_key))
     }
 }
 

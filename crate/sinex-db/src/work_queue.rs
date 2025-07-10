@@ -9,7 +9,6 @@ use crate::DbPoolRef;
 use anyhow::Result;
 use sinex_core::Timestamp;
 use sinex_ulid::Ulid;
-// use sqlx::types::Uuid;  // Not needed with correct casting
 use crate::models::DlqEvent;
 use crate::JsonValue;
 
@@ -145,19 +144,24 @@ pub async fn complete_work_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<(
     complete_work_queue_item(pool, queue_id).await
 }
 
+/// Parameters for inserting a DLQ event
+pub struct DlqEventParams {
+    pub failed_event_id: Ulid,
+    pub agent_name: String,
+    pub source: String,
+    pub event_type: String,
+    pub failure_reason: String,
+    pub error_category: String,
+    pub original_event_payload: JsonValue,
+    pub additional_metadata: Option<JsonValue>,
+}
+
 /// Insert a DLQ event following the exact same pattern as existing correct functions
 pub async fn insert_dlq_event(
     pool: DbPoolRef<'_>,
-    failed_event_id: Ulid,
-    agent_name: &str,
-    source: &str,
-    event_type: &str,
-    failure_reason: &str,
-    error_category: &str,
-    original_event_payload: JsonValue,
-    additional_metadata: Option<JsonValue>,
+    params: DlqEventParams,
 ) -> Result<DlqEvent> {
-    let failed_event_uuid = ulid_to_uuid(failed_event_id);
+    let failed_event_uuid = ulid_to_uuid(params.failed_event_id);
     
     let record = sqlx::query!(
         r#"
@@ -183,13 +187,13 @@ pub async fn insert_dlq_event(
             resolved_by
         "#,
         failed_event_uuid,
-        agent_name,
-        source,
-        event_type,
-        failure_reason,
-        error_category,
-        original_event_payload,
-        additional_metadata
+        params.agent_name,
+        params.source,
+        params.event_type,
+        params.failure_reason,
+        params.error_category,
+        params.original_event_payload,
+        params.additional_metadata
     )
     .fetch_one(pool)
     .await?;

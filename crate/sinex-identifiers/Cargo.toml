@@ -1,0 +1,30 @@
+[package]
+name = "sinex-identifiers"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database support
+sqlx = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Validation and schema
+schemars = { workspace = true }
+
+# Time and UUIDs
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Local dependencies
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-validation = { path = "../sinex-validation" }
+
+[features]
+default = []

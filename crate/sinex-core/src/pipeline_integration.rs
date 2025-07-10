@@ -2,7 +2,6 @@
 /// 
 /// This module demonstrates how to integrate the new multi-stage event pipeline
 /// with the existing unified collector architecture.
-
 use crate::{
     EventPipeline, PipelineConfig, RawEvent, EventSender, EventReceiver,
     Result, CoreError, sources, DbPool

@@ -107,19 +107,19 @@ To enforce data integrity at or near the point of ingestion, the `pg_jsonschema`
 
 Once events are in `raw.events`, they need to be processed by various agents for promotion, enrichment, and analysis.
 
-### 4.1. Promotion Queue Architecture (`sinex_schemas.promotion_queue`)
+### 4.1. Work Queue Architecture (`sinex_schemas.work_queue`)
 
-A dedicated PostgreSQL table, `sinex_schemas.promotion_queue`, serves as a persistent, transactional work queue.
+A dedicated PostgreSQL table, `sinex_schemas.work_queue`, serves as a persistent, transactional work queue.
 *   **Purpose:** Decouples event ingestion from agent processing, allows agents to work at their own pace, and ensures reliable delivery of events to target agents.
 *   **Key Schema Elements:** Stores `raw_event_id`, `target_agent_name` (FK to `agent_manifests`), `status` (`pending`, `processing`, `failed_retryable`), `attempts`, `max_attempts`, `next_retry_ts` (for exponential backoff), and `error_message_last`.
 *   **Population:** A router mechanism (e.g., PostgreSQL trigger on `raw.events` calling a router function) populates this queue based on agent subscriptions defined in `sinex_schemas.agent_manifests`.
 *   **Referenced TIMs:**
-    *   `[TIM-EventIngestionProcessing.md](docs/tims/data_substrate/TIM-EventIngestionProcessing.md)` (Section 2) for the `promotion_queue` DDL.
+    *   `[TIM-EventIngestionProcessing.md](docs/tims/data_substrate/TIM-EventIngestionProcessing.md)` (Section 2) for the `work_queue` DDL.
     *   `[TIM-AgentManifestManagement.md](docs/tims/architecture_crosscutting/TIM-AgentManifestManagement.md)` for agent subscription definitions.
 
 ### 4.2. Worker Pattern for Event Processing
 
-Exocortex agents (e.g., `sinex-promo-worker` in Rust) act as workers that poll the `promotion_queue`.
+Exocortex agents (e.g., `sinex-promo-worker` in Rust) act as workers that poll the `work_queue`.
 *   **Architectural Pattern:** Workers use `SELECT ... FOR UPDATE SKIP LOCKED` to claim batches of pending items for their `target_agent_name`. This allows multiple worker instances (even for the same agent type) to process items concurrently and safely.
 *   **Logic:** Workers fetch claimed items, process the corresponding `raw.events` payload, and then either delete the item from the queue (on success) or update its status for retry/DLQ (on failure).
 *   **Referenced TIMs:**
@@ -128,7 +128,7 @@ Exocortex agents (e.g., `sinex-promo-worker` in Rust) act as workers that poll t
 ### 4.3. Event Notification/Triggering (ADR-002)
 
 The decision documented in `[ADR-002-EventProcessingNotificationMechanism.md](docs/adr/ADR-002-EventProcessingNotificationMechanism.md)` dictates the triggering strategy:
-*   **Primary Mechanism:** Worker polling of `sinex_schemas.promotion_queue`.
+*   **Primary Mechanism:** Worker polling of `sinex_schemas.work_queue`.
 *   **Optional Optimization:** PostgreSQL `LISTEN/NOTIFY` can be used by specific workers as a "wake-up" signal to reduce polling latency. The `NOTIFY` payload is minimal, and the queue table remains the source of truth.
 *   **Deferred Alternative:** External message queues (e.g., Redis Streams) are a future consideration if the primary mechanism proves insufficient.
 *   **Referenced TIMs:**
@@ -136,7 +136,7 @@ The decision documented in `[ADR-002-EventProcessingNotificationMechanism.md](do
 
 ### 4.4. Dead Letter Queue (DLQ) Architecture (`core.dead_letter_queue`)
 
-Terminally failed messages from the `promotion_queue` (or other processing stages) are moved to a central PostgreSQL DLQ, `core.dead_letter_queue`.
+Terminally failed messages from the `work_queue` (or other processing stages) are moved to a central PostgreSQL DLQ, `core.dead_letter_queue`.
 *   **Purpose:** Ensures that problematic messages are not lost and can be reviewed, analyzed, and potentially replayed.
 *   **Schema:** Stores the original event ID (if applicable), the failed message payload, error details, retry counts, source queue, responsible agent, and status (`pending_review`, `resolved_manual`, etc.).
 *   **Management:** Includes retry policies (exponential backoff with jitter), tools for replaying DLQ items (e.g., `exo dlq` CLI), and mechanisms for TTL-based or manual purging.
@@ -229,7 +229,7 @@ This table is the Exocortex's authoritative index for all annexed content, linki
 ## 7. Advanced PostgreSQL Features Utilized (Summary)
 
 The data substrate architecture leverages several advanced PostgreSQL features:
-*   **Triggers:** For automated actions like populating the `promotion_queue` or eventifying schema changes.
+*   **Triggers:** For automated actions like populating the `work_queue` or eventifying schema changes.
 *   **Logical Replication (Conceptual for CDC):** Understanding this for potential future data synchronization to external systems (e.g., dedicated vector DBs).
 *   **Recursive CTEs (for Graph Traversal):** Standard SQL method for querying the `core_entities`/`core_entity_relations` graph.
 *   **Apache AGE (Optional Graph Extension):** Provides OpenCypher query capabilities as an alternative for complex graph queries, requiring schema synchronization.

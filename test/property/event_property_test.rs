@@ -1,6 +1,7 @@
 use crate::common::prelude::*;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
 use std::sync::Barrier;
 use std::thread;
@@ -369,7 +370,7 @@ fn test_concurrent_registry_access<F>(
 ) where
     F: Fn(&EventRegistry, usize, usize) + Send + Sync + 'static,
 {
-    let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+    let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
     let registry = Arc::new(builder.build());
     let barrier = Arc::new(Barrier::new(num_threads));
     let mut handles = Vec::new();
@@ -476,7 +477,7 @@ fn test_event_registry_lookup_consistency() {
         num_threads in 3usize..=8,
         _lookups_per_thread in 20usize..=100
     )| {
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
     let registry = Arc::new(builder.build());
         let barrier = Arc::new(Barrier::new(num_threads));
         let mut handles = Vec::new();
@@ -541,7 +542,7 @@ fn test_event_registry_bidirectional_mappings() {
     proptest!(|(
         source_names in prop::collection::vec(arb_registry_source_name(), 3..=10)
     )| {
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
         let registry = builder.build();
 
         // Test bidirectional consistency for all known mappings
@@ -574,7 +575,7 @@ fn test_event_registry_edge_cases() {
     proptest!(|(
         edge_case_inputs in prop::collection::vec(".*", 0..=10)
     )| {
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
         let registry = builder.build();
 
         let edge_cases = vec![
@@ -633,7 +634,7 @@ mod stress_tests {
         const OPERATIONS_PER_THREAD: usize = 1000;
         const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
         let _registry = Arc::new(builder.build());
         let operation_counter = Arc::new(AtomicUsize::new(0));
         let start_time = Instant::now();
@@ -684,7 +685,7 @@ mod stress_tests {
         const STRESS_DURATION_SECS: u64 = 2;
         const NUM_THREADS: usize = 20;
 
-        let mut builder = sinex_core::unified_collector::EventRegistryBuilder::new();
+        let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
     let registry = Arc::new(builder.build());
         let should_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut handles = Vec::new();

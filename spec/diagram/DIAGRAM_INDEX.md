@@ -34,7 +34,7 @@ Key insights:
 Sequence diagram showing:
 1. **Event Sources** → **Unified Collector** (✅ Working)
 2. **Collector** → **Database** via IngestorRuntime (✅ Working)
-3. **Database Triggers** → **Promotion Queue** (✅ Working)
+3. **Database Triggers** → **Work Queue** (✅ Working)
 4. **Workers** → **Event Processing** with retry logic (✅ Working)
 5. **Future AI Enhancement** (❌ Not implemented)
 
@@ -60,7 +60,7 @@ Entity-relationship diagram showing:
 - `raw.events` - Core event storage (TimescaleDB hypertable)
 - `sinex_schemas.event_payload_schemas` - JSON schema registry
 - `sinex_schemas.agent_manifests` - Agent registration
-- `sinex_schemas.promotion_queue` - Work distribution
+- `sinex_schemas.work_queue` - Work distribution
 
 ### ❌ Future Tables  
 - `artifacts` - Knowledge management
@@ -69,7 +69,7 @@ Entity-relationship diagram showing:
 - `semantic_clusters` - AI clustering
 
 ### Key Relationships
-- Promotion queue references events and agents
+- Work queue references events and agents
 - Schema registry optionally validates events
 - Future knowledge tables will reference events and artifacts
 
@@ -82,7 +82,7 @@ Dependency graph showing:
 
 ### Application Binaries
 - `unified-collector` - Multi-source event ingestion
-- `sinex-promo-worker` - Promotion queue processing
+- `sinex-promo-worker` - Work queue processing
 - `exo` CLI - Python-based query interface
 
 ### Core Crates
@@ -105,7 +105,7 @@ Development timeline showing:
 ### ✅ Completed Phases
 - **Foundation** (Database, ULID, TimescaleDB)
 - **Event Capture** (Filesystem, Terminal, Hyprland)
-- **Processing** (Workers, Promotion Queue)
+- **Processing** (Workers, Work Queue)
 - **Query Interface** (Python CLI)
 
 ### 🟡 Current Phase

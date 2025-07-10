@@ -67,7 +67,7 @@ psql $DATABASE_URL -c "
 # 4. Review queue status
 psql $DATABASE_URL -c "
   SELECT status, COUNT(*) 
-  FROM sinex_schemas.promotion_queue
+  FROM sinex_schemas.work_queue
   WHERE created_at > NOW() - INTERVAL '1 hour'
   GROUP BY status;"
 
@@ -224,7 +224,7 @@ psql $DATABASE_URL -c "
   SELECT 
     DATE(created_at) as date,
     COUNT(*) as failed_count
-  FROM sinex_schemas.promotion_queue
+  FROM sinex_schemas.work_queue
   WHERE status = 'failed'
     AND created_at > NOW() - INTERVAL '7 days'
   GROUP BY DATE(created_at)
@@ -248,7 +248,7 @@ openssl x509 -enddate -noout -in /path/to/cert.pem
 
 # 5. Clean up old failed queue items
 psql $DATABASE_URL -c "
-  DELETE FROM sinex_schemas.promotion_queue
+  DELETE FROM sinex_schemas.work_queue
   WHERE status = 'failed'
     AND created_at < NOW() - INTERVAL '30 days';"
 ```

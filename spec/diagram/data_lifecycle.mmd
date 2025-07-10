@@ -21,7 +21,7 @@ stateDiagram-v2
     state "Event Substrate" as Substrate {
         Validated --> StoredEvent : INSERT raw.events
         StoredEvent --> TriggerFired : Auto-promotion trigger
-        TriggerFired --> QueuedWork : promotion_queue entry
+        TriggerFired --> QueuedWork : work_queue entry
     }
     
     state "Work Processing" as Processing {

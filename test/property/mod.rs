@@ -6,12 +6,11 @@
 
 // Consolidated property tests
 pub mod event_property_test;
+pub mod event_model_fuzzing_test;
 pub mod queue_property_test;
 pub mod schema_property_test;
 pub mod ulid_property_test;
 
-// Legacy property tests (kept for reference)
-pub mod property_tests;
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;

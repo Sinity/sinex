@@ -14,36 +14,14 @@ use sinex_core::{
     Result as CoreResult, RawEventBuilder, unified_collector::EventRegistryBuilder,
     EventSource, EventSourceContext
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::io;
 
 // =============================================================================
 // BASIC FUNCTIONALITY TESTS
 // =============================================================================
 
-/// Test basic event creation with RawEventBuilder
-///
-/// Verifies that:
-/// - Events are created with correct source and type
-/// - Payload is properly attached
-/// - Auto-generated fields (host, ID) are populated
-/// - ULID format is correct (26 characters)
-#[sinex_test]
-async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(
-        sources::FS,
-        event_type_constants::filesystem::FILE_CREATED,
-        json!({"path": "/test/file.txt"}),
-    )
-    .build();
-
-    pretty_assertions::assert_eq!(event.source, sources::FS);
-    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
-    pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
-    assert!(!event.host.is_empty());
-    assert!(event.id.to_string().len() == 26); // ULID length
-    Ok(())
-}
+// Basic event builder test removed - superseded by test_raw_event_builder_complete_creation
 
 /// Test creating multiple events with different sources
 ///
@@ -258,10 +236,11 @@ async fn test_core_error_from_sql_error(_ctx: TestContext) -> TestResult {
 /// Test CoreError context chaining
 #[sinex_test]
 async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
-    let base_error = CoreError::validation("Base validation error");
-    let chained_error = base_error.with_context("field", "test_field");
+    let error_context = CoreError::validation("Base validation error")
+        .with_context("field", "test_field");
     
-    match chained_error {
+    let built_error = error_context.build();
+    match built_error {
         CoreError::Validation(msg) => {
             assert!(msg.contains("Base validation error"));
             assert!(msg.contains("test_field"));
@@ -274,9 +253,9 @@ async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
 /// Test CoreError result extension methods
 #[sinex_test]
 async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
-    let result: CoreResult<String> = Err(CoreError::validation("Test error"));
+    let result: CoreResult<String> = Err(CoreError::validation("Test error").build());
     
-    let extended_result = result.with_context("operation", "test_operation");
+    let extended_result = result.with_context(|| CoreError::validation("Test error").with_context("operation", "test_operation"));
     
     match extended_result {
         Err(CoreError::Validation(msg)) => {
@@ -422,7 +401,7 @@ impl EventSource for FailingEventSource {
 
 #[sinex_test]
 async fn test_event_source_error_propagation(_ctx: TestContext) -> TestResult {
-    let ctx_local = event_sources::test_context(json!({}));
+    let ctx_local = crate::common::event_sources::test_context(json!({}));
     let result = FailingEventSource::initialize(ctx_local).await;
 
     assert!(result.is_err());
@@ -795,7 +774,8 @@ async fn test_event_source_context_validation(_ctx: TestContext) -> TestResult {
 
     // Test configuration validation patterns
     let enabled = config["enabled"].as_bool().unwrap_or(false);
-    let paths = config["paths"].as_array().unwrap_or(&vec![]);
+    let default_paths = vec![];
+    let paths = config["paths"].as_array().unwrap_or(&default_paths);
     let timeout = config["timeout"].as_u64().unwrap_or(1000);
     let buffer_size = config["buffer_size"].as_u64().unwrap_or(512);
 
@@ -821,7 +801,8 @@ async fn test_event_source_context_defaults(_ctx: TestContext) -> TestResult {
 
     // Test extraction with defaults
     let enabled = minimal_config["enabled"].as_bool().unwrap_or(false);
-    let paths = minimal_config["paths"].as_array().unwrap_or(&vec![json!("/default")]);
+    let default_minimal_paths = vec![json!("/default")];
+    let paths = minimal_config["paths"].as_array().unwrap_or(&default_minimal_paths);
     let timeout = minimal_config["timeout"].as_u64().unwrap_or(5000);
     let buffer_size = minimal_config["buffer_size"].as_u64().unwrap_or(1024);
 

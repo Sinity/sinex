@@ -27,8 +27,8 @@
             *   **Connection Pooler Compatibility:** `LISTEN` does not work reliably with transaction-level poolers like PgBouncer (most common mode), as the listening registration is tied to a specific physical connection which may not be reused for subsequent transactions by the listener. Requires session pooling or direct connections for listeners.
             *   **Fan-out Complexity:** If multiple different agents need to process the same event, managing notifications to distinct channels or having agents filter a common channel adds complexity.
 
-    2.  **Dedicated PostgreSQL Queue Table with Worker Polling (e.g., `sinex_schemas.promotion_queue`):**
-        *   **Description:** A trigger or router populates a dedicated queue table (e.g., `promotion_queue`) with references to new `raw_event_id`s and the `target_agent_name` that should process it. Worker agents (e.g., Rust services) periodically poll this table for pending items using `SELECT ... FOR UPDATE SKIP LOCKED` to claim batches of work.
+    2.  **Dedicated PostgreSQL Queue Table with Worker Polling (e.g., `sinex_schemas.work_queue`):**
+        *   **Description:** A trigger or router populates a dedicated queue table (e.g., `work_queue`) with references to new `raw_event_id`s and the `target_agent_name` that should process it. Worker agents (e.g., Rust services) periodically poll this table for pending items using `SELECT ... FOR UPDATE SKIP LOCKED` to claim batches of work.
         *   **Pros:**
             *   **Robust & Reliable:** Uses PostgreSQL's transactional guarantees. Items persist in the queue until successfully processed and explicitly deleted by a worker.
             *   **Decoupled & Scalable:** Ingestion is fully decoupled. Multiple worker instances (even for the same agent type) can poll concurrently.
@@ -62,7 +62,7 @@
             *   Adds some complexity compared to pure polling. The queue table remains the source of truth for work items.
 
 *   **Decision:**
-    The initial and primary mechanism for triggering agent processing of new `raw.events` will be **Option 2: Worker polling of a dedicated PostgreSQL queue table (`sinex_schemas.promotion_queue`)**.
+    The initial and primary mechanism for triggering agent processing of new `raw.events` will be **Option 2: Worker polling of a dedicated PostgreSQL queue table (`sinex_schemas.work_queue`)**.
     `LISTEN/NOTIFY` (as per Option 4) may be used as an *optional optimization* by specific worker agents to reduce polling latency. If used, the `NOTIFY` payload will be a simple "wake-up" signal (e.g., just the `target_agent_name`), and the queue table remains the authoritative source for work items. The decision to add this `NOTIFY`-based wake-up will be made on a per-agent basis if polling latency becomes a demonstrable issue for its specific workload and the `LISTEN/NOTIFY` limitations are acceptable for that agent.
     External message queues (Option 3) are deferred as a future scaling optimization if the PostgreSQL-based queue and optional `NOTIFY` wake-up prove insufficient.
 
@@ -71,13 +71,13 @@
     2.  **Simplicity for MVP & Single-Host:** Leverages the existing PostgreSQL database, avoiding the introduction and management of an additional external dependency (like Redis or Kafka) in the core architecture of a single-host system. This aligns with keeping the initial operational footprint lean.
     3.  **Decoupling and Scalability:** Effectively decouples ingestion from processing. Multiple worker instances can pull from the queue, allowing for horizontal scaling of processing logic if needed. `FOR UPDATE SKIP LOCKED` ensures efficient concurrent access.
     4.  **Rich Feature Support:** The queue table model naturally supports tracking processing status, retry counts, error messages, and scheduled retry times (for exponential backoff) per item, directly within the database.
-    5.  **Transactional Coherence:** If a trigger on `raw.events` populates the `promotion_queue` within the same transaction, the queuing of work is atomic with the ingestion of the event.
+    5.  **Transactional Coherence:** If a trigger on `raw.events` populates the `work_queue` within the same transaction, the queuing of work is atomic with the ingestion of the event.
     6.  **Flexibility for `LISTEN/NOTIFY` Augmentation:** The polling model can be enhanced with `LISTEN/NOTIFY` as a "nudge" without fundamentally changing the reliability model, as the queue table remains the source of truth. This allows targeted optimization where latency is critical and `NOTIFY` constraints are manageable.
 
 *   **Consequences:**
-    *   Worker agents must implement polling logic for the `promotion_queue` table, using `SELECT ... FOR UPDATE SKIP LOCKED`.
-    *   The design of the `promotion_queue` table (columns, indexes) is critical for performance (see `TIM-EventIngestionProcessing.md`).
+    *   Worker agents must implement polling logic for the `work_queue` table, using `SELECT ... FOR UPDATE SKIP LOCKED`.
+    *   The design of the `work_queue` table (columns, indexes) is critical for performance (see `TIM-EventIngestionProcessing.md`).
     *   There will be a baseline polling latency. The frequency of polling is a tunable parameter, balancing responsiveness against database load.
     *   If `LISTEN/NOTIFY` is added for specific agents, those agents will need to manage a PostgreSQL connection suitable for `LISTEN` (e.g., direct connection or session pooling).
-    *   The `sinex_router.route_raw_event_to_promotion_queue` function (or similar logic) is responsible for populating the queue based on agent subscriptions defined in `sinex_schemas.agent_manifests`.
+    *   The `sinex_router.route_raw_event_to_work_queue` function (or similar logic) is responsible for populating the queue based on agent subscriptions defined in `sinex_schemas.agent_manifests`.
 

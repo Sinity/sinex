@@ -594,10 +594,11 @@ async fn test_ulid_timestamp_boundaries(ctx: TestContext) -> TestResult {
 
     for &timestamp in &test_timestamps {
         // Create ULID with specific timestamp
-        let ulid = Ulid::from_parts(timestamp, rand::random::<u128>());
+        let datetime = chrono::DateTime::from_timestamp_millis(timestamp as i64).unwrap();
+        let ulid = Ulid::from_datetime(datetime);
         
         // Verify timestamp extraction
-        let extracted_timestamp = ulid.timestamp_ms();
+        let extracted_timestamp = ulid.inner().timestamp_ms();
         assert_eq!(extracted_timestamp, timestamp, "Timestamp should roundtrip correctly");
         
         // Verify it can be converted to/from various formats
@@ -637,7 +638,7 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
     .fetch_one(pool)
     .await?;
     
-    let retrieved_ulid = Ulid::from_uuid(retrieved.id);
+    let retrieved_ulid = Ulid::from_uuid(retrieved.id.expect("Event should have an ID"));
     assert_eq!(retrieved_ulid, test_ulid, "ULID should roundtrip through database");
     
     // Test sorting by ULID
@@ -660,8 +661,8 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
     .await?;
     
     assert_eq!(ordered_events.len(), 2);
-    let first_ulid = Ulid::from_uuid(ordered_events[0].id);
-    let second_ulid = Ulid::from_uuid(ordered_events[1].id);
+    let first_ulid = Ulid::from_uuid(ordered_events[0].id.expect("Event should have an ID"));
+    let second_ulid = Ulid::from_uuid(ordered_events[1].id.expect("Event should have an ID"));
     
     assert!(first_ulid < second_ulid, "ULIDs should be ordered chronologically");
     

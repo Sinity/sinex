@@ -163,7 +163,7 @@ General guidelines for building robust and maintainable Exocortex agents/ingesto
 ### 2.2. Main Loop and Event Processing
 
 *   **Ingestors:** Monitor source (filesystem, socket, API). On new data, format into `raw.events` structure, assign `payload_schema_id` (looked up from `sinex_schemas.event_payload_schemas` or cached), generate `id` ULID, set `ts_orig`, and insert into `raw.events` (batch inserts preferred). Handle local file-based DLQ on DB write failure.
-*   **Processing Agents (e.g., for `promotion_queue`):** Implement polling loop as in `TIM-EventIngestionProcessing.md`.
+*   **Processing Agents (e.g., for `work_queue`):** Implement polling loop as in `TIM-EventIngestionProcessing.md`.
     *   Fetch batch of items (`SELECT ... FOR UPDATE SKIP LOCKED`).
     *   For each item:
         *   Fetch corresponding `raw.events.payload`.

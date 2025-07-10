@@ -7,17 +7,22 @@ use crate::DbPoolRef;
 use crate::JsonValue;
 use anyhow::Result;
 
+/// Parameters for upserting an agent manifest
+pub struct AgentManifestParams {
+    pub agent_name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub agent_type: String,
+    pub config_template_json: JsonValue,
+    pub produces_event_types: JsonValue,
+    pub subscribes_to_event_types: JsonValue,
+    pub required_capabilities: JsonValue,
+}
+
 /// Upsert an agent manifest following the exact same pattern as existing correct functions
 pub async fn upsert_agent_manifest(
     pool: DbPoolRef<'_>,
-    agent_name: &str,
-    version: &str,
-    description: Option<&str>,
-    agent_type: &str,
-    config_template_json: JsonValue,
-    produces_event_types: JsonValue,
-    subscribes_to_event_types: JsonValue,
-    required_capabilities: JsonValue,
+    params: AgentManifestParams,
 ) -> Result<()> {
     sqlx::query!(
         r#"
@@ -37,14 +42,14 @@ pub async fn upsert_agent_manifest(
             last_heartbeat_ts = EXCLUDED.last_heartbeat_ts,
             updated_at = NOW()
         "#,
-        agent_name,
-        version,
-        description,
-        agent_type,
-        config_template_json,
-        produces_event_types,
-        subscribes_to_event_types,
-        required_capabilities
+        params.agent_name,
+        params.version,
+        params.description,
+        params.agent_type,
+        params.config_template_json,
+        params.produces_event_types,
+        params.subscribes_to_event_types,
+        params.required_capabilities
     )
     .execute(pool)
     .await?;

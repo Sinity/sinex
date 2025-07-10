@@ -6,6 +6,9 @@ authors.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[lib]
+# proc-macro = true  # Temporarily disabled to allow testing
+
 [dependencies]
 # Core dependencies
 serde = { workspace = true }
@@ -17,6 +20,7 @@ anyhow = { workspace = true }
 
 # For RawEvent and builders
 sinex-ulid = { path = "../sinex-ulid" }
+sinex-events = { path = "../sinex-events" }
 
 # For hostname in RawEventBuilder
 gethostname = { workspace = true }
@@ -45,6 +49,9 @@ toml = { workspace = true }
 
 # For logging
 tracing = { workspace = true }
+
+# For error context macros
+sinex-macros = { path = "../sinex-macros" }
 
 # For path expansion
 dirs = { workspace = true }

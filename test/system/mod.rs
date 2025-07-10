@@ -102,3 +102,6 @@ pub mod reliability_test;
 
 /// Consolidated extreme load and stress testing
 pub mod stress_test;
+
+/// Temporal chaos scenarios and worker idempotency testing
+pub mod temporal_chaos_test;

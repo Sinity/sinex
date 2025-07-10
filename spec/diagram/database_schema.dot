@@ -68,8 +68,8 @@ digraph SinexDatabaseSchema {
             color="#006400"
         ];
         
-        promotion_queue [
-            label="{promotion_queue|{
+        work_queue [
+            label="{work_queue|{
                 queue_id: ULID PRIMARY KEY|
                 raw_event_id: ULID NOT NULL|
                 target_agent_name: TEXT NOT NULL|
@@ -178,13 +178,13 @@ digraph SinexDatabaseSchema {
     }
     
     // Current relationships (solid lines)
-    promotion_queue -> events [
+    work_queue -> events [
         label="raw_event_id",
         color="#006400",
         fontcolor="#006400"
     ];
     
-    agent_manifests -> promotion_queue [
+    agent_manifests -> work_queue [
         label="target_agent_name",
         color="#006400",
         fontcolor="#006400"
@@ -250,7 +250,7 @@ digraph SinexDatabaseSchema {
         
         constraints [
             shape=box,
-            label="✅ IMPLEMENTED:\l• events: Hypertable on ts_ingest\l• events: ULID → TIMESTAMPTZ extraction\l• promotion_queue: FOR UPDATE SKIP LOCKED\l• agent_manifests: Heartbeat tracking\l\l❌ PLANNED:\l• JSON Schema validation via pg_jsonschema\l• Vector similarity indexes (pgvector)\l• Entity uniqueness constraints\l• Referential integrity for future tables",
+            label="✅ IMPLEMENTED:\l• events: Hypertable on ts_ingest\l• events: ULID → TIMESTAMPTZ extraction\l• work_queue: FOR UPDATE SKIP LOCKED\l• agent_manifests: Heartbeat tracking\l\l❌ PLANNED:\l• JSON Schema validation via pg_jsonschema\l• Vector similarity indexes (pgvector)\l• Entity uniqueness constraints\l• Referential integrity for future tables",
             fillcolor="#f0f0f0",
             style="filled"
         ];

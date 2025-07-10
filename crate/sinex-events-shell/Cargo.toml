@@ -1,0 +1,46 @@
+[package]
+name = "sinex-events-shell"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core dependencies
+sinex-core = { path = "../sinex-core" }
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-db = { path = "../sinex-db" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true, features = ["chrono"] }
+
+# Logging
+tracing = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+rusqlite = "0.30"
+
+# Shell command parsing
+shell-words = "1.1"
+
+# Date/time handling
+chrono = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# File system utilities
+dirs = "5.0"
+notify = "6.1"
+shellexpand = "3.1"
+
+# Git utilities (for shell history integration)
+git2 = "0.18"

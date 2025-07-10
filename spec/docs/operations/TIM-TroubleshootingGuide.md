@@ -117,13 +117,13 @@ systemctl status sinex-promo-worker
 # 2. View queue status
 psql $DATABASE_URL -c "
   SELECT status, COUNT(*), MAX(created_at) as latest
-  FROM sinex_schemas.promotion_queue
+  FROM sinex_schemas.work_queue
   GROUP BY status;"
 
 # 3. Check for stuck items
 psql $DATABASE_URL -c "
   SELECT event_id, status, created_at, started_at, worker_id
-  FROM sinex_schemas.promotion_queue
+  FROM sinex_schemas.work_queue
   WHERE status = 'processing'
     AND started_at < NOW() - INTERVAL '10 minutes';"
 
@@ -173,7 +173,7 @@ systemctl show sinex-promo-worker | grep -E "(Memory|CPU)"
 #### Queue Corruption
 ```sql
 -- Reset stuck items
-UPDATE sinex_schemas.promotion_queue
+UPDATE sinex_schemas.work_queue
 SET status = 'pending', 
     started_at = NULL,
     worker_id = NULL,
@@ -182,7 +182,7 @@ WHERE status = 'processing'
   AND started_at < NOW() - INTERVAL '30 minutes';
 
 -- Clear failed items if too many
-DELETE FROM sinex_schemas.promotion_queue
+DELETE FROM sinex_schemas.work_queue
 WHERE status = 'failed'
   AND retry_count > 5
   AND created_at < NOW() - INTERVAL '24 hours';
@@ -598,7 +598,7 @@ psql $DATABASE_URL -c "
     AND ts_ingest < NOW() - INTERVAL '7 days';
 
   -- Clean failed queue items
-  DELETE FROM sinex_schemas.promotion_queue
+  DELETE FROM sinex_schemas.work_queue
   WHERE status = 'failed'
     AND created_at < NOW() - INTERVAL '30 days';
 
@@ -810,7 +810,7 @@ psql $DATABASE_URL -c "SELECT version();"
 psql $DATABASE_URL -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';"
 
 # Reset stuck queue
-psql $DATABASE_URL -c "UPDATE sinex_schemas.promotion_queue SET status = 'pending' WHERE status = 'processing' AND started_at < NOW() - INTERVAL '1 hour';"
+psql $DATABASE_URL -c "UPDATE sinex_schemas.work_queue SET status = 'pending' WHERE status = 'processing' AND started_at < NOW() - INTERVAL '1 hour';"
 
 # Emergency space cleanup
 sudo journalctl --vacuum-size=100M

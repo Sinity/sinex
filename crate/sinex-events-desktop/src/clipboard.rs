@@ -240,23 +240,16 @@ impl EventSource for ClipboardMonitor {
                             .build());
                     }
 
-                    // Initialize git-annex
-                    let output = Command::new("git-annex")
-                        .arg("init")
-                        .arg("sinex-clipboard-annex")
-                        .current_dir(&path)
-                        .output()
-                        .await
-                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to run git-annex init: {}", e)))
-                            .with_operation("initialize_clipboard_monitor")
-                            .with_context("repo_path", path.display().to_string())
-                            .build())?;
-
-                    if !output.status.success() {
-                        return Err(ErrorContext::new(CoreError::Configuration(format!("git-annex init failed: {}", String::from_utf8_lossy(&output.stderr))))
-                            .with_operation("initialize_clipboard_monitor")
-                            .with_context("repo_path", path.display().to_string())
-                            .build());
+                    // Initialize git-annex repository if it doesn't exist
+                    if !path.join(".git").exists() {
+                        use sinex_annex::GitAnnex;
+                        GitAnnex::init(&path, Some("sinex-clipboard-annex"))
+                            .await
+                            .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                                .with_operation("initialize_clipboard_monitor")
+                                .with_context("repo_path", path.display().to_string())
+                                .with_context("repo_name", "sinex-clipboard-annex")
+                                .build())?;
                     }
                 }
 
@@ -404,7 +397,7 @@ impl ClipboardMonitor {
                 };
 
                 let event =
-                    self.create_event(ClipboardChanged::EVENT_NAME, serde_json::to_value(payload)?);
+                    EventSource::create_event(self, ClipboardChanged::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "clipboard_changed").await?;
             } else {
                 let payload = ClipboardSelectionPayload {
@@ -420,7 +413,8 @@ impl ClipboardMonitor {
                     timestamp: Utc::now(),
                 };
 
-                let event = self.create_event(
+                let event = EventSource::create_event(
+                    self,
                     ClipboardSelection::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );

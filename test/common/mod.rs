@@ -20,8 +20,6 @@
 // Test prelude for standardized imports
 pub mod prelude;
 
-// Database helper functions and macros
-pub mod database_helpers;
 
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;
@@ -38,6 +36,7 @@ pub use crate::common::prelude::*;
 use sinex_core::{sources, EventFactory, event_type_constants};
 use sinex_db::events as db_events;
 use sinex_db::query_helpers::uuid_to_ulid;
+use sinex_db::AgentManifestParams;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -47,7 +46,8 @@ pub fn test_database_url() -> String {
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<DbPool> {
-    database_pool::acquire_test_database().await
+    let test_db = database_pool::acquire_test_database().await?;
+    Ok(test_db.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
@@ -349,14 +349,16 @@ pub mod assertions {
     ) -> Result<(), anyhow::Error> {
         let result = sinex_db::agent::upsert_agent_manifest(
             pool,
-            &manifest.agent_name,
-            &manifest.version,
-            manifest.description.as_deref(),
-            &manifest.agent_type,
-            manifest.config_template_json.clone().unwrap_or_default(),
-            manifest.produces_event_types.clone().unwrap_or_default(),
-            manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-            manifest.required_capabilities.clone().unwrap_or_default(),
+            AgentManifestParams {
+                agent_name: manifest.agent_name.clone(),
+                version: manifest.version.clone(),
+                description: manifest.description.clone(),
+                agent_type: manifest.agent_type.clone(),
+                config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+                produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+                subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+                required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+            },
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
@@ -777,24 +779,22 @@ pub fn create_test_event_with_payload(
     test_event_with_payload(source, event_type, payload)
 }
 
-/// Create a simple test event with source and type (legacy compatibility)
-pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
-    EventFactory::new(source).create_event(event_type, json!({"test": true}))
-}
 
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     sinex_db::agent::upsert_agent_manifest(
         pool,
-        &manifest.agent_name,
-        &manifest.version,
-        manifest.description.as_deref(),
-        &manifest.agent_type,
-        manifest.config_template_json.clone().unwrap_or_default(),
-        manifest.produces_event_types.clone().unwrap_or_default(),
-        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-        manifest.required_capabilities.clone().unwrap_or_default(),
+        AgentManifestParams {
+            agent_name: manifest.agent_name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            agent_type: manifest.agent_type.clone(),
+            config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+            produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+        },
     )
     .await?;
     Ok(())
@@ -846,14 +846,16 @@ pub async fn create_agent_with_subscriptions(
 
     sinex_db::agent::upsert_agent_manifest(
         pool,
-        &manifest.agent_name,
-        &manifest.version,
-        manifest.description.as_deref(),
-        &manifest.agent_type,
-        manifest.config_template_json.clone().unwrap_or_default(),
-        manifest.produces_event_types.clone().unwrap_or_default(),
-        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-        manifest.required_capabilities.clone().unwrap_or_default(),
+        AgentManifestParams {
+            agent_name: manifest.agent_name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            agent_type: manifest.agent_type.clone(),
+            config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+            produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+        },
     )
     .await?;
 
@@ -1057,9 +1059,7 @@ pub mod timing_optimization;
 /// Validation test utilities
 pub mod validation_test_utils;
 
-// Re-export the final pool as the default
-#[allow(unused_imports)]
-pub use database_pool::acquire_test_database;
+// Re-export the final pool as the default - used directly from database_pool module
 
 /// Schema test utilities
 pub mod schema_test_utils;

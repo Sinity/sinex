@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 04bf7715501f99e2f70a4016ed5390e057ab84620ddf0fc6680a17b3c80b419e # shrinks to schema_count = 1, schema_names = ["Aaa"], schema_versions = ["0.0.0"]

@@ -21,25 +21,20 @@
 //!
 //! ## Test Categories
 //!
-//! ### Core Component Integration
-//! - **`database/`**: Database operations with business logic
-//! - **`collector/`**: Event collection and coordination
-//! - **`worker/`**: Event processing and work distribution
-//! - **`event_sources/`**: Event source implementations
-//! - **`agent/`**: Agent lifecycle and communication
+//! ### Consolidated Integration Tests
+//! - **`database_test`**: Database operations with business logic
+//! - **`event_sources_test`**: Event source implementations and coordination
+//! - **`worker_test`**: Event processing and work distribution  
+//! - **`collector_test`**: Event collection and coordination
+//! - **`failure_modes_test`**: Graceful degradation and error handling
+//! - **`system_integration_test`**: High-level system coordination
 //!
-//! ### System Integration
-//! - **`failure_modes/`**: Graceful degradation and error handling
-//! - **`infrastructure/`**: Infrastructure component coordination
-//!
-//! ### Specific Integration Tests
+//! ### Additional Integration Coverage
 //! - Configuration validation across components
-//! - Health monitoring integration
+//! - Health monitoring integration  
 //! - Git Annex storage integration
 //! - Query interface functionality
-//! - System startup coordination
 //! - Failure recovery mechanisms
-//! - Deployment validation
 //!
 //! ## Running Integration Tests
 //!
@@ -56,27 +51,54 @@
 
 // === Core Component Integration ===
 
-/// Database operations integrated with business logic
-pub mod database;
-
-/// Consolidated database integration tests (replaces database/*)
+/// Consolidated database integration tests
 pub mod database_test;
 
-/// Event collection and coordination testing
-pub mod collector;
-
-/// Consolidated event source integration tests
+/// Consolidated event source integration tests  
 pub mod event_sources_test;
 
-/// Agent lifecycle and communication testing
-pub mod agent;
+/// Worker processing and distribution tests
+pub mod worker_test;
 
-// === System Integration ===
+/// Event collector coordination tests
+pub mod collector_test;
 
-/// Infrastructure component coordination
-pub mod infrastructure;
+/// Failure mode handling tests
+pub mod failure_modes_test;
 
-// === Specific Integration Tests ===
-// These tests have been consolidated into their respective test files
+/// System-wide integration tests
+pub mod system_integration_test;
+
+/// Search service integration tests
+pub mod search_service_test;
+
+/// PKM service integration tests
+pub mod pkm_service_test;
+
+/// Analytics service integration tests
+pub mod analytics_service_test;
+
+/// Content service integration tests
+pub mod content_service_test;
+
+/// BlobManager integration tests
+pub mod blob_manager_test;
+
+/// RPC handlers request/response tests
+pub mod rpc_handlers_test;
+
+// === Preflight Verification System Tests ===
+
+/// Preflight comprehensive integration tests
+pub mod preflight_integration_test;
+
+/// Preflight failure scenarios and error handling tests
+pub mod preflight_failure_scenarios_test;
+
+/// Preflight timeout, performance and graceful shutdown tests
+pub mod preflight_timeout_performance_test;
+
+/// Preflight rollback mechanisms and recovery tests
+pub mod preflight_rollback_recovery_test;
 
 

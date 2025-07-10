@@ -7,7 +7,7 @@ pub mod constants;
 pub mod directory_manager;
 pub mod error_context;
 pub mod event;
-pub mod event_builders;
+// event_builders module moved to sinex-events crate
 pub mod event_pipeline;
 pub mod event_registry_macro;
 pub mod event_source_base;
@@ -21,7 +21,7 @@ pub mod sqlite_helpers;
 pub mod timestamp_helpers;
 pub mod unified_collector;
 pub mod unified_event_source;
-pub mod strongly_typed_events;
+// strongly_typed_events module moved to sinex-events crate
 pub mod validation;
 pub mod validation_chains;
 pub mod wait_helpers;
@@ -49,7 +49,21 @@ pub use config_helpers::{
 pub use constants::{timeouts, limits, buffers, retry, filesystem};
 pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
-pub use event_builders::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
+pub use sinex_macros::with_context;
+pub use sinex_events::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
+// Re-export strongly typed events from sinex-events crate
+pub use sinex_events::{
+    EnforcedTypedEventSource, TypedEventPipelineAdapter, TypedEventError, TypedEventResult,
+    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
+    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
+    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
+    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
+    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload,
+    TypedToJsonAdapter,
+};
+// Note: TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder from strongly_typed_events
+// have different signatures than the ones in unified_event_source.rs - they are separate builders for different purposes
+// Note: TypedSourceAdapter was removed from strongly_typed_events to avoid circular dependency
 pub use event_pipeline::{
     EventPipeline, PipelineConfig, PipelineStage, StagedEvent, StageResult, StageMetrics, 
     EventTiming, PipelineMetrics, ValidationStage, EnrichmentStage, StorageStage, DistributionStage,
@@ -78,13 +92,10 @@ pub use timestamp_helpers::{
     timestamp_micros_to_datetime, timestamp_nanos_to_datetime, parse_flexible_timestamp,
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
-pub use unified_event_source::{UnifiedEventSource, TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder};
-pub use strongly_typed_events::{
-    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
-    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
-    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
-    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
-    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload
+pub use unified_event_source::{
+    UnifiedEventSource, 
+    TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder,
+    TypedWindowManagerEventBuilder, TypedSystemEventBuilder
 };
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
 pub use validation::{validate_path_within_root, contains_shell_metacharacters};
@@ -108,7 +119,6 @@ pub type JsonValue = serde_json::Value;
 pub type ConfigValue = toml::Value;
 
 use serde::{Deserialize, Serialize};
-use sinex_ulid::Ulid;
 use thiserror::Error;
 
 // ===== Database type aliases =====
@@ -189,119 +199,16 @@ impl From<sqlx::Error> for CoreError {
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 
-// ===== Core data structures =====
+// ===== Core data structures (moved to sinex-events) =====
 
-/// Raw event structure
-///
-/// This is the canonical event structure used throughout the system.
-/// NOTE: This struct uses ULID directly. When using with SQLX queries,
-/// use type overrides like: `id::uuid as "id: _"` for proper type inference
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct RawEvent {
-    pub id: Ulid,
-    pub source: String,
-    pub event_type: String,
-    pub ts_ingest: Timestamp,
-    pub ts_orig: OptionalTimestamp,
-    pub host: String,
-    pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<Ulid>,
-    pub payload: JsonValue,
-}
-
-impl RawEvent {
-    /// Extract ingestion timestamp from ULID (convenience method)
-    pub fn ts_ingest_from_ulid(&self) -> Timestamp {
-        self.id.timestamp()
-    }
-}
-
-/// Builder for creating RawEvent instances
-pub struct RawEventBuilder {
-    id: Option<Ulid>,
-    source: String,
-    event_type: String,
-    payload: JsonValue,
-    ts_orig: OptionalTimestamp,
-    host: Option<String>,
-    ingestor_version: Option<String>,
-    payload_schema_id: Option<Ulid>,
-}
-
-impl RawEventBuilder {
-    pub fn new(
-        source: impl Into<String>,
-        event_type: impl Into<String>,
-        payload: JsonValue,
-    ) -> Self {
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
-            payload,
-            ts_orig: None,
-            host: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-        }
-    }
-
-    pub fn with_orig_timestamp(mut self, ts: Timestamp) -> Self {
-        self.ts_orig = Some(ts);
-        self
-    }
-
-    /// Alias for with_orig_timestamp for compatibility
-    pub fn with_timestamp(self, ts: Timestamp) -> Self {
-        self.with_orig_timestamp(ts)
-    }
-
-    /// Set a specific ID for the event (useful for testing)
-    pub fn with_id(mut self, id: Ulid) -> Self {
-        self.id = Some(id);
-        self
-    }
-
-    pub fn with_host(mut self, host: impl Into<String>) -> Self {
-        self.host = Some(host.into());
-        self
-    }
-
-    pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
-        self.ingestor_version = Some(version.into());
-        self
-    }
-
-    pub fn with_payload_schema_id(mut self, id: Ulid) -> Self {
-        self.payload_schema_id = Some(id);
-        self
-    }
-
-    pub fn build(self) -> RawEvent {
-        let id = self.id.unwrap_or_else(Ulid::new);
-        let hostname = self
-            .host
-            .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
-
-        RawEvent {
-            id,
-            source: self.source,
-            event_type: self.event_type,
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: self.ts_orig,
-            host: hostname,
-            ingestor_version: self.ingestor_version,
-            payload_schema_id: self.payload_schema_id,
-            payload: self.payload,
-        }
-    }
-}
+// RawEvent and RawEventBuilder are now defined in sinex-events
+pub use sinex_events::{RawEvent, RawEventBuilder};
 
 // ===== Common type aliases for event handling =====
 
-/// Event sender type alias (now that RawEvent is defined)
+/// Event sender type alias (using RawEvent from sinex-events)
 pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
-/// Event receiver type alias (now that RawEvent is defined)
+/// Event receiver type alias (using RawEvent from sinex-events)
 pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
 
 // ===== Common types and constants (from types.rs) =====

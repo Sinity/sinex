@@ -14,6 +14,8 @@ default:
     @echo "  just test-unit   - Unit tests only"
     @echo "  just test-integration - Integration tests"
     @echo "  just test-system - System/E2E tests"
+    @echo "  just test-services - Test new service layer functionality"
+    @echo "  just test-core   - Core functionality tests (db, ulid, events)"
     @echo "  just test-all    - All tests including VM (~10-15min)"
     @echo ""
     @echo "🔧 Development:"
@@ -29,7 +31,8 @@ default:
     @echo ""
     @echo "▶️  Services:"
     @echo "  just collector   - Run unified collector"
-    @echo "  just worker      - Run promotion worker"
+    @echo "  just host        - Run sinex-host RPC server"
+    @echo "  just automaton   - Run sinex-automaton worker"
     @echo "  just query       - Query recent events"
     @echo ""
     @echo "📊 Coverage:"
@@ -56,57 +59,68 @@ test-all:
 # 📦 Unit tests - Fast isolated component tests (~5s)
 test-unit *ARGS:
     @echo "📦 Running unit tests (fast, isolated components)..."
-    cargo nextest run -E "test(unit::)" {{ARGS}}
+    cargo nextest run -E "test(unit::)" -- {{ARGS}}
 
 # 📦 Unit tests with limited parallelism - Reliable test execution
-test-unit-reliable:
+test-unit-reliable *ARGS:
     @echo "📦 Running unit tests with limited parallelism for reliability..."
-    cargo nextest run -E "test(unit::)" -j 2
+    cargo nextest run -E "test(unit::)" -j 2 -- {{ARGS}}
 
 # 🔗 Integration tests - Component interaction tests (~30s)
 test-integration *ARGS:
     @echo "🔗 Running integration tests (component interactions)..."
-    cargo nextest run -E "test(integration::)" {{ARGS}}
+    cargo nextest run -E "test(integration::)" -- {{ARGS}}
 
 # 🌐 System tests - Full pipeline E2E tests (~2min)
 test-system *ARGS:
     @echo "🌐 Running system tests (full pipeline E2E)..."
-    cargo nextest run -E "test(system::)" {{ARGS}}
+    cargo nextest run -E "test(system::)" -- {{ARGS}}
 
 # 💪 Stress tests - Load and performance tests (~1min)
 test-stress *ARGS:
     @echo "💪 Running stress tests (load and performance)..."
-    cargo nextest run -E "test(stress_test)" {{ARGS}}
+    cargo nextest run -E "test(stress_test)" -- {{ARGS}}
 
 # 🎲 Property-based tests - Randomized edge case testing (~1min)
 test-property *ARGS:
     @echo "🎲 Running property-based tests (randomized edge cases)..."
-    cargo nextest run -E "test(property::)" {{ARGS}}
+    cargo nextest run -E "test(property::)" -- {{ARGS}}
 
 # ⚔️  Adversarial tests - Security and chaos testing (~3min)
 test-adversarial *ARGS:
     @echo "⚔️ Running adversarial tests (security and chaos scenarios)..."
-    cargo nextest run -E "test(adversarial::)" {{ARGS}}
+    cargo nextest run -E "test(adversarial::)" -- {{ARGS}}
 
 # ⚡ Fast tests only - Unit + property tests for quick feedback (~30s)
 test-fast *ARGS:
     @echo "⚡ Running fast tests only (unit + property)..."
-    cargo nextest run -E "test(unit::) or test(property::)" {{ARGS}}
+    cargo nextest run -E "test(unit::) or test(property::)" -- {{ARGS}}
+
+# 🧪 Test new service layer functionality
+test-services *ARGS:
+    @echo "🧪 Testing service layer functionality..."
+    cargo test -p sinex-services -- {{ARGS}}
+    cargo test -p sinex-host -- {{ARGS}}
+
+# 🔧 Test core functionality (db, ulid, events)
+test-core *ARGS:
+    @echo "🔧 Testing core functionality..."
+    cargo nextest run -E "test(integration::database_test) or test(integration::event_sources_test)" -- {{ARGS}}
 
 # 🎯 Run specific tests with custom filter
 test *ARGS:
     @echo "🎯 Running tests with filter: {{ARGS}}"
-    cargo nextest run {{ARGS}}
+    cargo nextest run -- {{ARGS}}
 
 # 👀 Watch tests - Re-run tests on file changes
 watch *ARGS:
     @echo "👀 Watching for changes, running tests with filter: {{ARGS}}"
-    cargo watch -x "nextest run {{ARGS}}"
+    cargo watch -x "nextest run -- {{ARGS}}"
 
 # ⚡👀 Watch fast tests only - Re-run unit + property tests on changes
 watch-fast *ARGS:
     @echo "⚡👀 Watching for changes, running fast tests only..."
-    cargo watch -x "nextest run -E 'test(unit::) or test(property::)' {{ARGS}}"
+    cargo watch -x "nextest run -E 'test(unit::) or test(property::)' -- {{ARGS}}"
 
 # === VM Tests ===
 
@@ -162,10 +176,15 @@ collector *ARGS:
     @echo "🚀 Starting unified event collector..."
     cargo run --bin sinex-collector {{ARGS}}
 
-# ⚙️  Run promotion worker
-worker *ARGS:
-    @echo "⚙️ Starting promotion worker..."
-    cargo run --bin sinex-promo-worker {{ARGS}}
+# 🖥️  Run sinex-host RPC server for CLI/browser integration
+host *ARGS:
+    @echo "🖥️ Starting sinex-host RPC server..."
+    cargo run --bin sinex-host rpc-server {{ARGS}}
+
+# 🤖 Run sinex-automaton worker (service-layer event processing)
+automaton *ARGS:
+    @echo "🤖 Starting sinex-automaton worker..."
+    cargo run --bin sinex-automaton {{ARGS}}
 
 # 🔍 Query recent events from database
 query LIMIT="10" *ARGS:

@@ -1,5 +1,6 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
 use sinex_db::validation::{EventValidator, ValidationError};
 
 /// Property tests for schema validation functionality
@@ -145,8 +146,8 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
     )
 }
 
-#[sinex_test]
-async fn test_event_validator_normal_payloads(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_event_validator_normal_payloads() -> Result<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
@@ -188,8 +189,8 @@ async fn test_event_validator_normal_payloads(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_event_validator_security_payloads(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_event_validator_security_payloads() -> Result<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_problematic_payload()
@@ -211,8 +212,8 @@ async fn test_event_validator_security_payloads(_ctx: TestContext) -> TestResult
     Ok(())
 }
 
-#[sinex_test]
-async fn test_raw_event_validation_consistency(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_raw_event_validation_consistency() -> Result<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
@@ -245,8 +246,8 @@ async fn test_raw_event_validation_consistency(_ctx: TestContext) -> TestResult 
 // =============================================================================
 
 /// Test schema evolution and backward compatibility
-#[sinex_test]
-async fn test_schema_evolution_properties(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_schema_evolution_properties() -> Result<(), anyhow::Error> {
     proptest!(|(
         base_payload in arb_event_payload(),
         additional_fields in prop::collection::hash_map(
@@ -345,7 +346,7 @@ fn test_validation_chain_properties() {
                 continue;
             }
             
-            let result = ValidationChain::validate(test_string, "test_field")
+            let result = ValidationChain::validate(test_string.as_str(), "test_field")
                 .not_empty()
                 .min_length(min_len)
                 .max_length(max_len)
@@ -397,7 +398,7 @@ fn test_validation_chain_numeric_properties() {
             
             let result = ValidationChain::validate(test_number, "test_number")
                 .min_value(min_val)
-                .max_value(max_val)
+                .max(max_val)
                 .into_result();
             
             match result {
@@ -427,8 +428,9 @@ fn test_validation_chain_numeric_properties() {
 // Schema Loading and Persistence Properties
 // =============================================================================
 
-#[sinex_test]
-async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
@@ -460,7 +462,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                 });
                 
                 // Insert schema into database
-                let schema_id = Ulid::new();
+                let _schema_id = Ulid::new();
                 let result = sqlx::query!(
                     "INSERT INTO sinex_schemas.event_payload_schemas (event_source, event_type, schema_version, json_schema_definition, is_active)
                      VALUES ('test_source', $1, $2, $3, true)
@@ -528,8 +530,8 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
 // Error Handling Properties
 // =============================================================================
 
-#[sinex_test]
-async fn test_event_validator_edge_cases(_ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
     let validator = EventValidator::new();
 
     let long_source = "x".repeat(1000);
@@ -563,7 +565,7 @@ async fn test_event_validator_edge_cases(_ctx: TestContext) -> TestResult {
         let _result = validator.validate(&event);
         
         // The main property we're testing is that it doesn't crash
-        prop_assert!(true);
+        assert!(true);
     }
 
     Ok(())
@@ -573,8 +575,9 @@ async fn test_event_validator_edge_cases(_ctx: TestContext) -> TestResult {
 // Integration Tests
 // =============================================================================
 
-#[sinex_test]
-async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
+#[tokio::test]
+async fn test_event_validator_database_integration() -> Result<(), anyhow::Error> {
+    let ctx = TestContext::new().await?;
     let pool = ctx.pool();
 
     // Test loading validator from empty database

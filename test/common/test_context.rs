@@ -29,7 +29,7 @@ use crate::common::timing_optimization::wait_helpers::{
 };
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use sinex_core::EventFactory;
+use sinex_events::EventFactory;
 use sinex_db::query_helpers::uuid_to_ulid;
 
 /// Event builder factory for fluent API access
@@ -41,28 +41,28 @@ impl EventBuilderFactory {
     }
 
     /// Create a filesystem event builder
-    pub fn filesystem(&self) -> sinex_core::event_builders::FilesystemEventBuilder {
-        EventFactory::new(sinex_core::sources::FS).filesystem()
+    pub fn filesystem(&self) -> sinex_events::FilesystemEventBuilder {
+        EventFactory::new(sinex_events::sources::FS).filesystem()
     }
 
     /// Create a terminal event builder
-    pub fn terminal(&self) -> sinex_core::event_builders::TerminalEventBuilder {
-        EventFactory::new(sinex_core::sources::SHELL_KITTY).terminal()
+    pub fn terminal(&self) -> sinex_events::TerminalEventBuilder {
+        EventFactory::new(sinex_events::sources::SHELL_KITTY).terminal()
     }
 
     /// Create a clipboard event builder
-    pub fn clipboard(&self) -> sinex_core::event_builders::ClipboardEventBuilder {
-        EventFactory::new(sinex_core::sources::CLIPBOARD).clipboard()
+    pub fn clipboard(&self) -> sinex_events::ClipboardEventBuilder {
+        EventFactory::new(sinex_events::sources::CLIPBOARD).clipboard()
     }
 
     /// Create a hyprland event builder
-    pub fn hyprland(&self) -> sinex_core::event_builders::WindowManagerEventBuilder {
-        EventFactory::new(sinex_core::sources::WM_HYPRLAND).window_manager()
+    pub fn hyprland(&self) -> sinex_events::WindowManagerEventBuilder {
+        EventFactory::new(sinex_events::sources::WM_HYPRLAND).window_manager()
     }
 
     /// Create an agent event builder
-    pub fn agent(&self) -> sinex_core::event_builders::SystemEventBuilder {
-        EventFactory::new(sinex_core::sources::SINEX).system()
+    pub fn agent(&self) -> sinex_events::SystemEventBuilder {
+        EventFactory::new(sinex_events::sources::SINEX).system()
     }
 
     /// Create a generic event builder

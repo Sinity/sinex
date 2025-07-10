@@ -52,13 +52,13 @@ While most `raw.events.payload` objects are expected to be small metadata, for s
     6.  The `raw.events.payload` then stores metadata or a manifest of chunk hashes, not the full inline data.
 *   **Relevance:** Primarily for event sources producing large inline data. For most large content (PKM notes, web pages, media), the primary strategy is direct storage in `git-annex` via `core_blobs`, with `raw.events` referencing these.
 
-## 2. Event Processing Queue: `sinex_schemas.promotion_queue` [UG Sec 3.2.1]
+## 2. Event Processing Queue: `sinex_schemas.work_queue` [UG Sec 3.2.1]
 
 This table acts as a persistent, transactional work queue for agents to process raw events.
 
 *   **DDL (from UG Sec 3.2.1, refined):**
     ```sql
-    CREATE TABLE IF NOT EXISTS sinex_schemas.promotion_queue (
+    CREATE TABLE IF NOT EXISTS sinex_schemas.work_queue (
       queue_id                ULID PRIMARY KEY DEFAULT gen_ulid(), -- Using pgx_ulid
       raw_event_id            ULID NOT NULL REFERENCES raw.events(id) ON DELETE CASCADE,
       target_agent_name       TEXT NOT NULL REFERENCES sinex_schemas.agent_manifests(agent_name) ON DELETE CASCADE,
@@ -70,37 +70,37 @@ This table acts as a persistent, transactional work queue for agents to process 
       error_message_last      TEXT NULLABLE,
       created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
       processing_worker_id    TEXT NULLABLE, -- Identifier of worker instance currently processing
-      CONSTRAINT uq_promotion_queue_event_agent UNIQUE (raw_event_id, target_agent_name)
+      CONSTRAINT uq_work_queue_event_agent UNIQUE (raw_event_id, target_agent_name)
     );
 
-    COMMENT ON TABLE sinex_schemas.promotion_queue IS 'Work queue for agents to process raw events for promotion, enrichment, etc.';
-    COMMENT ON COLUMN sinex_schemas.promotion_queue.status IS 'Current status: pending, processing, failed_retryable.';
-    COMMENT ON COLUMN sinex_schemas.promotion_queue.next_retry_ts IS 'If status is failed_retryable, when next attempt should be made.';
+    COMMENT ON TABLE sinex_schemas.work_queue IS 'Work queue for agents to process raw events for promotion, enrichment, etc.';
+    COMMENT ON COLUMN sinex_schemas.work_queue.status IS 'Current status: pending, processing, failed_retryable.';
+    COMMENT ON COLUMN sinex_schemas.work_queue.next_retry_ts IS 'If status is failed_retryable, when next attempt should be made.';
 
     -- Index for workers to efficiently pick up pending tasks
-    CREATE INDEX IF NOT EXISTS idx_promo_queue_pending_tasks ON sinex_schemas.promotion_queue (status, target_agent_name, next_retry_ts ASC NULLS FIRST, created_at ASC)
+    CREATE INDEX IF NOT EXISTS idx_work_queue_pending_tasks ON sinex_schemas.work_queue (status, target_agent_name, next_retry_ts ASC NULLS FIRST, created_at ASC)
     WHERE status = 'pending' OR status = 'failed_retryable';
 
     -- Index for monitoring tasks that have repeatedly failed
-    CREATE INDEX IF NOT EXISTS idx_promo_queue_failed_tasks ON sinex_schemas.promotion_queue (target_agent_name, status, attempts)
+    CREATE INDEX IF NOT EXISTS idx_work_queue_failed_tasks ON sinex_schemas.work_queue (target_agent_name, status, attempts)
     WHERE status = 'failed_retryable';
     ```
-*   **Population:** A router mechanism (e.g., PostgreSQL trigger on `raw.events` calling `sinex_router.route_raw_event_to_promotion_queue()`, see `TIM-PostgreSQL-AdvancedFeatures.md` and `TIM-AgentManifestManagement.md`) populates this queue based on `agent_manifests.subscribes_to_event_types`.
+*   **Population:** A router mechanism (e.g., PostgreSQL trigger on `raw.events` calling `sinex_router.route_raw_event_to_work_queue()`, see `TIM-PostgreSQL-AdvancedFeatures.md` and `TIM-AgentManifestManagement.md`) populates this queue based on `agent_manifests.subscribes_to_event_types`.
 
-## 3. Worker Pattern for Promotion Queue [UG Sec 3.2.2]
+## 3. Worker Pattern for Work Queue [UG Sec 3.2.2]
 
-Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
+Worker processes (e.g., Rust `sinex-promo-worker`) poll the `work_queue`.
 
 *   **SQL for Polling and Claiming Items:**
     ```sql
     -- $1 = target_agent_name (e.g., 'PkmNoteEmbedderAgent_Python_v0.1.0')
     -- $2 = batch_size (e.g., 10)
     -- $3 = worker_id (e.g., 'hostname-worker-1')
-    UPDATE sinex_schemas.promotion_queue
+    UPDATE sinex_schemas.work_queue
     SET status = 'processing', last_attempt_ts = now(), processing_worker_id = $3
     WHERE queue_id IN (
         SELECT queue_id
-        FROM sinex_schemas.promotion_queue
+        FROM sinex_schemas.work_queue
         WHERE
             status IN ('pending', 'failed_retryable')
             AND target_agent_name = $1
@@ -124,7 +124,7 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
      use rand::Rng; // For jitter in backoff
 
      #[derive(sqlx::FromRow, Debug)]
-     struct PromotionQueueItem {
+     struct WorkQueueItem {
          queue_id: Ulid,
          raw_event_id: Ulid,
          target_agent_name: String,
@@ -133,7 +133,7 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
      }
 
      // Placeholder for actual agent processing logic
-     async fn dispatch_to_agent_processor(db_pool: &PgPool, item: &PromotionQueueItem) -> Result<(), anyhow::Error> {
+     async fn dispatch_to_agent_processor(db_pool: &PgPool, item: &WorkQueueItem) -> Result<(), anyhow::Error> {
          // Simulate work; actual logic fetches raw_event.payload, transforms, inserts to domain tables etc.
          println!("Processing item: {:?}", item);
          tokio::time::sleep(Duration::from_millis(100)).await;
@@ -144,13 +144,13 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
          Ok(())
      }
 
-    // pub async fn promotion_worker_loop(db_pool: PgPool, worker_id: String, agent_filter_name: String, batch_size: i32) {
+    // pub async fn work_queue_worker_loop(db_pool: PgPool, worker_id: String, agent_filter_name: String, batch_size: i32) {
          loop {
-             let items_to_process: Vec<PromotionQueueItem> = match sqlx::query_as(
-                 "UPDATE sinex_schemas.promotion_queue \
+             let items_to_process: Vec<WorkQueueItem> = match sqlx::query_as(
+                 "UPDATE sinex_schemas.work_queue \
                   SET status = 'processing', last_attempt_ts = now(), processing_worker_id = $3 \
                   WHERE queue_id IN ( \
-                      SELECT queue_id FROM sinex_schemas.promotion_queue \
+                      SELECT queue_id FROM sinex_schemas.work_queue \
                       WHERE status IN ('pending', 'failed_retryable') AND target_agent_name = $1 \
                         AND (next_retry_ts IS NULL OR next_retry_ts <= now()) \
                       ORDER BY CASE status WHEN 'failed_retryable' THEN 0 ELSE 1 END, next_retry_ts ASC NULLS FIRST, created_at ASC \
@@ -184,7 +184,7 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
 
                  if processing_result.is_ok() {
                      // Successfully processed, delete from queue
-                     if let Err(e) = sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1", item.queue_id)
+                     if let Err(e) = sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE queue_id = $1", item.queue_id)
                          .execute(&db_pool).await {
                          eprintln!("[{}] Processed item {} but failed to delete from queue: {}", worker_id, item.queue_id, e);
                      }
@@ -197,8 +197,8 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
                          // Move to DLQ (see TIM-DeadLetterQueueImplementation.md)
                          eprintln!("[{}] Item {} failed {} times, moving to DLQ. Error: {}", worker_id, item.queue_id, new_attempts, err_msg);
                          // ... (DLQ insertion logic) ...
-                         // Then delete from promotion_queue
-                         sqlx::query!("DELETE FROM sinex_schemas.promotion_queue WHERE queue_id = $1", item.queue_id)
+                         // Then delete from work_queue
+                         sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE queue_id = $1", item.queue_id)
                              .execute(&db_pool).await.ok();
                      } else {
                          // Schedule retry with exponential backoff
@@ -209,7 +209,7 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
                          let next_retry_at: DateTime<Utc> = Utc::now() + chrono::Duration::seconds(final_delay_secs as i64);
 
                          if let Err(e) = sqlx::query!(
-                             "UPDATE sinex_schemas.promotion_queue \
+                             "UPDATE sinex_schemas.work_queue \
                               SET attempts = $2, status = 'failed_retryable', error_message_last = $3, \
                                   next_retry_ts = $4, processing_worker_id = NULL \
                               WHERE queue_id = $1",
@@ -228,7 +228,7 @@ Worker processes (e.g., Rust `sinex-promo-worker`) poll the `promotion_queue`.
 
 ## 4. Event Notification Mechanisms and Trade-offs [UG Sec 3.3]
 
-As per ADR-002, the primary mechanism is polling the `promotion_queue`. `LISTEN/NOTIFY` is an optional enhancement for specific workers.
+As per ADR-002, the primary mechanism is polling the `work_queue`. `LISTEN/NOTIFY` is an optional enhancement for specific workers.
 
 ### 4.1. PostgreSQL `LISTEN/NOTIFY` (Optional Wake-Up Signal)
 
@@ -243,13 +243,13 @@ As per ADR-002, the primary mechanism is polling the `promotion_queue`. `LISTEN/
     *   Dropped Notifications: If no client is listening, notification is lost. Slow listeners can also miss notifications if their internal PG connection queue overflows.
     *   Connection Pooler Compatibility (PgBouncer): `LISTEN` does not work reliably with transaction-level pooling. Requires session pooling or direct connections for listeners.
 *   **Implementation as Wake-Up:**
-    *   The trigger that inserts into `promotion_queue` (e.g., `raw.route_new_event_to_promo_queue_trigger_func()`) could also issue:
-        `PERFORM pg_notify('promo_queue_update_' || NEW.target_agent_name, NEW.raw_event_id::text);`
-    *   The worker agent would establish a dedicated listening connection (or use session pooling) to `LISTEN promo_queue_update_<its_agent_name>;`. On notification, it triggers an immediate poll of the queue table.
+    *   The trigger that inserts into `work_queue` (e.g., `raw.route_new_event_to_work_queue_trigger_func()`) could also issue:
+        `PERFORM pg_notify('work_queue_update_' || NEW.target_agent_name, NEW.raw_event_id::text);`
+    *   The worker agent would establish a dedicated listening connection (or use session pooling) to `LISTEN work_queue_update_<its_agent_name>;`. On notification, it triggers an immediate poll of the queue table.
 
 ### 4.2. Redis Streams (Alternative for Future Scaling)
 
 *   **Benefits [SR1]:** Higher throughput (30k-100k msgs/sec), persistence, consumer groups for load balancing, message acknowledgements.
 *   **Considerations:** Adds external dependency (Redis), increases complexity (dual write problem or outbox pattern for atomicity with PG).
-*   **Status:** Deferred as per ADR-002. If `promotion_queue` with optional `NOTIFY` becomes a proven bottleneck, Redis Streams would be the next consideration.
+*   **Status:** Deferred as per ADR-002. If `work_queue` with optional `NOTIFY` becomes a proven bottleneck, Redis Streams would be the next consideration.
 

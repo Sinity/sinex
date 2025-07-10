@@ -4,7 +4,6 @@
 //! including work queue management, worker lifecycle simulation, and assertion helpers.
 
 use crate::common::prelude::*;
-#[allow(unused_imports)]
 use sinex_db::query_helpers::uuid_to_ulid;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_work_queue_count, wait_for_work_queue_status_count,
@@ -93,48 +92,17 @@ pub async fn setup_test_worker(
     Ok(queue_ids)
 }
 
-/// Insert a test work item (simplified version for tests)
-pub async fn insert_test_work_item(pool: &DbPool, target_agent: &str) -> Result<Ulid> {
-    // Create agent manifest first
-    crate::common::create_test_agent(pool, target_agent).await?;
-
-    // First create a raw event to reference
-    let event = crate::common::events::generic_adversarial_event(
-        "test_source",
-        "test.event",
-        json!({"test": true}),
-        Some("test_1.0"),
-    );
-
-    // Insert the raw event first
-    let inserted_event = sinex_db::insert_event_with_validator(pool, &event, None).await?;
-
-    // Now insert the work queue item using the real query function
-    let queue_id = sinex_db::add_to_work_queue(pool, inserted_event.id, target_agent, 3).await?;
-    let work_item = WorkQueueItem {
-        queue_id,
-        raw_event_id: inserted_event.id,
-        target_agent_name: target_agent.to_string(),
-        status: "pending".to_string(),
-        attempts: 0,
-        max_attempts: 3,
-        last_attempt_ts: None,
-        next_retry_ts: None,
-        error_message_last: None,
-        created_at: Utc::now(),
-        processing_worker_id: None,
-        processed_at: None,
-        failure_reason: None,
-    };
-    Ok(work_item.queue_id)
-}
-
-/// Create a test work queue item
-pub async fn create_test_work_item(
+/// Create a test work queue item with event and agent setup
+/// 
+/// This unified function replaces the previous insert_test_work_item and create_test_work_item
+/// functions to eliminate duplication while maintaining all functionality.
+pub async fn create_test_work_item_with_status(
     pool: &DbPool,
     target_agent: &str,
-    status: &str,
+    status: Option<&str>,
 ) -> Result<Ulid> {
+    let status = status.unwrap_or("pending");
+    
     // Create agent manifest first
     crate::common::create_test_agent(pool, target_agent).await?;
 
@@ -149,23 +117,44 @@ pub async fn create_test_work_item(
     // Insert the raw event first
     let inserted_event = sinex_db::insert_event_with_validator(pool, &event, None).await?;
 
-    // Create work queue item with specific status
-    let queue_id = Ulid::new();
-    sqlx::query!(
-        r#"
-        INSERT INTO sinex_schemas.work_queue
-        (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
-        VALUES ($1::uuid, $2::uuid, $3, $4, 0, 3, NOW())
-        "#,
-        queue_id.to_uuid(),
-        inserted_event.id.to_uuid(),
-        target_agent,
-        status
-    )
-    .execute(pool)
-    .await?;
+    // Create work queue item with specified status
+    if status == "pending" {
+        // Use the production function for pending status
+        sinex_db::add_to_work_queue(pool, inserted_event.id, target_agent, 3).await
+    } else {
+        // Use direct insert for non-pending status
+        let queue_id = Ulid::new();
+        sqlx::query!(
+            r#"
+            INSERT INTO sinex_schemas.work_queue
+            (queue_id, raw_event_id, target_agent_name, status, attempts, max_attempts, created_at)
+            VALUES ($1::uuid, $2::uuid, $3, $4, 0, 3, NOW())
+            "#,
+            queue_id.to_uuid(),
+            inserted_event.id.to_uuid(),
+            target_agent,
+            status
+        )
+        .execute(pool)
+        .await?;
+        Ok(queue_id)
+    }
+}
 
-    Ok(queue_id)
+/// Insert a test work item (legacy compatibility wrapper)
+#[deprecated(note = "Use create_test_work_item_with_status(pool, agent, None) instead")]
+pub async fn insert_test_work_item(pool: &DbPool, target_agent: &str) -> Result<Ulid> {
+    create_test_work_item_with_status(pool, target_agent, None).await
+}
+
+/// Create a test work queue item (legacy compatibility wrapper)
+#[deprecated(note = "Use create_test_work_item_with_status(pool, agent, Some(status)) instead")]
+pub async fn create_test_work_item(
+    pool: &DbPool,
+    target_agent: &str,
+    status: &str,
+) -> Result<Ulid> {
+    create_test_work_item_with_status(pool, target_agent, Some(status)).await
 }
 
 /// Get work queue item by ID
