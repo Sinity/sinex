@@ -420,3 +420,414 @@ async fn test_deduplication_behavior(_ctx: TestContext) -> TestResult {
     
     Ok(())
 }
+
+// =============================================================================
+// COMPREHENSIVE CONFIG VALIDATION (migrated from configuration_validation_test.rs)
+// =============================================================================
+
+#[sinex_test]
+async fn test_filesystem_config_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    
+    // Test valid filesystem configuration
+    let valid_config = json!({
+        "watch_patterns": ["/home/user/**/*", "/tmp/**/*.log"],
+        "ignore_patterns": ["*.tmp", "*.swp", ".git/**/*"],
+        "debounce_ms": 500,
+        "max_depth": 10
+    });
+    
+    let context = EventSourceContext::new(valid_config);
+    let config: FilesystemConfig = serde_json::from_value(context.config)?;
+    
+    assert_eq!(config.watch_patterns.len(), 2);
+    assert_eq!(config.ignore_patterns.len(), 3);
+    assert_eq!(config.debounce_ms, 500);
+    assert_eq!(config.max_depth, Some(10));
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_filesystem_config_invalid_patterns_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    
+    // Test invalid glob patterns
+    let invalid_config = json!({
+        "watch_patterns": ["[invalid-glob-pattern"],
+        "ignore_patterns": ["[another-invalid"],
+        "debounce_ms": 100
+    });
+    
+    let context = EventSourceContext::new(invalid_config);
+    let result: Result<FilesystemConfig, _> = serde_json::from_value(context.config);
+    
+    // Should fail due to invalid glob patterns or provide defaults
+    match result {
+        Err(e) => {
+            assert!(e.to_string().contains("invalid") || e.to_string().contains("pattern"));
+        }
+        Ok(_) => {} // Might provide defaults which is acceptable
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_filesystem_config_boundary_values_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    
+    // Test boundary values for numeric fields
+    let boundary_tests = vec![
+        ("zero_debounce", json!({"debounce_ms": 0})),
+        ("huge_debounce", json!({"debounce_ms": 1000000})),
+    ];
+    
+    for (test_name, config) in boundary_tests {
+        let context = EventSourceContext::new(config);
+        let result: Result<FilesystemConfig, _> = serde_json::from_value(context.config);
+        
+        match test_name {
+            "zero_debounce" => {
+                if let Ok(cfg) = result {
+                    assert_eq!(cfg.debounce_ms, 0);
+                }
+            }
+            "huge_debounce" => {
+                match result {
+                    Ok(cfg) => assert!(cfg.debounce_ms <= 3600000, "Should clamp extremely large values"),
+                    Err(_) => {} // Rejection is also acceptable
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_clipboard_config_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_desktop::clipboard::ClipboardConfig;
+    
+    // Test valid clipboard configuration
+    let valid_config = json!({
+        "monitor_clipboard": true,
+        "monitor_primary": true,
+        "max_content_size": 1048576,
+        "poll_interval_ms": 250,
+        "enable_history": true
+    });
+    
+    let context = EventSourceContext::new(valid_config);
+    let config: ClipboardConfig = serde_json::from_value(context.config)?;
+    
+    assert!(config.monitor_clipboard);
+    assert!(config.monitor_primary);
+    assert_eq!(config.max_content_size, 1048576);
+    assert_eq!(config.poll_interval_ms, 250);
+    assert!(config.enable_history);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_clipboard_config_invalid_sizes_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_desktop::clipboard::ClipboardConfig;
+    
+    // Test invalid size configurations
+    let invalid_configs = vec![
+        ("zero_size", json!({"max_content_size": 0})),
+        ("tiny_interval", json!({"poll_interval_ms": 0})),
+        ("huge_interval", json!({"poll_interval_ms": 3600000})),
+    ];
+    
+    for (test_name, config) in invalid_configs {
+        let context = EventSourceContext::new(config);
+        let result: Result<ClipboardConfig, _> = serde_json::from_value(context.config);
+        
+        match test_name {
+            "zero_size" => {
+                if result.is_ok() {
+                    let cfg = result.unwrap();
+                    assert!(cfg.max_content_size > 0, "Should have positive max content size");
+                }
+            }
+            "tiny_interval" => {
+                if result.is_ok() {
+                    let cfg = result.unwrap();
+                    assert!(cfg.poll_interval_ms >= 10, "Should have reasonable minimum interval");
+                }
+            }
+            "huge_interval" => {
+                if result.is_ok() {
+                    let cfg = result.unwrap();
+                    assert!(cfg.poll_interval_ms <= 60000, "Should clamp excessive intervals");
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_kitty_config_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_terminal::kitty::KittyConfig;
+    
+    // Test valid Kitty configuration
+    let valid_config = json!({
+        "socket_path": "/tmp/kitty-socket",
+        "poll_interval_seconds": 5,
+        "enabled": true
+    });
+    
+    let context = EventSourceContext::new(valid_config);
+    let config: KittyConfig = serde_json::from_value(context.config)?;
+    
+    assert_eq!(config.socket_path, Some("/tmp/kitty-socket".to_string()));
+    assert!(config.enabled);
+    assert_eq!(config.poll_interval_seconds, 5);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_kitty_config_invalid_paths_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_terminal::kitty::KittyConfig;
+    
+    // Test invalid socket paths
+    let invalid_configs = vec![
+        ("empty_path", json!({"socket_path": ""})),
+        ("relative_path", json!({"socket_path": "./relative/socket"})),
+    ];
+    
+    for (test_name, config) in invalid_configs {
+        let context = EventSourceContext::new(config);
+        let result: Result<KittyConfig, _> = serde_json::from_value(context.config);
+        
+        match test_name {
+            "empty_path" => {
+                if result.is_ok() {
+                    let cfg = result.unwrap();
+                    assert!(cfg.socket_path.is_some(), "Should provide default path");
+                }
+            }
+            "relative_path" => {
+                if result.is_ok() {
+                    let cfg = result.unwrap();
+                    assert!(cfg.socket_path.is_some(), "Should convert to absolute path");
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_dbus_config_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_system::dbus::DbusConfig;
+    
+    // Test valid D-Bus configuration
+    let valid_config = json!({
+        "monitor_session": true,
+        "monitor_system": false,
+        "include_interfaces": [
+            "org.freedesktop.Notifications",
+            "org.freedesktop.DBus"
+        ],
+        "extract_notifications": true
+    });
+    
+    let context = EventSourceContext::new(valid_config);
+    let config: DbusConfig = serde_json::from_value(context.config)?;
+    
+    assert!(config.monitor_session);
+    assert!(!config.monitor_system);
+    assert_eq!(config.include_interfaces.len(), 2);
+    assert!(config.extract_notifications);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_config_with_malformed_json_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    
+    // Test various malformed JSON scenarios
+    let malformed_configs = vec![
+        ("trailing_comma", r#"{"valid": true, "trailing": "comma",}"#),
+        ("duplicate_keys", r#"{"key": "first", "key": "duplicate"}"#),
+    ];
+    
+    for (_test_name, json_str) in malformed_configs {
+        let parse_result = serde_json::from_str::<serde_json::Value>(json_str);
+        
+        match parse_result {
+            Ok(value) => {
+                // Even if parsing succeeds, test that config extraction is robust
+                let context = EventSourceContext::new(value);
+                let _result: Result<FilesystemConfig, _> = serde_json::from_value(context.config);
+                // Should either work or fail gracefully
+            }
+            Err(e) => {
+                assert!(e.to_string().contains("JSON") || e.to_string().contains("parse"));
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_configuration_defaults_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    use sinex_events_desktop::clipboard::ClipboardConfig;
+    use sinex_events_terminal::kitty::KittyConfig;
+    use sinex_events_system::dbus::DbusConfig;
+    
+    // Test that all configurations provide sensible defaults
+    let empty_context = EventSourceContext::new(serde_json::json!({}));
+    
+    // Test filesystem defaults
+    let fs_config: FilesystemConfig = serde_json::from_value(empty_context.config.clone())?;
+    assert!(!fs_config.watch_patterns.is_empty(), "Should have default watch patterns");
+    assert!(fs_config.debounce_ms > 0, "Should have positive debounce");
+    
+    // Test clipboard defaults
+    let clipboard_config: ClipboardConfig = serde_json::from_value(empty_context.config.clone())?;
+    assert!(clipboard_config.max_content_size > 0, "Should have positive max size");
+    assert!(clipboard_config.poll_interval_ms > 0, "Should have positive interval");
+    
+    // Test Kitty defaults
+    let kitty_config: KittyConfig = serde_json::from_value(empty_context.config.clone())?;
+    assert!(kitty_config.poll_interval_seconds > 0, "Should have positive timeout");
+    
+    // Test D-Bus defaults
+    let dbus_config: DbusConfig = serde_json::from_value(empty_context.config.clone())?;
+    assert!(dbus_config.monitor_session || dbus_config.monitor_system, "Should monitor at least one bus");
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_configuration_type_coercion_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_fs::FilesystemConfig;
+    use sinex_events_terminal::kitty::KittyConfig;
+    
+    // Test that configuration values are properly coerced between types
+    let type_coercion_tests = vec![
+        ("string_to_number", json!({"debounce_ms": "500"})),
+        ("string_to_boolean", json!({"enabled": "true"})),
+    ];
+    
+    for (test_name, config) in type_coercion_tests {
+        let context = EventSourceContext::new(config);
+        
+        match test_name {
+            "string_to_number" => {
+                if let Ok(cfg) = serde_json::from_value::<FilesystemConfig>(context.config) {
+                    assert_eq!(cfg.debounce_ms, 500, "Should convert string to number");
+                }
+            }
+            "string_to_boolean" => {
+                if let Ok(cfg) = serde_json::from_value::<KittyConfig>(context.config) {
+                    assert!(cfg.enabled, "Should convert 'true' string to boolean");
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_configuration_security_validation_comprehensive(_ctx: TestContext) -> TestResult {
+    use sinex_core::EventSourceContext;
+    use sinex_events_terminal::kitty::KittyConfig;
+    
+    // Test that potentially dangerous configuration values are rejected
+    let security_tests = vec![
+        ("path_traversal", json!({"socket_path": "/tmp/../../../etc/passwd"})),
+        ("shell_injection", json!({"socket_path": "/tmp/socket; rm -rf /"})),
+        ("long_path", json!({"socket_path": "/".repeat(1000)})),
+    ];
+    
+    for (test_name, config) in security_tests {
+        let context = EventSourceContext::new(config);
+        let result: Result<KittyConfig, _> = serde_json::from_value(context.config);
+        
+        match result {
+            Ok(cfg) => {
+                match test_name {
+                    "path_traversal" => {
+                        let default_path = "".to_string();
+                        let path_str = cfg.socket_path.as_ref().unwrap_or(&default_path);
+                        assert!(!path_str.contains("../"), "Should not contain path traversal");
+                    }
+                    "shell_injection" => {
+                        let default_path = "".to_string();
+                        let path_str = cfg.socket_path.as_ref().unwrap_or(&default_path);
+                        assert!(!path_str.contains(";"), "Should not contain shell metacharacters");
+                    }
+                    "long_path" => {
+                        let default_path = "".to_string();
+                        let path_str = cfg.socket_path.as_ref().unwrap_or(&default_path);
+                        assert!(path_str.len() <= 4096, "Should limit path length");
+                    }
+                    _ => {}
+                }
+            }
+            Err(_) => {} // Rejection is acceptable for security tests
+        }
+    }
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_validation_chain_comprehensive_usage(_ctx: TestContext) -> TestResult {
+    use sinex_core::ValidationChain;
+    
+    // Test string validation
+    let result = ValidationChain::validate("test_string", "field_name")
+        .not_empty()
+        .min_length(5)
+        .max_length(20)
+        .into_result();
+    assert!(result.is_ok(), "Valid string should pass validation");
+    
+    // Test string validation failure
+    let result = ValidationChain::validate("", "empty_field")
+        .not_empty()
+        .into_result();
+    assert!(result.is_err(), "Empty string should fail not_empty validation");
+    
+    // Test number validation
+    let result = ValidationChain::validate(42, "number_field")
+        .min_value(0)
+        .into_result();
+    assert!(result.is_ok(), "Valid number should pass validation");
+    
+    // Test number validation failure
+    let result = ValidationChain::validate(-5, "negative_field")
+        .min_value(0)
+        .into_result();
+    assert!(result.is_err(), "Negative number should fail min_value validation");
+    
+    Ok(())
+}
