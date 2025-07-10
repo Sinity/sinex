@@ -9,6 +9,7 @@ members = [
     "crate/sinex-events-desktop",
     "crate/sinex-events-system", 
     "crate/sinex-events-fs",
+    "crate/sinex-events-shell",
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
