@@ -50,6 +50,9 @@ pub use constants::{timeouts, limits, buffers, retry, filesystem};
 pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
 pub use event_builders::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
+pub use strongly_typed_events::{
+    EnforcedTypedEventSource, TypedSourceAdapter, TypedEventPipelineAdapter,
+};
 pub use event_pipeline::{
     EventPipeline, PipelineConfig, PipelineStage, StagedEvent, StageResult, StageMetrics, 
     EventTiming, PipelineMetrics, ValidationStage, EnrichmentStage, StorageStage, DistributionStage,

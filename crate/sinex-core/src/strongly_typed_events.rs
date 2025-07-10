@@ -396,6 +396,105 @@ pub fn typed_event_channel() -> (TypedEventSender, TypedEventReceiver) {
 }
 
 // ============================================================================
+// Typed Event Pipeline Enforcement
+// ============================================================================
+
+/// Adapter to enforce typed event pipeline while maintaining EventSource compatibility
+pub struct TypedEventPipelineAdapter {
+    json_tx: crate::EventSender,
+}
+
+impl TypedEventPipelineAdapter {
+    /// Create new adapter that enforces typed events
+    pub fn new(json_tx: crate::EventSender) -> Self {
+        Self { json_tx }
+    }
+
+    /// Run adapter loop converting typed events to JSON for legacy systems
+    pub async fn run_adapter(self, mut typed_rx: TypedEventReceiver) -> crate::Result<()> {
+        while let Some(envelope) = typed_rx.recv().await {
+            // Convert typed event to JSON for database/legacy systems
+            let json_event = envelope.to_json_event();
+            
+            // Send to legacy pipeline
+            self.json_tx.send(json_event).await
+                .map_err(|e| crate::CoreError::Other(format!("Failed to send converted event: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
+/// Trait for sources that produce strongly-typed events (enforcement mechanism)
+#[async_trait::async_trait]
+pub trait EnforcedTypedEventSource: Send + Sync + 'static {
+    /// Configuration type for this source
+    type Config: Clone + serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + 'static;
+
+    /// Canonical source name
+    const SOURCE_NAME: &'static str;
+
+    /// Initialize the source with context containing config and shared resources
+    async fn initialize(ctx: crate::EventSourceContext) -> crate::Result<Self>
+    where
+        Self: Sized;
+
+    /// Stream ONLY typed events (enforcement: no RawEvent allowed)
+    async fn stream_typed_events(&mut self, tx: TypedEventSender) -> crate::Result<()>;
+
+    /// Graceful shutdown
+    async fn shutdown(&mut self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+/// Bridge adapter to make EnforcedTypedEventSource compatible with EventSource
+pub struct TypedSourceAdapter<T: EnforcedTypedEventSource> {
+    inner: T,
+}
+
+impl<T: EnforcedTypedEventSource> TypedSourceAdapter<T> {
+    pub fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: EnforcedTypedEventSource> crate::EventSource for TypedSourceAdapter<T> {
+    type Config = T::Config;
+
+    const SOURCE_NAME: &'static str = T::SOURCE_NAME;
+
+    async fn initialize(ctx: crate::EventSourceContext) -> crate::Result<Self>
+    where
+        Self: Sized,
+    {
+        let inner = T::initialize(ctx).await?;
+        Ok(Self::new(inner))
+    }
+
+    async fn stream_events(&mut self, tx: crate::EventSender) -> crate::Result<()> {
+        // Create typed channel
+        let (typed_tx, typed_rx) = typed_event_channel();
+        
+        // Create adapter to convert typed events to JSON
+        let adapter = TypedEventPipelineAdapter::new(tx);
+        let adapter_handle = tokio::spawn(adapter.run_adapter(typed_rx));
+        
+        // Run typed source
+        let typed_result = self.inner.stream_typed_events(typed_tx).await;
+        
+        // Wait for adapter to finish
+        let _ = adapter_handle.await;
+        
+        typed_result
+    }
+
+    async fn shutdown(&mut self) -> crate::Result<()> {
+        self.inner.shutdown().await
+    }
+}
+
+// ============================================================================
 // Event Builder Helpers
 // ============================================================================
 
