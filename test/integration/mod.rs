@@ -72,4 +72,13 @@ pub mod system_integration_test;
 /// Search service integration tests
 pub mod search_service_test;
 
+/// PKM service integration tests
+pub mod pkm_service_test;
+
+/// Analytics service integration tests
+pub mod analytics_service_test;
+
+/// Content service integration tests
+pub mod content_service_test;
+
 
