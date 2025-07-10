@@ -19,7 +19,6 @@ use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_core::{RawEventBuilder};
-// use sinex_db::events::insert_event_with_validator; // Unused import removed
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
@@ -703,56 +702,8 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 // WORK QUEUE TESTS
 // =============================================================================
 
-#[sinex_test]
-async fn test_work_queue_table_exists(ctx: TestContext) -> TestResult {
-    // Check that work_queue table exists
-    let result = sqlx::query!(
-        "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'work_queue' AND table_schema = 'sinex_schemas'"
-    )
-    .fetch_one(ctx.pool())
-    .await?;
-
-    pretty_assertions::assert_eq!(result.count.unwrap(), 1, "work_queue table should exist");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_work_queue_has_new_columns(ctx: TestContext) -> TestResult {
-    // Check for new columns
-    let columns = sqlx::query!(
-        r#"
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'work_queue'
-        AND table_schema = 'sinex_schemas'
-        AND column_name IN ('processed_at', 'failure_reason')
-        ORDER BY column_name
-        "#
-    )
-    .fetch_all(ctx.pool())
-    .await?;
-
-    pretty_assertions::assert_eq!(
-        columns.len(),
-        2,
-        "work_queue should have processed_at and failure_reason columns"
-    );
-
-    let column_names: Vec<String> = columns
-        .iter()
-        .filter_map(|r| r.column_name.clone())
-        .collect();
-    assert!(
-        column_names.contains(&"processed_at".to_string()),
-        "Missing processed_at column"
-    );
-    assert!(
-        column_names.contains(&"failure_reason".to_string()),
-        "Missing failure_reason column"
-    );
-
-    Ok(())
-}
+// Schema existence tests removed - these are handled by database migrations
+// and implicitly verified by every work queue operation test
 
 #[sinex_test]
 async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> TestResult {

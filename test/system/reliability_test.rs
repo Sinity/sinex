@@ -23,7 +23,6 @@
 use crate::common::database_pool::acquire_test_database;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-// use sinex_db::events::insert_event_with_validator as insert_event_with_validator; // Unused import removed
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================

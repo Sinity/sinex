@@ -21,29 +21,7 @@ use std::io;
 // BASIC FUNCTIONALITY TESTS
 // =============================================================================
 
-/// Test basic event creation with RawEventBuilder
-///
-/// Verifies that:
-/// - Events are created with correct source and type
-/// - Payload is properly attached
-/// - Auto-generated fields (host, ID) are populated
-/// - ULID format is correct (26 characters)
-#[sinex_test]
-async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(
-        sources::FS,
-        event_type_constants::filesystem::FILE_CREATED,
-        json!({"path": "/test/file.txt"}),
-    )
-    .build();
-
-    pretty_assertions::assert_eq!(event.source, sources::FS);
-    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
-    pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
-    assert!(!event.host.is_empty());
-    assert!(event.id.to_string().len() == 26); // ULID length
-    Ok(())
-}
+// Basic event builder test removed - superseded by test_raw_event_builder_complete_creation
 
 /// Test creating multiple events with different sources
 ///

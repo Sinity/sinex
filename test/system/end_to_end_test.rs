@@ -25,8 +25,6 @@ use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
 use sinex_core::RawEvent;
 use sinex_db::{models::*, run_migrations};
-// use sinex_db::events::insert_event_with_validator; // Unused import removed
-// use sinex_db::work_queue::add_to_work_queue; // Unused import removed
 use sinex_worker::{worker::Worker, EventProcessor};
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};

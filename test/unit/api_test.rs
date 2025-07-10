@@ -501,8 +501,6 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
     let artifact = create_artifact(ctx.pool(), input).await?;
 
     // TODO: Delete functionality not implemented yet
-    // let deleted = delete_artifact(ctx.pool(), artifact.artifact_id).await?;
-    // assert!(deleted);
 
     // Verify it exists (delete functionality pending)
     let retrieved = get_artifact_by_id(ctx.pool(), artifact.artifact_id).await?;

@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use crate::common::{event_sources, resources};
+use crate::common::resources;
 use chrono::{TimeZone, Utc};
 use sinex_core::{CoreError, EventSource, EventSourceContext, EventType, RawEventBuilder};
 use sinex_db::RawEvent;

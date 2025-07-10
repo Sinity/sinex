@@ -1395,27 +1395,7 @@ async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test ULID ordering property
-#[sinex_test]
-async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
-    // Test that ULID generation produces ordered values
-    let ulid1 = Ulid::new();
-    std::thread::sleep(std::time::Duration::from_millis(1)); // Ensure time progression
-    let ulid2 = Ulid::new();
-
-    assert!(ulid1 < ulid2, "ULIDs should be ordered by generation time");
-    assert!(
-        ulid1.to_string() < ulid2.to_string(),
-        "ULID string representations should be ordered"
-    );
-
-    // Verify ULID bytes are also ordered
-    assert!(
-        ulid1.to_bytes() < ulid2.to_bytes(),
-        "ULID byte representations should be ordered"
-    );
-    Ok(())
-}
+// ULID ordering property test moved to test/property/ulid_property_test.rs
 
 /// Test JSON payload constraints
 #[sinex_test]
