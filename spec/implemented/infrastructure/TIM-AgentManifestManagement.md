@@ -146,11 +146,11 @@ Agents can bundle a static `agent_manifest.json` file. This is used for initial 
 
 ## 5. Routing Logic Based on Manifest Capabilities [UG Sec 30.4, SA4]
 
-An "Event Router" component (PostgreSQL trigger function on `raw.events`, or dedicated agent) populates `sinex_schemas.promotion_queue`.
+An "Event Router" component (PostgreSQL trigger function on `raw.events`, or dedicated agent) populates `sinex_schemas.work_queue`.
 
-*   **SQL Router Function (`sinex_router.route_raw_event_to_promotion_queue` - from UG Sec 30.4):**
+*   **SQL Router Function (`sinex_router.route_raw_event_to_work_queue` - from UG Sec 30.4):**
     ```sql
-    -- CREATE OR REPLACE FUNCTION sinex_router.route_raw_event_to_promotion_queue(p_raw_event_id ULID)
+    -- CREATE OR REPLACE FUNCTION sinex_router.route_raw_event_to_work_queue(p_raw_event_id ULID)
     -- RETURNS VOID AS $$
     -- DECLARE
     //     v_event_source TEXT;
@@ -175,7 +175,7 @@ An "Event Router" component (PostgreSQL trigger function on `raw.events`, or ded
     //           -- Or if "source" is a top-level key and "event_type" is in an array value:
     //           -- AND am.subscribes_to_event_types -> v_event_source @> jsonb_build_array(v_event_type)
     //     LOOP
-    //         INSERT INTO sinex_schemas.promotion_queue (raw_event_id, target_agent_name) -- Add max_attempts if configurable
+    //         INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name) -- Add max_attempts if configurable
     //         VALUES (p_raw_event_id, v_agent_record.agent_name)
     //         ON CONFLICT (raw_event_id, target_agent_name) DO NOTHING;
     //     END LOOP;
@@ -185,7 +185,7 @@ An "Event Router" component (PostgreSQL trigger function on `raw.events`, or ded
     -- Trigger to call this router function:
     -- CREATE OR REPLACE FUNCTION raw.trigger_router_on_event_insert() RETURNS TRIGGER AS $$
     // BEGIN
-    //   PERFORM sinex_router.route_raw_event_to_promotion_queue(NEW.id);
+    //   PERFORM sinex_router.route_raw_event_to_work_queue(NEW.id);
     //   RETURN NEW;
     // END;
     // $$ LANGUAGE plpgsql;

@@ -123,7 +123,7 @@ This glossary provides definitions for key terms used throughout the Sinex proje
 *   **PlatformIO:** A cross-platform build system and IDE for embedded development, used for ESP32.
 *   **Prometheus:** An open-source monitoring system with a time-series database, used for Exocortex metrics.
 *   **Promotion (Event Promotion):** The process by which raw events from `raw.events` are transformed by agents into more structured data in domain tables or knowledge graph entities.
-*   **Promotion Queue (`sinex_schemas.promotion_queue`):** The PostgreSQL table used to manage the asynchronous processing of raw events by agents.
+*   **Work Queue (`sinex_schemas.work_queue`):** The PostgreSQL table used to manage the asynchronous processing of raw events by agents.
 *   **Promtail:** The log collection agent for Loki.
 *   **PTY (Pseudo-Terminal):** A pair of virtual character devices providing a terminal interface to a process, used by terminal emulators and session recorders like Asciinema.
 
