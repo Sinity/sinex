@@ -183,28 +183,6 @@ pub struct StressTestUtils;
 
 #[allow(dead_code)]
 impl StressTestUtils {
-    /// Setup a clean test environment with agent registration
-    pub async fn setup_test_environment(agent_name: &str, source_prefix: &str) -> Result<DbPool> {
-        let pool = database_helpers::get_shared_test_pool().await?;
-        run_migrations(&pool).await?;
-
-        // Register the test agent
-        sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (
-                agent_name, version, description, agent_type, status
-            ) VALUES ($1, '1.0.0', $2, 'generic', 'running')
-            ON CONFLICT (agent_name)
-            DO UPDATE SET
-                version = '1.0.0',
-                status = 'running'",
-            agent_name,
-            format!("Stress test agent for {}", source_prefix)
-        )
-        .execute(&pool)
-        .await?;
-
-        Ok(pool.clone())
-    }
 
     /// Clean up test data after a stress test
     pub async fn cleanup_test_data(

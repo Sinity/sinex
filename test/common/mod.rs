@@ -20,8 +20,6 @@
 // Test prelude for standardized imports
 pub mod prelude;
 
-// Database helper functions and macros
-pub mod database_helpers;
 
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;

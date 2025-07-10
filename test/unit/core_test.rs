@@ -423,7 +423,7 @@ impl EventSource for FailingEventSource {
 
 #[sinex_test]
 async fn test_event_source_error_propagation(_ctx: TestContext) -> TestResult {
-    let ctx_local = event_sources::test_context(json!({}));
+    let ctx_local = crate::common::event_sources::test_context(json!({}));
     let result = FailingEventSource::initialize(ctx_local).await;
 
     assert!(result.is_err());

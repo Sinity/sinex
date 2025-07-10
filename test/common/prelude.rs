@@ -62,7 +62,7 @@ pub use futures::future::join_all;
 pub use tempfile::TempDir;
 // ===== Test Infrastructure =====
 // Common modules
-pub use crate::common::{database_helpers, event_sources, events};
+pub use crate::common::events;
 // Test context - THE way to write tests
 // Event factory and builders - THE way to create events
 pub use sinex_core::{EventFactory, RawEventBuilder};

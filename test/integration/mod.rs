@@ -21,25 +21,20 @@
 //!
 //! ## Test Categories
 //!
-//! ### Core Component Integration
-//! - **`database/`**: Database operations with business logic
-//! - **`collector/`**: Event collection and coordination
-//! - **`worker/`**: Event processing and work distribution
-//! - **`event_sources/`**: Event source implementations
-//! - **`agent/`**: Agent lifecycle and communication
+//! ### Consolidated Integration Tests
+//! - **`database_test`**: Database operations with business logic
+//! - **`event_sources_test`**: Event source implementations and coordination
+//! - **`worker_test`**: Event processing and work distribution  
+//! - **`collector_test`**: Event collection and coordination
+//! - **`failure_modes_test`**: Graceful degradation and error handling
+//! - **`system_integration_test`**: High-level system coordination
 //!
-//! ### System Integration
-//! - **`failure_modes/`**: Graceful degradation and error handling
-//! - **`infrastructure/`**: Infrastructure component coordination
-//!
-//! ### Specific Integration Tests
+//! ### Additional Integration Coverage
 //! - Configuration validation across components
-//! - Health monitoring integration
+//! - Health monitoring integration  
 //! - Git Annex storage integration
 //! - Query interface functionality
-//! - System startup coordination
 //! - Failure recovery mechanisms
-//! - Deployment validation
 //!
 //! ## Running Integration Tests
 //!
@@ -56,25 +51,11 @@
 
 // === Core Component Integration ===
 
-/// Database operations integrated with business logic
-pub mod database;
-
-/// Consolidated database integration tests (replaces database/*)
+/// Consolidated database integration tests
 pub mod database_test;
 
-/// Event collection and coordination testing
-pub mod collector;
-
-/// Consolidated event source integration tests
+/// Consolidated event source integration tests  
 pub mod event_sources_test;
-
-/// Agent lifecycle and communication testing
-pub mod agent;
-
-// === System Integration ===
-
-/// Infrastructure component coordination
-pub mod infrastructure;
 
 // === Specific Integration Tests ===
 // These tests have been consolidated into their respective test files
