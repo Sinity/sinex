@@ -3,7 +3,6 @@
 /// This module implements the architectural improvement to merge EventFactory
 /// functionality directly into the EventSourceBase trait, eliminating boilerplate
 /// and providing type safety.
-
 use crate::unified_collector::EventSource;
 use crate::{CoreError, EventSender, EventSourceContext, RawEvent, RawEventBuilder, Result, JsonValue};
 use sinex_events::{
@@ -29,8 +28,8 @@ pub trait UnifiedEventSource: EventSource + Sized {
     /// Create a generic event with manual payload (for backward compatibility)
     fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
-            .with_host(&Self::get_hostname())
-            .with_ingestor_version(&Self::get_version())
+            .with_host(Self::get_hostname())
+            .with_ingestor_version(Self::get_version())
             .with_orig_timestamp(Utc::now())
             .build()
     }

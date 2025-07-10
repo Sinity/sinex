@@ -98,7 +98,7 @@ impl RawEventBuilder {
     }
 
     pub fn build(self) -> RawEvent {
-        let id = self.id.unwrap_or_else(Ulid::new);
+        let id = self.id.unwrap_or_default();
         let hostname = self
             .host
             .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());

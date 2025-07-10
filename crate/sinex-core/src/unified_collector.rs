@@ -85,8 +85,8 @@ pub trait EventSource: Send + Sync + 'static {
     /// Create a generic event with manual payload
     fn create_event(&self, event_type: &str, payload: crate::JsonValue) -> crate::RawEvent {
         crate::RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
-            .with_host(&self.source_host())
-            .with_ingestor_version(&self.source_version())
+            .with_host(self.source_host())
+            .with_ingestor_version(self.source_version())
             .build()
     }
 

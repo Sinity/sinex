@@ -4,6 +4,9 @@
 
 use thiserror::Error;
 
+/// Type alias for validator function
+type ValidatorFunction = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 /// Result type for identifier operations
 pub type IdentifierResult<T> = Result<T, IdentifierError>;
 
@@ -65,7 +68,6 @@ pub enum IdentifierError {
 
 /// Common validation functions
 pub mod validators {
-    use super::*;
     
     /// Validate that a string is not empty
     pub fn not_empty(value: &str) -> Result<(), String> {
@@ -282,7 +284,7 @@ pub mod validators {
 
 /// Validation builder for complex validation rules
 pub struct ValidationBuilder {
-    validators: Vec<Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>>,
+    validators: Vec<ValidatorFunction>,
 }
 
 impl ValidationBuilder {
@@ -294,7 +296,7 @@ impl ValidationBuilder {
     }
     
     /// Add a validator function
-    pub fn add<F>(mut self, validator: F) -> Self
+    pub fn with_validator<F>(mut self, validator: F) -> Self
     where
         F: Fn(&str) -> Result<(), String> + Send + Sync + 'static,
     {
@@ -304,23 +306,23 @@ impl ValidationBuilder {
     
     /// Add a not-empty validation
     pub fn not_empty(self) -> Self {
-        self.add(validators::not_empty)
+        self.with_validator(validators::not_empty)
     }
     
     /// Add a length validation
     pub fn length(self, min: usize, max: usize) -> Self {
-        self.add(validators::length_between(min, max))
+        self.with_validator(validators::length_between(min, max))
     }
     
     /// Add an alphanumeric validation
     pub fn alphanumeric(self) -> Self {
-        self.add(validators::alphanumeric)
+        self.with_validator(validators::alphanumeric)
     }
     
     /// Add a regex validation
     pub fn regex(self, pattern: &str) -> Self {
         let pattern = pattern.to_string();
-        self.add(move |value| validators::matches_regex(&pattern)(value))
+        self.with_validator(move |value| validators::matches_regex(&pattern)(value))
     }
     
     /// Build the final validator function

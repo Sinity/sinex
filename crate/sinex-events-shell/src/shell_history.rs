@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::fs;
 use tokio::sync::mpsc;
@@ -237,7 +237,7 @@ impl ShellHistoryMonitor {
     async fn process_history_line(
         &self,
         command_line: &str,
-        history_file: &PathBuf,
+        history_file: &Path,
         line_number: usize,
         shell_type: &Option<String>,
         tx: &EventSender,
@@ -313,7 +313,7 @@ impl ShellHistoryMonitor {
 // Helper Functions
 // ============================================================================
 
-fn detect_shell_type(path: &PathBuf) -> Option<String> {
+fn detect_shell_type(path: &Path) -> Option<String> {
     if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
         if file_name.contains("bash") {
             Some("bash".to_string())

@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
         
         // Test nanosecond conversion
-        let timestamp_ns = 1700000000_123456789_i64;
+        let timestamp_ns = 1_700_000_000_123_456_789_i64;
         let dt = timestamp_nanos_to_datetime(timestamp_ns);
         assert_eq!(dt.timestamp(), 1700000000);
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);

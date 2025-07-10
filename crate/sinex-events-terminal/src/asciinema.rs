@@ -126,6 +126,7 @@ pub struct AsciinemaRecorder {
     active_sessions: Arc<Mutex<HashMap<PathBuf, RecordingSession>>>,
     processed_files: Arc<Mutex<Vec<PathBuf>>>,
     blob_manager: Option<sinex_annex::BlobManager>,
+    #[allow(dead_code)]
     event_factory: EventFactory,
 }
 

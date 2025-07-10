@@ -18,21 +18,11 @@ impl Default for DatabaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorConfig {
     pub enabled_events: Vec<String>,
     pub annex_repo_path: Option<String>,
     pub database: DatabaseConfig,
-}
-
-impl Default for CollectorConfig {
-    fn default() -> Self {
-        Self {
-            enabled_events: Vec::new(),
-            annex_repo_path: None,
-            database: DatabaseConfig::default(),
-        }
-    }
 }
 
 impl CollectorConfig {
@@ -60,24 +50,14 @@ impl Default for ObservabilityConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SourcesConfig {
     pub filesystem: bool,
     pub terminal: bool,
     pub desktop: bool,
 }
 
-impl Default for SourcesConfig {
-    fn default() -> Self {
-        Self {
-            filesystem: false,
-            terminal: false,
-            desktop: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConfigFactory;
 
 impl ConfigFactory {

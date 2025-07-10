@@ -128,24 +128,24 @@ impl Worker {
                         match self.get_raw_event(item.raw_event_id).await {
                             Ok(Some(raw_event)) => {
                                 // Insert into DLQ
-                                if let Err(dlq_err) = insert_dlq_event(
-                                    &self.pool,
-                                    item.raw_event_id,
-                                    &item.target_agent_name,
-                                    &raw_event.source,
-                                    &raw_event.event_type,
-                                    &format!(
+                                let dlq_params = sinex_db::DlqEventParams {
+                                    failed_event_id: item.raw_event_id,
+                                    agent_name: item.target_agent_name.clone(),
+                                    source: raw_event.source.clone(),
+                                    event_type: raw_event.event_type.clone(),
+                                    failure_reason: format!(
                                         "Max attempts exceeded after {} retries: {}",
                                         new_attempts, e
                                     ),
-                                    "permanent", // Permanent failure after max retries
-                                    raw_event.payload,
-                                    Some(serde_json::json!({
+                                    error_category: "permanent".to_string(),
+                                    original_event_payload: raw_event.payload.clone(),
+                                    additional_metadata: Some(serde_json::json!({
                                         "promotion_queue_id": item.queue_id,
                                         "final_attempt_count": new_attempts,
                                         "worker_id": self.worker_id
                                     })),
-                                )
+                                };
+                                if let Err(dlq_err) = insert_dlq_event(&self.pool, dlq_params)
                                 .await
                                 {
                                     error!(

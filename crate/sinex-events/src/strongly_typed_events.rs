@@ -3,7 +3,6 @@
 /// This module implements the architectural improvement to use strongly-typed
 /// payloads throughout the system, deferring JSON serialization until the
 /// database boundary.
-
 use serde::{Serialize, Deserialize};
 use sinex_ulid::Ulid;
 use chrono::{DateTime, Utc};

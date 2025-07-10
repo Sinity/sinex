@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 // Error types for validation
@@ -69,7 +69,7 @@ pub fn validate_path(path: &str) -> Result<PathBuf> {
 }
 
 /// Simple path cleaning without external dependencies
-fn clean_path(path: &PathBuf) -> PathBuf {
+fn clean_path(path: &Path) -> PathBuf {
     let mut components = Vec::new();
     
     for component in path.components() {

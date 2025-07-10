@@ -2,7 +2,6 @@
 /// 
 /// This module shows how the collector can handle both old JsonValue-based events
 /// and new strongly-typed events during the migration period.
-
 use sinex_core::{
     EventSender, EventReceiver,
     RawEvent,

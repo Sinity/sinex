@@ -7,74 +7,59 @@ use crate::{TemporalIdentifier, HierarchicalIdentifier, NamespacedIdentifier, Ge
 
 // ===== Core System Identifiers =====
 
-/// Event ID - ULID-based for time ordering
 crate::define_ulid_identifier!(EventId);
 
-/// Service instance ID - UUID-based for uniqueness
 crate::define_uuid_identifier!(ServiceInstanceId);
 
-/// Host identifier 
 crate::define_identifier!(HostId, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators(".-")
 ));
 
-/// User identifier
 crate::define_identifier!(UserId, validators::combine_and(
     validators::not_empty,
     validators::length_between(1, 64)
 ));
 
-/// Session identifier - ULID-based
 crate::define_ulid_identifier!(SessionId);
 
-/// Request ID for tracing - ULID-based
 crate::define_ulid_identifier!(RequestId);
 
 // ===== Service and Component Identifiers =====
 
-/// Service name (e.g., "sinex-collector", "sinex-automaton")
 crate::define_identifier!(ServiceName, validators::combine_and(
     validators::not_empty,
     validators::matches_regex(r"^[a-z][a-z0-9-]*$")
 ), display = "service:{}" );
 
-/// Component name within a service
 crate::define_identifier!(ComponentName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("._-")
 ));
 
-/// Agent name for workers
 crate::define_identifier!(AgentName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_-")
 ));
 
-/// Task identifier - ULID-based for ordering
 crate::define_ulid_identifier!(TaskId);
 
-/// Job identifier - ULID-based
 crate::define_ulid_identifier!(JobId);
 
 // ===== Event Source Identifiers =====
 
-/// Event source name (e.g., "fs", "shell.kitty", "wm.hyprland")
 crate::define_identifier!(SourceName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators(".")
 ), display = "source:{}" );
 
-/// Event type name (e.g., "file.created", "command.executed")
 crate::define_identifier!(EventType, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("._")
 ), display = "event:{}" );
 
-/// Schema identifier - ULID-based
 crate::define_ulid_identifier!(SchemaId);
 
-/// Schema version
 crate::define_identifier!(SchemaVersion, validators::combine_and(
     validators::not_empty,
     validators::matches_regex(r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -82,25 +67,21 @@ crate::define_identifier!(SchemaVersion, validators::combine_and(
 
 // ===== File System Identifiers =====
 
-/// File path identifier
 crate::define_identifier!(FilePath, validators::combine_and(
     validators::not_empty,
     validators::path_format
 ));
 
-/// Directory path identifier  
 crate::define_identifier!(DirectoryPath, validators::combine_and(
     validators::not_empty,
     validators::path_format
 ));
 
-/// Blob hash (git-annex style)
 crate::define_identifier!(BlobHash, validators::combine_and(
     validators::not_empty,
     validators::length_between(40, 128) // Support various hash algorithms
 ));
 
-/// File extension
 crate::define_identifier!(FileExtension, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators(".")
@@ -108,19 +89,16 @@ crate::define_identifier!(FileExtension, validators::combine_and(
 
 // ===== Database Identifiers =====
 
-/// Database table name
 crate::define_identifier!(TableName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_")
 ));
 
-/// Database column name
 crate::define_identifier!(ColumnName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_")
 ));
 
-/// Database index name
 crate::define_identifier!(IndexName, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_")
@@ -128,13 +106,11 @@ crate::define_identifier!(IndexName, validators::combine_and(
 
 // ===== Network Identifiers =====
 
-/// Hostname
 crate::define_identifier!(Hostname, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators(".-")
 ));
 
-/// Port number
 crate::define_identifier!(Port, |s: &str| {
     match s.parse::<u16>() {
         Ok(port) if port > 0 => Ok(()),
@@ -143,21 +119,17 @@ crate::define_identifier!(Port, |s: &str| {
     }
 });
 
-/// URL identifier
 crate::define_identifier!(Url, validators::url_format);
 
-/// Email address
 crate::define_identifier!(EmailAddress, validators::email_format);
 
 // ===== Configuration Identifiers =====
 
-/// Configuration key
 crate::define_identifier!(ConfigKey, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("._-")
 ));
 
-/// Environment variable name
 crate::define_identifier!(EnvVar, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_")
@@ -165,25 +137,21 @@ crate::define_identifier!(EnvVar, validators::combine_and(
 
 // ===== Security Identifiers =====
 
-/// API key
 crate::define_identifier!(ApiKey, validators::combine_and(
     validators::not_empty,
     validators::length_between(16, 256)
 ));
 
-/// Token identifier
 crate::define_identifier!(Token, validators::combine_and(
     validators::not_empty,
     validators::length_between(8, 512)
 ));
 
-/// Permission name
 crate::define_identifier!(Permission, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("._:")
 ));
 
-/// Role name
 crate::define_identifier!(Role, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_-")
@@ -191,19 +159,16 @@ crate::define_identifier!(Role, validators::combine_and(
 
 // ===== Workspace and Organization =====
 
-/// Workspace identifier
 crate::define_identifier!(WorkspaceId, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_-")
 ));
 
-/// Organization identifier
 crate::define_identifier!(OrganizationId, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_-")
 ));
 
-/// Project identifier
 crate::define_identifier!(ProjectId, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators("_-")
@@ -211,7 +176,6 @@ crate::define_identifier!(ProjectId, validators::combine_and(
 
 // ===== Hierarchical Identifiers =====
 
-/// Namespace for hierarchical organization
 crate::define_identifier!(Namespace, validators::combine_and(
     validators::not_empty,
     validators::alphanumeric_with_separators(".")
@@ -332,37 +296,30 @@ impl NamespacedIdentifier for EventType {
 
 // ===== Convenience Functions =====
 
-/// Create an event ID from current timestamp
 pub fn event_id_now() -> EventId {
     EventId::generate()
 }
 
-/// Create a session ID from current timestamp
 pub fn session_id_now() -> SessionId {
     SessionId::generate()
 }
 
-/// Create a request ID for request tracing
 pub fn request_id_now() -> RequestId {
     RequestId::generate()
 }
 
-/// Create a task ID from current timestamp
 pub fn task_id_now() -> TaskId {
     TaskId::generate()
 }
 
-/// Parse a file path and validate it
 pub fn parse_file_path(path: &str) -> Result<FilePath, crate::IdentifierError> {
     FilePath::new(path)
 }
 
-/// Create a source name with namespace
 pub fn source_name(namespace: &str, local: &str) -> Result<SourceName, crate::IdentifierError> {
     SourceName::in_namespace(namespace, local)
 }
 
-/// Create an event type with namespace
 pub fn event_type(namespace: &str, local: &str) -> Result<EventType, crate::IdentifierError> {
     EventType::in_namespace(namespace, local)
 }
@@ -370,7 +327,7 @@ pub fn event_type(namespace: &str, local: &str) -> Result<EventType, crate::Iden
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Identifier, TemporalIdentifier, NamespacedIdentifier, HierarchicalIdentifier};
+    use crate::{TemporalIdentifier, NamespacedIdentifier, HierarchicalIdentifier};
     
     #[test]
     fn test_event_id_generation() {

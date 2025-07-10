@@ -218,12 +218,10 @@ impl TypedFilesystemMonitor {
                 } else {
                     glob_pattern.matches(&path_str)
                 }
+            } else if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                glob_pattern.matches(filename)
             } else {
-                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                    glob_pattern.matches(filename)
-                } else {
-                    false
-                }
+                false
             };
 
             if matches {

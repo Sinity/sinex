@@ -29,6 +29,7 @@ pub use events::{
     insert_event_with_validator,
 };
 pub use work_queue::{
+    DlqEventParams,
     add_to_work_queue,
     claim_work_queue_items,
     complete_work_queue_item,
@@ -44,6 +45,7 @@ pub use work_queue::{
     complete_work_item,
 };
 pub use agent::{
+    AgentManifestParams,
     upsert_agent_manifest,
     update_agent_heartbeat,
 };

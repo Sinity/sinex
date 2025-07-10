@@ -12,6 +12,9 @@ use tracing::{info, warn, error};
 
 use crate::{ServiceResult, ServiceError};
 
+/// Type alias for shutdown function
+type ShutdownFunction = Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ServiceResult<()>> + Send>> + Send + Sync>;
+
 /// Shutdown signal types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShutdownSignal {
@@ -101,6 +104,7 @@ pub trait GracefulShutdown: Send + Sync {
 pub struct ShutdownManager {
     components: Arc<RwLock<Vec<Box<dyn GracefulShutdown>>>>,
     shutdown_sender: broadcast::Sender<ShutdownRequest>,
+    #[allow(dead_code)]
     shutdown_receiver: broadcast::Receiver<ShutdownRequest>,
     shutdown_complete: Arc<Notify>,
     is_shutting_down: Arc<RwLock<bool>>,
@@ -320,7 +324,7 @@ impl Default for ShutdownManager {
 /// Simple graceful shutdown implementation for functions
 pub struct FunctionShutdown {
     name: String,
-    shutdown_fn: Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ServiceResult<()>> + Send>> + Send + Sync>,
+    shutdown_fn: ShutdownFunction,
     timeout: Duration,
     priority: u32,
 }

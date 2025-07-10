@@ -66,9 +66,13 @@ struct Args {
 
 /// Service container holding all service instances
 struct ServiceContainer {
+    #[allow(dead_code)]
     analytics: Arc<AnalyticsService>,
+    #[allow(dead_code)]
     content: Arc<ContentService>,
+    #[allow(dead_code)]
     pkm: Arc<PkmService>,
+    #[allow(dead_code)]
     search: Arc<SearchService>,
 }
 
@@ -100,6 +104,7 @@ struct ServiceBasedProcessor {
     batch_size: i32,
     poll_interval: u64,
     events_processed: Arc<AtomicU64>,
+    #[allow(dead_code)]
     services: Arc<ServiceContainer>,
 }
 
@@ -167,24 +172,24 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Register the agent
-    upsert_agent_manifest(
-        pool,
-        agent_name,
-        version,
-        Some("Event automation worker that routes events to service layer"),
-        "automation",
-        serde_json::json!({
+    let manifest_params = sinex_db::AgentManifestParams {
+        agent_name: agent_name.to_string(),
+        version: version.to_string(),
+        description: Some("Event automation worker that routes events to service layer".to_string()),
+        agent_type: "automation".to_string(),
+        config_template_json: serde_json::json!({
             "uses_services": true,
             "service_routing": true
         }),
-        serde_json::json!({
+        produces_event_types: serde_json::json!({
             "sinex.agent.heartbeat": [{"type": "heartbeat"}]
         }),
-        serde_json::json!({
+        subscribes_to_event_types: serde_json::json!({
             "raw.events_feed_all": [{"note": "Subscribes to all events for routing to services"}]
         }),
-        serde_json::json!({})
-    )
+        required_capabilities: serde_json::json!({}),
+    };
+    upsert_agent_manifest(pool, manifest_params)
     .await?;
 
     info!(agent_name = %agent_name, version = %version, "Agent registered");

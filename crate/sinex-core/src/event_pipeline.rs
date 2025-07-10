@@ -8,7 +8,6 @@
 /// 5. Distribution - Work queue and downstream processing
 /// 
 /// Each stage has clear input/output contracts and error handling.
-
 use crate::{RawEvent, EventSender, EventReceiver, Result, CoreError, JsonValue};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -170,6 +169,12 @@ pub struct ValidationStage {
     metrics: Arc<RwLock<StageMetrics>>,
 }
 
+impl Default for ValidationStage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationStage {
     pub fn new() -> Self {
         Self {
@@ -251,6 +256,12 @@ pub struct EnrichmentStage {
     hostname: String,
     version: String,
     metrics: Arc<RwLock<StageMetrics>>,
+}
+
+impl Default for EnrichmentStage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EnrichmentStage {

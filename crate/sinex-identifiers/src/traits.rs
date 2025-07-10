@@ -170,7 +170,7 @@ pub mod utils {
     use super::*;
     
     /// Check if two identifiers are of the same type
-    pub fn same_type<T1: Identifier, T2: Identifier>(id1: &T1, id2: &T2) -> bool {
+    pub fn same_type<T1: Identifier, T2: Identifier>(_id1: &T1, _id2: &T2) -> bool {
         std::any::TypeId::of::<T1>() == std::any::TypeId::of::<T2>()
     }
     

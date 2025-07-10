@@ -3,7 +3,7 @@
 //! Provides unified configuration management for services including
 //! configuration loading, validation, and hot-reload capabilities.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fmt;

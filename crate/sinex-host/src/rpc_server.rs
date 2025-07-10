@@ -19,6 +19,7 @@ use crate::handlers::*;
 
 #[derive(Debug, Clone, Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     method: String,
     params: Value,

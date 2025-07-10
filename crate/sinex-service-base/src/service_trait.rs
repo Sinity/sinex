@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::{ServiceId, ServiceName, ComponentName};
+use crate::{ServiceId, ServiceName};
 use crate::health::HealthReport;
 use crate::status::ServiceMetrics;
 
