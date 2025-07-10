@@ -15,14 +15,10 @@ use sinex_db::{
     create_entity, get_entities_by_type, create_relation, get_entity_relations,
     models::*,
 };
-// use sinex_core::{
-//     ConfigExtractor, MultiValidator, ValidationChain,
-// };
-// Unused imports removed
 
 // Helper function to create and insert a test event
 async fn create_and_insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> anyhow::Result<RawEvent> {
-    let event = create_test_event(source, event_type).await;
+    let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     // Insert the event and return the inserted event (which has the actual DB ID)
     let inserted_event = crate::common::insert_event_with_validator(
         pool,
@@ -365,7 +361,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "screenshot".to_string(),
+        artifact_type: "media".to_string(),
         title: "Screenshot".to_string(),
         mime_type: Some("image/png".to_string()),
         size_bytes: Some(1024),
@@ -379,7 +375,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     let artifact = create_artifact(ctx.pool(), input).await?;
 
     assert_eq!(artifact.created_from_event_id, Some(event_id));
-    assert_eq!(artifact.artifact_type, "screenshot");
+    assert_eq!(artifact.artifact_type, "media");
     assert_eq!(artifact.mime_type, Some("image/png".to_string()));
     assert_eq!(artifact.size_bytes, Some(1024));
     assert_eq!(artifact.original_path, Some("/artifacts/screenshot_123.png".to_string()));
@@ -397,7 +393,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "log_file".to_string(),
+        artifact_type: "file".to_string(),
         title: "Log File".to_string(),
         mime_type: Some("text/plain".to_string()),
         size_bytes: Some(2048),
@@ -416,7 +412,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     assert!(retrieved.is_some());
     let artifact = retrieved.unwrap();
     assert_eq!(artifact.artifact_id, created_artifact.artifact_id);
-    assert_eq!(artifact.artifact_type, "log_file");
+    assert_eq!(artifact.artifact_type, "file");
     assert_eq!(artifact.mime_type, Some("text/plain".to_string()));
     assert_eq!(artifact.size_bytes, Some(2048));
     assert_eq!(artifact.metadata["lines"], 150);
@@ -434,7 +430,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
     let inputs = vec![
         CreateArtifactInput {
             created_from_event_id: Some(event_id),
-            artifact_type: "screenshot".to_string(),
+            artifact_type: "media".to_string(),
             title: "Screenshot".to_string(),
             source_url: None,
             checksum: None,
@@ -446,7 +442,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
         },
         CreateArtifactInput {
             created_from_event_id: Some(event_id),
-            artifact_type: "video".to_string(),
+            artifact_type: "media".to_string(),
             title: "Video Recording".to_string(),
             source_url: None,
             checksum: None,
@@ -477,8 +473,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
 
     // Check artifact types
     let types: Vec<String> = artifacts.iter().map(|a| a.artifact_type.clone()).collect();
-    assert!(types.contains(&"screenshot".to_string()));
-    assert!(types.contains(&"video".to_string()));
+    assert!(types.contains(&"media".to_string()));
 
     Ok(())
 }
@@ -491,7 +486,7 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "temp_file".to_string(),
+        artifact_type: "file".to_string(),
         title: "Temp File".to_string(),
         source_url: None,
         checksum: None,
@@ -505,8 +500,6 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
     let artifact = create_artifact(ctx.pool(), input).await?;
 
     // TODO: Delete functionality not implemented yet
-    // let deleted = delete_artifact(ctx.pool(), artifact.artifact_id).await?;
-    // assert!(deleted);
 
     // Verify it exists (delete functionality pending)
     let retrieved = get_artifact_by_id(ctx.pool(), artifact.artifact_id).await?;
@@ -560,7 +553,7 @@ async fn test_create_knowledge_graph_relationship(ctx: TestContext) -> TestResul
         entity_type: "project".to_string(),
         name: "Sinex Development".to_string(),
         metadata: Some(json!({"status": "active"})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("sinex.development".to_string()),
         aliases: None,
         description: None,
     };
@@ -594,26 +587,26 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
     // Create entities of different types
     let inputs = vec![
         CreateEntityInput {
-            entity_type: "file".to_string(),
+            entity_type: "concept".to_string(),
             name: "document.txt".to_string(),
             metadata: Some(json!({"size": 1024})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("document.txt".to_string()),
         aliases: None,
         description: None,
         },
         CreateEntityInput {
-            entity_type: "file".to_string(),
+            entity_type: "concept".to_string(),
             name: "image.png".to_string(),
             metadata: Some(json!({"size": 2048})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("image.png".to_string()),
         aliases: None,
         description: None,
         },
         CreateEntityInput {
-            entity_type: "process".to_string(),
+            entity_type: "tool".to_string(),
             name: "editor".to_string(),
             metadata: Some(json!({"pid": 1234})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("editor".to_string()),
         aliases: None,
         description: None,
         },
@@ -645,20 +638,20 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
 async fn test_query_relationships(ctx: TestContext) -> TestResult {
     // Create entities and relationships
     let user_input = CreateEntityInput {
-        entity_type: "user".to_string(),
+        entity_type: "person".to_string(),
         name: "Alice".to_string(),
         metadata: Some(json!({})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("alice".to_string()),
         aliases: None,
         description: None,
     };
     let user = create_entity(ctx.pool(), user_input).await?;
 
     let file_input = CreateEntityInput {
-        entity_type: "file".to_string(),
+        entity_type: "concept".to_string(),
         name: "report.pdf".to_string(),
         metadata: Some(json!({})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("report.pdf".to_string()),
         aliases: None,
         description: None,
     };
@@ -675,7 +668,7 @@ async fn test_query_relationships(ctx: TestContext) -> TestResult {
         created_from_event_id: None,
     };
 
-    let relationship = create_relation(ctx.pool(), relationship_input).await?;
+    let _relationship = create_relation(ctx.pool(), relationship_input).await?;
 
     // Query relationships from user
     let relationships = get_entity_relations(ctx.pool(), user.entity_id).await?;
@@ -699,31 +692,30 @@ async fn test_query_relationships(ctx: TestContext) -> TestResult {
 /// Test configuration validation with valid input
 #[sinex_test]
 async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
-    let config = json!({
-        "database": {
-            "url": "postgresql://localhost/test",
-            "pool_size": 10
-        },
-        "event_sources": {
-            "filesystem": {
-                "enabled": true,
-                "paths": ["/home/user"]
-            },
-            "terminal": {
-                "enabled": true,
-                "socket_path": "/tmp/kitty.sock"
-            }
-        }
-    });
+    let config: ConfigValue = toml::from_str(r#"
+        [database]
+        url = "postgresql://localhost/test"
+        pool_size = 10
+        
+        [event_sources]
+        [event_sources.filesystem]
+        enabled = true
+        paths = ["/home/user"]
+        
+        [event_sources.terminal]
+        enabled = true
+        socket_path = "/tmp/kitty.sock"
+    "#).unwrap();
 
-    // TODO: Config extraction test needs proper ConfigValue instead of JsonValue
-    // let db_url = config.require_str("database.url")?;
-    // assert_eq!(db_url, "postgresql://localhost/test");
+    // Use proper ConfigExtractor methods
+    let db_url = config.require_str("database.url")?;
+    assert_eq!(db_url, "postgresql://localhost/test");
     
-    // Simple JSON validation instead
-    assert_eq!(config["database"]["url"], "postgresql://localhost/test");
-    assert_eq!(config["database"]["pool_size"], 10);
-    assert_eq!(config["event_sources"]["filesystem"]["enabled"], true);
+    let pool_size = config.require_u64("database.pool_size")?;
+    assert_eq!(pool_size, 10);
+    
+    let fs_enabled = config.require_bool("event_sources.filesystem.enabled")?;
+    assert!(fs_enabled);
 
     Ok(())
 }
@@ -731,40 +723,36 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
 /// Test configuration validation with invalid input
 #[sinex_test]
 async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult {
-    let config = json!({
-        "database": {
-            "url": "",  // Invalid: empty URL
-            "pool_size": -1  // Invalid: negative pool size
-        },
-        "event_sources": {
-            "filesystem": {
-                "enabled": true,
-                "paths": []  // Invalid: empty paths array
-            }
-        }
-    });
+    let config: ConfigValue = toml::from_str(r#"
+        [database]
+        url = ""  # Invalid: empty URL
+        pool_size = -1  # Invalid: negative pool size
+        
+        [event_sources]
+        [event_sources.filesystem]
+        enabled = true
+        paths = []  # Invalid: empty paths array
+    "#).unwrap();
 
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // let extractor = ConfigExtractor::new(config);
+    // Test validation with ConfigExtractor methods
+    let url = config.require_str("database.url")?;
     
-    // TODO: Validation chain tests need proper ConfigValue
-    // Test validation chains
-    // let url_validation = ValidationChain::validate(extractor.get_string("database.url")?, "database.url")
-    //     .not_empty()
-    //     .custom(|url| url.starts_with("postgresql://"), "must be a PostgreSQL URL")
-    //     .into_result();
+    // Test validation chains for empty URL
+    let url_validation = ValidationChain::validate(url, "database.url")
+        .not_empty()
+        .into_result();
+    assert!(url_validation.is_err(), "Empty URL should fail validation");
     
-    // assert!(url_validation.is_err(), "Empty URL should fail validation");
+    // Test negative pool size handling (TOML parses -1 as i64)
+    let pool_size_result = config.require_u64("database.pool_size");
+    assert!(pool_size_result.is_err(), "Negative pool size should fail u64 extraction");
     
-    // let pool_size_result = extractor.get_u32("database.pool_size");
-    // assert!(pool_size_result.is_err(), "Negative pool size should fail extraction");
-    
-    // let paths = extractor.get_array("event_sources.filesystem.paths")?;
-    // let paths_validation = ValidationChain::validate(paths, "filesystem.paths")
-    //     .custom(|paths| !paths.is_empty(), "paths cannot be empty")
-    //     .into_result();
-    
-    // assert!(paths_validation.is_err(), "Empty paths array should fail validation");
+    // Test empty paths array validation
+    let paths = config.require_array("event_sources.filesystem.paths")?;
+    let paths_validation = ValidationChain::validate(paths, "filesystem.paths")
+        .custom(|paths| !paths.is_empty(), "paths cannot be empty")
+        .into_result();
+    assert!(paths_validation.is_err(), "Empty paths array should fail validation");
 
     Ok(())
 }
@@ -772,29 +760,25 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
 /// Test configuration validation with missing fields
 #[sinex_test]
 async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> TestResult {
-    let config = json!({
-        "database": {
-            "url": "postgresql://localhost/test"
-            // Missing pool_size
-        }
-        // Missing event_sources
-    });
+    let config: ConfigValue = toml::from_str(r#"
+        [database]
+        url = "postgresql://localhost/test"
+        # Missing pool_size
+        # Missing event_sources section
+    "#).unwrap();
 
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // let extractor = ConfigExtractor::new(config);
-    
-    // TODO: ConfigExtractor test needs proper ConfigValue
+    // Test ConfigExtractor methods with missing fields
     // Should be able to get existing field
-    // let db_url = extractor.get_string("database.url")?;
-    // assert_eq!(db_url, "postgresql://localhost/test");
+    let db_url = config.require_str("database.url")?;
+    assert_eq!(db_url, "postgresql://localhost/test");
     
     // Should fail for missing field
-    // let pool_size_result = extractor.get_u32("database.pool_size");
-    // assert!(pool_size_result.is_err(), "Missing pool_size should fail");
+    let pool_size_result = config.require_u64("database.pool_size");
+    assert!(pool_size_result.is_err(), "Missing pool_size should fail");
     
     // Should fail for missing nested field
-    // let fs_enabled_result = extractor.get_bool("event_sources.filesystem.enabled");
-    // assert!(fs_enabled_result.is_err(), "Missing event_sources should fail");
+    let fs_enabled_result = config.require_bool("event_sources.filesystem.enabled");
+    assert!(fs_enabled_result.is_err(), "Missing event_sources should fail");
 
     Ok(())
 }
@@ -802,41 +786,32 @@ async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> Test
 /// Test configuration validation with type conversion
 #[sinex_test]
 async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> TestResult {
-    let config = json!({
-        "numbers": {
-            "as_string": "42",
-            "as_number": 42,
-            "as_float": 3.14
-        },
-        "booleans": {
-            "as_string": "true",
-            "as_bool": true
-        }
-    });
+    let config: ConfigValue = toml::from_str(r#"
+        [numbers]
+        as_string = "42"
+        as_number = 42
+        as_float = 3.14
+        
+        [booleans]
+        as_string = "true"
+        as_bool = true
+    "#).unwrap();
 
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // let extractor = ConfigExtractor::new(config);
+    // Test ConfigExtractor type conversion methods
+    // TOML parses "42" as string, number as i64, float as f64
+    let num_str = config.require_str("numbers.as_string")?;
+    assert_eq!(num_str, "42");
     
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // Test number extraction from string
-    // let num_from_string = extractor.get_u32("numbers.as_string")?;
-    // assert_eq!(num_from_string, 42);
+    let num_value = config.require_i64("numbers.as_number")?;
+    assert_eq!(num_value, 42);
     
-    // Test number extraction from number
-    // let num_from_number = extractor.get_u32("numbers.as_number")?;
-    // assert_eq!(num_from_number, 42);
+    // Test boolean extraction
+    let bool_value = config.require_bool("booleans.as_bool")?;
+    assert!(bool_value);
     
-    // Test float extraction
-    // let float_val = extractor.get_f64("numbers.as_float")?;
-    // assert_eq!(float_val, 3.14);
-    
-    // Test boolean extraction from string
-    // let bool_from_string = extractor.get_bool("booleans.as_string")?;
-    // assert!(bool_from_string);
-    
-    // Test boolean extraction from boolean
-    // let bool_from_bool = extractor.get_bool("booleans.as_bool")?;
-    // assert!(bool_from_bool);
+    // Test string extraction for boolean string
+    let bool_str = config.require_str("booleans.as_string")?;
+    assert_eq!(bool_str, "true");
 
     Ok(())
 }
@@ -844,46 +819,35 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
 /// Test multi-validator functionality
 #[sinex_test]
 async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
-    let config = json!({
-        "server": {
-            "host": "localhost",
-            "port": 8080,
-            "ssl": true
-        },
-        "database": {
-            "url": "postgresql://localhost/test",
-            "pool_size": 10
-        }
-    });
+    let config: ConfigValue = toml::from_str(r#"
+        [server]
+        host = "localhost"
+        port = 8080
+        ssl = true
+        
+        [database]
+        url = "postgresql://localhost/test"
+        pool_size = 10
+    "#).unwrap();
 
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // let extractor = ConfigExtractor::new(config);
-    // TODO: ConfigExtractor test needs proper ConfigValue
-    // let mut validator = MultiValidator::new();
+    // Test direct validation using ValidationChain (simpler approach)
+    let host = config.require_str("server.host")?;
+    ValidationChain::validate(host, "server.host")
+        .not_empty()
+        .custom(|host| *host == "localhost" || host.starts_with("127."), "must be localhost or 127.x.x.x")
+        .into_result()?;
     
-    // Add multiple validations
-    // validator.add_validation(
-    //     "server.host",
-    //     ValidationChain::validate(extractor.get_string("server.host")?, "server.host")
-    //         .not_empty()
-    //         .custom(|host| host == "localhost" || host.starts_with("127."), "must be localhost or 127.x.x.x")
-    // );
+    let port = config.require_i64("server.port")?;
+    ValidationChain::validate(port, "server.port")
+        .min(1)
+        .max(65535)
+        .into_result()?;
     
-    // validator.add_validation(
-    //     "server.port",
-    //     ValidationChain::validate(extractor.get_u32("server.port")?, "server.port")
-    //         .custom(|&port| port > 0 && port < 65536, "must be a valid port number")
-    // );
-    
-    // validator.add_validation(
-    //     "database.pool_size",
-    //     ValidationChain::validate(extractor.get_u32("database.pool_size")?, "database.pool_size")
-    //         .custom(|&size| size > 0 && size <= 100, "must be between 1 and 100")
-    // );
-    
-    // Execute all validations
-    // let result = validator.validate_all();
-    // assert!(result.is_ok(), "All validations should pass");
+    let pool_size = config.require_i64("database.pool_size")?;
+    ValidationChain::validate(pool_size, "database.pool_size")
+        .min(1)
+        .max(100)
+        .into_result()?;
 
     Ok(())
 }

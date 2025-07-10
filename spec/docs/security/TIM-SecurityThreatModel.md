@@ -161,14 +161,14 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
         5.  **(Future) High Availability Setup for PostgreSQL:** Streaming replication to a hot standby (adds complexity).
     *   **Reference:** `SystemOperations_And_Integrity_Architecture.md` (Sec 5.1), `TIM-PostgreSQLBackupDR_pgBackRest.md`.
 
-*   **Threat 4.3: Ingestor flood overwhelming `raw.events` or `promotion_queue`.**
+*   **Threat 4.3: Ingestor flood overwhelming `raw.events` or `work_queue`.**
     *   **Asset:** Ingestion pipeline, processing capacity.
     *   **Impact:** Event loss (if queue overflows before persistence or DLQ), processing backlog.
     *   **Mitigation:**
         1.  **Rate Limiting:** On external-facing ingest endpoints (e.g., mobile ingest API).
         2.  **Systemd Resource Quotas for Ingestors.**
-        3.  **Efficient `promotion_queue` Processing:** Scalable worker pattern.
-        4.  **Backpressure:** If `promotion_queue` grows too large, system could signal ingestors to slow down (advanced).
+        3.  **Efficient `work_queue` Processing:** Scalable worker pattern.
+        4.  **Backpressure:** If `work_queue` grows too large, system could signal ingestors to slow down (advanced).
 
 *   **Threat 4.4: LLM API rate limiting or cost runaway causing dependent agent failure.**
     *   **Asset:** Availability of LLM-dependent agent features.

@@ -2,8 +2,6 @@
 //!
 //! This module provides event-related database operations with proper error handling
 //! and clean API design, following the exact same pattern as existing *_correct.rs files.
-
-// use crate::models::CreateEventInput;  // Not needed for correct pattern
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::validation::EventValidator;
 use crate::DbPoolRef;

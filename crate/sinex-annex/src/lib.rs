@@ -56,7 +56,7 @@ impl AnnexKey {
 
 #[derive(Debug)]
 pub struct GitAnnex {
-    config: AnnexConfig,
+    pub config: AnnexConfig,
 }
 
 impl GitAnnex {

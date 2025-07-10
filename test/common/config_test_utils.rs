@@ -4,7 +4,6 @@
 //! using the new ConfigExtractor and ConfigValidator abstractions.
 
 use crate::common::prelude::*;
-// use std::collections::HashMap;
 
 /// Create test configuration for various scenarios
 pub mod test_configs {

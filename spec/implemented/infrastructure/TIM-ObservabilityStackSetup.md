@@ -113,10 +113,10 @@ sinex_dlq_items_total: # Metric name prefix
     - processing_agent_name: { usage: "LABEL", description: "Agent responsible for DLQ item" }
     - count:  { usage: "GAUGE", description: "Number of items in DLQ by status and source" }
 
-sinex_promotion_queue_items_total:
-  query: "SELECT target_agent_name, status, count(*) AS count FROM sinex_schemas.promotion_queue GROUP BY target_agent_name, status;"
+sinex_work_queue_items_total:
+  query: "SELECT target_agent_name, status, count(*) AS count FROM sinex_schemas.work_queue GROUP BY target_agent_name, status;"
   metrics:
-    - target_agent_name: { usage: "LABEL", description: "Target agent for promotion" }
+    - target_agent_name: { usage: "LABEL", description: "Target agent for work processing" }
     - status: { usage: "LABEL", description: "Status of promotion queue item" }
     - count:  { usage: "GAUGE", description: "Number of items in promotion queue by agent and status" }
 ```

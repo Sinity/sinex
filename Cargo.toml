@@ -4,20 +4,43 @@ members = [
     "crate/sinex-ulid",
     "crate/sinex-db", 
     "crate/sinex-worker",
-    "crate/sinex-promo-worker",
+    "crate/sinex-automaton",
+    "crate/sinex-events",
     "crate/sinex-events-terminal",
     "crate/sinex-events-desktop",
     "crate/sinex-events-system", 
     "crate/sinex-events-fs",
+    "crate/sinex-events-shell",
+    "crate/sinex-shell-integration",
+    "crate/sinex-validation",
+    "crate/sinex-service-base",
+    "crate/sinex-identifiers",
     "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
     "crate/sinex-preflight",
     "crate/sinex-test-macros",
+    "crate/sinex-macros",
     "crate/sinex-services",
-    "crate/sinex-config", "crate/sinex-host",
+    "crate/sinex-config",
+    "crate/sinex-host",
 ]
 resolver = "2"
+
+# Clippy configuration for zero warnings enforcement
+[workspace.lints.clippy]
+# Treat all clippy warnings as errors for production code
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+# Allow some pedantic lints that are too noisy
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+# Specific lints we want to enforce strictly
+too_many_arguments = "deny"
+type_complexity = "deny"
+cognitive_complexity = "warn"
 
 [package]
 name = "sinex"
@@ -46,6 +69,7 @@ gethostname.workspace = true
 sinex-core = { path = "crate/sinex-core" }
 sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
+sinex-events = { path = "crate/sinex-events" }
 sinex-events-terminal = { path = "crate/sinex-events-terminal" }
 sinex-events-desktop = { path = "crate/sinex-events-desktop" }
 sinex-events-system = { path = "crate/sinex-events-system" }
@@ -54,6 +78,8 @@ sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
 sinex-preflight = { path = "crate/sinex-preflight" }
+sinex-services = { path = "crate/sinex-services" }
+sinex-host = { path = "crate/sinex-host" }
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
@@ -91,6 +117,9 @@ ctor = "0.2"
 parking_lot = "0.12"
 once_cell = "1"
 ctrlc = "3"
+reqwest = { version = "0.11", features = ["json"] }
+tower = "0.4"
+tower-http = "0.4"
 
 [workspace.package]
 version = "0.4.2"

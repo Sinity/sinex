@@ -1,0 +1,42 @@
+[package]
+name = "sinex-events"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Core async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization  
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# IDs
+uuid = { workspace = true }
+sinex-ulid = { path = "../sinex-ulid" }
+
+# Note: Avoiding sinex-core dependency to prevent circular deps
+
+# System utilities
+gethostname = { workspace = true }
+
+# Validation and schema
+schemars = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[features]
+default = []

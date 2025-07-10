@@ -21,6 +21,7 @@
 use crate::common::prelude::*;
 use crate::common::resources;
 use sinex_annex::{AnnexConfig, GitAnnex};
+use sqlx::Row;
 use tokio::fs;
 
 // ==================== GIT ANNEX INTEGRATION TESTS ====================

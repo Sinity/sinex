@@ -26,16 +26,16 @@ Triggers are used for automated actions in response to database events (INSERT, 
 *   Simple audit triggers (logging OLD vs NEW) might add ~0.4% overhead per row operation.
 *   Statement-level triggers are generally less expensive as they fire once per statement.
 
-### 1.3. Example Use Case: Populating `promotion_queue` (Conceptual)
+### 1.3. Example Use Case: Populating `work_queue` (Conceptual)
 
-A trigger on `raw.events` `AFTER INSERT` could call a router function to populate `sinex_schemas.promotion_queue`. (See `TIM-EventIngestionProcessing.md` for the router function and `TIM-AgentManifestManagement.md` for how it uses manifests).
+A trigger on `raw.events` `AFTER INSERT` could call a router function to populate `sinex_schemas.work_queue`. (See `TIM-EventIngestionProcessing.md` for the router function and `TIM-AgentManifestManagement.md` for how it uses manifests).
 
 ```sql
 CREATE OR REPLACE FUNCTION raw.route_new_event_to_promo_queue_trigger_func()
 RETURNS TRIGGER AS $$
 BEGIN
     -- Call the main routing function, passing the new event's ID
-    PERFORM sinex_router.route_raw_event_to_promotion_queue(NEW.id);
+    PERFORM sinex_router.route_raw_event_to_work_queue(NEW.id);
     RETURN NEW; -- Result is ignored for AFTER trigger, but good practice
 END;
 $$ LANGUAGE plpgsql;

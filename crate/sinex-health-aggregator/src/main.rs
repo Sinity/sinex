@@ -2,7 +2,6 @@ use axum::{extract::State, http::StatusCode, response::Json, routing::get, Route
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::{JsonValue, ErrorContext, CoreError};
-// use sinex_core::{ComponentHeartbeat, SystemHealth};
 use sinex_db::DbPool;
 use std::collections::HashMap;
 use std::sync::Arc;

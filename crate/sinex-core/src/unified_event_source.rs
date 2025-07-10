@@ -3,10 +3,9 @@
 /// This module implements the architectural improvement to merge EventFactory
 /// functionality directly into the EventSourceBase trait, eliminating boilerplate
 /// and providing type safety.
-
 use crate::unified_collector::EventSource;
 use crate::{CoreError, EventSender, EventSourceContext, RawEvent, RawEventBuilder, Result, JsonValue};
-use crate::event_builders::{
+use sinex_events::{
     FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder,
     WindowManagerEventBuilder, SystemEventBuilder
 };
@@ -29,8 +28,8 @@ pub trait UnifiedEventSource: EventSource + Sized {
     /// Create a generic event with manual payload (for backward compatibility)
     fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
         RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
-            .with_host(&Self::get_hostname())
-            .with_ingestor_version(&Self::get_version())
+            .with_host(Self::get_hostname())
+            .with_ingestor_version(Self::get_version())
             .with_orig_timestamp(Utc::now())
             .build()
     }
@@ -422,7 +421,7 @@ mod tests {
     fn test_unified_event_source_type_safety() {
         // This ensures FilesystemSource can only create events with "fs" source
         let source = TestFilesystemSource;
-        let event = source.filesystem()
+        let event = UnifiedEventSource::filesystem(&source)
             .path("/test.txt")
             .created()
             .size(1024)
@@ -438,7 +437,7 @@ mod tests {
         let source = TestFilesystemSource;
         
         // Direct builder access from source
-        let event = source.filesystem().path("/test").created().build();
+        let event = UnifiedEventSource::filesystem(&source).path("/test").created().build();
         assert_eq!(event.source, sources::FS);
         
         // Source name is enforced by the type system

@@ -1,5 +1,5 @@
 use crate::common::prelude::*;
-use crate::common::{event_sources, resources};
+use crate::common::resources;
 use chrono::{TimeZone, Utc};
 use sinex_core::{CoreError, EventSource, EventSourceContext, EventType, RawEventBuilder};
 use sinex_db::RawEvent;
@@ -31,8 +31,8 @@ use tokio::time::{sleep, timeout};
 #[sinex_test]
 async fn test_filesystem_watcher_initialization(_ctx: TestContext) -> TestResult {
     let temp_dir = resources::temp_dir()?;
-    let config = event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
-    let ctx = event_sources::test_context(config);
+    let config = crate::common::event_sources::filesystem_config(temp_dir.path().to_str().unwrap());
+    let ctx = crate::common::event_sources::test_context(config);
     let _watcher = FilesystemMonitor::initialize(ctx).await?;
 
     // FilesystemMonitor doesn't have name() or version() methods
@@ -51,7 +51,7 @@ async fn test_filesystem_watcher_captures_events(_ctx: TestContext) -> TestResul
         "debounce_ms": 50
     });
 
-    let ctx = event_sources::test_context(config);
+    let ctx = crate::common::event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
 
     let (tx, mut rx) = mpsc::channel(10);
@@ -90,7 +90,7 @@ async fn test_filesystem_watcher_ignores_patterns(_ctx: TestContext) -> TestResu
         "debounce_ms": 50
     });
 
-    let ctx = event_sources::test_context(config);
+    let ctx = crate::common::event_sources::test_context(config);
     let mut watcher = FilesystemMonitor::initialize(ctx).await?;
 
     let (tx, mut rx) = mpsc::channel(10);
@@ -135,7 +135,7 @@ async fn test_kitty_listener_initialization(_ctx: TestContext) -> TestResult {
         polling_interval_secs: 1,
     };
 
-    let ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let listener = KittySocketListener::initialize(ctx).await;
     // Should succeed even if no socket exists (will wait for socket)
     assert!(
@@ -341,7 +341,7 @@ async fn test_atuin_reader_initialization(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_ok(), "Should initialize with valid database");
 
@@ -351,7 +351,7 @@ async fn test_atuin_reader_initialization(_ctx: TestContext) -> TestResult {
         ..config
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_err(), "Should fail with non-existent database");
     Ok(())
@@ -391,7 +391,7 @@ async fn test_atuin_event_capture(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -467,7 +467,7 @@ async fn test_atuin_timestamp_conversion(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -587,7 +587,7 @@ impl EventSource for CrashingEventSource {
 
 #[sinex_test]
 async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = crate::common::event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_millis(200));
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -627,7 +627,7 @@ async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = crate::common::event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(10)); // Won't crash on time
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -661,7 +661,7 @@ async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_source_restart_after_crash(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = crate::common::event_sources::test_context(json!({}));
     
     // First instance - will crash after 3 events
     let mut source1 = CrashingEventSource::new(Duration::from_secs(10))
@@ -723,7 +723,7 @@ async fn test_clipboard_monitor_initialization(_ctx: TestContext) -> TestResult 
         "max_content_size": 1024000
     });
 
-    let ctx = event_sources::test_context(config);
+    let ctx = crate::common::event_sources::test_context(config);
     let result = ClipboardMonitor::initialize(ctx).await;
     
     // Clipboard monitor may fail to initialize in headless environments
@@ -749,7 +749,7 @@ async fn test_clipboard_monitor_initialization(_ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = crate::common::event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(5));
     let (tx, mut rx) = mpsc::channel(1000);
 
@@ -785,7 +785,7 @@ async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_event_source_memory_usage(_ctx: TestContext) -> TestResult {
-    let ctx = event_sources::test_context(json!({}));
+    let _ctx = crate::common::event_sources::test_context(json!({}));
     let mut source = CrashingEventSource::new(Duration::from_secs(2));
     let (tx, mut rx) = mpsc::channel(10); // Small buffer to test backpressure
 
@@ -835,7 +835,7 @@ async fn test_event_source_error_conditions(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let result = AtuinDbReader::initialize(event_ctx).await;
     assert!(result.is_err(), "Should fail with non-existent database");
 
@@ -850,7 +850,7 @@ async fn test_event_source_error_conditions(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = event_sources::test_context(serde_json::to_value(&corrupted_config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&corrupted_config).unwrap());
     // Note: AtuinDbReader initialization only checks if file exists,
     // actual corruption would be detected during event streaming
     let reader = AtuinDbReader::initialize(event_ctx).await;
@@ -892,8 +892,8 @@ async fn test_multiple_event_sources_coordination(_ctx: TestContext) -> TestResu
         "debounce_ms": 50
     });
 
-    let atuin_ctx = event_sources::test_context(serde_json::to_value(&atuin_config).unwrap());
-    let fs_ctx = event_sources::test_context(fs_config);
+    let atuin_ctx = crate::common::event_sources::test_context(serde_json::to_value(&atuin_config).unwrap());
+    let fs_ctx = crate::common::event_sources::test_context(fs_config);
 
     let mut atuin_reader = AtuinDbReader::initialize(atuin_ctx).await?;
     let mut fs_watcher = FilesystemMonitor::initialize(fs_ctx).await?;
@@ -989,43 +989,3 @@ pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Create mock event source for testing
-pub struct MockEventSource {
-    pub name: String,
-    pub events_to_generate: Vec<RawEvent>,
-    pub events_sent: Arc<AtomicUsize>,
-}
-
-impl MockEventSource {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            events_to_generate: Vec::new(),
-            events_sent: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    pub fn with_events(mut self, events: Vec<RawEvent>) -> Self {
-        self.events_to_generate = events;
-        self
-    }
-
-    pub async fn simulate_events(&self, tx: tokio::sync::mpsc::Sender<RawEvent>) -> Result<()> {
-        for event in &self.events_to_generate {
-            tx.send(event.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to send event: {}", e))?;
-
-            self.events_sent
-                .fetch_add(1, Ordering::SeqCst);
-
-            // Small delay to simulate realistic timing
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        Ok(())
-    }
-
-    pub fn events_sent_count(&self) -> usize {
-        self.events_sent.load(AtomicUsize::Ordering::SeqCst)
-    }
-}

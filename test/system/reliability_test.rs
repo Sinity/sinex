@@ -23,7 +23,6 @@
 use crate::common::database_pool::acquire_test_database;
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-// use sinex_db::events::insert_event_with_validator as insert_event_with_validator; // Unused import removed
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
@@ -42,19 +41,21 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         Ulid::new().to_string().to_lowercase()
     );
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = acquire_test_database().await?;
+    let base_test_db = acquire_test_database().await?;
+    let base_pool = base_test_db.pool();
 
     // Create test database
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool)
         .await?;
 
     let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
 
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(Duration::from_secs(5), async {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
-        run_migrations(pool.pool()).await?;
+        let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
+        run_migrations(pool).await?;
 
         // Verify basic functionality after startup
         let schema_count: i64 = sqlx::query_scalar!(
@@ -100,7 +101,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
     println!("\nTesting startup with existing data...");
 
     let existing_data_startup = timeout(Duration::from_secs(3), async {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+        let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
 
         // Add some existing data
         sqlx::query!(
@@ -172,7 +174,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
     let error_recovery_test = timeout(
         Duration::from_secs(5),
         async {
-            let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+            let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
 
             // Simulate migration corruption by manually inserting invalid migration record
             sqlx::query!(
@@ -223,7 +226,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool)
         .await
         .ok();
 
@@ -792,10 +795,11 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         Ulid::new().to_string().to_lowercase()
     );
     let base_url = std::env::var("DATABASE_URL")?;
-    let base_pool = acquire_test_database().await?;
+    let base_test_db = acquire_test_database().await?;
+    let base_pool = base_test_db.pool();
 
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool)
         .await?;
 
     let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
@@ -804,7 +808,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
     let migration_start = Instant::now();
 
     let fresh_migration_test = timeout(Duration::from_secs(5), async {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+        let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
 
         // Run migrations on fresh database
         run_migrations(&pool).await?;
@@ -873,7 +878,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
     println!("\nTesting migration idempotency...");
 
     let idempotency_test = timeout(Duration::from_secs(4), async {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+        let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
 
         // Run migrations again (should be idempotent)
         run_migrations(&pool).await?;
@@ -920,7 +926,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
     println!("\nTesting data preservation during migrations...");
 
     let data_preservation_test = timeout(Duration::from_secs(5), async {
-        let pool = TestPool::with_strategy(CleanupStrategy::None).await?;
+        let test_db = acquire_test_database().await?;
+        let pool = test_db.pool();
 
         // Insert test data before migration
         sqlx::query!(
@@ -1067,10 +1074,11 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
     println!("\nTesting migration error handling...");
 
     let error_handling_test = timeout(Duration::from_secs(5), async {
-        let pool = match TestPool::with_strategy(CleanupStrategy::None).await {
-            Ok(pool) => pool,
+        let test_db = match acquire_test_database().await {
+            Ok(test_db) => test_db,
             Err(_) => return false,
         };
+        let pool = test_db.pool();
 
         // Simulate a migration error by attempting invalid operation
         let invalid_migration_result = sqlx::query!(
@@ -1114,7 +1122,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
     // Cleanup test database
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
-        .execute(&base_pool)
+        .execute(base_pool)
         .await
         .ok();
 

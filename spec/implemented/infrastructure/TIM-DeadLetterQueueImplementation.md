@@ -39,7 +39,7 @@ This TIM details the implementation of the central Dead Letter Queue (DLQ) in Po
 
 ## 1. Central PostgreSQL DLQ: `core.dead_letter_queue` [UG Sec 3.4.1]
 
-A single, rich central DLQ table stores messages that failed processing after exhausting retries in their primary queues (e.g., `sinex_schemas.promotion_queue`).
+A single, rich central DLQ table stores messages that failed processing after exhausting retries in their primary queues (e.g., `sinex_schemas.work_queue`).
 
 *   **Schema (from UG Sec 3.4.1, CR5, `openai_sinex_6.md` Sec 2):**
     ```sql
@@ -54,7 +54,7 @@ A single, rich central DLQ table stores messages that failed processing after ex
         error_message           TEXT,
         error_stack_trace       TEXT NULLABLE, -- If applicable and captured
         retry_count_before_dlq  INTEGER DEFAULT 0,
-        source_queue_name       VARCHAR(255) NOT NULL, -- e.g., "promotion_queue", "agent_X_internal_queue"
+        source_queue_name       VARCHAR(255) NOT NULL, -- e.g., "work_queue", "agent_X_internal_queue"
         processing_agent_name   TEXT NULLABLE REFERENCES sinex_schemas.agent_manifests(agent_name),
         additional_metadata     JSONB, -- e.g., agent version, host, relevant config, parameters
         ts_added_to_dlq         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -89,7 +89,7 @@ A single, rich central DLQ table stores messages that failed processing after ex
 
 ## 3. Retry Policies: Exponential Backoff with Jitter [UG Sec 3.4.3]
 
-This logic is applied by workers processing items from primary queues (like `sinex_schemas.promotion_queue`) or by DLQ replay workers.
+This logic is applied by workers processing items from primary queues (like `sinex_schemas.work_queue`) or by DLQ replay workers.
 
 *   **Implementation (Conceptual, based on UG Sec 3.2.2 Rust worker):**
     1.  On processing failure, increment `item.attempts`.

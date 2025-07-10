@@ -41,6 +41,12 @@ pub struct RetryBuilder {
     config: RetryConfig,
 }
 
+impl Default for RetryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RetryBuilder {
     pub fn new() -> Self {
         Self {

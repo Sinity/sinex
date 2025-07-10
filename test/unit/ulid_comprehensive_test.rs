@@ -409,7 +409,7 @@ mod correctness {
 /// Performance validation tests
 mod performance {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[sinex_test]
@@ -473,7 +473,7 @@ mod performance {
         let operations = counter.load(Ordering::Relaxed);
 
         pretty_assertions::assert_eq!(final_count, num_threads * ulids_per_thread);
-        pretty_assertions::assert_eq!(operations, num_threads * ulids_per_thread as u64);
+        pretty_assertions::assert_eq!(operations, (num_threads * ulids_per_thread) as u64);
         Ok(())
     }
 

@@ -22,6 +22,7 @@
 
 use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sqlx::Row;
 use std::time::{Duration, Instant};
 
 // ==================== DATABASE PERFORMANCE TESTS ====================
@@ -213,19 +214,17 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
             for j in 0..200 {
                 sinex_db::events::insert_event_with_validator(
                     &pool,
-                    &format!("perf_test_{}", i),
-                    &format!("test_event_{}", j),
-                    "test-host",
-                    serde_json::json!({
-                        "task": i,
-                        "event": j,
-                        "data": "performance test payload"
-                    }),
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
+                    &RawEventBuilder::new(
+                        format!("perf_test_{}", i),
+                        format!("test_event_{}", j),
+                        serde_json::json!({
+                            "task": i,
+                            "event": j,
+                            "data": "performance test payload"
+                        })
+                    ).build(),
+                    None
+                ).await?;
             }
             Ok::<_, anyhow::Error>(())
         });
@@ -262,15 +261,13 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
     for i in 0..100 {
         sinex_db::events::insert_event_with_validator(
             ctx.pool(),
-            "concurrent_test",
-            "process_me",
-            "test-host",
-            serde_json::json!({ "id": i }),
-            None,
-            None,
-            None,
-        )
-        .await?;
+            &RawEventBuilder::new(
+                "concurrent_test",
+                "process_me",
+                serde_json::json!({ "id": i })
+            ).build(),
+            None
+        ).await?;
     }
 
     let start = Instant::now();
@@ -311,18 +308,16 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                     // Mark as processed
                     sinex_db::events::insert_event_with_validator(
                         &pool,
-                        "concurrent_test",
-                        "processed",
-                        "test-host",
-                        serde_json::json!({
-                            "worker_id": worker_id,
-                            "original_id": event_id.to_string()
-                        }),
-                        None,
-                        None,
-                        None,
-                    )
-                    .await?;
+                        &RawEventBuilder::new(
+                            "concurrent_test",
+                            "processed",
+                            serde_json::json!({
+                                "worker_id": worker_id,
+                                "original_id": event_id.to_string()
+                            })
+                        ).build(),
+                        None
+                    ).await?;
 
                     processed += 1;
                 } else {
@@ -364,18 +359,16 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
     for i in 0..1000 {
         sinex_db::events::insert_event_with_validator(
             ctx.pool(),
-            "latency_test",
-            if i % 2 == 0 { "type_a" } else { "type_b" },
-            "test-host",
-            serde_json::json!({
-                "value": i,
-                "category": if i % 10 == 0 { "special" } else { "normal" }
-            }),
-            None,
-            None,
-            None,
-        )
-        .await?;
+            &RawEventBuilder::new(
+                "latency_test",
+                if i % 2 == 0 { "type_a" } else { "type_b" },
+                serde_json::json!({
+                    "value": i,
+                    "category": if i % 10 == 0 { "special" } else { "normal" }
+                })
+            ).build(),
+            None
+        ).await?;
     }
 
     // Test various query patterns
@@ -546,18 +539,16 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                         // Mark as processed
                         sinex_db::events::insert_event_with_validator(
                             &pool_clone,
-                            "scaling_test",
-                            "processed",
-                            "test-host",
-                            serde_json::json!({
-                                "worker_id": worker_id,
-                                "original_id": event_id.to_string()
-                            }),
-                            None,
-                            None,
-                            None,
-                        )
-                        .await?;
+                            &RawEventBuilder::new(
+                                "scaling_test",
+                                "processed",
+                                serde_json::json!({
+                                    "worker_id": worker_id,
+                                    "original_id": event_id.to_string()
+                                })
+                            ).build(),
+                            None
+                        ).await?;
 
                         processed += 1;
                     } else {

@@ -338,7 +338,7 @@ impl BlobManager {
     }
 
     /// Get blob metadata by ID
-    async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
+    pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
         let row = sqlx::query(
             "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
                     checksum_sha256, checksum_blake3, storage_backend, verification_status

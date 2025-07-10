@@ -10,12 +10,12 @@ use tracing::{debug, error, info};
 use std::os::unix::fs::PermissionsExt;
 
 use sinex_core::{
-    sources, EventSourceContext, Result,
-    strongly_typed_events::{
-        TypedEventSender, EventEnvelope, TypedFilesystemEventBuilder,
-    },
+    sources,
     filesystem, timeouts,
-    unified_collector::TypedEventSource,
+};
+use sinex_events::{
+    TypedEventSender, EventEnvelope, TypedFilesystemEventBuilder,
+    EnforcedTypedEventSource, TypedEventResult, TypedEventError,
 };
 
 use crate::filesystem::{FilesystemConfig, RenameOperation};
@@ -27,14 +27,17 @@ pub struct TypedFilesystemMonitor {
     rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
 }
 
+// Note: Direct conversion implementations removed due to orphan rule.
+// Manual conversion should be used when needed.
+
 #[async_trait]
-impl TypedEventSource for TypedFilesystemMonitor {
+impl EnforcedTypedEventSource for TypedFilesystemMonitor {
     type Config = FilesystemConfig;
     const SOURCE_NAME: &'static str = sources::FS;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let config: FilesystemConfig = serde_json::from_value(ctx.config.clone())
-            .map_err(|e| sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e)))?;
+    async fn initialize(config_value: serde_json::Value) -> TypedEventResult<Self> {
+        let config: FilesystemConfig = serde_json::from_value(config_value)
+            .map_err(|e| TypedEventError::Serialization(format!("Failed to parse config: {}", e)))?;
         
         info!(
             patterns = ?config.watch_patterns,
@@ -48,7 +51,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
         })
     }
 
-    async fn stream_events(&mut self, tx: TypedEventSender) -> Result<()> {
+    async fn stream_typed_events(&mut self, tx: TypedEventSender) -> TypedEventResult<()> {
         info!(
             patterns = ?self.config.watch_patterns,
             ignore = ?self.config.ignore_patterns,
@@ -64,10 +67,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
             notify_tx,
         )
         .map_err(|e| {
-            sinex_core::CoreError::processing_failed()
-                .with_operation("create_debouncer")
-                .with_source(e)
-                .build()
+            TypedEventError::Other(format!("Failed to create debouncer: {}", e))
         })?;
 
         // Watch all matching paths
@@ -97,10 +97,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
                 std::fs::create_dir_all(base_path).map_err(|e| {
-                    sinex_core::CoreError::io_error(base_path)
-                        .with_operation("create_directory")
-                        .with_source(e)
-                        .build()
+                    TypedEventError::Other(format!("Failed to create directory {}: {}", base_path.display(), e))
                 })?;
             }
 
@@ -110,10 +107,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
                     .watcher()
                     .watch(base_path, notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        sinex_core::CoreError::io_error(base_path)
-                            .with_operation("watch_path")
-                            .with_source(e)
-                            .build()
+                        TypedEventError::Other(format!("Failed to watch path {}: {}", base_path.display(), e))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
                 
@@ -224,12 +218,10 @@ impl TypedFilesystemMonitor {
                 } else {
                     glob_pattern.matches(&path_str)
                 }
+            } else if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                glob_pattern.matches(filename)
             } else {
-                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                    glob_pattern.matches(filename)
-                } else {
-                    false
-                }
+                false
             };
 
             if matches {

@@ -3,8 +3,8 @@
 //! This module re-exports the event builders from sinex-core for test compatibility
 //! and provides additional test-specific builders not suitable for production code.
 
-// Re-export everything from sinex-core event builders
-pub use sinex_core::event_builders::*;
+// Re-export everything from sinex-events event builders
+pub use sinex_events::event_builders::*;
 
 // Additional type aliases for test compatibility  
 pub type HyprlandEventType = WindowManagerEventType;

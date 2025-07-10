@@ -12,11 +12,10 @@ use crate::common::prelude::*;
 use sinex_db::work_queue::claim_work_queue_items;
 use sinex_core::{sources, event_type_constants}; 
 use sinex_db::validation::EventValidator;
-use sinex_db::models::*;
-use sinex_db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_db::AgentManifestParams;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool}};
 use serde_json::json;
-use sqlx::types::Uuid;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -537,15 +536,18 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::upsert_agent_manifest(
+    let _agent = sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
-        "test_agent",
-        "1.0.0",
-        "running",
-        "test",
-        Some("Test agent for work queue"),
-        None,
-        None,
+        AgentManifestParams {
+            agent_name: "test_agent".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("Test agent for work queue".to_string()),
+            agent_type: "test".to_string(),
+            config_template_json: serde_json::json!({}),
+            produces_event_types: serde_json::json!([]),
+            subscribes_to_event_types: serde_json::json!([]),
+            required_capabilities: serde_json::json!({}),
+        },
     )
     .await?;
 
@@ -560,7 +562,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Add to work queue
-    let queue_item = sinex_db::add_to_work_queue(
+    let queue_item = sinex_db::work_queue::add_to_work_queue_detailed(
         ctx.pool(),
         inserted_event.id,
         "test_agent",
@@ -598,15 +600,18 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::upsert_agent_manifest(
+    let _agent = sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
-        "test_agent",
-        "1.0.0",
-        "running",
-        "test",
-        Some("Test agent for retry logic"),
-        None,
-        None,
+        AgentManifestParams {
+            agent_name: "test_agent".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("Test agent for retry logic".to_string()),
+            agent_type: "test".to_string(),
+            config_template_json: serde_json::json!({}),
+            produces_event_types: serde_json::json!([]),
+            subscribes_to_event_types: serde_json::json!([]),
+            required_capabilities: serde_json::json!({}),
+        },
     )
     .await?;
 
@@ -643,7 +648,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     assert!(second_item.is_some(), "Should get item on second attempt (retry)");
     let item = second_item.unwrap();
     assert_eq!(item.attempts, 1, "Second attempt should have 1 prior attempt");
-    assert_eq!(item.queue_id, queue_item.queue_id, "Should be the same work item");
+    assert_eq!(item.queue_id, queue_item, "Should be the same work item");
     
     // Fail the second attempt (this will exhaust max_attempts=2)
     sinex_db::fail_work_item(ctx.pool(), item.queue_id, "Test failure 2").await?;
@@ -806,7 +811,7 @@ async fn test_database_connectivity_verification(ctx: TestContext) -> TestResult
 /// Test PostgreSQL extensions verification
 #[sinex_test]
 async fn test_postgresql_extensions_verification(ctx: TestContext) -> TestResult {
-    let (status, details, messages) = sinex_preflight::database::verify_postgresql_extensions().await?;
+    let (status, details, _messages) = sinex_preflight::database::verify_postgresql_extensions().await?;
 
     // Should pass or warn, depending on which extensions are available
     assert!(matches!(status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));
@@ -823,7 +828,7 @@ async fn test_postgresql_extensions_verification(ctx: TestContext) -> TestResult
 /// Test migration readiness verification
 #[sinex_test]
 async fn test_migration_readiness_verification(ctx: TestContext) -> TestResult {
-    let (status, details, messages) = sinex_preflight::database::verify_migration_readiness().await?;
+    let (status, details, _messages) = sinex_preflight::database::verify_migration_readiness().await?;
 
     assert_eq!(status, sinex_preflight::VerificationStatus::Pass);
     assert!(details.get("current_migrations").is_some());
@@ -896,11 +901,11 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
 
     // Test that we can execute queries on all connections
     for (i, conn) in connections.iter_mut().enumerate() {
-        let result = sqlx::query!("SELECT $1 as test_value", i as i32)
+        let result = sqlx::query!("SELECT $1::text as test_value", i as i32)
             .fetch_one(&mut **conn)
             .await?;
 
-        assert_eq!(result.test_value, Some(i as i32));
+        assert_eq!(result.test_value, Some((i as i32).to_string()));
     }
 
     // Connections are automatically returned to pool when dropped
@@ -1231,7 +1236,7 @@ async fn test_system_resources_verification(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_memory_availability_check(_ctx: TestContext) -> TestResult {
     // We can't directly test the internal function, but we can test the overall verification
-    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+    let (_status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
 
     let memory_info = details.get("memory").unwrap();
 
@@ -1251,7 +1256,7 @@ async fn test_memory_availability_check(_ctx: TestContext) -> TestResult {
 /// Test disk space check
 #[sinex_test]
 async fn test_disk_space_check(_ctx: TestContext) -> TestResult {
-    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+    let (_status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
 
     let disk_info = details.get("disk").unwrap();
     let paths = disk_info.get("paths").unwrap().as_object().unwrap();
@@ -1273,7 +1278,7 @@ async fn test_disk_space_check(_ctx: TestContext) -> TestResult {
 /// Test CPU capacity check
 #[sinex_test]
 async fn test_cpu_capacity_check(_ctx: TestContext) -> TestResult {
-    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+    let (_status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
 
     let cpu_info = details.get("cpu").unwrap();
 
@@ -1296,7 +1301,7 @@ async fn test_cpu_capacity_check(_ctx: TestContext) -> TestResult {
 /// Test filesystem permissions check
 #[sinex_test]
 async fn test_filesystem_permissions_check(_ctx: TestContext) -> TestResult {
-    let (status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
+    let (_status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
 
     let filesystem_info = details.get("fs").unwrap();
     let directories = filesystem_info.get("directories").unwrap().as_object().unwrap();
@@ -1395,27 +1400,7 @@ async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test ULID ordering property
-#[sinex_test]
-async fn test_ulid_ordering_property(_ctx: TestContext) -> TestResult {
-    // Test that ULID generation produces ordered values
-    let ulid1 = Ulid::new();
-    std::thread::sleep(std::time::Duration::from_millis(1)); // Ensure time progression
-    let ulid2 = Ulid::new();
-
-    assert!(ulid1 < ulid2, "ULIDs should be ordered by generation time");
-    assert!(
-        ulid1.to_string() < ulid2.to_string(),
-        "ULID string representations should be ordered"
-    );
-
-    // Verify ULID bytes are also ordered
-    assert!(
-        ulid1.to_bytes() < ulid2.to_bytes(),
-        "ULID byte representations should be ordered"
-    );
-    Ok(())
-}
+// ULID ordering property test moved to test/property/ulid_property_test.rs
 
 /// Test JSON payload constraints
 #[sinex_test]
@@ -1476,7 +1461,7 @@ async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
         .payload_is_object()
         .into_result();
 
-    assert_validation_passes(validation_result)?;
+    validation_result?;
 
     // Also test with EventValidator
     let validator_result = validator.validate(&event);

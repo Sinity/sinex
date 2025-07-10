@@ -1,0 +1,44 @@
+[package]
+name = "sinex-automaton"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Event automation worker for Sinex - routes events to service layer"
+
+[lib]
+name = "sinex_automaton"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sinex-automaton"
+path = "src/main.rs"
+
+[dependencies]
+sinex-core = { path = "../sinex-core" }
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-db = { path = "../sinex-db" }
+sinex-worker = { path = "../sinex-worker" }
+sinex-services = { path = "../sinex-services" }
+sinex-annex = { path = "../sinex-annex" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+clap = { workspace = true }
+gethostname = { workspace = true }
+rand = { workspace = true }
+sd-notify = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+sinex-test-macros = { path = "../sinex-test-macros" }
+futures = "0.3"

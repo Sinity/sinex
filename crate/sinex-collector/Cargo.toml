@@ -7,6 +7,7 @@ authors.workspace = true
 [dependencies]
 # Core sinex dependencies
 sinex-core = { path = "../sinex-core" }
+sinex-events = { path = "../sinex-events" }
 sinex-db = { path = "../sinex-db" }
 sinex-events-terminal = { path = "../sinex-events-terminal" }
 sinex-events-desktop = { path = "../sinex-events-desktop" }

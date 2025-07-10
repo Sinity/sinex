@@ -6,7 +6,7 @@ use sinex_db::work_queue::{claim_work_queue_items, complete_work_queue_item};
 use sinex_db::models::WorkQueueItem;
 use sinex_worker::{calculate_backoff_secs, EventProcessor, WorkerMetrics};
 use std::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use std::collections::HashSet;

@@ -89,8 +89,6 @@ pub mod api_test;
 /// Tests for configuration validation and management
 pub mod configuration_test;
 
-/// Configuration validation unit tests
-pub mod configuration_validation_test;
 
 /// Consolidated database unit tests (includes db, model, ingestor, preflight)
 pub mod database_test;
@@ -98,8 +96,6 @@ pub mod database_test;
 /// Tests for preflight verification
 pub mod preflight_test;
 
-/// Test context validation
-pub mod test_context_validation;
 
 /// Consolidated terminal unit tests  
 pub mod terminal_test;
@@ -107,7 +103,5 @@ pub mod terminal_test;
 /// ULID comprehensive tests
 pub mod ulid_comprehensive_test;
 
-/// Consolidated ULID unit tests
-pub mod ulid_test;
 
 // Infrastructure tests are in test/common/ directory

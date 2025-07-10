@@ -135,6 +135,12 @@ pub struct FileWatcherBuilder {
     config: FileWatcherConfig,
 }
 
+impl Default for FileWatcherBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileWatcherBuilder {
     pub fn new() -> Self {
         Self {
