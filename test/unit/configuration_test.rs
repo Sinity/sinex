@@ -14,11 +14,13 @@ async fn test_configuration_defaults(_ctx: TestContext) -> TestResult {
     // Test that default configurations are valid and complete
     use sinex_collector::config::CollectorConfig;
     
-    let _config = CollectorConfig::default();
-    // TODO: Update field names to match actual CollectorConfig
-    // assert!(config.unified_collector.is_some());
-    // assert!(config.database.is_some());
-    // assert!(config.event_sources.is_some());
+    let config = CollectorConfig::default();
+    
+    // Test actual CollectorConfig fields
+    assert!(!config.enabled_events.is_empty());
+    assert!(config.event.is_empty());
+    assert!(!config.flat_config.is_empty());
+    assert!(config.annex_repo_path.is_none());
     
     Ok(())
 }
