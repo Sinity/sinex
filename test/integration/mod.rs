@@ -57,7 +57,19 @@ pub mod database_test;
 /// Consolidated event source integration tests  
 pub mod event_sources_test;
 
-// === Specific Integration Tests ===
-// These tests have been consolidated into their respective test files
+/// Worker processing and distribution tests
+pub mod worker_test;
+
+/// Event collector coordination tests
+pub mod collector_test;
+
+/// Failure mode handling tests
+pub mod failure_modes_test;
+
+/// System-wide integration tests
+pub mod system_integration_test;
+
+/// Search service integration tests
+pub mod search_service_test;
 
 

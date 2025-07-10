@@ -77,6 +77,7 @@ sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
 sinex-preflight = { path = "crate/sinex-preflight" }
+sinex-services = { path = "crate/sinex-services" }
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
