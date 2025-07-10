@@ -1,18 +1,18 @@
-# sinex-promo-worker
+# Sinex Automaton
 
-This crate provides both a library and binary for managing event promotion in Sinex.
+This crate provides both a library and binary for event automation in Sinex. It routes events to the service layer for processing.
 
 ## Library Components
 
-### PromotionRouter
+### WorkRouter
 
 Routes events to agents based on their subscription manifests:
 
 ```rust
-use sinex_promo_worker::{PromotionRouter, get_active_manifests};
+use sinex_automaton::{WorkRouter, get_active_manifests};
 
 let manifests = get_active_manifests(&pool).await?;
-let router = PromotionRouter::from_manifests(manifests);
+let router = WorkRouter::from_manifests(manifests);
 
 // Determine which agents should process an event
 let target_agents = router.route_event(&event);

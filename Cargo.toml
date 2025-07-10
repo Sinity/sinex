@@ -4,7 +4,7 @@ members = [
     "crate/sinex-ulid",
     "crate/sinex-db", 
     "crate/sinex-worker",
-    "crate/sinex-promo-worker",
+    "crate/sinex-automaton",
     "crate/sinex-events-terminal",
     "crate/sinex-events-desktop",
     "crate/sinex-events-system", 

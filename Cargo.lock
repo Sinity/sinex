@@ -3008,6 +3008,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-automaton"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "gethostname 0.4.3",
+ "rand 0.8.5",
+ "sd-notify",
+ "serde",
+ "serde_json",
+ "sinex-annex",
+ "sinex-core",
+ "sinex-db",
+ "sinex-services",
+ "sinex-ulid",
+ "sinex-worker",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-collector"
 version = "0.4.2"
 dependencies = [
@@ -3281,32 +3309,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
-]
-
-[[package]]
-name = "sinex-promo-worker"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "gethostname 0.4.3",
- "rand 0.8.5",
- "sd-notify",
- "serde",
- "serde_json",
- "sinex-core",
- "sinex-db",
- "sinex-ulid",
- "sinex-worker",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

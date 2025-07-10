@@ -4,12 +4,17 @@ use clap::Parser;
 use sinex_db::{
     models::WorkQueueItem, agent::upsert_agent_manifest, DbPool, DbPoolRef, JsonValue,
 };
-use sinex_promo_worker::{
+use sinex_automaton::{
     create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter,
 };
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
+use sinex_services::{
+    AnalyticsService, ContentService, PkmService, SearchService,
+};
+use sinex_annex::BlobManager;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::{signal, task, time::sleep};
 use tracing::{error, info, warn};
@@ -53,27 +58,55 @@ struct Args {
     /// Scanner batch size
     #[arg(long, env = "SCANNER_BATCH_SIZE", default_value = "1000")]
     scanner_batch_size: usize,
+
+    /// Annex repository path for blob storage
+    #[arg(long, env = "SINEX_ANNEX_PATH", default_value = "/tmp/sinex-annex")]
+    annex_path: PathBuf,
 }
 
-/// Example processor that logs events
-///
-/// This is a reference implementation showing how to build a processor.
-/// In production, you would:
-/// 1. Parse the event payload according to its schema
-/// 2. Transform/enrich the data as needed  
-/// 3. Insert into domain-specific tables
-/// 4. Generate derived events if needed
-struct ExampleProcessor {
+/// Service container holding all service instances
+struct ServiceContainer {
+    analytics: Arc<AnalyticsService>,
+    content: Arc<ContentService>,
+    pkm: Arc<PkmService>,
+    search: Arc<SearchService>,
+}
+
+impl ServiceContainer {
+    async fn new(pool: DbPool, annex_path: PathBuf) -> Result<Self> {
+        // Create blob manager for content service
+        let annex_config = sinex_annex::AnnexConfig {
+            repo_path: annex_path,
+            num_copies: None,
+            large_files: None,
+        };
+        let blob_manager = Arc::new(
+            BlobManager::new(annex_config, pool.clone())?
+        );
+        
+        // Initialize all services
+        Ok(Self {
+            analytics: Arc::new(AnalyticsService::new(pool.clone())),
+            content: Arc::new(ContentService::new(pool.clone(), blob_manager)),
+            pkm: Arc::new(PkmService::new(pool.clone())),
+            search: Arc::new(SearchService::new(pool)),
+        })
+    }
+}
+
+/// Event processor that routes events to the appropriate service methods
+struct ServiceBasedProcessor {
     agent_name: String,
     batch_size: i32,
     poll_interval: u64,
     events_processed: Arc<AtomicU64>,
+    services: Arc<ServiceContainer>,
 }
 
 #[async_trait]
-impl EventProcessor for ExampleProcessor {
+impl EventProcessor for ServiceBasedProcessor {
     async fn process_event(&self, pool: DbPoolRef<'_>, item: &WorkQueueItem) -> Result<()> {
-        // Use consolidated query function
+        // Get the event
         let event = sinex_db::events::get_event_by_id(pool, item.raw_event_id).await?;
 
         info!(
@@ -81,21 +114,47 @@ impl EventProcessor for ExampleProcessor {
             event_id = %event.id,
             source = %event.source,
             event_type = %event.event_type,
-            "Processing event"
+            "Processing event via service layer"
         );
 
-        // Example: Just log the event payload
-        info!(
-            agent = %self.agent_name,
-            payload = %event.payload,
-            "Event payload"
-        );
-
-        // In a real implementation, you would:
-        // 1. Parse the payload according to its schema
-        // 2. Transform/enrich the data
-        // 3. Insert into domain-specific tables
-        // 4. Generate derived events if needed
+        // Route events based on source and type to appropriate service methods
+        match (event.source.as_str(), event.event_type.as_str()) {
+            // Filesystem events might trigger content analysis
+            ("fs", "file.created") | ("fs", "file.modified") => {
+                info!("Filesystem event detected - would trigger content analysis");
+                // In the future, this might:
+                // - Extract text from documents
+                // - Generate thumbnails for images
+                // - Index content for search
+            }
+            
+            // Shell events might trigger command analysis
+            ("shell.kitty", "command.executed") => {
+                info!("Command execution detected - would analyze command patterns");
+                // In the future, this might:
+                // - Extract command patterns
+                // - Build command frequency statistics
+                // - Detect workflow patterns
+            }
+            
+            // Clipboard events might trigger entity extraction
+            ("clipboard", "copied") => {
+                info!("Clipboard event detected - would extract entities");
+                // In the future, this might:
+                // - Extract URLs, emails, code snippets
+                // - Create knowledge graph entities
+                // - Link to related events
+            }
+            
+            // Default: just log that we processed it
+            _ => {
+                info!(
+                    "Event processed: {} :: {}",
+                    event.source,
+                    event.event_type
+                );
+            }
+        }
 
         // Track processed events
         self.events_processed.fetch_add(1, Ordering::Relaxed);
@@ -124,14 +183,17 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
         pool,
         agent_name,
         version,
-        Some("Example promotion worker that logs events"),
-        "promoter",
-        serde_json::json!({}),
+        Some("Event automation worker that routes events to service layer"),
+        "automation",
+        serde_json::json!({
+            "uses_services": true,
+            "service_routing": true
+        }),
         serde_json::json!({
             "sinex.agent.heartbeat": [{"type": "heartbeat"}]
         }),
         serde_json::json!({
-            "raw.events_feed_all": [{"note": "Subscribes to all events for demo purposes"}]
+            "raw.events_feed_all": [{"note": "Subscribes to all events for routing to services"}]
         }),
         serde_json::json!({})
     )
@@ -157,11 +219,14 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("Starting sinex-promo-worker");
+    info!("Starting sinex-automaton");
 
     // Create database pool
     let database_url = args.database_url.clone();
     let pool = sinex_db::create_pool(&database_url).await?;
+
+    // Create service container
+    let services = Arc::new(ServiceContainer::new(pool.clone(), args.annex_path.clone()).await?);
 
     // Run in scanner mode or worker mode
     if args.scanner_mode || args.agent_name.is_none() {
@@ -170,7 +235,7 @@ async fn main() -> Result<()> {
         let agent_name = args.agent_name.clone().unwrap();
         // Register the agent
         register_agent(&pool, &agent_name).await?;
-        run_worker_mode(pool, agent_name, args).await
+        run_worker_mode(pool, agent_name, args, services).await
     }
 }
 
@@ -195,7 +260,7 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
     let heartbeat_shutdown = shutdown.clone();
     let heartbeat_handle = task::spawn(async move {
         use sinex_core::HeartbeatEmitter;
-        let emitter = HeartbeatEmitter::new(heartbeat_pool, "promo-worker-scanner".to_string(), 45);
+        let emitter = HeartbeatEmitter::new(heartbeat_pool, "automaton-scanner".to_string(), 45);
 
         // Run heartbeat until shutdown
         tokio::select! {
@@ -211,7 +276,7 @@ async fn run_scanner_mode(pool: DbPool, args: Args) -> Result<()> {
             }
         }
     });
-    info!("Started heartbeat emission for promo-worker-scanner");
+    info!("Started heartbeat emission for automaton-scanner");
 
     // Start metrics server
     let metrics_handle = task::spawn(async move {
@@ -358,8 +423,13 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
 }
 
 /// Run as a worker processing work queue entries
-async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result<()> {
-    info!(agent = %agent_name, "Running in worker mode");
+async fn run_worker_mode(
+    pool: DbPool, 
+    agent_name: String, 
+    args: Args,
+    services: Arc<ServiceContainer>
+) -> Result<()> {
+    info!(agent = %agent_name, "Running in worker mode with service layer");
 
     // Set up graceful shutdown
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -411,12 +481,13 @@ async fn run_worker_mode(pool: DbPool, agent_name: String, args: Args) -> Result
         }
     });
 
-    // Create processor
-    let processor = Arc::new(ExampleProcessor {
+    // Create processor with service layer
+    let processor = Arc::new(ServiceBasedProcessor {
         agent_name: agent_name.clone(),
         batch_size: args.batch_size,
         poll_interval: args.poll_interval,
         events_processed: events_processed.clone(),
+        services,
     });
 
     // Create worker

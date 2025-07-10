@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
-use sinex_promo_worker::{EventScanner, ScannerConfig, WorkRouter};
+use sinex_automaton::{EventScanner, ScannerConfig, WorkRouter};
 use sinex_ulid::Ulid;
 
 /// Helper to create a test event
@@ -111,7 +111,7 @@ fn test_scanner_state_management() {
     assert!(scanner.state().last_scan_ts.is_none());
 
     // Test state restoration instead of direct mutation
-    let mut test_state = sinex_promo_worker::scanner::ScannerState::default();
+    let mut test_state = sinex_automaton::scanner::ScannerState::default();
     let event_id1 = Ulid::new();
     let event_id2 = Ulid::new();
     test_state
