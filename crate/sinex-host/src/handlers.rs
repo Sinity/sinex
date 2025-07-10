@@ -22,7 +22,7 @@ pub async fn handle_event_count_by_source(
     let end_time = Utc::now();
     let start_time = end_time - Duration::days(days_back);
     
-    let counts = service.event_count_by_source(start_time, end_time).await?;
+    let counts = service.get_event_count_by_source(Some(start_time), Some(end_time)).await?;
     Ok(json!(counts))
 }
 
