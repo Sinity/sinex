@@ -3099,6 +3099,7 @@ dependencies = [
  "sinex-collector",
  "sinex-core",
  "sinex-db",
+ "sinex-events",
  "sinex-events-desktop",
  "sinex-events-fs",
  "sinex-events-system",

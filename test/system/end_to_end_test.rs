@@ -24,7 +24,7 @@ use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
 use sinex_core::RawEvent;
-use sinex_db::{models::*, run_migrations};
+use sinex_db::{models::*, run_migrations, AgentManifestParams};
 use sinex_worker::{worker::Worker, EventProcessor};
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
@@ -689,14 +689,16 @@ async fn test_complete_event_pipeline(ctx: TestContext) -> TestResult {
     let agent_name = "test-collector";
     sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
-        agent_name,
-        "0.1.0",
-        Some("Test collector for integration testing"),
-        "collector",
-        serde_json::json!({}),
-        serde_json::json!(["file.created", "file.modified"]),
-        serde_json::json!([]),
-        serde_json::json!([]),
+        AgentManifestParams {
+            agent_name: agent_name.to_string(),
+            version: "0.1.0".to_string(),
+            description: Some("Test collector for integration testing".to_string()),
+            agent_type: "collector".to_string(),
+            config_template_json: serde_json::json!({}),
+            produces_event_types: serde_json::json!(["file.created", "file.modified"]),
+            subscribes_to_event_types: serde_json::json!([]),
+            required_capabilities: serde_json::json!({}),
+        },
     )
     .await?;
 

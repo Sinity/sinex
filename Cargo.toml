@@ -1,19 +1,4 @@
 [workspace]
-# Clippy configuration for zero warnings enforcement
-[workspace.lints.clippy]
-# Treat all clippy warnings as errors for production code
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
-# Allow some pedantic lints that are too noisy
-module_name_repetitions = "allow"
-similar_names = "allow"
-too_many_lines = "allow"
-# Specific lints we want to enforce strictly
-too_many_arguments = "deny"
-type_complexity = "deny"
-cognitive_complexity = "warn"
-
 members = [
     "crate/sinex-core",
     "crate/sinex-ulid",
@@ -36,9 +21,25 @@ members = [
     "crate/sinex-preflight",
     "crate/sinex-test-macros",
     "crate/sinex-services",
-    "crate/sinex-config", "crate/sinex-host",
+    "crate/sinex-config",
+    "crate/sinex-host",
 ]
 resolver = "2"
+
+# Clippy configuration for zero warnings enforcement
+[workspace.lints.clippy]
+# Treat all clippy warnings as errors for production code
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+# Allow some pedantic lints that are too noisy
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+# Specific lints we want to enforce strictly
+too_many_arguments = "deny"
+type_complexity = "deny"
+cognitive_complexity = "warn"
 
 [package]
 name = "sinex"
@@ -67,6 +68,7 @@ gethostname.workspace = true
 sinex-core = { path = "crate/sinex-core" }
 sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
+sinex-events = { path = "crate/sinex-events" }
 sinex-events-terminal = { path = "crate/sinex-events-terminal" }
 sinex-events-desktop = { path = "crate/sinex-events-desktop" }
 sinex-events-system = { path = "crate/sinex-events-system" }

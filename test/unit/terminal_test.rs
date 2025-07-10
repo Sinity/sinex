@@ -23,7 +23,7 @@ use sinex_events_terminal::{
     asciinema::{AsciinemaConfig, AsciinemaRecorder},
 };
 use sinex_core::{
-    EventSource, EventSourceContext, EventType, chunking::ChunkingService
+    EventSource, EventSourceContext, EventType
 };
 use std::path::PathBuf;
 use chrono::Utc;
@@ -84,44 +84,52 @@ async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult
     // Test KittyCommandCompletedPayload
     let cmd_payload = KittyCommandCompletedPayload {
         command: "ls -la".to_string(),
-        cwd: "/home/user".to_string(),
-        pid: 1234,
-        session_id: "test_session".to_string(),
-        timestamp: Utc::now(),
+        command_output: "total 8\n-rw-r--r-- 1 user user 1234 Jan 1 12:00 file.txt".to_string(),
+        working_directory: Some("/home/user".to_string()),
+        kitty_window_id: "1".to_string(),
+        kitty_tab_id: "1".to_string(),
+        exit_status: Some(0),
+        execution_time_ms: Some(150),
+        output_size_bytes: 1024,
+        output_line_count: 2,
+        shell_integration_used: true,
+        completion_timestamp: Utc::now().to_rfc3339(),
     };
     
     let serialized = serde_json::to_string(&cmd_payload)?;
     let deserialized: KittyCommandCompletedPayload = serde_json::from_str(&serialized)?;
     
     assert_eq!(cmd_payload.command, deserialized.command);
-    assert_eq!(cmd_payload.cwd, deserialized.cwd);
-    assert_eq!(cmd_payload.pid, deserialized.pid);
-    assert_eq!(cmd_payload.session_id, deserialized.session_id);
+    assert_eq!(cmd_payload.working_directory, deserialized.working_directory);
+    assert_eq!(cmd_payload.kitty_window_id, deserialized.kitty_window_id);
+    assert_eq!(cmd_payload.exit_status, deserialized.exit_status);
     
     // Test KittyProcessChangedPayload
     let process_payload = KittyProcessChangedPayload {
-        old_process: KittyProcessInfo {
+        kitty_window_id: "1".to_string(),
+        kitty_tab_id: "1".to_string(),
+        previous_process: Some(KittyProcessInfo {
             pid: 1234,
             name: "bash".to_string(),
             cmdline: Some("bash".to_string()),
             parent_pid: Some(999),
-        },
-        new_process: KittyProcessInfo {
+        }),
+        current_process: KittyProcessInfo {
             pid: 5678,
             name: "vim".to_string(),
             cmdline: Some("vim file.txt".to_string()),
             parent_pid: Some(1234),
         },
-        session_id: "test_session".to_string(),
-        timestamp: Utc::now(),
+        change_timestamp: Utc::now().to_rfc3339(),
+        working_directory: Some("/home/user".to_string()),
     };
     
     let serialized = serde_json::to_string(&process_payload)?;
     let deserialized: KittyProcessChangedPayload = serde_json::from_str(&serialized)?;
     
-    assert_eq!(process_payload.old_process.pid, deserialized.old_process.pid);
-    assert_eq!(process_payload.new_process.name, deserialized.new_process.name);
-    assert_eq!(process_payload.session_id, deserialized.session_id);
+    assert_eq!(process_payload.previous_process.as_ref().unwrap().pid, deserialized.previous_process.as_ref().unwrap().pid);
+    assert_eq!(process_payload.current_process.name, deserialized.current_process.name);
+    assert_eq!(process_payload.kitty_window_id, deserialized.kitty_window_id);
     
     Ok(())
 }
@@ -163,20 +171,21 @@ async fn test_kitty_config_socket_paths(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_kitty_tab_event_payloads(_ctx: TestContext) -> TestResult {
     let tab_payload = KittyTabCreatedPayload {
-        tab_id: 42,
-        window_id: 1,
-        title: "New Tab".to_string(),
-        cwd: "/home/user/project".to_string(),
-        timestamp: Utc::now(),
+        kitty_tab_id: "42".to_string(),
+        kitty_window_id: "1".to_string(),
+        tab_title: "New Tab".to_string(),
+        tab_index: 0,
+        is_active: true,
+        creation_timestamp: Utc::now().to_rfc3339(),
     };
     
     let serialized = serde_json::to_string(&tab_payload)?;
     let deserialized: KittyTabCreatedPayload = serde_json::from_str(&serialized)?;
     
-    assert_eq!(tab_payload.tab_id, deserialized.tab_id);
-    assert_eq!(tab_payload.window_id, deserialized.window_id);
-    assert_eq!(tab_payload.title, deserialized.title);
-    assert_eq!(tab_payload.cwd, deserialized.cwd);
+    assert_eq!(tab_payload.kitty_tab_id, deserialized.kitty_tab_id);
+    assert_eq!(tab_payload.kitty_window_id, deserialized.kitty_window_id);
+    assert_eq!(tab_payload.tab_title, deserialized.tab_title);
+    assert_eq!(tab_payload.tab_index, deserialized.tab_index);
     
     Ok(())
 }
@@ -250,27 +259,33 @@ async fn test_scrollback_event_types(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_scrollback_payload_serialization(_ctx: TestContext) -> TestResult {
     let scrollback_payload = TerminalScrollbackCapturedPayload {
-        session_id: "test_session_123".to_string(),
-        content: "This is terminal output\nWith multiple lines\n".to_string(),
-        line_count: 2,
-        byte_size: 42,
-        timestamp: Utc::now(),
-        contains_ansi: false,
-        chunked: false,
-        chunk_id: None,
+        window_id: 1,
+        terminal_type: "kitty".to_string(),
+        cwd: "/home/user".to_string(),
+        window_title: "Test Window".to_string(),
+        scrollback_text: Some("This is terminal output\nWith multiple lines\n".to_string()),
+        scrollback_chunks: None,
+        git_annex_path: None,
         git_annex_key: None,
+        scrollback_lines: 2,
+        scrollback_size_bytes: 42,
+        is_chunked: false,
+        chunk_count: None,
+        includes_screen: true,
+        has_ansi_codes: false,
+        timestamp: Utc::now(),
     };
     
     let serialized = serde_json::to_string(&scrollback_payload)?;
     let deserialized: TerminalScrollbackCapturedPayload = serde_json::from_str(&serialized)?;
     
-    assert_eq!(scrollback_payload.session_id, deserialized.session_id);
-    assert_eq!(scrollback_payload.content, deserialized.content);
-    assert_eq!(scrollback_payload.line_count, deserialized.line_count);
-    assert_eq!(scrollback_payload.byte_size, deserialized.byte_size);
-    assert_eq!(scrollback_payload.contains_ansi, deserialized.contains_ansi);
-    assert_eq!(scrollback_payload.chunked, deserialized.chunked);
-    assert_eq!(scrollback_payload.chunk_id, deserialized.chunk_id);
+    assert_eq!(scrollback_payload.window_id, deserialized.window_id);
+    assert_eq!(scrollback_payload.scrollback_text, deserialized.scrollback_text);
+    assert_eq!(scrollback_payload.scrollback_lines, deserialized.scrollback_lines);
+    assert_eq!(scrollback_payload.scrollback_size_bytes, deserialized.scrollback_size_bytes);
+    assert_eq!(scrollback_payload.has_ansi_codes, deserialized.has_ansi_codes);
+    assert_eq!(scrollback_payload.is_chunked, deserialized.is_chunked);
+    assert_eq!(scrollback_payload.terminal_type, deserialized.terminal_type);
     assert_eq!(scrollback_payload.git_annex_key, deserialized.git_annex_key);
     
     Ok(())
@@ -280,28 +295,23 @@ async fn test_scrollback_payload_serialization(_ctx: TestContext) -> TestResult 
 #[sinex_test]
 async fn test_command_output_payload_serialization(_ctx: TestContext) -> TestResult {
     let cmd_output_payload = CommandOutputCapturedPayload {
-        command: "ls -la".to_string(),
-        output: "total 8\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 .\n".to_string(),
-        exit_code: 0,
-        execution_time_ms: 150,
-        session_id: "test_session_456".to_string(),
+        window_id: 1,
+        command_text: Some("ls -la".to_string()),
+        output_text: "total 8\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 .\n".to_string(),
+        output_type: "last_cmd_output".to_string(),
+        cwd: "/home/user".to_string(),
         timestamp: Utc::now(),
-        chunked: false,
-        chunk_id: None,
-        git_annex_key: Some("SHA256E-s1024--abcdef123456".to_string()),
     };
     
     let serialized = serde_json::to_string(&cmd_output_payload)?;
     let deserialized: CommandOutputCapturedPayload = serde_json::from_str(&serialized)?;
     
-    assert_eq!(cmd_output_payload.command, deserialized.command);
-    assert_eq!(cmd_output_payload.output, deserialized.output);
-    assert_eq!(cmd_output_payload.exit_code, deserialized.exit_code);
-    assert_eq!(cmd_output_payload.execution_time_ms, deserialized.execution_time_ms);
-    assert_eq!(cmd_output_payload.session_id, deserialized.session_id);
-    assert_eq!(cmd_output_payload.chunked, deserialized.chunked);
-    assert_eq!(cmd_output_payload.chunk_id, deserialized.chunk_id);
-    assert_eq!(cmd_output_payload.git_annex_key, deserialized.git_annex_key);
+    assert_eq!(cmd_output_payload.command_text, deserialized.command_text);
+    assert_eq!(cmd_output_payload.output_text, deserialized.output_text);
+    assert_eq!(cmd_output_payload.window_id, deserialized.window_id);
+    assert_eq!(cmd_output_payload.output_type, deserialized.output_type);
+    assert_eq!(cmd_output_payload.cwd, deserialized.cwd);
+    assert_eq!(cmd_output_payload.timestamp, deserialized.timestamp);
     
     Ok(())
 }

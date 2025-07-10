@@ -36,6 +36,7 @@ pub use crate::common::prelude::*;
 use sinex_core::{sources, EventFactory, event_type_constants};
 use sinex_db::events as db_events;
 use sinex_db::query_helpers::uuid_to_ulid;
+use sinex_db::AgentManifestParams;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -348,14 +349,16 @@ pub mod assertions {
     ) -> Result<(), anyhow::Error> {
         let result = sinex_db::agent::upsert_agent_manifest(
             pool,
-            &manifest.agent_name,
-            &manifest.version,
-            manifest.description.as_deref(),
-            &manifest.agent_type,
-            manifest.config_template_json.clone().unwrap_or_default(),
-            manifest.produces_event_types.clone().unwrap_or_default(),
-            manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-            manifest.required_capabilities.clone().unwrap_or_default(),
+            AgentManifestParams {
+                agent_name: manifest.agent_name.clone(),
+                version: manifest.version.clone(),
+                description: manifest.description.clone(),
+                agent_type: manifest.agent_type.clone(),
+                config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+                produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+                subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+                required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+            },
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
@@ -782,14 +785,16 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
     let manifest = generators::test_agent_manifest(agent_name);
     sinex_db::agent::upsert_agent_manifest(
         pool,
-        &manifest.agent_name,
-        &manifest.version,
-        manifest.description.as_deref(),
-        &manifest.agent_type,
-        manifest.config_template_json.clone().unwrap_or_default(),
-        manifest.produces_event_types.clone().unwrap_or_default(),
-        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-        manifest.required_capabilities.clone().unwrap_or_default(),
+        AgentManifestParams {
+            agent_name: manifest.agent_name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            agent_type: manifest.agent_type.clone(),
+            config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+            produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+        },
     )
     .await?;
     Ok(())
@@ -841,14 +846,16 @@ pub async fn create_agent_with_subscriptions(
 
     sinex_db::agent::upsert_agent_manifest(
         pool,
-        &manifest.agent_name,
-        &manifest.version,
-        manifest.description.as_deref(),
-        &manifest.agent_type,
-        manifest.config_template_json.clone().unwrap_or_default(),
-        manifest.produces_event_types.clone().unwrap_or_default(),
-        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
-        manifest.required_capabilities.clone().unwrap_or_default(),
+        AgentManifestParams {
+            agent_name: manifest.agent_name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            agent_type: manifest.agent_type.clone(),
+            config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
+            produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
+        },
     )
     .await?;
 

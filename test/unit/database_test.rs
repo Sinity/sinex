@@ -13,6 +13,7 @@ use sinex_db::work_queue::claim_work_queue_items;
 use sinex_core::{sources, event_type_constants}; 
 use sinex_db::validation::EventValidator;
 use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_db::AgentManifestParams;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool}};
 use serde_json::json;
 
@@ -535,16 +536,18 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::upsert_agent_manifest(
+    let _agent = sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
-        "test_agent",
-        "1.0.0",
-        Some("Test agent for work queue"),
-        "test",
-        serde_json::json!({}),
-        serde_json::json!([]),
-        serde_json::json!([]),
-        serde_json::json!([])
+        AgentManifestParams {
+            agent_name: "test_agent".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("Test agent for work queue".to_string()),
+            agent_type: "test".to_string(),
+            config_template_json: serde_json::json!({}),
+            produces_event_types: serde_json::json!([]),
+            subscribes_to_event_types: serde_json::json!([]),
+            required_capabilities: serde_json::json!({}),
+        },
     )
     .await?;
 
@@ -597,16 +600,18 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::upsert_agent_manifest(
+    let _agent = sinex_db::agent::upsert_agent_manifest(
         ctx.pool(),
-        "test_agent",
-        "1.0.0",
-        Some("Test agent for retry logic"),
-        "test",
-        serde_json::json!({}),
-        serde_json::json!([]),
-        serde_json::json!([]),
-        serde_json::json!([])
+        AgentManifestParams {
+            agent_name: "test_agent".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("Test agent for retry logic".to_string()),
+            agent_type: "test".to_string(),
+            config_template_json: serde_json::json!({}),
+            produces_event_types: serde_json::json!([]),
+            subscribes_to_event_types: serde_json::json!([]),
+            required_capabilities: serde_json::json!({}),
+        },
     )
     .await?;
 
