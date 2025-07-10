@@ -81,6 +81,9 @@ pub mod analytics_service_test;
 /// Content service integration tests
 pub mod content_service_test;
 
+/// BlobManager integration tests
+pub mod blob_manager_test;
+
 /// RPC handlers request/response tests
 pub mod rpc_handlers_test;
 
