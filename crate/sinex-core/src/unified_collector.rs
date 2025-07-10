@@ -57,7 +57,7 @@ pub trait EventType: Send + Sync + 'static {
     const SOURCE_NAME: &'static str = <Self::SourceImpl as EventSourceProvider>::SOURCE_NAME;
 }
 
-/// Trait for event sources - implementation details that produce events
+/// Trait for event sources - implementation details that produce events (subsumes EventFactory)
 #[async_trait]
 pub trait EventSource: Send + Sync + 'static {
     /// Configuration type for this source
@@ -78,6 +78,53 @@ pub trait EventSource: Send + Sync + 'static {
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    // ===== Event Creation Methods (subsumes EventFactory) =====
+
+    /// Create a generic event with manual payload
+    fn create_event(&self, event_type: &str, payload: crate::JsonValue) -> crate::RawEvent {
+        crate::RawEventBuilder::new(Self::SOURCE_NAME, event_type, payload)
+            .with_host(&self.source_host())
+            .with_ingestor_version(&self.source_version())
+            .build()
+    }
+
+    /// Create a filesystem event builder
+    fn filesystem(&self) -> crate::event_builders::FilesystemEventBuilder {
+        crate::event_builders::FilesystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    }
+
+    /// Create a terminal event builder
+    fn terminal(&self) -> crate::event_builders::TerminalEventBuilder {
+        crate::event_builders::TerminalEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    }
+
+    /// Create a clipboard event builder
+    fn clipboard(&self) -> crate::event_builders::ClipboardEventBuilder {
+        crate::event_builders::ClipboardEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    }
+
+    /// Create a window manager event builder
+    fn window_manager(&self) -> crate::event_builders::WindowManagerEventBuilder {
+        crate::event_builders::WindowManagerEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    }
+
+    /// Create a system event builder
+    fn system(&self) -> crate::event_builders::SystemEventBuilder {
+        crate::event_builders::SystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+    }
+
+    // ===== Metadata Helper Methods =====
+
+    /// Get host identifier (sources can override for caching)
+    fn source_host(&self) -> String {
+        gethostname::gethostname().to_string_lossy().to_string()
+    }
+
+    /// Get ingestor version (sources can override for caching)
+    fn source_version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
     }
 }
 
