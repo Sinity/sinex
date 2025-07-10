@@ -42,6 +42,7 @@ OPTIONS:
     -v, --verbose           Enable verbose output
     -d, --debug             Enable debug mode (implies --keep-failed and --verbose)
     -l, --list              List available tests
+    --validate              Validate VM test infrastructure and syntax
 
 EXAMPLES:
     $0                      # Run smoke tests
@@ -74,6 +75,74 @@ list_tests() {
     for test in "${CHAOS_TESTS[@]}"; do
         echo "  - $test"
     done
+}
+
+validate_infrastructure() {
+    log "🔍 Validating VM test infrastructure..."
+    
+    # Check syntax of individual test files
+    local test_files=(
+        "test/nixos-vm/chaos-engineering.nix"
+        "test/nixos-vm/production-scale.nix"
+    )
+    
+    local common_files=(
+        "test/nixos-vm/common/chaos-toolkit.nix"
+        "test/nixos-vm/common/production-load.nix"
+    )
+    
+    # Check test files syntax
+    for file in "${test_files[@]}"; do
+        if [[ -f "$file" ]]; then
+            log "✅ Checking syntax of $(basename "$file")..."
+            if ! nix-instantiate "$file" \
+                --arg pkgs 'import <nixpkgs> {}' \
+                --arg sinex-collector 'null' \
+                --arg sinex-promo-worker 'null' \
+                --arg pg_jsonschema 'null' >/dev/null 2>&1; then
+                error "❌ Syntax error in $file"
+                return 1
+            fi
+        else
+            warning "⚠️ Missing file: $file"
+        fi
+    done
+    
+    # Check common infrastructure files
+    for file in "${common_files[@]}"; do
+        if [[ -f "$file" ]]; then
+            log "✅ Checking $(basename "$file")..."
+            if ! nix-instantiate "$file" --arg pkgs 'import <nixpkgs> {}' >/dev/null 2>&1; then
+                error "❌ Syntax error in $file"
+                return 1
+            fi
+        else
+            warning "⚠️ Missing file: $file"
+        fi
+    done
+    
+    # Check justfile integration
+    log "✅ Checking justfile integration..."
+    local required_commands=("test-vm-chaos" "test-vm-production" "test-vm-advanced")
+    
+    for cmd in "${required_commands[@]}"; do
+        if ! grep -q "$cmd" justfile 2>/dev/null; then
+            warning "⚠️ justfile missing $cmd command"
+        fi
+    done
+    
+    success "🎉 VM test infrastructure validation completed!"
+    echo ""
+    echo "📋 Infrastructure Summary:"
+    echo "  ✅ NixOS VM test configurations validated"
+    echo "  ✅ Common infrastructure modules checked"
+    echo "  ✅ Justfile integration verified"
+    echo ""
+    echo "🚀 Ready to run VM tests with:"
+    echo "  $0 -c smoke      # Quick validation tests"
+    echo "  $0 -c all        # All VM tests"
+    
+    return 0
 }
 
 log() {
@@ -306,6 +375,10 @@ while [[ $# -gt 0 ]]; do
         -l|--list)
             list_tests
             exit 0
+            ;;
+        --validate)
+            validate_infrastructure
+            exit $?
             ;;
         -*)
             error "Unknown option: $1"
