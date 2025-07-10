@@ -422,7 +422,7 @@ mod tests {
     fn test_unified_event_source_type_safety() {
         // This ensures FilesystemSource can only create events with "fs" source
         let source = TestFilesystemSource;
-        let event = source.filesystem()
+        let event = UnifiedEventSource::filesystem(&source)
             .path("/test.txt")
             .created()
             .size(1024)
@@ -438,7 +438,7 @@ mod tests {
         let source = TestFilesystemSource;
         
         // Direct builder access from source
-        let event = source.filesystem().path("/test").created().build();
+        let event = UnifiedEventSource::filesystem(&source).path("/test").created().build();
         assert_eq!(event.source, sources::FS);
         
         // Source name is enforced by the type system

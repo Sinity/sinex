@@ -397,7 +397,7 @@ impl ClipboardMonitor {
                 };
 
                 let event =
-                    self.create_event(ClipboardChanged::EVENT_NAME, serde_json::to_value(payload)?);
+                    EventSource::create_event(self, ClipboardChanged::EVENT_NAME, serde_json::to_value(payload)?);
                 tx.send_or_log(event, "clipboard_changed").await?;
             } else {
                 let payload = ClipboardSelectionPayload {
@@ -413,7 +413,8 @@ impl ClipboardMonitor {
                     timestamp: Utc::now(),
                 };
 
-                let event = self.create_event(
+                let event = EventSource::create_event(
+                    self,
                     ClipboardSelection::EVENT_NAME,
                     serde_json::to_value(payload)?,
                 );

@@ -2,9 +2,8 @@
 use async_trait::async_trait;
 use sinex_core::{
     EventSource, EventSourceContext, EventSender, Result,
-    strongly_typed_events::{typed_event_channel, TypedToJsonAdapter},
+    strongly_typed_events::{typed_event_channel, TypedToJsonAdapter, EnforcedTypedEventSource},
     sources,
-    unified_collector::TypedEventSource,
 };
 use crate::{FilesystemConfig, TypedFilesystemMonitor};
 
@@ -19,7 +18,7 @@ impl EventSource for TypedFilesystemAdapter {
     const SOURCE_NAME: &'static str = sources::FS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let inner = <TypedFilesystemMonitor as TypedEventSource>::initialize(ctx).await?;
+        let inner = <TypedFilesystemMonitor as EnforcedTypedEventSource>::initialize(ctx).await?;
         Ok(Self { inner })
     }
 
@@ -32,7 +31,7 @@ impl EventSource for TypedFilesystemAdapter {
         let adapter_handle = tokio::spawn(adapter.run());
         
         // Run the typed source
-        let result = <TypedFilesystemMonitor as TypedEventSource>::stream_events(&mut self.inner, typed_tx).await;
+        let result = <TypedFilesystemMonitor as EnforcedTypedEventSource>::stream_typed_events(&mut self.inner, typed_tx).await;
         
         // Wait for adapter to finish
         let _ = adapter_handle.await;

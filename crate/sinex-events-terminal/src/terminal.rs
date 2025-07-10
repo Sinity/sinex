@@ -167,7 +167,8 @@ impl KittySocketListener {
                                 "New command detected"
                             );
 
-                            let event = self.create_event(
+                            let event = EventSource::create_event(
+                                self,
                                 event_type_constants::shell::COMMAND_EXECUTED,
                                 serde_json::to_value(cmd)?,
                             );

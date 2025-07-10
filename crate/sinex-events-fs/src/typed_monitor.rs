@@ -13,9 +13,9 @@ use sinex_core::{
     sources, EventSourceContext, Result,
     strongly_typed_events::{
         TypedEventSender, EventEnvelope, TypedFilesystemEventBuilder,
+        EnforcedTypedEventSource,
     },
     filesystem, timeouts,
-    unified_collector::TypedEventSource,
 };
 
 use crate::filesystem::{FilesystemConfig, RenameOperation};
@@ -28,7 +28,7 @@ pub struct TypedFilesystemMonitor {
 }
 
 #[async_trait]
-impl TypedEventSource for TypedFilesystemMonitor {
+impl EnforcedTypedEventSource for TypedFilesystemMonitor {
     type Config = FilesystemConfig;
     const SOURCE_NAME: &'static str = sources::FS;
 
@@ -48,7 +48,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
         })
     }
 
-    async fn stream_events(&mut self, tx: TypedEventSender) -> Result<()> {
+    async fn stream_typed_events(&mut self, tx: TypedEventSender) -> Result<()> {
         info!(
             patterns = ?self.config.watch_patterns,
             ignore = ?self.config.ignore_patterns,
@@ -64,10 +64,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
             notify_tx,
         )
         .map_err(|e| {
-            sinex_core::CoreError::processing_failed()
-                .with_operation("create_debouncer")
-                .with_source(e)
-                .build()
+            sinex_core::CoreError::Other(format!("Failed to create debouncer: {}", e))
         })?;
 
         // Watch all matching paths
@@ -97,10 +94,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
                 std::fs::create_dir_all(base_path).map_err(|e| {
-                    sinex_core::CoreError::io_error(base_path)
-                        .with_operation("create_directory")
-                        .with_source(e)
-                        .build()
+                    sinex_core::CoreError::Io(format!("Failed to create directory {}: {}", base_path.display(), e))
                 })?;
             }
 
@@ -110,10 +104,7 @@ impl TypedEventSource for TypedFilesystemMonitor {
                     .watcher()
                     .watch(base_path, notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        sinex_core::CoreError::io_error(base_path)
-                            .with_operation("watch_path")
-                            .with_source(e)
-                            .build()
+                        sinex_core::CoreError::Io(format!("Failed to watch path {}: {}", base_path.display(), e))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
                 
