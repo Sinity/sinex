@@ -903,3 +903,65 @@ mod unit_tests {
         assert_eq!(tracker.get_duplicates().len(), 3); // Should have 3 duplicates
     }
 }
+
+// =============================================================================
+// Queue Retry Timing Property Tests (migrated from property_tests.rs)
+// =============================================================================
+
+proptest! {
+    /// Test queue retry timing boundaries with exponential backoff
+    #[test]
+    fn test_queue_retry_timing_boundaries(
+        attempts in 0i32..20,
+        base_delay in 1.0f64..300.0,
+    ) {
+        // Calculate exponential backoff
+        let delay = base_delay * (2.0_f64.powi(attempts));
+        let with_jitter = delay * 1.1; // Max jitter
+        let clamped = with_jitter.clamp(1.0, 24.0 * 3600.0);
+
+        // Verify bounds
+        assert!(clamped >= 1.0);
+        assert!(clamped <= 24.0 * 3600.0);
+
+        // Verify exponential growth until cap
+        if attempts < 10 && base_delay < 100.0 {
+            // Should be growing exponentially before hitting cap
+            let next_delay = base_delay * (2.0_f64.powi(attempts + 1));
+            if next_delay * 1.1 <= 24.0 * 3600.0 {
+                assert!(delay < next_delay);
+            }
+        }
+
+        // Verify reasonable minimum delay
+        assert!(clamped >= base_delay.min(1.0));
+    }
+
+    /// Test retry timing with realistic work queue scenarios
+    #[test]
+    fn test_work_queue_retry_patterns(
+        failure_count in 0usize..10,
+        base_retry_ms in 100u64..5000,
+    ) {
+        let mut retry_delays = Vec::new();
+        
+        for attempt in 0..failure_count {
+            let delay_ms = base_retry_ms * (2_u64.pow(attempt as u32));
+            let max_delay_ms = 30 * 60 * 1000; // 30 minutes max
+            let actual_delay = delay_ms.min(max_delay_ms);
+            
+            retry_delays.push(actual_delay);
+            
+            // Verify delay is reasonable
+            assert!(actual_delay >= base_retry_ms);
+            assert!(actual_delay <= max_delay_ms);
+        }
+        
+        // Verify delays are non-decreasing (exponential backoff)
+        for window in retry_delays.windows(2) {
+            if let [prev, next] = window {
+                assert!(next >= prev, "Retry delays should not decrease");
+            }
+        }
+    }
+}
