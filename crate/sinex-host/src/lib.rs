@@ -2,5 +2,7 @@
 //!
 //! Provides the service container and related functionality for the Sinex Host
 
-// Expose service_container module for testing
+// Expose modules for testing and external use
 pub mod service_container;
+pub mod rpc_server;
+pub mod handlers;

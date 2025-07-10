@@ -31,7 +31,7 @@ struct ContentServiceTest {
 
 impl ContentServiceTest {
     /// Create a new test fixture with ContentService and temporary git-annex repo
-    async fn new(pool: &DbPool) -> TestResult<Self> {
+    async fn new(pool: &DbPool) -> Result<Self, Box<dyn std::error::Error>> {
         let temp_dir = temp_dir()?;
         let annex_path = temp_dir.path().join("test-annex");
         
@@ -55,7 +55,7 @@ impl ContentServiceTest {
     }
     
     /// Initialize a test git-annex repository
-    async fn init_test_annex(path: &Path) -> TestResult<()> {
+    async fn init_test_annex(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(path).await?;
         
         // Check if git-annex is available
@@ -684,7 +684,7 @@ async fn test_content_storage_and_metadata_consistency(ctx: TestContext) -> Test
     // Verify metadata consistency
     assert_eq!(artifact.title, metadata.original_filename);
     assert_eq!(artifact.mime_type.as_deref(), metadata.mime_type.as_deref());
-    assert_eq!(artifact.checksum.as_deref(), Some(&metadata.checksum_sha256));
+    assert_eq!(artifact.checksum.as_deref(), Some(metadata.checksum_sha256.as_str()));
     
     // Verify annex key consistency
     let artifact_metadata = &artifact.metadata;
