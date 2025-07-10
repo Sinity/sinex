@@ -78,31 +78,36 @@
 //! Unit tests use minimal infrastructure and avoid the full `#[sinex_test]` macro
 //! when external resources aren't needed. Use standard `#[test]` for pure unit tests.
 
-// === Crate-Specific Unit Tests ===
+// === Consolidated Unit Tests ===
 
 /// Tests for `sinex-core` crate
-pub mod core;
-
-/// Tests for `sinex-db` crate
-pub mod db;
-
-/// Tests for `sinex-ulid` crate
-pub mod ulid;
-
-/// Tests for data model structures
-pub mod model;
-
-/// Tests for event ingestion logic
-pub mod ingestor;
-
-/// Tests for terminal event sources
-pub mod terminal;
-
-/// Tests for preflight verification
-pub mod preflight_test;
+pub mod core_test;
 
 /// Tests for API layer functionality
 pub mod api_test;
 
 /// Tests for configuration validation and management
 pub mod configuration_test;
+
+/// Configuration validation unit tests
+pub mod configuration_validation_test;
+
+/// Consolidated database unit tests (includes db, model, ingestor, preflight)
+pub mod database_test;
+
+/// Tests for preflight verification
+pub mod preflight_test;
+
+/// Test context validation
+pub mod test_context_validation;
+
+/// Consolidated terminal unit tests  
+pub mod terminal_test;
+
+/// ULID comprehensive tests
+pub mod ulid_comprehensive_test;
+
+/// Consolidated ULID unit tests
+pub mod ulid_test;
+
+// Infrastructure tests are in test/common/ directory

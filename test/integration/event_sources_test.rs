@@ -6,9 +6,7 @@ use sinex_db::RawEvent;
 use sinex_events_desktop::clipboard::ClipboardMonitor;
 use sinex_events_fs::filesystem::FilesystemMonitor;
 use sinex_events_terminal::{
-    asciinema::AsciinemaRecorder, 
     atuin::{AtuinConfig, AtuinDbReader, CommandExecutedAtuin, CommandExecutedAtuinPayload},
-    scrollback::ScrollbackCapture,
     terminal::{CommandExecuted, CommandExecutedPayload, KittyConfig, KittySocketListener},
 };
 use std::fs;
@@ -1019,7 +1017,7 @@ impl MockEventSource {
                 .map_err(|e| anyhow::anyhow!("Failed to send event: {}", e))?;
 
             self.events_sent
-                .fetch_add(1, AtomicUsize::Ordering::SeqCst);
+                .fetch_add(1, Ordering::SeqCst);
 
             // Small delay to simulate realistic timing
             tokio::time::sleep(Duration::from_millis(10)).await;

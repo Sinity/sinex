@@ -10,6 +10,7 @@ use crate::common::timing_optimization::wait_helpers::{
     wait_for_work_queue_count, wait_for_work_queue_status_count,
 };
 use sinex_db::models::WorkQueueItem;
+use chrono::Utc;
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &DbPool, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(pool, "test_worker", item_count).await
@@ -106,11 +107,25 @@ pub async fn insert_test_work_item(pool: &DbPool, target_agent: &str) -> Result<
     );
 
     // Insert the raw event first
-    let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(pool, &event, None).await?;
 
     // Now insert the work queue item using the real query function
-    let work_item =
-        sinex_db::queries::insert_work_queue_item(pool, inserted_event.id, target_agent).await?;
+    let queue_id = sinex_db::add_to_work_queue(pool, inserted_event.id, target_agent, 3).await?;
+    let work_item = WorkQueueItem {
+        queue_id,
+        raw_event_id: inserted_event.id,
+        target_agent_name: target_agent.to_string(),
+        status: "pending".to_string(),
+        attempts: 0,
+        max_attempts: 3,
+        last_attempt_ts: None,
+        next_retry_ts: None,
+        error_message_last: None,
+        created_at: Utc::now(),
+        processing_worker_id: None,
+        processed_at: None,
+        failure_reason: None,
+    };
     Ok(work_item.queue_id)
 }
 
@@ -132,7 +147,7 @@ pub async fn create_test_work_item(
     );
 
     // Insert the raw event first
-    let inserted_event = sinex_db::queries::insert_event(pool, &event).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(pool, &event, None).await?;
 
     // Create work queue item with specific status
     let queue_id = Ulid::new();
@@ -155,23 +170,53 @@ pub async fn create_test_work_item(
 
 /// Get work queue item by ID
 pub async fn get_work_item(pool: &DbPool, queue_id: Ulid) -> Result<Option<WorkQueueItem>> {
-    match sinex_db::queries::get_work_item_by_id(pool, queue_id).await {
-        Ok(item) => Ok(Some(item)),
-        Err(e) => {
-            // Check if it's a not found error
-            if e.to_string().contains("not found") {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        }
+    // Use direct query since get_work_item_by_id may not exist in new API
+    let row = sqlx::query!(
+        "SELECT queue_id::uuid as \"queue_id!\", raw_event_id::uuid as \"raw_event_id!\", target_agent_name, status, attempts, max_attempts, last_attempt_ts, next_retry_ts, error_message_last, created_at, processing_worker_id, processed_at, failure_reason FROM sinex_schemas.work_queue WHERE queue_id::uuid = $1",
+        queue_id.to_uuid()
+    )
+    .fetch_optional(pool)
+    .await?;
+    
+    match row {
+        Some(r) => Ok(Some(WorkQueueItem {
+            queue_id: uuid_to_ulid(r.queue_id),
+            raw_event_id: uuid_to_ulid(r.raw_event_id),
+            target_agent_name: r.target_agent_name,
+            status: r.status,
+            attempts: r.attempts,
+            max_attempts: r.max_attempts,
+            last_attempt_ts: r.last_attempt_ts,
+            next_retry_ts: r.next_retry_ts,
+            error_message_last: r.error_message_last,
+            created_at: r.created_at,
+            processing_worker_id: r.processing_worker_id,
+            processed_at: r.processed_at,
+            failure_reason: r.failure_reason,
+        })),
+        None => Ok(None),
     }
 }
 
 /// Create a work queue item for an existing event
 pub async fn create_work_item(pool: &DbPool, target_agent: &str, event_id: Ulid) -> Result<Ulid> {
     // Use the real query function to insert
-    let work_item = sinex_db::queries::insert_work_queue_item(pool, event_id, target_agent).await?;
+    let queue_id = sinex_db::add_to_work_queue(pool, event_id, target_agent, 3).await?;
+    let work_item = WorkQueueItem {
+        queue_id,
+        raw_event_id: event_id,
+        target_agent_name: target_agent.to_string(),
+        status: "pending".to_string(),
+        attempts: 0,
+        max_attempts: 3,
+        last_attempt_ts: None,
+        next_retry_ts: None,
+        error_message_last: None,
+        created_at: Utc::now(),
+        processing_worker_id: None,
+        processed_at: None,
+        failure_reason: None,
+    };
     Ok(work_item.queue_id)
 }
 

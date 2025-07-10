@@ -462,17 +462,16 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                 // Insert schema into database
                 let schema_id = Ulid::new();
                 let result = sqlx::query!(
-                    "INSERT INTO sinex_schemas.event_schemas (id, event_type, version, schema_def, is_active)
-                     VALUES ($1::ulid, $2, $3, $4, true)
-                     ON CONFLICT (event_type, version) DO NOTHING",
-                    schema_id.to_string(),
+                    "INSERT INTO sinex_schemas.event_payload_schemas (event_source, event_type, schema_version, json_schema_definition, is_active)
+                     VALUES ('test_source', $1, $2, $3, true)
+                     ON CONFLICT (event_source, event_type, schema_version) DO NOTHING",
                     name,
                     version,
                     schema_def
                 ).execute(pool).await;
                 
                 if result.is_ok() {
-                    created_schemas.push((schema_id, name.clone(), version.clone()));
+                    created_schemas.push((name.clone(), version.clone()));
                 }
             }
             
@@ -480,7 +479,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
             let validator = EventValidator::load_from_db(pool).await.expect("Should load validator");
             
             // Test that schemas are accessible
-            for (schema_id, name, version) in &created_schemas {
+            for (name, version) in &created_schemas {
                 // Create an event that should validate against this schema
                 let event = RawEventBuilder::new(
                     "test_source",
@@ -511,10 +510,11 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
             }
             
             // Cleanup
-            for (schema_id, _, _) in created_schemas {
+            for (name, version) in created_schemas {
                 let _ = sqlx::query!(
-                    "DELETE FROM sinex_schemas.event_schemas WHERE id = $1::ulid",
-                    schema_id.to_string()
+                    "DELETE FROM sinex_schemas.event_payload_schemas WHERE event_source = 'test_source' AND event_type = $1 AND schema_version = $2",
+                    name,
+                    version
                 ).execute(pool).await;
             }
             

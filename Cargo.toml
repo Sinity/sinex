@@ -14,6 +14,8 @@ members = [
     "crate/sinex-health-aggregator",
     "crate/sinex-preflight",
     "crate/sinex-test-macros",
+    "crate/sinex-services",
+    "crate/sinex-config", "crate/sinex-host",
 ]
 resolver = "2"
 
@@ -51,6 +53,7 @@ sinex-events-fs = { path = "crate/sinex-events-fs" }
 sinex-worker = { path = "crate/sinex-worker" }
 sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
+sinex-preflight = { path = "crate/sinex-preflight" }
 
 # Testing dependencies needed for integration tests
 futures = "0.3"
@@ -85,6 +88,7 @@ test-case = "3.3"
 rstest = "0.18"
 num_cpus = "1.16"
 ctor = "0.2"
+parking_lot = "0.12"
 once_cell = "1"
 ctrlc = "3"
 

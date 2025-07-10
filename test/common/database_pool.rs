@@ -1,19 +1,93 @@
-//! Pre-initialized database pool for test isolation
+//! Unified Database Pool for Test Isolation
 //!
-//! This creates a fixed pool of databases at startup and distributes them to tests.
-//! Databases are cleaned BEFORE being given to a test, not after.
+//! This is the single source of truth for database pool management in Sinex tests.
+//! Features:
+//! - Global, lazy static pool of pre-warmed, migrated databases
+//! - PostgreSQL advisory locks for inter-process coordination
+//! - Automatic cleanup on TestDatabase Drop
+//! - High-performance architecture with 64 pre-warmed databases
+//! - Clean-before-use strategy for optimal performance
+//!
+//! # Usage
+//! ```rust
+//! let test_db = acquire_test_database().await?;
+//! // Use test_db.pool() for database operations
+//! // Database automatically returns to pool on drop
+//! ```
 
 use crate::common::prelude::*;
-use std::sync::atomic::{AtomicU32, AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use once_cell::sync::Lazy;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use sinex_core::timeouts;
+use parking_lot::Mutex;
 
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
 static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Pool performance metrics
+static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(|| PoolMetrics::new());
+
+/// Pool performance metrics for monitoring
+struct PoolMetrics {
+    acquisitions: AtomicUsize,
+    total_wait_time: AtomicU64,
+    cleanup_failures: AtomicUsize,
+    template_recreations: AtomicUsize,
+}
+
+impl PoolMetrics {
+    fn new() -> Self {
+        Self {
+            acquisitions: AtomicUsize::new(0),
+            total_wait_time: AtomicU64::new(0),
+            cleanup_failures: AtomicUsize::new(0),
+            template_recreations: AtomicUsize::new(0),
+        }
+    }
+    
+    fn record_acquisition(&self, wait_time: Duration) {
+        self.acquisitions.fetch_add(1, Ordering::Relaxed);
+        self.total_wait_time.fetch_add(wait_time.as_millis() as u64, Ordering::Relaxed);
+    }
+    
+    fn record_cleanup_failure(&self) {
+        self.cleanup_failures.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    fn record_template_recreation(&self) {
+        self.template_recreations.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    fn get_stats(&self) -> PoolStats {
+        let acquisitions = self.acquisitions.load(Ordering::Relaxed);
+        let total_wait = self.total_wait_time.load(Ordering::Relaxed);
+        
+        PoolStats {
+            total_acquisitions: acquisitions,
+            average_wait_time_ms: if acquisitions > 0 { total_wait / acquisitions as u64 } else { 0 },
+            cleanup_failures: self.cleanup_failures.load(Ordering::Relaxed),
+            template_recreations: self.template_recreations.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Pool statistics for monitoring
+#[derive(Debug, Clone)]
+pub struct PoolStats {
+    pub total_acquisitions: usize,
+    pub average_wait_time_ms: u64,
+    pub cleanup_failures: usize,
+    pub template_recreations: usize,
+}
+
+/// Get current pool statistics
+pub fn get_pool_stats() -> PoolStats {
+    POOL_METRICS.get_stats()
+}
 
 /// Template database name cached for the current test process  
 static TEMPLATE_DB_NAME: OnceLock<String> = OnceLock::new();
@@ -48,22 +122,98 @@ impl Default for PoolConfig {
     }
 }
 
-/// A test database handle
+/// Pool configuration with customizable parameters
+impl PoolConfig {
+    /// Create config with custom pool size
+    pub fn with_size(size: usize) -> Self {
+        let mut config = Self::default();
+        config.size = size;
+        config
+    }
+    
+    /// Create config with custom template name
+    pub fn with_template(template_name: &str) -> Self {
+        let mut config = Self::default();
+        config.template_name = template_name.to_string();
+        config
+    }
+}
+
+/// A test database handle that automatically returns to pool on Drop
+/// This is the primary interface for test database access
 pub struct TestDatabase {
     name: String,
     pool: DbPool,
     slot: Arc<DatabaseSlot>,
     lock_id: i64, // Store advisory lock ID for cleanup
+    acquired_at: Instant,
+    acquisition_process_id: u32,
 }
 
 impl TestDatabase {
+    /// Get the database name
     pub fn name(&self) -> &str {
         &self.name
     }
     
+    /// Get the database pool for operations
     pub fn pool(&self) -> &DbPool {
         &self.pool
     }
+    
+    /// Get acquisition timestamp for diagnostics
+    pub fn acquired_at(&self) -> Instant {
+        self.acquired_at
+    }
+    
+    /// Get the process ID that acquired this database
+    pub fn acquisition_process_id(&self) -> u32 {
+        self.acquisition_process_id
+    }
+    
+    /// Check if the database is healthy
+    pub async fn check_health(&self) -> Result<bool> {
+        match sqlx::query("SELECT 1 as health_check")
+            .fetch_one(&self.pool)
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+    
+    /// Get database statistics for debugging
+    pub async fn get_stats(&self) -> Result<DatabaseStats> {
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM raw.events) as event_count,
+                (SELECT COUNT(*) FROM sinex_schemas.agent_manifests) as agent_count,
+                (SELECT COUNT(*) FROM sinex_schemas.work_queue) as work_queue_count
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(DatabaseStats {
+            event_count: row.event_count.unwrap_or(0),
+            agent_count: row.agent_count.unwrap_or(0),
+            work_queue_count: row.work_queue_count.unwrap_or(0),
+        })
+    }
+    
+    /// Force cleanup of this database (for testing)
+    pub async fn force_cleanup(&self) -> Result<()> {
+        clean_database(&self.pool, &self.name).await
+    }
+}
+
+/// Database statistics for debugging
+#[derive(Debug, Clone)]
+pub struct DatabaseStats {
+    pub event_count: i64,
+    pub agent_count: i64,
+    pub work_queue_count: i64,
 }
 
 impl Drop for TestDatabase {
@@ -98,12 +248,12 @@ impl Drop for TestDatabase {
         }).join().unwrap_or_else(|_| eprintln!("⚠️  Cleanup thread panicked"));
         
         // Clear the pool reference
-        if let Ok(mut pool_opt) = self.slot.pool.lock() {
-            *pool_opt = None;
-        }
+        let mut pool_opt = self.slot.pool.lock();
+        *pool_opt = None;
         
         // Record when this slot was released
-        if let Ok(mut last_released) = self.slot.last_released.lock() {
+        {
+            let mut last_released = self.slot.last_released.lock();
             *last_released = Some(std::time::Instant::now());
         }
         
@@ -116,12 +266,12 @@ impl Drop for TestDatabase {
 struct DatabaseSlot {
     name: String,
     url: String,  // Store URL instead of pool to create fresh connections
-    pool: std::sync::Mutex<Option<DbPool>>,  // Current pool if in use
+    pool: Mutex<Option<DbPool>>,  // Current pool if in use
     in_use: AtomicBool,
     // Track when the slot was acquired to help debug issues
-    last_acquired: std::sync::Mutex<Option<std::time::Instant>>,
+    last_acquired: Mutex<Option<std::time::Instant>>,
     // Track when the slot was released for cooldown
-    last_released: std::sync::Mutex<Option<std::time::Instant>>,
+    last_released: Mutex<Option<std::time::Instant>>,
 }
 
 /// The global database pool
@@ -222,10 +372,10 @@ impl DatabasePool {
             slots.push(Arc::new(DatabaseSlot {
                 name,
                 url,
-                pool: std::sync::Mutex::new(None),
+                pool: Mutex::new(None),
                 in_use: AtomicBool::new(false),
-                last_acquired: std::sync::Mutex::new(None),
-                last_released: std::sync::Mutex::new(None),
+                last_acquired: Mutex::new(None),
+                last_released: Mutex::new(None),
             }));
         }
         
@@ -288,7 +438,8 @@ impl DatabasePool {
                 
                 // Store lock info in the slot for cleanup
                 slot.in_use.store(true, Ordering::Release);
-                if let Ok(mut pool_opt) = slot.pool.lock() {
+                {
+                    let mut pool_opt = slot.pool.lock();
                     *pool_opt = Some(pool.clone());
                 }
                 
@@ -300,22 +451,31 @@ impl DatabasePool {
                         if clean_time.as_millis() > 100 {
                             eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
                         }
+                        
+                        let acquisition_time = start_time.elapsed();
+                        POOL_METRICS.record_acquisition(acquisition_time);
+                        
                         return Ok(TestDatabase {
                             name: slot.name.clone(),
                             pool: pool.clone(),
                             slot: slot.clone(),
                             lock_id,
+                            acquired_at: Instant::now(),
+                            acquisition_process_id: pid,
                         });
                     }
                     Err(e) => {
                         eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
+                        POOL_METRICS.record_cleanup_failure();
+                        
                         // Release the advisory lock
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                             .bind(lock_id)
                             .execute(&pool)
                             .await;
                         pool.close().await;
-                        if let Ok(mut pool_opt) = slot.pool.lock() {
+                        {
+                            let mut pool_opt = slot.pool.lock();
                             *pool_opt = None;
                         }
                         slot.in_use.store(false, Ordering::Release);
@@ -341,7 +501,7 @@ impl DatabasePool {
     }
 }
 
-/// Clean a database for reuse
+/// Clean a database for reuse with comprehensive cleanup strategies
 async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
     eprintln!("🧹 Cleaning database: {}", db_name);
     
@@ -535,6 +695,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
         }
         
         if !all_clean {
+            POOL_METRICS.record_cleanup_failure();
             return Err(anyhow::anyhow!(
                 "Database {} cleanup failed - tables still contain data", 
                 db_name
@@ -659,6 +820,9 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
             .map_err(|_| CoreError::Other("Failed to cache template database name".to_string()))?;
         return Ok(template_name.to_string());
     }
+    
+    // Track template recreation
+    POOL_METRICS.record_template_recreation();
 
     // Connect to template database and run all migrations
     let template_url = base_url.replace("/sinex_dev", &format!("/{}", template_name));
@@ -866,5 +1030,100 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
             Ok(()) // Don't fail, optimizations are optional
         }
     }
+}
+
+/// Health check for the entire pool
+pub async fn check_pool_health() -> Result<PoolHealthReport> {
+    let pool_lock = POOL.lock().await;
+    
+    if let Some(pool) = pool_lock.as_ref() {
+        let mut healthy_slots = 0;
+        let mut unhealthy_slots = 0;
+        let mut total_slots = 0;
+        
+        for slot in &pool.slots {
+            total_slots += 1;
+            
+            if slot.in_use.load(Ordering::Acquire) {
+                // Skip in-use slots
+                continue;
+            }
+            
+            // Try to connect to this slot's database
+            match sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(Duration::from_secs(2))
+                .connect(&slot.url)
+                .await 
+            {
+                Ok(pool) => {
+                    match sqlx::query("SELECT 1").fetch_one(&pool).await {
+                        Ok(_) => healthy_slots += 1,
+                        Err(_) => unhealthy_slots += 1,
+                    }
+                    pool.close().await;
+                }
+                Err(_) => unhealthy_slots += 1,
+            }
+        }
+        
+        Ok(PoolHealthReport {
+            total_slots,
+            healthy_slots,
+            unhealthy_slots,
+            stats: POOL_METRICS.get_stats(),
+        })
+    } else {
+        Ok(PoolHealthReport {
+            total_slots: 0,
+            healthy_slots: 0,
+            unhealthy_slots: 0,
+            stats: POOL_METRICS.get_stats(),
+        })
+    }
+}
+
+/// Pool health report
+#[derive(Debug, Clone)]
+pub struct PoolHealthReport {
+    pub total_slots: usize,
+    pub healthy_slots: usize,
+    pub unhealthy_slots: usize,
+    pub stats: PoolStats,
+}
+
+/// Emergency pool reset function (for testing/debugging)
+pub async fn reset_pool() -> Result<()> {
+    let mut pool_lock = POOL.lock().await;
+    
+    if let Some(pool) = pool_lock.take() {
+        // Close all connections
+        for slot in &pool.slots {
+            {
+                let mut pool_opt = slot.pool.lock();
+                if let Some(pool) = pool_opt.take() {
+                    pool.close().await;
+                }
+            }
+        }
+    }
+    
+    // Force reinitialize on next acquisition
+    *pool_lock = None;
+    
+    Ok(())
+}
+
+/// Initialize pool with custom configuration (for testing)
+pub async fn init_pool_with_config(config: PoolConfig) -> Result<()> {
+    let mut pool_lock = POOL.lock().await;
+    let pool = Arc::new(DatabasePool::new(config).await?);
+    *pool_lock = Some(pool);
+    Ok(())
+}
+
+/// Get pool configuration (for debugging)
+pub fn get_pool_config() -> PoolConfig {
+    PoolConfig::default()
 }
 

@@ -14,20 +14,10 @@
 //! - Backpressure and flow control
 //! - Multi-source coordination and timing
 
-/// Backpressure and flow control tests
-pub mod backpressure_test;
-
-/// Basic collector functionality tests
-pub mod basic_collector_test;
-
 /// Configuration management tests
 pub mod config_tests;
 
-/// Hot reload functionality tests
-pub mod hot_reload_test;
-
-/// Multi-source coordination tests
-pub mod multi_source_coordination_test;
+// Other collector tests have been consolidated into ../collector_test.rs
 
 /// Common utilities for collector testing
 pub mod utils {

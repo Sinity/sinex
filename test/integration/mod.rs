@@ -65,12 +65,6 @@ pub mod database_test;
 /// Event collection and coordination testing
 pub mod collector;
 
-/// Event processing and work distribution testing
-pub mod worker;
-
-/// Event source implementation testing
-pub mod event_sources;
-
 /// Consolidated event source integration tests
 pub mod event_sources_test;
 
@@ -79,31 +73,10 @@ pub mod agent;
 
 // === System Integration ===
 
-/// Failure handling across component boundaries
-pub mod failure_modes;
-
 /// Infrastructure component coordination
 pub mod infrastructure;
 
 // === Specific Integration Tests ===
-
-/// Query interface functionality testing
-pub mod query_interface_test;
-
-/// System startup coordination testing
-pub mod full_system_startup_test;
-
-/// Failure recovery mechanism testing
-pub mod failure_recovery_integration_test;
-
-/// Health monitoring integration testing
-pub mod health_monitoring_integration_test;
-
-/// Git Annex storage integration testing
-pub mod git_annex_full_integration_test;
-
-
-/// Deployment validation testing
-pub mod deployment_validation_test;
+// These tests have been consolidated into their respective test files
 
 

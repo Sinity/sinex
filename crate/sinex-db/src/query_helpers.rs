@@ -24,7 +24,8 @@
 //!
 //! # async fn example(pool: &DbPool) -> DbResult<()> {
 //! // Simple query with automatic error context
-//! let event: RawEvent = query_one(pool, "SELECT * FROM raw.events WHERE id = $1::uuid::ulid", "get event by id").await?;
+//! let event_id = Ulid::new();
+//! let event: RawEvent = query_one(pool, "SELECT * FROM raw.events WHERE id = $1", ulid_to_uuid(event_id), "get event by id").await?;
 //! # Ok(())
 //! # }
 //! ```

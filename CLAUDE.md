@@ -355,3 +355,19 @@ See `spec/docs/claude/abstraction_usage_guide.md` for examples.
 ## Remember
 
 This is a system capturing someone's entire digital life. Reliability is non-negotiable.
+
+### Compilation Efficiency Rule
+**ALWAYS save full compilation output to temp file first, then process that file with different tools rather than recompiling multiple times.**
+
+```bash
+# CORRECT: Compile once, analyze multiple ways
+nix develop --command cargo check --workspace --all-targets > /tmp/compile_output.txt 2>&1
+grep "error:" /tmp/compile_output.txt | head -10
+wc -l /tmp/compile_output.txt  
+grep -c "warning:" /tmp/compile_output.txt
+
+# WRONG: Multiple compilations (wasteful)
+nix develop --command cargo check ... 2>&1 | head -10
+nix develop --command cargo check ... 2>&1 | wc -l
+nix develop --command cargo check ... 2>&1 | grep error
+```

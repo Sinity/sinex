@@ -23,14 +23,8 @@ pub mod prelude;
 // Database helper functions and macros
 pub mod database_helpers;
 
-// Unified database access
-pub mod database;
-
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;
-
-// Consolidated test assertions and utilities
-pub mod consolidated_assertions;
 
 // Unified test context for all tests
 pub mod test_context;
@@ -41,7 +35,9 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core::{event_type_constants, sources, EventFactory};
+use sinex_core::{sources, EventFactory, event_type_constants};
+use sinex_db::events as db_events;
+use sinex_db::query_helpers::uuid_to_ulid;
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -51,14 +47,13 @@ pub fn test_database_url() -> String {
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> Result<DbPool> {
-    let test_pool = database::TestPool::with_strategy(database::CleanupStrategy::None).await?;
-    Ok(test_pool.pool().clone())
+    database_pool::acquire_test_database().await
 }
 
 /// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
 pub async fn insert_event(pool: &DbPool, event: &sinex_db::RawEvent) -> Result<Ulid> {
-    let inserted = queries::insert_event(pool, event).await?;
+    let inserted = db_events::insert_event_with_validator(pool, event, None).await?;
     Ok(inserted.id)
 }
 
@@ -329,7 +324,7 @@ pub mod assertions {
 
     /// Assert that an event was inserted successfully
     pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> Result<Ulid> {
-        let inserted = queries::insert_event(pool, event).await?;
+        let inserted = db_events::insert_event_with_validator(pool, event, None).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
     }
@@ -339,7 +334,7 @@ pub mod assertions {
         pool: &DbPool,
         event: &RawEvent,
     ) -> Result<(), anyhow::Error> {
-        let result = queries::insert_event(pool, event).await;
+        let result = db_events::insert_event_with_validator(pool, event, None).await;
         assert!(
             result.is_err(),
             "Expected event insertion to fail, but it succeeded"
@@ -352,16 +347,16 @@ pub mod assertions {
         pool: &DbPool,
         manifest: &AgentManifest,
     ) -> Result<(), anyhow::Error> {
-        let result = sinex_db::agent_correct::upsert_agent_manifest(
+        let result = sinex_db::agent::upsert_agent_manifest(
             pool,
             &manifest.agent_name,
             &manifest.version,
             manifest.description.as_deref(),
             &manifest.agent_type,
-            manifest.config_template_json.clone(),
-            manifest.produces_event_types.clone(),
-            manifest.subscribes_to_event_types.clone(),
-            manifest.required_capabilities.clone(),
+            manifest.config_template_json.clone().unwrap_or_default(),
+            manifest.produces_event_types.clone().unwrap_or_default(),
+            manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            manifest.required_capabilities.clone().unwrap_or_default(),
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
@@ -554,12 +549,75 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
     Ok(exists.exists)
 }
 
+/// Helper for getting recent events
+pub async fn get_recent_events(pool: &DbPool, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        ORDER BY ts_ingest DESC
+        LIMIT $1
+        "#,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: uuid_to_ulid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        });
+    }
+    Ok(events)
+}
+
+/// Helper for getting events by type
+pub async fn get_events_by_type(pool: &DbPool, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        WHERE event_type = $1
+        ORDER BY ts_ingest DESC
+        LIMIT $2
+        "#,
+        event_type,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: uuid_to_ulid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        });
+    }
+    Ok(events)
+}
+
 /// Helper for getting a single event by ID
 pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> {
-    let event = sqlx::query_as!(
-        RawEvent,
+    let record = sqlx::query!(
         r#"
-        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
         FROM raw.events
         WHERE id::uuid = $1
         "#,
@@ -568,15 +626,24 @@ pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> 
     .fetch_one(pool)
     .await?;
 
-    Ok(event)
+    Ok(RawEvent {
+        id: uuid_to_ulid(record.id),
+        source: record.source,
+        event_type: record.event_type,
+        host: record.host,
+        payload: record.payload,
+        ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+        ts_orig: record.ts_orig,
+        ingestor_version: record.ingestor_version,
+        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+    })
 }
 
 /// Helper for getting events by source
 pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
-    let events = sqlx::query_as!(
-        RawEvent,
+    let records = sqlx::query!(
         r#"
-        SELECT id::uuid as "id: Ulid", source, event_type, host, payload, ts_ingest, ts_orig
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
         FROM raw.events
         WHERE source = $1
         ORDER BY ts_ingest DESC
@@ -588,6 +655,56 @@ pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Re
     .fetch_all(pool)
     .await?;
 
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: uuid_to_ulid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        });
+    }
+    Ok(events)
+}
+
+/// Get events within a specific time range
+pub async fn get_events_in_time_range(
+    pool: &DbPool, 
+    start_time: chrono::DateTime<chrono::Utc>, 
+    end_time: chrono::DateTime<chrono::Utc>
+) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        WHERE ts_ingest >= $1 AND ts_ingest <= $2
+        ORDER BY ts_ingest ASC
+        "#,
+        start_time,
+        end_time
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: uuid_to_ulid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        });
+    }
     Ok(events)
 }
 
@@ -668,16 +785,16 @@ pub fn create_test_event(source: &str, event_type: &str) -> sinex_db::RawEvent {
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
-        manifest.config_template_json.clone(),
-        manifest.produces_event_types.clone(),
-        manifest.subscribes_to_event_types.clone(),
-        manifest.required_capabilities.clone(),
+        manifest.config_template_json.clone().unwrap_or_default(),
+        manifest.produces_event_types.clone().unwrap_or_default(),
+        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+        manifest.required_capabilities.clone().unwrap_or_default(),
     )
     .await?;
     Ok(())
@@ -690,6 +807,33 @@ pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) ->
     insert_event(pool, &event).await
 }
 
+/// Helper to emulate old insert_event_with_validator API signature
+#[allow(dead_code)]
+pub async fn insert_event_with_validator(
+    pool: &DbPool,
+    source: &str,
+    event_type: &str,
+    host: &str,
+    payload: serde_json::Value,
+    ts_orig: Option<chrono::DateTime<chrono::Utc>>,
+    ingestor_version: Option<&str>,
+    payload_schema_id: Option<sinex_ulid::Ulid>,
+) -> Result<RawEvent> {
+    let mut event = EventFactory::new(source).create_event(event_type, payload);
+    event.host = host.to_string();
+    if let Some(ts) = ts_orig {
+        event.ts_orig = Some(ts);
+    }
+    if let Some(version) = ingestor_version {
+        event.ingestor_version = Some(version.to_string());
+    }
+    if let Some(schema_id) = payload_schema_id {
+        event.payload_schema_id = Some(schema_id);
+    }
+    
+    db_events::insert_event_with_validator(pool, &event, None).await
+}
+
 /// Helper for creating agent with specific subscriptions
 pub async fn create_agent_with_subscriptions(
     pool: &DbPool,
@@ -700,16 +844,16 @@ pub async fn create_agent_with_subscriptions(
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
-    sinex_db::agent_correct::upsert_agent_manifest(
+    sinex_db::agent::upsert_agent_manifest(
         pool,
         &manifest.agent_name,
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
-        manifest.config_template_json.clone(),
-        manifest.produces_event_types.clone(),
-        manifest.subscribes_to_event_types.clone(),
-        manifest.required_capabilities.clone(),
+        manifest.config_template_json.clone().unwrap_or_default(),
+        manifest.produces_event_types.clone().unwrap_or_default(),
+        manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+        manifest.required_capabilities.clone().unwrap_or_default(),
     )
     .await?;
 
