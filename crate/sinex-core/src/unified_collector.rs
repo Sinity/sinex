@@ -172,6 +172,26 @@ impl EventRegistry {
         sources.dedup();
         sources
     }
+
+    /// Alias for has_event for compatibility
+    pub fn is_valid_event_type(&self, event_type: &str) -> bool {
+        self.has_event(event_type)
+    }
+
+    /// Get all event types
+    pub fn all_event_types(&self) -> &[&'static str] {
+        self.event_types
+    }
+
+    /// Alias for all_sources for compatibility
+    pub fn get_all_sources(&self) -> Vec<&'static str> {
+        self.all_sources()
+    }
+
+    /// Alias for all_event_types for compatibility
+    pub fn get_all_event_types(&self) -> &[&'static str] {
+        self.all_event_types()
+    }
 }
 
 /// Trait for event crates to register their event types
@@ -206,6 +226,15 @@ impl EventRegistryBuilder {
             self.schema_generators.insert(event_name, schema_generator);
         }
         self.event_to_source.push((event_name, source_name));
+    }
+
+    /// Auto-registration method for compatibility
+    pub fn with_auto_registration<F>(mut self, register_fn: F) -> Self 
+    where
+        F: FnOnce(&mut Self),
+    {
+        register_fn(&mut self);
+        self
     }
     
     pub fn build(mut self) -> EventRegistry {

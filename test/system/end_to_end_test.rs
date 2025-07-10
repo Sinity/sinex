@@ -75,7 +75,7 @@ async fn test_complete_system_event_capture_to_query(ctx: TestContext) -> TestRe
     // Insert events
     let mut inserted_ids = Vec::new();
     for event in &events {
-        let inserted = queries::insert_event(ctx.pool(), event).await?;
+        let inserted = sinex_db::insert_event(ctx.pool(), event).await?;
         inserted_ids.push(inserted.id);
     }
 
@@ -148,7 +148,7 @@ async fn test_system_cli_integration(ctx: TestContext) -> TestResult {
     ];
 
     for event in &test_events {
-        queries::insert_event(ctx.pool(), event).await?;
+        sinex_db::insert_event(ctx.pool(), event).await?;
     }
 
     // Give events time to be committed
@@ -224,7 +224,7 @@ async fn test_system_real_filesystem_simulation(ctx: TestContext) -> TestResult 
 
     // Insert filesystem events
     for event in &fs_events {
-        queries::insert_event(ctx.pool(), event).await?;
+        sinex_db::insert_event(ctx.pool(), event).await?;
     }
 
     // Verify events can be queried by path pattern
@@ -318,14 +318,14 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
 
     // Insert all events
     for event in &correlated_events {
-        queries::insert_event(ctx.pool(), event).await?;
+        sinex_db::insert_event(ctx.pool(), event).await?;
     }
 
     // Query events in time window
     let start_time = base_time - chrono::Duration::seconds(1);
     let end_time = base_time + chrono::Duration::seconds(30);
 
-    let window_events = queries::get_events_in_time_range(ctx.pool(), start_time, end_time).await?;
+    let window_events = get_events_in_time_range(ctx.pool(), start_time, end_time).await?;
 
     // Verify we can find correlated events
     let shell_events: Vec<_> = window_events
@@ -401,7 +401,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
 
     // Insert all edge case events
     for event in &edge_case_events {
-        let result = queries::insert_event(ctx.pool(), event).await;
+        let result = sinex_db::insert_event(ctx.pool(), event).await;
 
         // System should handle edge cases gracefully
         match result {
@@ -428,7 +428,7 @@ async fn test_system_error_recovery(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let result = queries::insert_event(ctx.pool(), &normal_event).await;
+    let result = sinex_db::insert_event(ctx.pool(), &normal_event).await;
     assert!(
         result.is_ok(),
         "System should handle normal events after edge cases"
@@ -457,7 +457,7 @@ async fn test_system_performance_baseline(ctx: TestContext) -> TestResult {
         )
         .build();
 
-        queries::insert_event(ctx.pool(), &event).await?;
+        sinex_db::insert_event(ctx.pool(), &event).await?;
     }
 
     let insert_duration = start_time.elapsed();
@@ -1178,7 +1178,7 @@ async fn test_window_geometry_overflow(ctx: TestContext) -> TestResult {
             None,
         );
 
-        match queries::insert_event(ctx.pool(), &event).await {
+        match sinex_db::insert_event(ctx.pool(), &event).await {
             Ok(_) => {
                 println!(
                     "  {}: Accepted geometry ({},{}) {}x{}",
@@ -1264,7 +1264,7 @@ async fn test_event_cascade_explosion(ctx: TestContext) -> TestResult {
     // Initial filesystem event
     let fs_event = events::filesystem_chaos_event("file.modified", "/tmp/trigger.sh", None);
 
-    queries::insert_event(ctx.pool(), &fs_event).await?;
+    sinex_db::insert_event(ctx.pool(), &fs_event).await?;
     total_events += 1;
 
     // Simulate: file change triggers 10 terminal commands
@@ -1279,7 +1279,7 @@ async fn test_event_cascade_explosion(ctx: TestContext) -> TestResult {
             None,
         );
 
-        queries::insert_event(ctx.pool(), &term_event).await?;
+        sinex_db::insert_event(ctx.pool(), &term_event).await?;
         total_events += 1;
 
         // Each terminal command opens a notification window
@@ -1290,7 +1290,7 @@ async fn test_event_cascade_explosion(ctx: TestContext) -> TestResult {
             None,
         );
 
-        queries::insert_event(ctx.pool(), &win_event).await?;
+        sinex_db::insert_event(ctx.pool(), &win_event).await?;
         total_events += 1;
     }
 

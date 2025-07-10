@@ -672,6 +672,42 @@ pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Re
     Ok(events)
 }
 
+/// Get events within a specific time range
+pub async fn get_events_in_time_range(
+    pool: &DbPool, 
+    start_time: chrono::DateTime<chrono::Utc>, 
+    end_time: chrono::DateTime<chrono::Utc>
+) -> Result<Vec<RawEvent>> {
+    let records = sqlx::query!(
+        r#"
+        SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
+        FROM raw.events
+        WHERE ts_ingest >= $1 AND ts_ingest <= $2
+        ORDER BY ts_ingest ASC
+        "#,
+        start_time,
+        end_time
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut events = Vec::new();
+    for record in records {
+        events.push(RawEvent {
+            id: uuid_to_ulid(record.id),
+            source: record.source,
+            event_type: record.event_type,
+            host: record.host,
+            payload: record.payload,
+            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
+            ts_orig: record.ts_orig,
+            ingestor_version: record.ingestor_version,
+            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        });
+    }
+    Ok(events)
+}
+
 /// Macros for common test patterns
 #[macro_export]
 macro_rules! test_event_insertion {

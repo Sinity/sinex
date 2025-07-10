@@ -25,7 +25,7 @@
 // ===== Standard Library =====
 pub use std::collections::{HashMap, HashSet};
 pub use std::fmt::Debug;
-pub use std::path::PathBuf;
+// pub use std::path::PathBuf; // Currently unused
 pub use std::str::FromStr;
 pub use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -49,7 +49,7 @@ pub use sinex_core::{
 };
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
-    prelude::{AgentManifest, QueueStatus, WorkQueueItem},
+    prelude::{WorkQueueItem}, // AgentManifest, QueueStatus currently unused
     run_migrations, DbPool, RawEvent,
 };
 pub use sinex_ulid::Ulid;
@@ -96,6 +96,8 @@ pub use sinex_db::{
     events::get_event_by_id,
     metrics_queries::calculate_queue_depth_metrics,
 };
+// Test helper functions from common/mod.rs
+pub use crate::common::{get_events_by_type, get_events_by_source, get_recent_events, get_events_in_time_range};
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_database_state, assert_eq_with_context,

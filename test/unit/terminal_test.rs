@@ -103,12 +103,14 @@ async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult
         old_process: KittyProcessInfo {
             pid: 1234,
             name: "bash".to_string(),
-            cmdline: vec!["bash".to_string()],
+            cmdline: Some("bash".to_string()),
+            parent_pid: Some(999),
         },
         new_process: KittyProcessInfo {
             pid: 5678,
             name: "vim".to_string(),
-            cmdline: vec!["vim".to_string(), "file.txt".to_string()],
+            cmdline: Some("vim file.txt".to_string()),
+            parent_pid: Some(1234),
         },
         session_id: "test_session".to_string(),
         timestamp: Utc::now(),

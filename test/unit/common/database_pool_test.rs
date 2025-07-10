@@ -80,7 +80,7 @@ async fn test_cleanup_performance() {
             "cleanup.test",
             json!({"index": i})
         ).build();
-        queries::insert_event(pool, &event).await.unwrap();
+        sinex_db::insert_event(pool, &event).await.unwrap();
     }
     
     // Verify data exists
@@ -162,7 +162,7 @@ async fn test_concurrent_database_usage() {
                 "test.event",
                 json!({"task": i})
             ).build();
-            queries::insert_event(db.pool(), &event).await.unwrap();
+            sinex_db::insert_event(db.pool(), &event).await.unwrap();
             
             // Simulate work
             tokio::time::sleep(Duration::from_millis(10)).await;

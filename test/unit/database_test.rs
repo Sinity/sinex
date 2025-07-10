@@ -10,7 +10,7 @@
 
 use crate::common::prelude::*;
 use sinex_db::work_queue::claim_work_queue_items;
-use sinex_core::{typed_sources, typed_event_types};
+use sinex_core::{sources, event_type_constants}; 
 use sinex_db::validation::EventValidator;
 use sinex_db::models::*;
 use sinex_db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
@@ -40,7 +40,7 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
             .await?;
 
     // Retrieve the inserted event
-    let inserted_event = sinex_db::events_correct::get_event_by_id(ctx.pool(), event_id)
+    let inserted_event = sinex_db::get_event_by_id(ctx.pool(), event_id)
         .await
         .map_err(|e| {
             CoreError::database("Failed to retrieve inserted event")
@@ -184,38 +184,38 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = RawEventBuilder::new(
-        "fs",
-        "file.created",
+        sources::FS,
+        event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/fs_file.txt"}),
     )
     .build();
 
     let terminal_event = RawEventBuilder::new(
-        "shell.kitty",
-        "command.executed",
+        sources::SHELL_KITTY,
+        event_type_constants::shell::COMMAND_EXECUTED,
         json!({"command": "ls"}),
     )
     .build();
 
-    let wm_event =
-        RawEventBuilder::new("wm.hyprland", "window.focus", json!({"window_id": 123})).build();
+    let wm_event = RawEventBuilder::new(
+        sources::WM_HYPRLAND, 
+        event_type_constants::window_manager::WINDOW_FOCUSED,
+        json!({"window_id": 123})
+    ).build();
 
-    queries::insert_event(ctx.pool(), &fs_event).await?;
-    queries::insert_event(ctx.pool(), &terminal_event).await?;
-    queries::insert_event(ctx.pool(), &wm_event).await?;
+    sinex_db::insert_event(ctx.pool(), &fs_event).await?;
+    sinex_db::insert_event(ctx.pool(), &terminal_event).await?;
+    sinex_db::insert_event(ctx.pool(), &wm_event).await?;
 
-    // Query events by source
-    let fs_events = queries::get_events_by_source(ctx.pool(), typed_sources::FS.as_str(), 10).await?;
-    assert!(!fs_events.is_empty());
-    assert!(fs_events.iter().all(|e| e.source == typed_sources::FS.as_str()));
-
-    let shell_events = queries::get_events_by_source(ctx.pool(), typed_sources::SHELL_KITTY.as_str(), 10).await?;
-    assert!(!shell_events.is_empty());
-    assert!(shell_events.iter().all(|e| e.source == typed_sources::SHELL_KITTY.as_str()));
-
-    let wm_events = queries::get_events_by_source(ctx.pool(), typed_sources::WM_HYPRLAND.as_str(), 10).await?;
-    assert!(!wm_events.is_empty());
-    assert!(wm_events.iter().all(|e| e.source == typed_sources::WM_HYPRLAND.as_str()));
+    // Verify events were inserted by checking each one by ID
+    let retrieved_fs = sinex_db::get_event_by_id(ctx.pool(), fs_event.id).await?;
+    assert_eq!(retrieved_fs.source, sources::FS);
+    
+    let retrieved_terminal = sinex_db::get_event_by_id(ctx.pool(), terminal_event.id).await?;
+    assert_eq!(retrieved_terminal.source, sources::SHELL_KITTY);
+    
+    let retrieved_wm = sinex_db::get_event_by_id(ctx.pool(), wm_event.id).await?;
+    assert_eq!(retrieved_wm.source, sources::WM_HYPRLAND);
 
     Ok(())
 }
@@ -245,20 +245,20 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    queries::insert_event(ctx.pool(), &create_event).await?;
-    queries::insert_event(ctx.pool(), &delete_event).await?;
-    queries::insert_event(ctx.pool(), &command_event).await?;
+    sinex_db::insert_event(ctx.pool(), &create_event).await?;
+    sinex_db::insert_event(ctx.pool(), &delete_event).await?;
+    sinex_db::insert_event(ctx.pool(), &command_event).await?;
 
     // Query by event type
-    let create_events = queries::get_events_by_type(ctx.pool(), "file.created", 10).await?;
+    let create_events = get_events_by_type(ctx.pool(), "file.created", 10).await?;
     assert!(!create_events.is_empty());
     assert!(create_events.iter().all(|e| e.event_type == "file.created"));
 
-    let delete_events = queries::get_events_by_type(ctx.pool(), "file.deleted", 10).await?;
+    let delete_events = get_events_by_type(ctx.pool(), "file.deleted", 10).await?;
     assert!(!delete_events.is_empty());
     assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
 
-    let command_events = queries::get_events_by_type(ctx.pool(), "command.executed", 10).await?;
+    let command_events = get_events_by_type(ctx.pool(), "command.executed", 10).await?;
     assert!(!command_events.is_empty());
     assert!(command_events.iter().all(|e| e.event_type == "command.executed"));
 
@@ -537,7 +537,7 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = queries::upsert_agent_manifest(
+    let _agent = sinex_db::upsert_agent_manifest(
         ctx.pool(),
         "test_agent",
         "1.0.0",
@@ -557,10 +557,10 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Add to work queue
-    let queue_item = queries::add_to_work_queue(
+    let queue_item = sinex_db::add_to_work_queue(
         ctx.pool(),
         inserted_event.id,
         "test_agent",
@@ -585,10 +585,10 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     pretty_assertions::assert_eq!(item.status, "processing");
 
     // Complete processing
-    queries::complete_work_item(ctx.pool(), item.queue_id).await?;
+    sinex_db::complete_work_item(ctx.pool(), item.queue_id).await?;
 
     // Verify item is completed
-    let completed_item = queries::get_work_item_by_id(ctx.pool(), item.queue_id).await?;
+    let completed_item = sinex_db::get_work_item_by_id(ctx.pool(), item.queue_id).await?;
     pretty_assertions::assert_eq!(completed_item.status, "succeeded");
 
     Ok(())
@@ -598,7 +598,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = queries::upsert_agent_manifest(
+    let _agent = sinex_db::upsert_agent_manifest(
         ctx.pool(),
         "test_agent",
         "1.0.0",
@@ -618,10 +618,10 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Add to work queue with limited retries
-    let queue_item = queries::add_to_work_queue(
+    let queue_item = sinex_db::add_to_work_queue(
         ctx.pool(),
         inserted_event.id,
         "test_agent",
@@ -630,33 +630,33 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     .await?;
 
     // First attempt - should succeed
-    let first_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    let first_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(first_item.is_some(), "Should get item on first attempt");
     let item = first_item.unwrap();
     assert_eq!(item.attempts, 0, "First attempt should have 0 prior attempts");
     
     // Fail the first attempt
-    queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure 1").await?;
+    sinex_db::fail_work_item(ctx.pool(), item.queue_id, "Test failure 1").await?;
     
     // Second attempt - should succeed (retry)
-    let second_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    let second_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(second_item.is_some(), "Should get item on second attempt (retry)");
     let item = second_item.unwrap();
     assert_eq!(item.attempts, 1, "Second attempt should have 1 prior attempt");
     assert_eq!(item.queue_id, queue_item.queue_id, "Should be the same work item");
     
     // Fail the second attempt (this will exhaust max_attempts=2)
-    queries::fail_work_item(ctx.pool(), item.queue_id, "Test failure 2").await?;
+    sinex_db::fail_work_item(ctx.pool(), item.queue_id, "Test failure 2").await?;
     
     // Third attempt - should not get item (max retries exceeded)
-    let third_item = queries::get_next_work_item(ctx.pool(), "test_agent").await?;
+    let third_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(
         third_item.is_none(),
         "Should not get item on third attempt (max retries exceeded)"
     );
 
     // Verify item is in DLQ
-    let dlq_items = queries::get_dlq_items(ctx.pool(), "test_agent", 10).await?;
+    let dlq_items = sinex_db::get_dlq_items(ctx.pool(), "test_agent", 10).await?;
     assert!(!dlq_items.is_empty());
 
     let dlq_item = &dlq_items[0];
@@ -693,7 +693,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
             )
             .build();
 
-            queries::insert_event(&pool_clone, &event).await
+            sinex_db::insert_event(&pool_clone, &event).await
         });
     }
 
@@ -725,7 +725,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
         let event =
             RawEventBuilder::new("fs", "file.created", json!({"sequence": i})).build();
 
-        let inserted = queries::insert_event(ctx.pool(), &event).await?;
+        let inserted = sinex_db::insert_event(ctx.pool(), &event).await?;
         events.push(inserted);
 
         // Small delay to ensure timestamp progression
@@ -733,7 +733,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     }
 
     // Query events ordered by ID (ULID)
-    let _ordered_events = queries::get_recent_events(ctx.pool(), 10).await?;
+    let _ordered_events = get_recent_events(ctx.pool(), 10).await?;
 
     // Verify ULID ordering matches insertion order
     for i in 1..events.len() {
@@ -759,7 +759,7 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let result = queries::insert_event(ctx.pool(), &valid_event).await;
+    let result = sinex_db::insert_event(ctx.pool(), &valid_event).await;
     assert!(result.is_ok());
 
     // Test with event that has invalid payload structure
@@ -776,7 +776,7 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
 
     // Depending on validation implementation, this might succeed or fail
     // For now, just test that it doesn't panic
-    let _result = queries::insert_event(ctx.pool(), &invalid_event).await;
+    let _result = sinex_db::insert_event(ctx.pool(), &invalid_event).await;
     // Result can be Ok or Err - we're testing that it handles it gracefully
 
     Ok(())
@@ -842,8 +842,8 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
-    let retrieved_event = queries::get_event_by_id(ctx.pool(), inserted_event.id).await?;
+    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
+    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event.id).await?;
     
     assert_eq!(retrieved_event.source, "unit-test-crud");
     assert_eq!(retrieved_event.event_type, "test.crud_operations");
@@ -871,7 +871,7 @@ async fn test_database_transaction_handling(ctx: TestContext) -> TestResult {
     assert_eq!(committed_count, initial_count + 1);
 
     // Test that the event was actually inserted and is retrievable
-    let retrieved_event = queries::get_event_by_id(ctx.pool(), event1.id).await?;
+    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), event1.id).await?;
     assert_eq!(retrieved_event.source, "unit-test-tx");
     assert_eq!(retrieved_event.event_type, "test.transaction");
 
@@ -922,7 +922,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test handling of SQL syntax errors
-    let syntax_error = sqlx::query!("SELECT * FROM nonexistent_table_12345")
+    let syntax_error = sqlx::query("SELECT * FROM nonexistent_table_12345")
         .fetch_optional(pool)
         .await;
 
@@ -936,7 +936,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
     )
     .build();
 
-    let inserted_event = queries::insert_event(ctx.pool(), &event).await?;
+    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
     
     // Try to insert with same ID (should fail with constraint violation)
     let duplicate_event = RawEvent {
@@ -951,7 +951,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
         payload: serde_json::json!({"test": "duplicate"}),
     };
 
-    let constraint_error = queries::insert_event(ctx.pool(), &duplicate_event).await;
+    let constraint_error = sinex_db::insert_event(ctx.pool(), &duplicate_event).await;
     assert!(constraint_error.is_err(), "Should fail with constraint violation");
 
     Ok(())

@@ -485,7 +485,7 @@ async fn test_entropy_distribution_in_practice(_ctx: TestContext) -> TestResult 
     let timestamp_collision_rate = 1.0 - (unique_timestamps.len() as f64 / sample_size as f64);
     
     println!("Unique timestamps: {}", unique_timestamps.len());
-    println!("Timestamp collision rate: {:.2%}", timestamp_collision_rate);
+    println!("Timestamp collision rate: {:.2}%", timestamp_collision_rate * 100.0);
     
     // Verify all ULIDs are unique despite potential timestamp collisions
     let unique_ulids: HashSet<_> = ulids.iter().collect();

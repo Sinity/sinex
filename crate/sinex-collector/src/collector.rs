@@ -2,7 +2,7 @@ use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
     unified_collector::{EventRegistry, EventRegistryBuilder, EventSource},
-    ConfigValue, EventSender, EventSourceContext, JsonValue, buffers,
+    ConfigValue, EventSender, EventSourceContext, JsonValue, buffers, sources,
 };
 use sinex_db::validation::EventValidator;
 use sinex_db::DbPool;
@@ -186,47 +186,47 @@ impl UnifiedCollector {
     async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
 
-        if self.needs_source("fs") {
+        if self.needs_source(sources::FS) {
             let handle = self.start_filesystem_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("shell.kitty") {
+        if self.needs_source(sources::SHELL_KITTY) {
             let handle = self.start_terminal_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("wm.hyprland") {
+        if self.needs_source(sources::WM_HYPRLAND) {
             let handle = self.start_window_manager_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("shell.atuin") {
+        if self.needs_source(sources::SHELL_ATUIN) {
             let handle = self.start_atuin_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("shell.history") {
+        if self.needs_source(sources::SHELL_HISTORY) {
             let handle = self.start_shell_history_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("shell.recording") {
+        if self.needs_source(sources::SHELL_RECORDING) {
             let handle = self.start_asciinema_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("shell.scrollback") {
+        if self.needs_source(sources::SHELL_SCROLLBACK) {
             let handle = self.start_scrollback_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("dbus") {
+        if self.needs_source(sources::DBUS) {
             let handle = self.start_dbus_source(event_tx.clone()).await?;
             handles.push(handle);
         }
 
-        if self.needs_source("clipboard") {
+        if self.needs_source(sources::CLIPBOARD) {
             match self.start_clipboard_source(event_tx.clone()).await {
                 Ok(handle) => handles.push(handle),
                 Err(e) => error!(
@@ -236,7 +236,7 @@ impl UnifiedCollector {
             }
         }
 
-        if self.needs_source("journald") {
+        if self.needs_source(sources::JOURNALD) {
             let handle = self.start_journal_source(event_tx.clone()).await?;
             handles.push(handle);
         }

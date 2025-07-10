@@ -671,7 +671,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
             }
 
             // Simulate database operations during init
-            match queries::crate::common::insert_event_with_validator(
+            match sinex_db::crate::common::insert_event_with_validator(
                 &pool_clone,
                 "init",
                 &format!("init.step_{}", step),

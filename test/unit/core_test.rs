@@ -10,7 +10,7 @@
 
 use crate::common::prelude::*;
 use sinex_core::{
-    event_type_constants, sources, typed_event_types, CoreError, 
+    sources, event_type_constants, CoreError, 
     Result as CoreResult, RawEventBuilder, unified_collector::EventRegistryBuilder,
     EventSource, EventSourceContext
 };
@@ -32,16 +32,13 @@ use std::io;
 async fn test_raw_event_builder_basic(_ctx: TestContext) -> TestResult {
     let event = RawEventBuilder::new(
         sources::FS,
-        typed_event_types::filesystem::FILE_CREATED.as_str(),
+        event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt"}),
     )
     .build();
 
     pretty_assertions::assert_eq!(event.source, sources::FS);
-    pretty_assertions::assert_eq!(
-        event.event_type,
-        typed_event_types::filesystem::FILE_CREATED.as_str()
-    );
+    pretty_assertions::assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
     pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
     assert!(!event.host.is_empty());
     assert!(event.id.to_string().len() == 26); // ULID length
@@ -60,19 +57,19 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
         RawEventBuilder::new(
             sources::FS,
-            typed_event_types::filesystem::FILE_CREATED.as_str(),
+            event_type_constants::filesystem::FILE_CREATED,
             json!({"path": "/test/file1.txt"}),
         )
         .build(),
         RawEventBuilder::new(
             sources::SHELL_KITTY,
-            typed_event_types::shell::COMMAND_EXECUTED.as_str(),
+            event_type_constants::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
         )
         .build(),
         RawEventBuilder::new(
             sources::SINEX,
-            typed_event_types::sinex::AGENT_HEARTBEAT.as_str(),
+            event_type_constants::sinex::AGENT_HEARTBEAT,
             json!({"status": "running"}),
         )
         .build(),
@@ -193,14 +190,14 @@ async fn test_raw_event_builder_with_ingestor_version(_ctx: TestContext) -> Test
     
     let event = RawEventBuilder::new(
         sources::WM_HYPRLAND,
-        event_type_constants::wm::WINDOW_FOCUSED,
+        event_type_constants::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 42, "title": "Test Window"}),
     )
     .with_ingestor_version(ingestor_version)
     .build();
 
     pretty_assertions::assert_eq!(event.source, sources::WM_HYPRLAND);
-    pretty_assertions::assert_eq!(event.event_type, event_type_constants::wm::WINDOW_FOCUSED);
+    pretty_assertions::assert_eq!(event.event_type, event_type_constants::window_manager::WINDOW_FOCUSED);
     pretty_assertions::assert_eq!(event.ingestor_version, Some(ingestor_version.to_string()));
     pretty_assertions::assert_eq!(event.payload["window_id"], 42);
     pretty_assertions::assert_eq!(event.payload["title"], "Test Window");
