@@ -150,6 +150,81 @@ impl<T> ValidationChain<T> {
     }
 }
 
+// String slice (&str) validations - mirrors String implementation for compatibility
+impl ValidationChain<&str> {
+    /// Validate that the string is not empty
+    pub fn not_empty(mut self) -> Self {
+        if self.value.is_empty() {
+            self.errors.push(ValidationError::InvalidValue {
+                field: self.field_name.clone(),
+                message: "cannot be empty".to_string(),
+            });
+        }
+        self
+    }
+
+    /// Validate minimum string length
+    pub fn min_length(mut self, min: usize) -> Self {
+        if self.value.len() < min {
+            self.errors.push(ValidationError::InvalidValue {
+                field: self.field_name.clone(),
+                message: format!("must be at least {} characters long", min),
+            });
+        }
+        self
+    }
+
+    /// Validate maximum string length
+    pub fn max_length(mut self, max: usize) -> Self {
+        if self.value.len() > max {
+            self.errors.push(ValidationError::InvalidValue {
+                field: self.field_name.clone(),
+                message: format!("must be at most {} characters long", max),
+            });
+        }
+        self
+    }
+
+    /// Validate string matches a regex pattern
+    pub fn matches_regex(mut self, pattern: &Regex) -> Self {
+        if !pattern.is_match(self.value) {
+            self.errors.push(ValidationError::InvalidValue {
+                field: self.field_name.clone(),
+                message: format!("does not match pattern: {}", pattern.as_str()),
+            });
+        }
+        self
+    }
+
+    /// Validate string is safe for use as a file path (no directory traversal)
+    pub fn is_path_safe(mut self) -> Self {
+        match crate::validation::validate_path(self.value) {
+            Ok(_) => {}
+            Err(e) => {
+                self.errors.push(ValidationError::InvalidValue {
+                    field: self.field_name.clone(),
+                    message: format!("path validation failed: {}", e),
+                });
+            }
+        }
+        self
+    }
+
+    /// Validate that string is a valid URL
+    pub fn is_valid_url(mut self) -> Self {
+        match Url::parse(self.value) {
+            Ok(_) => {}
+            Err(e) => {
+                self.errors.push(ValidationError::InvalidValue {
+                    field: self.field_name.clone(),
+                    message: format!("invalid URL: {}", e),
+                });
+            }
+        }
+        self
+    }
+}
+
 // Numeric validations for types that can be compared
 impl<T> ValidationChain<T>
 where
@@ -189,6 +264,11 @@ where
             });
         }
         self
+    }
+
+    /// Alias for min() for compatibility
+    pub fn min_value(self, min: T) -> Self {
+        self.min(min)
     }
 }
 
@@ -291,6 +371,18 @@ impl ValidationChain<JsonValue> {
                     message: "JSON structure has excessive expansion ratio".to_string(),
                 });
             }
+        }
+        self
+    }
+
+    /// Validate JSON has a specific type
+    pub fn json_type(mut self, expected: JsonType) -> Self {
+        if !expected.matches(&self.value) {
+            self.errors.push(ValidationError::InvalidType {
+                field: self.field_name.clone(),
+                expected: expected.to_string(),
+                actual: json_type_name(&self.value),
+            });
         }
         self
     }

@@ -432,6 +432,23 @@ impl ComponentHeartbeat {
         }
     }
 
+    /// Simple health status determination for testing (using default conditions)
+    pub fn determine_health_status(
+        memory_usage_mb: u32,
+        cpu_usage_percent: f32,
+        errors_last_hour: u32,
+    ) -> HealthStatus {
+        let conditions = HealthCheckConditions::default();
+        Self::determine_health_status_with_conditions(
+            memory_usage_mb,
+            cpu_usage_percent,
+            errors_last_hour,
+            60, // Default uptime
+            &conditions,
+        )
+        .unwrap_or(HealthStatus::Failed)
+    }
+
     /// Get latest heartbeat for a specific component
     pub async fn get_latest_for_component(
         pool: DbPoolRef<'_>,

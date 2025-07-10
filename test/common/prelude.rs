@@ -25,7 +25,7 @@
 // ===== Standard Library =====
 pub use std::collections::{HashMap, HashSet};
 pub use std::fmt::Debug;
-pub use std::path::{Path, PathBuf};
+// pub use std::path::PathBuf; // Currently unused
 pub use std::str::FromStr;
 pub use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -49,18 +49,18 @@ pub use sinex_core::{
 };
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_db::{
-    prelude::{AgentManifest, QueueStatus, WorkQueueItem},
-    queries, run_migrations, DbPool, RawEvent,
+    prelude::{WorkQueueItem}, // AgentManifest, QueueStatus currently unused
+    run_migrations, DbPool, RawEvent,
 };
 pub use sinex_ulid::Ulid;
 // ===== Async Runtime =====
-pub use tokio::sync::{mpsc, Barrier};
-pub use tokio::time::{interval, sleep, timeout};
+pub use tokio::sync::mpsc;
+pub use tokio::time::timeout;
 // ===== Database =====
 // ===== Testing Utilities =====
 pub use async_trait::async_trait;
 pub use futures::future::join_all;
-pub use tempfile::{NamedTempFile, TempDir};
+pub use tempfile::TempDir;
 // ===== Test Infrastructure =====
 // Common modules
 pub use crate::common::{database_helpers, event_sources, events};
@@ -71,7 +71,8 @@ pub use crate::common::event_builders::EventBuilder;
 // Database helpers
 // NEW: Unified database access
 // pub use crate::common::create_test_db_pool;
-pub use crate::common::database::{CleanupStrategy, TestPool, TestPoolExt};
+// Database pool access
+pub use crate::common::database_pool::acquire_test_database;
 pub use crate::common::database_helpers::{
     create_test_event,
     // create_test_agent, purge_old_work_queue_items - available but unused currently
@@ -83,17 +84,20 @@ pub use sinex_test_macros::sinex_test;
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
 pub use crate::common::timing_optimization::wait_helpers::{
-    wait_for_condition_or_timeout, wait_for_filtered_event_count, wait_for_work_queue_count,
+    wait_for_filtered_event_count, wait_for_work_queue_count,
     wait_for_work_queue_status_count,
 };
 // ===== Common Functions =====
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
-pub use sinex_db::queries::{
-    add_to_work_queue, calculate_queue_depth_metrics, claim_work_queue_items,
-    complete_work_queue_item, fail_work_queue_item, insert_raw_event,
+pub use sinex_db::{
+    work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item},
+    events::get_event_by_id,
+    metrics_queries::calculate_queue_depth_metrics,
 };
+// Test helper functions from common/mod.rs
+pub use crate::common::{get_events_by_type, get_events_by_source, get_recent_events, get_events_in_time_range};
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_database_state, assert_eq_with_context,

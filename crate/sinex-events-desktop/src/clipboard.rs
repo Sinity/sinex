@@ -5,12 +5,11 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, error, info};
 
-use sinex_annex::{AnnexConfig, BlobManager, BlobMetadata, GitAnnex};
+use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core::{
     sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext,
     EventType, JsonValue, Result, Timestamp, ErrorContext, CoreError,
 };
-use sinex_db::DbPool;
 
 // ============================================================================
 // Event Payloads
@@ -144,8 +143,7 @@ pub struct ClipboardMonitor {
     last_clipboard: Option<String>,
     last_primary: Option<String>,
     clipboard_history: Vec<ClipboardHistoryEntry>,
-    git_annex: Option<GitAnnex>,
-    db_pool: Option<DbPool>,
+    blob_manager: Option<BlobManager>,
 }
 
 #[derive(Clone)]
@@ -204,47 +202,89 @@ impl EventSource for ClipboardMonitor {
             wl_paste_available, xclip_available
         );
 
-        // Initialize git-annex if configured
+        // Initialize BlobManager if configured with both annex path and database
         let annex_repo_path = ctx
             .annex_repo_path
             .clone()
             .or(config.annex_repo_path.clone());
-        let git_annex = if let Some(ref repo_path) = annex_repo_path {
-            let path = std::path::PathBuf::from(repo_path);
+        
+        let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
+            (Some(repo_path), Some(db_pool)) => {
+                let path = std::path::PathBuf::from(repo_path);
 
-            // Initialize git-annex repository if it doesn't exist
-            if !path.join(".git").exists() {
-                GitAnnex::init(&path, Some("sinex-clipboard-annex"))
-                    .await
-                    .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
-                        .with_operation("initialize_clipboard_monitor")
-                        .with_context("repo_path", path.display().to_string())
-                        .with_context("repo_name", "sinex-clipboard-annex")
-                        .build())?;
+                // Initialize git-annex repository if it doesn't exist
+                if !path.join(".git").exists() {
+                    info!("Initializing git-annex repository at {:?}", path);
+                    tokio::fs::create_dir_all(&path)
+                        .await
+                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to create directory: {}", e)))
+                            .with_operation("initialize_clipboard_monitor")
+                            .with_context("repo_path", path.display().to_string())
+                            .build())?;
+
+                    // Initialize git repository
+                    let output = Command::new("git")
+                        .arg("init")
+                        .current_dir(&path)
+                        .output()
+                        .await
+                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to run git init: {}", e)))
+                            .with_operation("initialize_clipboard_monitor")
+                            .with_context("repo_path", path.display().to_string())
+                            .build())?;
+
+                    if !output.status.success() {
+                        return Err(ErrorContext::new(CoreError::Configuration(format!("git init failed: {}", String::from_utf8_lossy(&output.stderr))))
+                            .with_operation("initialize_clipboard_monitor")
+                            .with_context("repo_path", path.display().to_string())
+                            .build());
+                    }
+
+                    // Initialize git-annex
+                    let output = Command::new("git-annex")
+                        .arg("init")
+                        .arg("sinex-clipboard-annex")
+                        .current_dir(&path)
+                        .output()
+                        .await
+                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to run git-annex init: {}", e)))
+                            .with_operation("initialize_clipboard_monitor")
+                            .with_context("repo_path", path.display().to_string())
+                            .build())?;
+
+                    if !output.status.success() {
+                        return Err(ErrorContext::new(CoreError::Configuration(format!("git-annex init failed: {}", String::from_utf8_lossy(&output.stderr))))
+                            .with_operation("initialize_clipboard_monitor")
+                            .with_context("repo_path", path.display().to_string())
+                            .build());
+                    }
+                }
+
+                let annex_config = AnnexConfig {
+                    repo_path: path.clone(),
+                    num_copies: Some(2),
+                    large_files: None,
+                };
+
+                match BlobManager::new(annex_config, db_pool.clone()) {
+                    Ok(manager) => Some(manager),
+                    Err(e) => {
+                        error!("Failed to create BlobManager: {}. Large clipboard content will not be stored.", e);
+                        None
+                    }
+                }
             }
-
-            let annex_config = AnnexConfig {
-                repo_path: path.clone(),
-                num_copies: Some(2),
-                large_files: None,
-            };
-
-            let git_annex = GitAnnex::new(annex_config).map_err(|e| 
-                ErrorContext::new(CoreError::Configuration(format!("Failed to create GitAnnex: {}", e)))
-                    .with_operation("initialize_clipboard_monitor")
-                    .with_context("repo_path", path.display().to_string())
-                    .build()
-            )?;
-
-            Some(git_annex)
-        } else {
-            None
+            _ => {
+                if annex_repo_path.is_some() && ctx.db_pool.is_none() {
+                    info!("Git-annex path configured but no database connection available. Large clipboard content will not be stored.");
+                }
+                None
+            }
         };
 
         // Create instance and set additional fields
         let mut instance = Self::new(config).await?;
-        instance.git_annex = git_annex;
-        instance.db_pool = ctx.db_pool;
+        instance.blob_manager = blob_manager;
         Ok(instance)
     }
 
@@ -282,8 +322,7 @@ impl ClipboardMonitor {
             last_clipboard: None,
             last_primary: None,
             clipboard_history: Vec::new(),
-            git_annex: None,
-            db_pool: None,
+            blob_manager: None,
         })
     }
 
@@ -612,84 +651,35 @@ impl ClipboardMonitor {
         content: &str,
         content_hash: &str,
     ) -> Result<(String, Option<String>)> {
-        // Check if we have git-annex configured
-        let git_annex = self.git_annex.as_ref().ok_or_else(|| 
-            ErrorContext::new(CoreError::Configuration("Git-annex not configured for large content storage".to_string()))
+        // Check if we have BlobManager configured
+        let blob_manager = self.blob_manager.as_ref().ok_or_else(|| 
+            ErrorContext::new(CoreError::Configuration("BlobManager not configured for large content storage".to_string()))
                 .with_operation("store_large_content")
                 .with_context("content_size", content.len().to_string())
                 .with_context("content_hash", content_hash)
                 .build()
         )?;
 
-        // Create a temporary file with the content
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(format!("clipboard_{}.tmp", content_hash));
-
-        tokio::fs::write(&temp_file, content.as_bytes())
-            .await
-            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to write temporary file: {}", e)))
+        // Use BlobManager to ingest content directly from bytes
+        let metadata = blob_manager.ingest_from_bytes(
+            content.as_bytes(),
+            "clipboard_content",
+            "text/plain"
+        ).await.map_err(|e| 
+            ErrorContext::new(CoreError::Io(format!("Failed to ingest clipboard content: {}", e)))
                 .with_operation("store_large_content")
-                .with_context("temp_file", temp_file.display().to_string())
                 .with_context("content_size", content.len().to_string())
-                .build())?;
-
-        // Add to git-annex
-        let annex_key = git_annex.add_file(&temp_file).await.map_err(|e| 
-            ErrorContext::new(CoreError::Io(format!("Failed to add file to git-annex: {}", e)))
-                .with_operation("store_large_content")
-                .with_context("temp_file", temp_file.display().to_string())
                 .with_context("content_hash", content_hash)
                 .build()
         )?;
 
-        // Clean up temp file (git-annex has moved it)
-        let _ = tokio::fs::remove_file(&temp_file).await;
+        debug!(
+            "Stored clipboard content via BlobManager: {} ({})",
+            metadata.blob_id,
+            metadata.annex_key
+        );
 
-        // Store blob metadata if we have database access
-        let blob_id = if let Some(ref db_pool) = self.db_pool {
-            let annex_config = AnnexConfig {
-                repo_path: git_annex.repo_path().to_path_buf(),
-                num_copies: None,
-                large_files: None,
-            };
-            let blob_manager = BlobManager::new(annex_config, db_pool.clone()).map_err(|e| {
-                sinex_core::CoreError::processing_failed()
-                    .with_operation("create_blob_manager")
-                    .with_source(e)
-                    .build()
-            })?;
-
-            let blob_metadata = BlobMetadata {
-                blob_id: sinex_ulid::Ulid::new(),
-                annex_key: annex_key.key.clone(),
-                original_filename: "clipboard_content".to_string(),
-                size_bytes: content.len() as i64,
-                mime_type: Some("text/plain".to_string()),
-                checksum_sha256: annex_key.hash.clone(),
-                checksum_blake3: Some(content_hash.to_string()),
-                storage_backend: "git-annex".to_string(),
-                verification_status: Some("verified".to_string()),
-            };
-
-            match blob_manager.insert_blob(&blob_metadata).await {
-                Ok(_) => {
-                    debug!(
-                        "Stored blob metadata for clipboard content: {}",
-                        blob_metadata.blob_id
-                    );
-                    Some(blob_metadata.blob_id.to_string())
-                }
-                Err(e) => {
-                    error!("Failed to store blob metadata: {}", e);
-                    None
-                }
-            }
-        } else {
-            debug!("No database connection available, skipping blob metadata storage");
-            None
-        };
-
-        Ok((annex_key.key, blob_id))
+        Ok((metadata.annex_key, Some(metadata.blob_id.to_string())))
     }
 
     // Removed - now using EventSourceBase::create_event

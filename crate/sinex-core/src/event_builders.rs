@@ -4,7 +4,7 @@
 //! Based on proven patterns from the test infrastructure, these builders eliminate
 //! manual RawEvent construction and ensure consistency across all event sources.
 
-use crate::{RawEventBuilder, JsonValue};
+use crate::{RawEventBuilder, JsonValue, event_type_constants};
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::collections::HashMap;
@@ -73,10 +73,10 @@ pub enum FileOperation {
 impl FileOperation {
     fn as_event_type(&self) -> &'static str {
         match self {
-            FileOperation::Create => "file.created",
-            FileOperation::Modify => "file.modified",
-            FileOperation::Delete => "file.deleted",
-            FileOperation::Move => "file.moved",
+            FileOperation::Create => event_type_constants::filesystem::FILE_CREATED,
+            FileOperation::Modify => event_type_constants::filesystem::FILE_MODIFIED,
+            FileOperation::Delete => event_type_constants::filesystem::FILE_DELETED,
+            FileOperation::Move => event_type_constants::filesystem::FILE_MOVED,
         }
     }
 }
@@ -755,7 +755,7 @@ mod tests {
             .build();
 
         assert_eq!(event.source, sources::FS);
-        assert_eq!(event.event_type, "file.created");
+        assert_eq!(event.event_type, event_type_constants::filesystem::FILE_CREATED);
         assert_eq!(event.payload["path"], "/test/file.txt");
         assert_eq!(event.payload["size"], 1024);
     }

@@ -66,3 +66,6 @@ rand = "0.8"
 # For file watcher abstraction
 notify = "6.0"
 
+[dev-dependencies]
+tempfile = { workspace = true }
+

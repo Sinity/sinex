@@ -124,6 +124,115 @@ impl BlobManager {
         Ok(blob_metadata)
     }
 
+    /// Ingest content from bytes (for in-memory content like clipboard)
+    pub async fn ingest_from_bytes(
+        &self,
+        content: &[u8],
+        filename: &str,
+        content_type: &str,
+    ) -> Result<BlobMetadata> {
+        info!("Ingesting {} bytes as {}", content.len(), filename);
+        let start = Instant::now();
+
+        // Compute BLAKE3 hash for deduplication
+        let blake3_hash = blake3::hash(content).to_hex().to_string();
+        debug!("Computed BLAKE3 hash: {}", blake3_hash);
+
+        // Check if blob already exists
+        if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
+            info!(
+                "Content already exists in blob store with ID: {}",
+                existing.blob_id
+            );
+
+            // Update original_filenames array if this is a new filename
+            self.add_original_filename(&existing.blob_id, filename).await?;
+
+            // Emit deduplication metric
+            self.emit_operation_metric(
+                "ingest",
+                "deduplicated",
+                existing.size_bytes,
+                start.elapsed().as_millis() as i64,
+            )
+            .await?;
+
+            return Ok(existing);
+        }
+
+        // Create a temporary file with the content
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("sinex_blob_{}.tmp", &blake3_hash[..8]));
+
+        tokio::fs::write(&temp_file, content)
+            .await
+            .context("Failed to write temporary file")?;
+
+        // Add to git-annex
+        let annex_key = self.annex.add_file(&temp_file).await?;
+        info!("Added to git-annex with key: {}", annex_key.key);
+
+        // Clean up temp file (git-annex has moved it)
+        let _ = tokio::fs::remove_file(&temp_file).await;
+
+        // Create blob record in database
+        let blob_id = Ulid::new();
+        let size_bytes = content.len() as i64;
+
+        let blob_metadata = BlobMetadata {
+            blob_id,
+            annex_key: annex_key.key.clone(),
+            original_filename: filename.to_string(),
+            size_bytes,
+            mime_type: Some(content_type.to_string()),
+            checksum_sha256: annex_key.hash.clone(),
+            checksum_blake3: Some(blake3_hash),
+            storage_backend: "git-annex".to_string(),
+            verification_status: Some("verified".to_string()),
+        };
+
+        self.insert_blob(&blob_metadata).await?;
+        info!("Successfully ingested blob: {}", blob_id);
+
+        // Emit ingest success metric
+        self.emit_operation_metric(
+            "ingest",
+            "success",
+            size_bytes,
+            start.elapsed().as_millis() as i64,
+        )
+        .await?;
+
+        Ok(blob_metadata)
+    }
+
+    /// Retrieve blob content as bytes
+    pub async fn retrieve_content(&self, annex_key: &str) -> Result<Vec<u8>> {
+        let start = Instant::now();
+
+        // Ensure content is available locally
+        self.annex.get_content(annex_key).await?;
+
+        // Find the actual file path
+        let path = self.find_symlink_path(annex_key).await?;
+        
+        // Read the content
+        let content = tokio::fs::read(&path)
+            .await
+            .context("Failed to read blob content")?;
+
+        // Emit retrieval metric
+        self.emit_operation_metric(
+            "retrieve",
+            "success",
+            content.len() as i64,
+            start.elapsed().as_millis() as i64,
+        )
+        .await?;
+
+        Ok(content)
+    }
+
     /// Retrieve a blob's content path
     pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<PathBuf> {
         let start = Instant::now();

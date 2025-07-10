@@ -9,7 +9,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Expr, ItemFn, Lit, Meta, Stmt, visit::Visit};
+use syn::{parse_macro_input, Expr, ItemFn, Lit, Meta, visit::Visit};
 
 /// Parse timeout attribute from macro arguments
 /// Supports `timeout = 30` syntax
@@ -69,7 +69,7 @@ fn has_proptest_usage(block: &syn::Block) -> bool {
 
 /// Transform proptest! calls to work with async runtime
 fn transform_proptest_calls(block: &syn::Block) -> syn::Block {
-    use syn::{parse_quote, Block};
+    use syn::parse_quote;
     
     // For now, we'll wrap the entire block in a runtime bridge
     // In a more sophisticated implementation, we'd traverse and transform specific proptest! calls

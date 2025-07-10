@@ -303,7 +303,7 @@ mod correctness {
         let ulid_str = ulid.to_string();
 
         pretty_assertions::assert_eq!(ulid_str.len(), 26, "ULID must be 26 characters");
-        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c));
+        assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)),
             "ULID must only contain valid Crockford Base32 characters");
 
         // Verify excluded characters
@@ -512,7 +512,6 @@ mod properties {
     use chrono::{Utc, Duration as ChronoDuration};
 
     proptest! {
-        #[sinex_test]
         fn string_roundtrip_property(s in "[0-9A-Z]{26}") {
             if let Ok(ulid) = Ulid::from_str(&s) {
                 let s2 = ulid.to_string();
@@ -521,7 +520,6 @@ mod properties {
             }
         }
 
-        #[sinex_test]
         fn ordering_matches_time_property(a: u64, b: u64) {
             let time_a = Utc::now() + ChronoDuration::milliseconds(a as i64 % 86400000);
             let time_b = Utc::now() + ChronoDuration::milliseconds(b as i64 % 86400000);
@@ -532,7 +530,6 @@ mod properties {
             prop_assert_eq!(ulid_a.cmp(&ulid_b), time_a.cmp(&time_b));
         }
 
-        #[sinex_test]
         fn bytes_roundtrip_property(bytes: [u8; 16]) {
             if let Ok(ulid) = Ulid::from_bytes(bytes) {
                 let bytes2 = ulid.to_bytes();
@@ -540,7 +537,6 @@ mod properties {
             }
         }
 
-        #[sinex_test]
         fn uuid_roundtrip_preserves_all_data(bytes: [u8; 16]) {
             if let Ok(original) = Ulid::from_bytes(bytes) {
                 let uuid = original.to_uuid();
@@ -552,6 +548,5 @@ mod properties {
                 prop_assert_eq!(original.timestamp(), restored.timestamp());
             }
         }
-        Ok(())
     }
 }

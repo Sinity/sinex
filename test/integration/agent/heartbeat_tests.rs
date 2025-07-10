@@ -35,7 +35,7 @@ async fn test_agent_heartbeat_generation(ctx: TestContext) -> TestResult {
         heartbeat_payload,
     );
     
-    let _inserted_event = queries::insert_event(ctx.pool(), &heartbeat_event).await.unwrap();
+    let _inserted_event = sinex_db::events::insert_event_with_validator(ctx.pool(), &heartbeat_event, None).await.unwrap();
 
     // Update agent's last_heartbeat_ts
     sqlx::query(

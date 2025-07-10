@@ -95,6 +95,8 @@ pub use wait_helpers::{
     wait_for_condition_or_timeout, BackoffHelper
 };
 
+// Re-export constants modules - note: modules are defined later in this file
+
 // Common type aliases for event handling (defined after RawEvent struct)
 
 // Common type aliases for time handling
@@ -216,6 +218,7 @@ impl RawEvent {
 
 /// Builder for creating RawEvent instances
 pub struct RawEventBuilder {
+    id: Option<Ulid>,
     source: String,
     event_type: String,
     payload: JsonValue,
@@ -232,6 +235,7 @@ impl RawEventBuilder {
         payload: JsonValue,
     ) -> Self {
         Self {
+            id: None,
             source: source.into(),
             event_type: event_type.into(),
             payload,
@@ -244,6 +248,17 @@ impl RawEventBuilder {
 
     pub fn with_orig_timestamp(mut self, ts: Timestamp) -> Self {
         self.ts_orig = Some(ts);
+        self
+    }
+
+    /// Alias for with_orig_timestamp for compatibility
+    pub fn with_timestamp(self, ts: Timestamp) -> Self {
+        self.with_orig_timestamp(ts)
+    }
+
+    /// Set a specific ID for the event (useful for testing)
+    pub fn with_id(mut self, id: Ulid) -> Self {
+        self.id = Some(id);
         self
     }
 
@@ -263,7 +278,7 @@ impl RawEventBuilder {
     }
 
     pub fn build(self) -> RawEvent {
-        let id = Ulid::new();
+        let id = self.id.unwrap_or_else(Ulid::new);
         let hostname = self
             .host
             .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());

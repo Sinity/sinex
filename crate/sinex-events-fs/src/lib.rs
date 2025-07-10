@@ -1,4 +1,6 @@
 pub mod filesystem;
+pub mod typed_monitor;
+pub mod typed_adapter;
 
 // Re-export filesystem event types
 pub use filesystem::{
@@ -6,6 +8,10 @@ pub use filesystem::{
     FileDeleted, FileDeletedPayload, FileModified, FileModifiedPayload, FileMoved, FileMovedPayload,
     FilesystemMonitor, FilesystemWatcher, FilesystemConfig,
 };
+
+// Re-export typed monitor and adapter
+pub use typed_monitor::TypedFilesystemMonitor;
+pub use typed_adapter::TypedFilesystemAdapter;
 
 use sinex_core::register_events;
 

@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use std::process::Command;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, EventSender, CoreError};
+use sinex_collector::config::CollectorConfig;
+use tempfile::TempDir;
 use async_trait::async_trait;
 
 // =============================================================================
@@ -28,11 +30,11 @@ use async_trait::async_trait;
 fn create_comprehensive_config() -> CollectorConfig {
     CollectorConfig {
         enabled_events: vec![
-            "filesystem.file.created".to_string(),
-            "filesystem.file.modified".to_string(),
-            "terminal.command.executed".to_string(),
-            "hyprland.window.focus".to_string(),
-            "clipboard.content.changed".to_string(),
+            "file.created".to_string(),
+            "file.modified".to_string(),
+            "command.executed".to_string(),
+            "window.focused".to_string(),
+            "copied".to_string(),
         ],
         annex_repo_path: Some("/tmp/test-annex".to_string()),
         ..Default::default()

@@ -455,7 +455,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
                     tokio::time::sleep(tokio::time::Duration::from_millis(time_gap_seconds * 100)).await;
                 }
 
-                let event = sinex_db::queries::insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     pool,
                     "property.ulid_ordering",
                     "ordering_test",
@@ -530,7 +530,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             let mut batch1_ulids = Vec::new();
 
             for i in 0..batch1_size {
-                let event = sinex_db::queries::insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     pool,
                     &source_name,
                     "batch1_event",
@@ -559,7 +559,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             let mut batch2_ulids = Vec::new();
 
             for i in 0..batch2_size {
-                let event = sinex_db::queries::insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     pool,
                     &source_name,
                     "batch2_event",
@@ -762,7 +762,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
             // Create relationships
             for i in 0..num_relationships {
                 // Insert event with ULID
-                let event = sinex_db::queries::insert_raw_event(
+                let event = crate::common::insert_event_with_validator(
                     pool,
                     "property.fk_test",
                     "foreign_key_test",

@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod nixos_config;
 pub mod observability;
 pub mod recovery;
+pub mod typed_collector;
 
 pub use agent::*;
 pub use collector::*;
