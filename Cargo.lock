@@ -3105,6 +3105,7 @@ dependencies = [
  "sinex-events-system",
  "sinex-events-terminal",
  "sinex-preflight",
+ "sinex-services",
  "sinex-test-macros",
  "sinex-ulid",
  "sinex-worker",
@@ -3242,6 +3243,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-events",
+ "sinex-macros",
  "sinex-ulid",
  "sqlx",
  "tempfile",
@@ -3449,6 +3451,7 @@ dependencies = [
  "byteorder",
  "chrono",
  "clap",
+ "futures",
  "hyper 1.6.0",
  "hyper-util",
  "serde",
@@ -3458,6 +3461,7 @@ dependencies = [
  "sinex-db",
  "sinex-services",
  "sinex-ulid",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tower 0.5.2",
@@ -3479,6 +3483,15 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "sinex-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -3537,6 +3550,7 @@ dependencies = [
  "sinex-annex",
  "sinex-core",
  "sinex-db",
+ "sinex-test-macros",
  "sinex-ulid",
  "sqlx",
  "thiserror 1.0.69",

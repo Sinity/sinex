@@ -20,6 +20,7 @@ members = [
     "crate/sinex-health-aggregator",
     "crate/sinex-preflight",
     "crate/sinex-test-macros",
+    "crate/sinex-macros",
     "crate/sinex-services",
     "crate/sinex-config",
     "crate/sinex-host",

@@ -49,6 +49,7 @@ pub use config_helpers::{
 pub use constants::{timeouts, limits, buffers, retry, filesystem};
 pub use directory_manager::{DirectoryManager, DirectoryConfig};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use sinex_macros::with_context;
 pub use sinex_events::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
 // Re-export strongly typed events from sinex-events crate
 pub use sinex_events::{

@@ -361,7 +361,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "screenshot".to_string(),
+        artifact_type: "media".to_string(),
         title: "Screenshot".to_string(),
         mime_type: Some("image/png".to_string()),
         size_bytes: Some(1024),
@@ -375,7 +375,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     let artifact = create_artifact(ctx.pool(), input).await?;
 
     assert_eq!(artifact.created_from_event_id, Some(event_id));
-    assert_eq!(artifact.artifact_type, "screenshot");
+    assert_eq!(artifact.artifact_type, "media");
     assert_eq!(artifact.mime_type, Some("image/png".to_string()));
     assert_eq!(artifact.size_bytes, Some(1024));
     assert_eq!(artifact.original_path, Some("/artifacts/screenshot_123.png".to_string()));
@@ -393,7 +393,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "log_file".to_string(),
+        artifact_type: "file".to_string(),
         title: "Log File".to_string(),
         mime_type: Some("text/plain".to_string()),
         size_bytes: Some(2048),
@@ -412,7 +412,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     assert!(retrieved.is_some());
     let artifact = retrieved.unwrap();
     assert_eq!(artifact.artifact_id, created_artifact.artifact_id);
-    assert_eq!(artifact.artifact_type, "log_file");
+    assert_eq!(artifact.artifact_type, "file");
     assert_eq!(artifact.mime_type, Some("text/plain".to_string()));
     assert_eq!(artifact.size_bytes, Some(2048));
     assert_eq!(artifact.metadata["lines"], 150);
@@ -430,7 +430,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
     let inputs = vec![
         CreateArtifactInput {
             created_from_event_id: Some(event_id),
-            artifact_type: "screenshot".to_string(),
+            artifact_type: "media".to_string(),
             title: "Screenshot".to_string(),
             source_url: None,
             checksum: None,
@@ -442,7 +442,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
         },
         CreateArtifactInput {
             created_from_event_id: Some(event_id),
-            artifact_type: "video".to_string(),
+            artifact_type: "media".to_string(),
             title: "Video Recording".to_string(),
             source_url: None,
             checksum: None,
@@ -473,8 +473,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
 
     // Check artifact types
     let types: Vec<String> = artifacts.iter().map(|a| a.artifact_type.clone()).collect();
-    assert!(types.contains(&"screenshot".to_string()));
-    assert!(types.contains(&"video".to_string()));
+    assert!(types.contains(&"media".to_string()));
 
     Ok(())
 }
@@ -487,7 +486,7 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
     
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
-        artifact_type: "temp_file".to_string(),
+        artifact_type: "file".to_string(),
         title: "Temp File".to_string(),
         source_url: None,
         checksum: None,
@@ -554,7 +553,7 @@ async fn test_create_knowledge_graph_relationship(ctx: TestContext) -> TestResul
         entity_type: "project".to_string(),
         name: "Sinex Development".to_string(),
         metadata: Some(json!({"status": "active"})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("sinex.development".to_string()),
         aliases: None,
         description: None,
     };
@@ -588,26 +587,26 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
     // Create entities of different types
     let inputs = vec![
         CreateEntityInput {
-            entity_type: "file".to_string(),
+            entity_type: "concept".to_string(),
             name: "document.txt".to_string(),
             metadata: Some(json!({"size": 1024})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("document.txt".to_string()),
         aliases: None,
         description: None,
         },
         CreateEntityInput {
-            entity_type: "file".to_string(),
+            entity_type: "concept".to_string(),
             name: "image.png".to_string(),
             metadata: Some(json!({"size": 2048})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("image.png".to_string()),
         aliases: None,
         description: None,
         },
         CreateEntityInput {
-            entity_type: "process".to_string(),
+            entity_type: "tool".to_string(),
             name: "editor".to_string(),
             metadata: Some(json!({"pid": 1234})),
-            canonical_name: Some("jane.smith".to_string()),
+            canonical_name: Some("editor".to_string()),
         aliases: None,
         description: None,
         },
@@ -639,20 +638,20 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
 async fn test_query_relationships(ctx: TestContext) -> TestResult {
     // Create entities and relationships
     let user_input = CreateEntityInput {
-        entity_type: "user".to_string(),
+        entity_type: "person".to_string(),
         name: "Alice".to_string(),
         metadata: Some(json!({})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("alice".to_string()),
         aliases: None,
         description: None,
     };
     let user = create_entity(ctx.pool(), user_input).await?;
 
     let file_input = CreateEntityInput {
-        entity_type: "file".to_string(),
+        entity_type: "concept".to_string(),
         name: "report.pdf".to_string(),
         metadata: Some(json!({})),
-        canonical_name: Some("jane.smith".to_string()),
+        canonical_name: Some("report.pdf".to_string()),
         aliases: None,
         description: None,
     };

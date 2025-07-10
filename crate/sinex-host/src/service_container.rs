@@ -35,6 +35,11 @@ impl ServiceContainer {
             std::env::var("SINEX_ANNEX_PATH")
                 .unwrap_or_else(|_| "/tmp/sinex-annex".to_string())
         );
+        
+        // Ensure the annex directory exists
+        std::fs::create_dir_all(&annex_path)
+            .with_context(|| format!("Failed to create annex directory: {:?}", annex_path))?;
+        
         let annex_config = sinex_annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
