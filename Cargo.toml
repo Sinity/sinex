@@ -15,7 +15,7 @@ members = [
     "crate/sinex-preflight",
     "crate/sinex-test-macros",
     "crate/sinex-services",
-    "crate/sinex-config",
+    "crate/sinex-config", "crate/sinex-host",
 ]
 resolver = "2"
 

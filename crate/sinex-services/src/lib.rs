@@ -14,4 +14,4 @@ pub use analytics::AnalyticsService;
 pub use content::ContentService;
 pub use error::{ServiceError, ServiceResult};
 pub use pkm::PkmService;
-pub use search::SearchService;
+pub use search::{SearchService, SearchQuery};
