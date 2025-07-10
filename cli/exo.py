@@ -21,6 +21,13 @@ from rich.text import Text
 from rich.panel import Panel
 from rich import box
 
+# Import RPC client
+try:
+    from .rpc_client import SinexRPCClient, SinexRPCError, create_client
+except ImportError:
+    # Handle case where running directly
+    from rpc_client import SinexRPCClient, SinexRPCError, create_client
+
 console = Console()
 
 
@@ -30,6 +37,14 @@ def get_db_connection():
     # Debug: print the URL being used
     # print(f"Using DB URL: {db_url}")
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
+
+def get_rpc_client(rpc_url: Optional[str] = None) -> SinexRPCClient:
+    """Get RPC client using environment variable or default."""
+    if rpc_url is None:
+        rpc_url = os.environ.get('SINEX_RPC_URL', 'http://127.0.0.1:9999')
+    
+    return SinexRPCClient(rpc_url)
 
 
 def parse_time_delta(time_str: str) -> timedelta:
@@ -50,55 +65,33 @@ def parse_time_delta(time_str: str) -> timedelta:
     return timedelta(**{units[unit]: value})
 
 
-def parse_datetime(date_str: str) -> datetime:
-    """Parse datetime string in various formats."""
-    formats = [
-        '%Y-%m-%d %H:%M:%S',
-        '%Y-%m-%d %H:%M',
-        '%Y-%m-%d',
-        '%H:%M:%S',
-        '%H:%M'
-    ]
-    
-    for fmt in formats:
-        try:
-            if 'Y' not in fmt:  # Time only, use today's date
-                today = datetime.now().date()
-                time_obj = datetime.strptime(date_str, fmt).time()
-                return datetime.combine(today, time_obj)
-            return datetime.strptime(date_str, fmt)
-        except ValueError:
-            continue
-    
-    raise ValueError(f"Unable to parse datetime: {date_str}")
+def _query_with_rpc(rpc_url: Optional[str], source: Optional[str], event_type: Optional[str],
+                   since: Optional[str], until: Optional[str], last: Optional[str], 
+                   limit: int, host: Optional[str]) -> List[Dict]:
+    """Query events using RPC client."""
+    try:
+        client = get_rpc_client(rpc_url)
+        events = client.query_events_compatible(
+            source=source,
+            event_type=event_type,
+            since=since,
+            until=until,
+            last=last,
+            limit=limit,
+            host=host
+        )
+        return events
+    except SinexRPCError:
+        # Re-raise RPC errors as-is
+        raise
+    except Exception as e:
+        raise SinexRPCError(-32603, f"RPC query failed: {e}") from e
 
 
-@click.group()
-@click.option('--interactive', '-i', is_flag=True, help='Launch interactive query builder')
-def cli(interactive):
-    """Sinex CLI - Query your digital memory."""
-    if interactive:
-        from .interactive import run_interactive_mode
-        run_interactive_mode()
-        return
-
-
-@cli.command()
-@click.option('--source', '-s', help='Filter by event source (e.g., hyprland)')
-@click.option('--event-type', '-t', help='Filter by event type (e.g., window_focused)')
-@click.option('--since', help='Show events since datetime (YYYY-MM-DD HH:MM:SS)')
-@click.option('--until', help='Show events until datetime (YYYY-MM-DD HH:MM:SS)')
-@click.option('--last', '-l', help='Show events from last N time (e.g., 1h, 30m, 2d)')
-@click.option('--limit', '-n', default=50, help='Maximum number of events to show')
-@click.option('--host', help='Filter by host')
-@click.option('--payload-jq', help='JQ filter for payload (requires jq command)')
-@click.option('--output-format', type=click.Choice(['table', 'json', 'csv', 'yaml']), 
-              default='table', help='Output format')
-def query(source: Optional[str], event_type: Optional[str], since: Optional[str], 
-          until: Optional[str], last: Optional[str], limit: int, host: Optional[str],
-          payload_jq: Optional[str], output_format: str):
-    """Enhanced query for events from the sinex database."""
-    
+def _query_with_database(source: Optional[str], event_type: Optional[str],
+                        since: Optional[str], until: Optional[str], last: Optional[str],
+                        limit: int, host: Optional[str]) -> List[Dict]:
+    """Query events using direct database connection (legacy mode)."""
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # Build query using new schema
@@ -146,20 +139,293 @@ def query(source: Optional[str], event_type: Optional[str], since: Optional[str]
             
             cur.execute(query_sql, params)
             events = cur.fetchall()
+            
+    return events
+
+
+def _sources_with_rpc(rpc_url: Optional[str]) -> List[Dict]:
+    """Get sources statistics using RPC client."""
+    try:
+        client = get_rpc_client(rpc_url)
+        sources = client.get_sources_statistics()
+        return sources
+    except SinexRPCError:
+        # Re-raise RPC errors as-is
+        raise
+    except Exception as e:
+        raise SinexRPCError(-32603, f"RPC sources query failed: {e}") from e
+
+
+def _sources_with_database() -> List[Dict]:
+    """Get sources statistics using direct database connection (legacy mode)."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    source, 
+                    COUNT(*) as event_count,
+                    COUNT(DISTINCT event_type) as event_type_count,
+                    COUNT(DISTINCT host) as host_count,
+                    MIN(ts_ingest) as first_event,
+                    MAX(ts_ingest) as last_event,
+                    AVG(CASE WHEN ts_orig IS NOT NULL THEN 
+                        EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) as avg_ingest_delay
+                FROM raw.events
+                GROUP BY source
+                ORDER BY event_count DESC
+            """)
+            sources = cur.fetchall()
+    return sources
+
+
+def _stats_with_rpc(rpc_url: Optional[str]) -> None:
+    """Show stats using RPC client - limited functionality."""
+    try:
+        client = get_rpc_client(rpc_url)
+        
+        # Get basic event counts by source
+        counts = client.get_event_count_by_source(days_back=7)
+        total_events = sum(counts.values())
+        
+        console.print(f"\n[bold]📊 Total Events (last 7 days):[/bold] {total_events:,}")
+        console.print(f"[dim]Note: Using RPC mode - limited statistics available[/dim]")
+        console.print(f"[dim]Use --use-db flag for full statistics[/dim]")
+        
+        # Show event counts by source
+        if counts:
+            console.print("\n[bold]📋 Events by Source (last 7 days):[/bold]")
+            source_table = Table()
+            source_table.add_column("Source", style="cyan")
+            source_table.add_column("Count", justify="right", style="white")
+            
+            for source, count in sorted(counts.items(), key=lambda x: x[1], reverse=True):
+                source_table.add_row(source, f"{count:,}")
+            
+            console.print(source_table)
+        
+        # Try to get heatmap data
+        try:
+            heatmap = client.get_activity_heatmap(bucket_size_minutes=60, limit=24)
+            if heatmap:
+                console.print(f"\n[bold]📅 Recent Activity:[/bold]")
+                for bucket in heatmap[:10]:  # Show last 10 time buckets
+                    count = bucket.get('event_count', 0)
+                    time_bucket = bucket.get('time_bucket', 'Unknown')
+                    bar_length = min(30, count // max(1, total_events // 100))
+                    bar = "█" * bar_length
+                    console.print(f"{time_bucket}: {bar} {count:,} events")
+        except Exception:
+            console.print("\n[yellow]Activity heatmap not available via RPC[/yellow]")
+        
+    except SinexRPCError:
+        # Re-raise RPC errors as-is
+        raise
+    except Exception as e:
+        raise SinexRPCError(-32603, f"RPC stats query failed: {e}") from e
+
+
+def _stats_with_database() -> None:
+    """Show stats using direct database connection (legacy mode)."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Total events
+            cur.execute("SELECT COUNT(*) as total FROM raw.events")
+            total = cur.fetchone()['total']
+            
+            # DLQ statistics
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as total_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending_dlq,
+                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_dlq
+                FROM sinex_schemas.dlq_events
+            """)
+            dlq_stats = cur.fetchone()
+            
+            # Events by day (last 7 days)
+            cur.execute("""
+                SELECT DATE(ts_ingest) as day, COUNT(*) as count,
+                       COUNT(DISTINCT source) as sources
+                FROM raw.events
+                WHERE ts_ingest > NOW() - INTERVAL '7 days'
+                GROUP BY day
+                ORDER BY day DESC
+            """)
+            daily_counts = cur.fetchall()
+            
+            # Schema usage
+            cur.execute("""
+                SELECT s.event_source, s.event_type, s.schema_version,
+                       COUNT(e.id) as usage_count
+                FROM sinex_schemas.event_payload_schemas s
+                LEFT JOIN raw.events e ON e.payload_schema_id = s.id
+                WHERE s.is_active = true
+                GROUP BY s.event_source, s.event_type, s.schema_version
+                ORDER BY usage_count DESC
+                LIMIT 10
+            """)
+            schema_usage = cur.fetchall()
+            
+            # Agent health
+            cur.execute("""
+                SELECT 
+                    payload->>'agent_name' as agent_name,
+                    payload->>'status' as status,
+                    MAX(ts_ingest) as last_heartbeat
+                FROM raw.events
+                WHERE source = 'sinex' AND event_type = 'agent.heartbeat'
+                GROUP BY payload->>'agent_name', payload->>'status'
+                ORDER BY last_heartbeat DESC
+            """)
+            agent_health = cur.fetchall()
     
-    # Apply JQ filter if specified
-    if payload_jq and events:
-        events = apply_jq_filter(events, payload_jq)
+    console.print(f"\n[bold]📊 Total Events:[/bold] {total:,}")
     
-    # Output in specified format
-    if output_format == 'json':
-        output_json(events)
-    elif output_format == 'csv':
-        output_csv(events)
-    elif output_format == 'yaml':
-        output_yaml(events)
-    else:
-        display_events_enhanced(events)
+    # DLQ statistics
+    console.print(f"\n[bold]🚨 DLQ Statistics:[/bold]")
+    console.print(f"Total DLQ entries: {dlq_stats['total_dlq']:,}")
+    console.print(f"Pending: {dlq_stats['pending_dlq']:,}")
+    console.print(f"Resolved: {dlq_stats['resolved_dlq']:,}")
+    
+    # Daily activity
+    console.print("\n[bold]📅 Daily Activity (last 7 days):[/bold]")
+    for day in daily_counts:
+        bar_length = min(50, day['count'] // max(1, total // 1000))
+        bar = "█" * bar_length
+        console.print(f"{day['day']}: {bar} {day['count']:,} events ({day['sources']} sources)")
+    
+    # Schema usage
+    if schema_usage:
+        console.print("\n[bold]📋 Most Used Schemas:[/bold]")
+        schema_table = Table()
+        schema_table.add_column("Source", style="cyan")
+        schema_table.add_column("Event Type", style="green")
+        schema_table.add_column("Version", style="yellow")
+        schema_table.add_column("Usage", justify="right", style="white")
+        
+        for schema in schema_usage:
+            schema_table.add_row(
+                schema['event_source'],
+                schema['event_type'],
+                schema['schema_version'],
+                f"{schema['usage_count']:,}"
+            )
+        
+        console.print(schema_table)
+    
+    # Agent health
+    if agent_health:
+        console.print("\n[bold]🤖 Agent Health:[/bold]")
+        for agent in agent_health:
+            last_hb = agent['last_heartbeat']
+            if last_hb:
+                age = datetime.now(datetime.timezone.utc) - last_hb.replace(tzinfo=None)
+                if age.total_seconds() < 300:  # 5 minutes
+                    status_icon = "🟢"
+                elif age.total_seconds() < 3600:  # 1 hour
+                    status_icon = "🟡"
+                else:
+                    status_icon = "🔴"
+            else:
+                status_icon = "⚫"
+            
+            console.print(f"  {status_icon} {agent['agent_name']}: {agent['status']} "
+                         f"(last: {last_hb.strftime('%H:%M:%S') if last_hb else 'never'})")
+
+
+def parse_datetime(date_str: str) -> datetime:
+    """Parse datetime string in various formats."""
+    formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%d',
+        '%H:%M:%S',
+        '%H:%M'
+    ]
+    
+    for fmt in formats:
+        try:
+            if 'Y' not in fmt:  # Time only, use today's date
+                today = datetime.now().date()
+                time_obj = datetime.strptime(date_str, fmt).time()
+                return datetime.combine(today, time_obj)
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    
+    raise ValueError(f"Unable to parse datetime: {date_str}")
+
+
+@click.group()
+@click.option('--interactive', '-i', is_flag=True, help='Launch interactive query builder')
+@click.option('--rpc-url', help='RPC server URL (default: http://127.0.0.1:9999)', envvar='SINEX_RPC_URL')
+@click.option('--use-db', is_flag=True, help='Use direct database connection instead of RPC')
+@click.pass_context
+def cli(ctx, interactive, rpc_url, use_db):
+    """Sinex CLI - Query your digital memory."""
+    # Store config in context for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj['rpc_url'] = rpc_url
+    ctx.obj['use_db'] = use_db
+    
+    if interactive:
+        try:
+            from .interactive import run_interactive_mode
+            run_interactive_mode()
+        except ImportError:
+            console.print("[red]Interactive mode not available[/red]")
+        return
+
+
+@cli.command()
+@click.option('--source', '-s', help='Filter by event source (e.g., hyprland)')
+@click.option('--event-type', '-t', help='Filter by event type (e.g., window_focused)')
+@click.option('--since', help='Show events since datetime (YYYY-MM-DD HH:MM:SS)')
+@click.option('--until', help='Show events until datetime (YYYY-MM-DD HH:MM:SS)')
+@click.option('--last', '-l', help='Show events from last N time (e.g., 1h, 30m, 2d)')
+@click.option('--limit', '-n', default=50, help='Maximum number of events to show')
+@click.option('--host', help='Filter by host')
+@click.option('--payload-jq', help='JQ filter for payload (requires jq command)')
+@click.option('--output-format', type=click.Choice(['table', 'json', 'csv', 'yaml']), 
+              default='table', help='Output format')
+@click.pass_context
+def query(ctx, source: Optional[str], event_type: Optional[str], since: Optional[str], 
+          until: Optional[str], last: Optional[str], limit: int, host: Optional[str],
+          payload_jq: Optional[str], output_format: str):
+    """Enhanced query for events from the sinex database."""
+    
+    use_db = ctx.obj.get('use_db', False)
+    rpc_url = ctx.obj.get('rpc_url')
+    
+    try:
+        if use_db:
+            # Use direct database connection (legacy mode)
+            events = _query_with_database(source, event_type, since, until, last, limit, host)
+        else:
+            # Use RPC (default mode)
+            events = _query_with_rpc(rpc_url, source, event_type, since, until, last, limit, host)
+        
+        # Apply JQ filter if specified
+        if payload_jq and events:
+            events = apply_jq_filter(events, payload_jq)
+        
+        # Output in specified format
+        if output_format == 'json':
+            output_json(events)
+        elif output_format == 'csv':
+            output_csv(events)
+        elif output_format == 'yaml':
+            output_yaml(events)
+        else:
+            display_events_enhanced(events)
+            
+    except SinexRPCError as e:
+        console.print(f"[red]RPC Error: {e}[/red]")
+        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
 
 
 @cli.group()
@@ -643,51 +909,56 @@ def extract_event_summary(source: str, event_type: str, payload: Dict) -> str:
 
 # Add enhanced sources command
 @cli.command()
-def sources():
+@click.pass_context
+def sources(ctx):
     """List all event sources with enhanced statistics."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 
-                    source, 
-                    COUNT(*) as event_count,
-                    COUNT(DISTINCT event_type) as event_type_count,
-                    COUNT(DISTINCT host) as host_count,
-                    MIN(ts_ingest) as first_event,
-                    MAX(ts_ingest) as last_event,
-                    AVG(CASE WHEN ts_orig IS NOT NULL THEN 
-                        EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) as avg_ingest_delay
-                FROM raw.events
-                GROUP BY source
-                ORDER BY event_count DESC
-            """)
-            sources = cur.fetchall()
+    use_db = ctx.obj.get('use_db', False)
+    rpc_url = ctx.obj.get('rpc_url')
     
-    table = Table(title="Event Sources")
-    table.add_column("Source", style="cyan")
-    table.add_column("Events", justify="right", style="green")
-    table.add_column("Types", justify="right", style="yellow")
-    table.add_column("Hosts", justify="right", style="blue")
-    table.add_column("First Event", style="dim")
-    table.add_column("Last Event", style="dim")
-    table.add_column("Avg Delay", justify="right", style="magenta")
-    
-    for source in sources:
-        delay = source['avg_ingest_delay']
-        delay_str = f"{delay:.2f}s" if delay else "N/A"
+    try:
+        if use_db:
+            # Use direct database connection (legacy mode)
+            sources = _sources_with_database()
+        else:
+            # Use RPC (default mode)
+            sources = _sources_with_rpc(rpc_url)
         
-        table.add_row(
-            source['source'],
-            f"{source['event_count']:,}",
-            str(source['event_type_count']),
-            str(source['host_count']),
-            source['first_event'].strftime('%Y-%m-%d'),
-            source['last_event'].strftime('%Y-%m-%d'),
-            delay_str
-        )
-    
-    console.print(table)
+        table = Table(title="Event Sources")
+        table.add_column("Source", style="cyan")
+        table.add_column("Events", justify="right", style="green")
+        table.add_column("Types", justify="right", style="yellow")
+        table.add_column("Hosts", justify="right", style="blue")
+        table.add_column("First Event", style="dim")
+        table.add_column("Last Event", style="dim")
+        table.add_column("Avg Delay", justify="right", style="magenta")
+        
+        for source in sources:
+            delay = source.get('avg_ingest_delay')
+            delay_str = f"{delay:.2f}s" if delay else "N/A"
+            
+            first_event = source.get('first_event')
+            last_event = source.get('last_event')
+            
+            table.add_row(
+                source['source'],
+                f"{source['event_count']:,}",
+                str(source.get('event_type_count', 1)),
+                str(source.get('host_count', 1)),
+                first_event.strftime('%Y-%m-%d') if first_event else "N/A",
+                last_event.strftime('%Y-%m-%d') if last_event else "N/A",
+                delay_str
+            )
+        
+        console.print(table)
+        
+    except SinexRPCError as e:
+        console.print(f"[red]RPC Error: {e}[/red]")
+        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
 
 
 @cli.group()
@@ -1532,114 +1803,28 @@ def format_duration(seconds: int) -> str:
 
 
 @cli.command()
-def stats():
+@click.pass_context
+def stats(ctx):
     """Show enhanced database statistics."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Total events
-            cur.execute("SELECT COUNT(*) as total FROM raw.events")
-            total = cur.fetchone()['total']
-            
-            # DLQ statistics
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as total_dlq,
-                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending_dlq,
-                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_dlq
-                FROM sinex_schemas.dlq_events
-            """)
-            dlq_stats = cur.fetchone()
-            
-            # Events by day (last 7 days)
-            cur.execute("""
-                SELECT DATE(ts_ingest) as day, COUNT(*) as count,
-                       COUNT(DISTINCT source) as sources
-                FROM raw.events
-                WHERE ts_ingest > NOW() - INTERVAL '7 days'
-                GROUP BY day
-                ORDER BY day DESC
-            """)
-            daily_counts = cur.fetchall()
-            
-            # Schema usage
-            cur.execute("""
-                SELECT s.event_source, s.event_type, s.schema_version,
-                       COUNT(e.id) as usage_count
-                FROM sinex_schemas.event_payload_schemas s
-                LEFT JOIN raw.events e ON e.payload_schema_id = s.id
-                WHERE s.is_active = true
-                GROUP BY s.event_source, s.event_type, s.schema_version
-                ORDER BY usage_count DESC
-                LIMIT 10
-            """)
-            schema_usage = cur.fetchall()
-            
-            # Agent health
-            cur.execute("""
-                SELECT 
-                    payload->>'agent_name' as agent_name,
-                    payload->>'status' as status,
-                    MAX(ts_ingest) as last_heartbeat
-                FROM raw.events
-                WHERE source = 'sinex' AND event_type = 'agent.heartbeat'
-                GROUP BY payload->>'agent_name', payload->>'status'
-                ORDER BY last_heartbeat DESC
-            """)
-            agent_health = cur.fetchall()
+    use_db = ctx.obj.get('use_db', False)
+    rpc_url = ctx.obj.get('rpc_url')
     
-    console.print(f"\n[bold]📊 Total Events:[/bold] {total:,}")
-    
-    # DLQ statistics
-    console.print(f"\n[bold]🚨 DLQ Statistics:[/bold]")
-    console.print(f"Total DLQ entries: {dlq_stats['total_dlq']:,}")
-    console.print(f"Pending: {dlq_stats['pending_dlq']:,}")
-    console.print(f"Resolved: {dlq_stats['resolved_dlq']:,}")
-    
-    # Daily activity
-    console.print("\n[bold]📅 Daily Activity (last 7 days):[/bold]")
-    for day in daily_counts:
-        bar_length = min(50, day['count'] // max(1, total // 1000))
-        bar = "█" * bar_length
-        console.print(f"{day['day']}: {bar} {day['count']:,} events ({day['sources']} sources)")
-    
-    # Schema usage
-    if schema_usage:
-        console.print("\n[bold]📋 Most Used Schemas:[/bold]")
-        schema_table = Table()
-        schema_table.add_column("Source", style="cyan")
-        schema_table.add_column("Event Type", style="green")
-        schema_table.add_column("Version", style="yellow")
-        schema_table.add_column("Usage", justify="right", style="white")
-        
-        for schema in schema_usage:
-            schema_table.add_row(
-                schema['event_source'],
-                schema['event_type'],
-                schema['schema_version'],
-                f"{schema['usage_count']:,}"
-            )
-        
-        console.print(schema_table)
-    
-    # Agent health
-    if agent_health:
-        console.print("\n[bold]🤖 Agent Health:[/bold]")
-        for agent in agent_health:
-            last_hb = agent['last_heartbeat']
-            if last_hb:
-                age = datetime.now(datetime.timezone.utc) - last_hb.replace(tzinfo=None)
-                if age.total_seconds() < 300:  # 5 minutes
-                    status_icon = "🟢"
-                elif age.total_seconds() < 3600:  # 1 hour
-                    status_icon = "🟡"
-                else:
-                    status_icon = "🔴"
-            else:
-                status_icon = "⚫"
+    try:
+        if use_db:
+            # Use direct database connection (legacy mode)
+            _stats_with_database()
+        else:
+            # Use RPC (default mode) - limited functionality for now
+            _stats_with_rpc(rpc_url)
             
-            console.print(f"  {status_icon} {agent['agent_name']}: {agent['status']} "
-                         f"(last: {last_hb.strftime('%H:%M:%S') if last_hb else 'never'})")
+    except SinexRPCError as e:
+        console.print(f"[red]RPC Error: {e}[/red]")
+        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
 
 
 @cli.group()

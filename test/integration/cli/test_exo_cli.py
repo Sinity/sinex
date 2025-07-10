@@ -31,6 +31,190 @@ sys.path.insert(0, cli_dir)
 import exo
 
 
+class TestRPCIntegration:
+    """Test RPC integration for CLI commands."""
+    
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+    
+    @pytest.fixture
+    def mock_rpc_client(self):
+        """Mock RPC client."""
+        with mock.patch('exo.get_rpc_client') as mock_get_client:
+            mock_client = mock.MagicMock()
+            mock_get_client.return_value = mock_client
+            yield mock_client
+    
+    def test_query_with_rpc_success(self, runner, mock_rpc_client):
+        """Test query command using RPC client."""
+        # Mock RPC response
+        mock_rpc_client.query_events_compatible.return_value = [
+            {
+                'id': 'test-event-id',
+                'source': 'test_source',
+                'event_type': 'test_event',
+                'ts_ingest': datetime.now(),
+                'ts_orig': None,
+                'host': 'test-host',
+                'ingestor_version': None,
+                'payload_schema_id': None,
+                'payload': {'message': 'test message'}
+            }
+        ]
+        
+        result = runner.invoke(exo.cli, ['query', '--source', 'test_source', '--limit', '10'])
+        
+        assert result.exit_code == 0
+        assert 'test_source' in result.output
+        assert 'test_event' in result.output
+        assert 'test-host' in result.output
+        
+        # Verify RPC client was called with correct parameters
+        mock_rpc_client.query_events_compatible.assert_called_once()
+        call_args = mock_rpc_client.query_events_compatible.call_args[1]
+        assert call_args['source'] == 'test_source'
+        assert call_args['limit'] == 10
+    
+    def test_query_with_rpc_error(self, runner, mock_rpc_client):
+        """Test query command with RPC error."""
+        from exo import SinexRPCError
+        mock_rpc_client.query_events_compatible.side_effect = SinexRPCError(
+            -32603, "RPC server unavailable"
+        )
+        
+        result = runner.invoke(exo.cli, ['query', '--source', 'test'])
+        
+        assert result.exit_code == 1
+        assert 'RPC Error' in result.output
+        assert 'Try using --use-db flag' in result.output
+    
+    def test_query_with_database_fallback(self, runner, mock_rpc_client):
+        """Test query command using database fallback."""
+        with mock.patch('exo.get_db_connection') as mock_db:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchall.return_value = [
+                {
+                    'id': b'test-id',
+                    'source': 'test_db_source',
+                    'event_type': 'test_event',
+                    'ts_ingest': datetime.now(),
+                    'ts_orig': None,
+                    'host': 'test-host',
+                    'ingestor_version': None,
+                    'payload_schema_id': None,
+                    'payload': {'message': 'from database'}
+                }
+            ]
+            mock_db.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+            
+            result = runner.invoke(exo.cli, [
+                'query', 
+                '--use-db',  # Force database mode
+                '--source', 'test_db_source', 
+                '--limit', '10'
+            ])
+            
+            assert result.exit_code == 0
+            assert 'test_db_source' in result.output
+            # RPC client should not be called when using --use-db
+            assert not mock_rpc_client.query_events_compatible.called
+    
+    def test_sources_with_rpc_success(self, runner, mock_rpc_client):
+        """Test sources command using RPC client."""
+        mock_rpc_client.get_sources_statistics.return_value = [
+            {
+                'source': 'test_filesystem',
+                'event_count': 150,
+                'event_type_count': 3,
+                'host_count': 2,
+                'first_event': datetime.now() - timedelta(days=30),
+                'last_event': datetime.now(),
+                'avg_ingest_delay': 0.5
+            },
+            {
+                'source': 'test_terminal',
+                'event_count': 75,
+                'event_type_count': 2,
+                'host_count': 1,
+                'first_event': datetime.now() - timedelta(days=15),
+                'last_event': datetime.now() - timedelta(minutes=5),
+                'avg_ingest_delay': None
+            }
+        ]
+        
+        result = runner.invoke(exo.cli, ['sources'])
+        
+        assert result.exit_code == 0
+        assert 'Event Sources' in result.output
+        assert 'test_filesystem' in result.output
+        assert 'test_terminal' in result.output
+        assert '150' in result.output
+        assert '75' in result.output
+        
+        # Verify RPC client was called
+        mock_rpc_client.get_sources_statistics.assert_called_once()
+    
+    def test_stats_with_rpc_success(self, runner, mock_rpc_client):
+        """Test stats command using RPC client."""
+        mock_rpc_client.get_event_count_by_source.return_value = {
+            'test_filesystem': 100,
+            'test_terminal': 50,
+            'test_system': 25
+        }
+        mock_rpc_client.get_activity_heatmap.return_value = [
+            {
+                'time_bucket': '2025-01-10 14:00',
+                'event_count': 45
+            },
+            {
+                'time_bucket': '2025-01-10 13:00',
+                'event_count': 32
+            }
+        ]
+        
+        result = runner.invoke(exo.cli, ['stats'])
+        
+        assert result.exit_code == 0
+        assert 'Total Events (last 7 days)' in result.output
+        assert '175' in result.output  # Sum of all sources
+        assert 'test_filesystem' in result.output
+        assert 'test_terminal' in result.output
+        assert 'Recent Activity' in result.output
+        
+        # Verify RPC client methods were called
+        mock_rpc_client.get_event_count_by_source.assert_called_once_with(days_back=7)
+        mock_rpc_client.get_activity_heatmap.assert_called_once()
+    
+    def test_rpc_url_configuration(self, runner, mock_rpc_client):
+        """Test RPC URL configuration."""
+        with mock.patch('exo.SinexRPCClient') as mock_client_class:
+            mock_client_class.return_value = mock_rpc_client
+            mock_rpc_client.query_events_compatible.return_value = []
+            
+            result = runner.invoke(exo.cli, [
+                '--rpc-url', 'http://custom-host:8888',
+                'query', '--limit', '5'
+            ])
+            
+            assert result.exit_code == 0
+            # Verify custom RPC URL was used
+            mock_client_class.assert_called_with('http://custom-host:8888')
+    
+    def test_rpc_environment_variable(self, runner, mock_rpc_client):
+        """Test RPC URL from environment variable."""
+        with mock.patch.dict(os.environ, {'SINEX_RPC_URL': 'http://env-host:7777'}):
+            with mock.patch('exo.SinexRPCClient') as mock_client_class:
+                mock_client_class.return_value = mock_rpc_client
+                mock_rpc_client.query_events_compatible.return_value = []
+                
+                result = runner.invoke(exo.cli, ['query', '--limit', '5'])
+                
+                assert result.exit_code == 0
+                # Verify environment variable RPC URL was used
+                mock_client_class.assert_called_with('http://env-host:7777')
+
+
 class TestDLQCommands:
     """Test Dead Letter Queue commands."""
     
