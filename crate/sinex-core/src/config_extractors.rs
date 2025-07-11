@@ -261,7 +261,7 @@ impl ConfigValidator {
                         path
                     )));
                 }
-                
+
                 if !Path::new(path_str).is_absolute() && !path_str.starts_with("~/") {
                     return Err(CoreError::Configuration(format!(
                         "Path at '{}' must be an absolute path or start with ~/",
@@ -287,7 +287,7 @@ impl ConfigValidator {
                         path
                     )));
                 }
-                
+
                 if !Path::new(path_str).is_absolute() {
                     return Err(CoreError::Configuration(format!(
                         "Path at '{}' must be an absolute path",
@@ -329,20 +329,23 @@ impl ConfigValidator {
                         // Use the core validation function and check for shell metacharacters
                         if crate::validation::validate_path(path_str).is_err() {
                             return Err(CoreError::Configuration(format!(
-                                "Path pattern at '{}[{}]' ('{}') contains dangerous content", 
+                                "Path pattern at '{}[{}]' ('{}') contains dangerous content",
                                 path, i, path_str
                             )));
                         }
-                        
+
                         // Check for command injection patterns
                         if crate::validation::contains_shell_metacharacters(path_str) {
                             return Err(CoreError::Configuration(format!(
-                                "Path pattern at '{}[{}]' ('{}') contains shell metacharacters", 
+                                "Path pattern at '{}[{}]' ('{}') contains shell metacharacters",
                                 path, i, path_str
                             )));
                         }
-                        
-                        if !path_str.starts_with('/') && !path_str.starts_with("~/") && !path_str.contains('*') {
+
+                        if !path_str.starts_with('/')
+                            && !path_str.starts_with("~/")
+                            && !path_str.contains('*')
+                        {
                             return Err(CoreError::Configuration(format!(
                                 "Path pattern at '{}[{}]' ('{}') should be an absolute path, start with ~/, or contain wildcards", 
                                 path, i, path_str

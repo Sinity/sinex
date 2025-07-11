@@ -2,14 +2,14 @@ use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_work_queue_status_count;
 use crate::common::worker_test_utils;
 use sinex_db::events::insert_event_with_validator;
-use sinex_db::work_queue::{claim_work_queue_items, complete_work_queue_item};
 use sinex_db::models::WorkQueueItem;
+use sinex_db::work_queue::{claim_work_queue_items, complete_work_queue_item};
 use sinex_worker::{calculate_backoff_secs, EventProcessor, WorkerMetrics};
-use std::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
-use std::collections::HashSet;
 
 // =============================================================================
 // WORK QUEUE ALGORITHM TESTS
@@ -49,7 +49,8 @@ impl WorkDistributionMetrics {
     }
 
     fn record_work_item_created(&self) {
-        self.total_work_items_created.fetch_add(1, Ordering::Relaxed);
+        self.total_work_items_created
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_successful_claim(&self, worker_id: &str) {
@@ -71,7 +72,8 @@ impl WorkDistributionMetrics {
         if let Some(counter) = self.items_processed_by_worker.get(worker_id) {
             counter.fetch_add(1, Ordering::Relaxed);
         }
-        self.processing_time_ms.fetch_add(processing_time.as_millis() as u64, Ordering::Relaxed);
+        self.processing_time_ms
+            .fetch_add(processing_time.as_millis() as u64, Ordering::Relaxed);
     }
 
     fn report(&self) -> String {
@@ -90,13 +92,21 @@ impl WorkDistributionMetrics {
 
         report.push_str("  Per-worker claimed: ");
         for (worker_id, counter) in &self.items_claimed_by_worker {
-            report.push_str(&format!("{}:{} ", worker_id, counter.load(Ordering::Relaxed)));
+            report.push_str(&format!(
+                "{}:{} ",
+                worker_id,
+                counter.load(Ordering::Relaxed)
+            ));
         }
         report.push('\n');
 
         report.push_str("  Per-worker processed: ");
         for (worker_id, counter) in &self.items_processed_by_worker {
-            report.push_str(&format!("{}:{} ", worker_id, counter.load(Ordering::Relaxed)));
+            report.push_str(&format!(
+                "{}:{} ",
+                worker_id,
+                counter.load(Ordering::Relaxed)
+            ));
         }
         report.push('\n');
 
@@ -191,7 +201,10 @@ impl SelectForUpdateWorker {
                 let process_start = Instant::now();
                 tokio::time::sleep(self.processing_delay).await;
 
-                let queue_id_str = item.queue_id.clone().ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?;
+                let queue_id_str = item
+                    .queue_id
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?;
                 let queue_id_ulid = queue_id_str.parse::<sinex_ulid::Ulid>()?;
                 let completion_result = sqlx::query!(
                     "UPDATE sinex_schemas.work_queue
@@ -204,10 +217,14 @@ impl SelectForUpdateWorker {
                 .await;
 
                 let processing_time = process_start.elapsed();
-                self.metrics.record_item_processed(&self.worker_id, processing_time);
+                self.metrics
+                    .record_item_processed(&self.worker_id, processing_time);
 
                 if completion_result.is_err() {
-                    println!("Worker {} failed to mark item {:?} as completed", self.worker_id, item.queue_id);
+                    println!(
+                        "Worker {} failed to mark item {:?} as completed",
+                        self.worker_id, item.queue_id
+                    );
                 }
 
                 Ok(true)
@@ -311,12 +328,20 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
         for _ in 0..12 {
             interval.tick().await;
 
-            let pending_count = wait_for_work_queue_status_count(&monitor_pool, "pending", 0, 1).await.unwrap_or(0);
+            let pending_count = wait_for_work_queue_status_count(&monitor_pool, "pending", 0, 1)
+                .await
+                .unwrap_or(0);
 
-            let in_progress_count = wait_for_work_queue_status_count(&monitor_pool, "processing", 0, 1).await.unwrap_or(0);
+            let in_progress_count =
+                wait_for_work_queue_status_count(&monitor_pool, "processing", 0, 1)
+                    .await
+                    .unwrap_or(0);
 
             samples.push((pending_count, in_progress_count));
-            println!("Queue status: {} pending, {} in progress", pending_count, in_progress_count);
+            println!(
+                "Queue status: {} pending, {} in progress",
+                pending_count, in_progress_count
+            );
         }
 
         samples
@@ -336,9 +361,13 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
         println!("Worker {} processed {} items", worker_ids[i], processed);
     }
 
-    let final_pending = wait_for_work_queue_status_count(pool, "pending", 0, 5).await.unwrap_or(0);
+    let final_pending = wait_for_work_queue_status_count(pool, "pending", 0, 5)
+        .await
+        .unwrap_or(0);
 
-    let final_succeeded = wait_for_work_queue_status_count(pool, "succeeded", 0, 5).await.unwrap_or(0);
+    let final_succeeded = wait_for_work_queue_status_count(pool, "succeeded", 0, 5)
+        .await
+        .unwrap_or(0);
 
     println!("\nAlgorithm Fairness Test Results:");
     println!("  Work items created: {}", work_items_to_create);
@@ -347,8 +376,16 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
     println!("  Final succeeded: {}", final_succeeded);
     println!("{}", metrics.report());
 
-    let max_queue_depth = queue_samples.iter().map(|(pending, _)| *pending).max().unwrap_or(0);
-    let avg_queue_depth = queue_samples.iter().map(|(pending, _)| *pending).sum::<i64>() / queue_samples.len() as i64;
+    let max_queue_depth = queue_samples
+        .iter()
+        .map(|(pending, _)| *pending)
+        .max()
+        .unwrap_or(0);
+    let avg_queue_depth = queue_samples
+        .iter()
+        .map(|(pending, _)| *pending)
+        .sum::<i64>()
+        / queue_samples.len() as i64;
     println!("  Max queue depth: {}", max_queue_depth);
     println!("  Avg queue depth: {}", avg_queue_depth);
 
@@ -363,8 +400,15 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
     println!("  Fairness ratio (max/min): {:.2}", fairness_ratio);
 
     assert!(total_processed > 0, "Should have processed some work items");
-    pretty_assertions::assert_eq!(final_succeeded as u64, total_processed, "Succeeded count should match processed count");
-    assert!(fairness_ratio < 3.0, "Work distribution should be reasonably fair (ratio < 3.0)");
+    pretty_assertions::assert_eq!(
+        final_succeeded as u64,
+        total_processed,
+        "Succeeded count should match processed count"
+    );
+    assert!(
+        fairness_ratio < 3.0,
+        "Work distribution should be reasonably fair (ratio < 3.0)"
+    );
 
     let successful_claims = metrics.successful_claims.load(Ordering::Relaxed);
     let failed_claims = metrics.failed_claims.load(Ordering::Relaxed);
@@ -375,12 +419,27 @@ async fn test_select_for_update_skip_locked_fairness(ctx: TestContext) -> TestRe
     };
 
     println!("  Claim success rate: {:.2}%", claim_success_rate * 100.0);
-    assert!(claim_success_rate > 0.5, "Claim success rate should be > 50%");
+    assert!(
+        claim_success_rate > 0.5,
+        "Claim success rate should be > 50%"
+    );
 
     // Cleanup
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name).execute(pool).await?;
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.fairness_test'").execute(pool).await?;
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name).execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.fairness_test'")
+        .execute(pool)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -403,7 +462,9 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
     .execute(pool)
     .await?;
 
-    let worker_ids: Vec<String> = (0..high_contention_worker_count).map(|i| format!("contention_worker_{}", i)).collect();
+    let worker_ids: Vec<String> = (0..high_contention_worker_count)
+        .map(|i| format!("contention_worker_{}", i))
+        .collect();
 
     let metrics = Arc::new(WorkDistributionMetrics::new(&worker_ids));
 
@@ -470,7 +531,10 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
         if processed > 0 {
             workers_with_work += 1;
         }
-        println!("Contention worker {} processed {} items", worker_ids[i], processed);
+        println!(
+            "Contention worker {} processed {} items",
+            worker_ids[i], processed
+        );
     }
 
     let remaining_work: i64 = sqlx::query_scalar!(
@@ -490,24 +554,47 @@ async fn test_select_for_update_skip_locked_under_contention(ctx: TestContext) -
     println!("  Remaining work: {}", remaining_work);
     println!("{}", metrics.report());
 
-    pretty_assertions::assert_eq!(total_processed, work_items, "All work items should be processed exactly once");
+    pretty_assertions::assert_eq!(
+        total_processed,
+        work_items,
+        "All work items should be processed exactly once"
+    );
     pretty_assertions::assert_eq!(remaining_work, 0, "No work should remain unprocessed");
-    assert!(workers_with_work > 0, "At least some workers should have gotten work");
+    assert!(
+        workers_with_work > 0,
+        "At least some workers should have gotten work"
+    );
 
     let lock_conflicts = metrics.lock_conflicts_detected.load(Ordering::Relaxed);
     let successful_claims = metrics.successful_claims.load(Ordering::Relaxed);
 
     println!("  Lock conflicts detected: {}", lock_conflicts);
-    pretty_assertions::assert_eq!(successful_claims, work_items, "Should have exactly as many successful claims as work items");
+    pretty_assertions::assert_eq!(
+        successful_claims,
+        work_items,
+        "Should have exactly as many successful claims as work items"
+    );
 
     if lock_conflicts > 0 {
         println!("  ✓ Lock contention detected and handled correctly");
     }
 
     // Cleanup
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name).execute(pool).await?;
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.contention_test'").execute(pool).await?;
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name).execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.contention_test'")
+        .execute(pool)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -560,7 +647,9 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
         expected_order.push(queue_id);
     }
 
-    let metrics = Arc::new(WorkDistributionMetrics::new(&[String::from("ordering_worker")]));
+    let metrics = Arc::new(WorkDistributionMetrics::new(&[String::from(
+        "ordering_worker",
+    )]));
     let worker = SelectForUpdateWorker::new(
         "ordering_worker".to_string(),
         pool.clone(),
@@ -597,18 +686,39 @@ async fn test_work_queue_ordering_properties(ctx: TestContext) -> TestResult {
     println!("  Expected order: {} items", expected_order.len());
     println!("  Actual order: {} items", actual_order.len());
 
-    pretty_assertions::assert_eq!(actual_order.len(), expected_order.len(), "Should process all items");
+    pretty_assertions::assert_eq!(
+        actual_order.len(),
+        expected_order.len(),
+        "Should process all items"
+    );
 
     for (i, (expected, actual)) in expected_order.iter().zip(actual_order.iter()).enumerate() {
-        pretty_assertions::assert_eq!(expected, actual, "Item at position {} should match expected order", i);
+        pretty_assertions::assert_eq!(
+            expected,
+            actual,
+            "Item at position {} should match expected order",
+            i
+        );
     }
 
     println!("  ✓ FIFO ordering preserved by SELECT FOR UPDATE SKIP LOCKED");
 
     // Cleanup
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name).execute(pool).await?;
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.ordering_test'").execute(pool).await?;
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name).execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.ordering_test'")
+        .execute(pool)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -668,7 +778,10 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
 
     for (queue_id, max_attempts) in &queue_ids {
         for attempt in 1..=*max_attempts {
-            println!("Testing retry for queue_id={}, attempt={}/{}", queue_id, attempt, max_attempts);
+            println!(
+                "Testing retry for queue_id={}, attempt={}/{}",
+                queue_id, attempt, max_attempts
+            );
 
             let claimed = sqlx::query!(
                 "UPDATE sinex_schemas.work_queue
@@ -683,7 +796,11 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
             .fetch_one(pool)
             .await?;
 
-            pretty_assertions::assert_eq!(claimed.attempts, { attempt }, "Attempt count should match");
+            pretty_assertions::assert_eq!(
+                claimed.attempts,
+                { attempt },
+                "Attempt count should match"
+            );
 
             if attempt < *max_attempts {
                 sqlx::query!(
@@ -705,7 +822,10 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                 .fetch_optional(pool)
                 .await?;
 
-                assert!(available.is_some(), "Item should be available for retry after failure");
+                assert!(
+                    available.is_some(),
+                    "Item should be available for retry after failure"
+                );
             } else {
                 sqlx::query!(
                     "UPDATE sinex_schemas.work_queue
@@ -726,7 +846,10 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
                 .fetch_optional(pool)
                 .await?;
 
-                assert!(available.is_none(), "Item should not be available after max attempts reached");
+                assert!(
+                    available.is_none(),
+                    "Item should not be available after max attempts reached"
+                );
             }
         }
     }
@@ -777,7 +900,10 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
     .fetch_optional(pool)
     .await?;
 
-    assert!(skipped_item.is_none(), "Should skip items that have exhausted attempts");
+    assert!(
+        skipped_item.is_none(),
+        "Should skip items that have exhausted attempts"
+    );
 
     println!("\nRetry Mechanism Test Results:");
     println!("  ✓ Retry logic correctly respects max_attempts");
@@ -785,9 +911,21 @@ async fn test_work_queue_retry_mechanism(ctx: TestContext) -> TestResult {
     println!("  ✓ Attempt counting works correctly");
 
     // Cleanup
-    sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1", agent_name).execute(pool).await?;
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.retry_test'").execute(pool).await?;
-    sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1", agent_name).execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!("DELETE FROM raw.events WHERE source = 'algorithm.retry_test'")
+        .execute(pool)
+        .await?;
+    sqlx::query!(
+        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        agent_name
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -859,7 +997,7 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(
 
         tasks.spawn(async move {
             // Wait for all workers to be ready
-            barrier.wait().await;
+            barrier.wait();
 
             let mut local_processed = 0;
 
@@ -905,7 +1043,8 @@ async fn test_select_for_update_skip_locked_prevents_duplicate_processing(
     // Verify results
     let total_processed = *processed_count.lock().await;
     pretty_assertions::assert_eq!(
-        total_processed, 10,
+        total_processed,
+        10,
         "All 10 items should have been processed exactly once"
     );
 
@@ -986,7 +1125,10 @@ async fn test_event_processor_basic_processing(ctx: TestContext) -> TestResult {
 
     // Process the item using the proper query function (setup_test_worker creates agent with _agent suffix)
     let items = claim_work_queue_items(pool, "test_agent", "test_worker", 1).await?;
-    let item = items.into_iter().next().expect("Should have work item for test_agent");
+    let item = items
+        .into_iter()
+        .next()
+        .expect("Should have work item for test_agent");
 
     processor.process_event(pool, &item).await?;
 
@@ -1005,11 +1147,17 @@ async fn test_event_processor_failure_handling(ctx: TestContext) -> TestResult {
     let _queue_id = queue_ids[0];
 
     let items = claim_work_queue_items(pool, "test_agent", "test_worker", 1).await?;
-    let item = items.into_iter().next().expect("Should have work item for test_agent");
+    let item = items
+        .into_iter()
+        .next()
+        .expect("Should have work item for test_agent");
 
     let result = processor.process_event(pool, &item).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Test processor failure"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Test processor failure"));
 
     Ok(())
 }

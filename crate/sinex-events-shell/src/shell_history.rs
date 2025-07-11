@@ -11,12 +11,12 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::fs;
 use tokio::sync::mpsc;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase,
-    EventSourceContext, Result, EventFactory, CoreError,
+    sources, ChannelSenderExt, CoreError, EventFactory, EventSender, EventSource, EventSourceBase,
+    EventSourceContext, Result,
 };
 
 use crate::{ShellCommandInfo, ShellConfig};
@@ -63,7 +63,7 @@ impl EventSourceBase for ShellHistoryMonitor {}
 #[async_trait]
 impl EventSource for ShellHistoryMonitor {
     type Config = ShellConfig;
-    
+
     const SOURCE_NAME: &'static str = sources::SHELL_HISTORY;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
@@ -75,25 +75,34 @@ impl EventSource for ShellHistoryMonitor {
         );
 
         let mut file_states = HashMap::new();
-        
+
         // Initialize file states for existing history files
         for history_path in &config.history_paths {
             let expanded_path = shellexpand::tilde(history_path);
             let path = PathBuf::from(expanded_path.as_ref());
-            
+
             if path.exists() {
                 match fs::metadata(&path).await {
                     Ok(metadata) => {
                         let shell_type = detect_shell_type(&path);
                         let line_count = count_lines(&path).await.unwrap_or(0);
-                        
-                        file_states.insert(path.clone(), FileState {
-                            last_modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                            last_line_count: line_count,
-                            shell_type,
-                        });
-                        
-                        info!("Monitoring shell history file: {} ({} lines)", path.display(), line_count);
+
+                        file_states.insert(
+                            path.clone(),
+                            FileState {
+                                last_modified: metadata
+                                    .modified()
+                                    .unwrap_or(SystemTime::UNIX_EPOCH),
+                                last_line_count: line_count,
+                                shell_type,
+                            },
+                        );
+
+                        info!(
+                            "Monitoring shell history file: {} ({} lines)",
+                            path.display(),
+                            line_count
+                        );
                     }
                     Err(e) => {
                         warn!("Cannot access history file {}: {}", path.display(), e);
@@ -113,7 +122,7 @@ impl EventSource for ShellHistoryMonitor {
 
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
-        
+
         // Set up file watcher for all history files
         let mut watcher: RecommendedWatcher = Watcher::new(
             move |res: notify::Result<notify::Event>| {
@@ -149,7 +158,7 @@ impl EventSource for ShellHistoryMonitor {
                         }
                     }
                 }
-                
+
                 // Periodic poll
                 _ = poll_interval.tick() => {
                     for path in self.file_states.keys().cloned().collect::<Vec<_>>() {
@@ -164,24 +173,37 @@ impl EventSource for ShellHistoryMonitor {
 }
 
 impl ShellHistoryMonitor {
-    async fn process_history_file_changes(&mut self, path: &PathBuf, tx: &EventSender) -> Result<()> {
+    async fn process_history_file_changes(
+        &mut self,
+        path: &PathBuf,
+        tx: &EventSender,
+    ) -> Result<()> {
         // Check if file still exists
         if !path.exists() {
             debug!("History file no longer exists: {}", path.display());
             return Ok(());
         }
 
-        let metadata = fs::metadata(path).await
-            .map_err(|e| CoreError::Io(format!("Failed to get metadata for {}: {}", path.display(), e)))?;
+        let metadata = fs::metadata(path).await.map_err(|e| {
+            CoreError::Io(format!(
+                "Failed to get metadata for {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         let current_modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let current_line_count = count_lines(path).await.unwrap_or(0);
 
         let (last_modified, last_line_count, shell_type) = {
             let state = self.file_states.get(path).unwrap();
-            (state.last_modified, state.last_line_count, state.shell_type.clone())
+            (
+                state.last_modified,
+                state.last_line_count,
+                state.shell_type.clone(),
+            )
         };
-        
+
         // Check if file has been modified or has new lines
         if current_modified > last_modified || current_line_count > last_line_count {
             debug!(
@@ -203,14 +225,11 @@ impl ShellHistoryMonitor {
             let mut processed_count = 0;
             for (line_num, command_line) in new_lines.into_iter().enumerate() {
                 let absolute_line_num = last_line_count + line_num + 1;
-                
-                if let Err(e) = self.process_history_line(
-                    &command_line,
-                    path,
-                    absolute_line_num,
-                    &shell_type,
-                    tx
-                ).await {
+
+                if let Err(e) = self
+                    .process_history_line(&command_line, path, absolute_line_num, &shell_type, tx)
+                    .await
+                {
                     error!("Error processing history line: {}", e);
                 } else {
                     processed_count += 1;
@@ -243,7 +262,7 @@ impl ShellHistoryMonitor {
         tx: &EventSender,
     ) -> Result<()> {
         let trimmed = command_line.trim();
-        
+
         // Skip empty lines and comments
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return Ok(());
@@ -267,7 +286,12 @@ impl ShellHistoryMonitor {
 
         // Check if command should be ignored
         if let Ok((command, _)) = ShellCommandInfo::parse_command_line(&actual_command) {
-            if self.config.ignore_commands.iter().any(|ignored| command.starts_with(ignored)) {
+            if self
+                .config
+                .ignore_commands
+                .iter()
+                .any(|ignored| command.starts_with(ignored))
+            {
                 return Ok(());
             }
         }
@@ -298,10 +322,9 @@ impl ShellHistoryMonitor {
             shell_command_info,
         };
 
-        let event = self.event_factory.create_event(
-            "command.imported",
-            serde_json::to_value(payload)?,
-        );
+        let event = self
+            .event_factory
+            .create_event("command.imported", serde_json::to_value(payload)?);
 
         tx.send_or_log(event, "shell_history_command").await?;
 
@@ -330,22 +353,24 @@ fn detect_shell_type(path: &Path) -> Option<String> {
 }
 
 async fn count_lines(path: &PathBuf) -> Result<usize> {
-    let content = fs::read_to_string(path).await
+    let content = fs::read_to_string(path)
+        .await
         .map_err(|e| CoreError::Io(format!("Failed to read file: {}", e)))?;
-    
+
     Ok(content.lines().count())
 }
 
 async fn read_lines_from_offset(path: &PathBuf, offset: usize) -> Result<Vec<String>> {
-    let content = fs::read_to_string(path).await
+    let content = fs::read_to_string(path)
+        .await
         .map_err(|e| CoreError::Io(format!("Failed to read file: {}", e)))?;
-    
+
     let lines: Vec<String> = content
         .lines()
         .skip(offset)
         .map(|s| s.to_string())
         .collect();
-    
+
     Ok(lines)
 }
 
@@ -355,7 +380,7 @@ fn parse_zsh_extended_history(line: &str) -> (String, Option<chrono::DateTime<ch
         if let Some(semicolon_pos) = rest.find(';') {
             let timestamp_part = &rest[..semicolon_pos];
             let command_part = &rest[semicolon_pos + 1..];
-            
+
             // Parse timestamp (format: "timestamp:elapsed")
             if let Some(colon_pos) = timestamp_part.find(':') {
                 let timestamp_str = &timestamp_part[..colon_pos];
@@ -365,10 +390,10 @@ fn parse_zsh_extended_history(line: &str) -> (String, Option<chrono::DateTime<ch
                     return (command_part.to_string(), Some(dt));
                 }
             }
-            
+
             return (command_part.to_string(), None);
         }
     }
-    
+
     (line.to_string(), None)
 }

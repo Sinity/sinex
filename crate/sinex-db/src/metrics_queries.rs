@@ -36,7 +36,7 @@ pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<Qu
     )
     .fetch_all(pool)
     .await?;
-    
+
     Ok(records
         .into_iter()
         .map(|record| QueueDepthMetrics {

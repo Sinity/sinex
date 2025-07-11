@@ -16,8 +16,8 @@ use tokio::time;
 use tracing::{debug, error, info};
 
 use sinex_core::{
-    event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType, Result,
-    EventFactory, ErrorContext, CoreError, BackoffHelper,
+    event_type_constants, sources, BackoffHelper, CoreError, ErrorContext, EventFactory,
+    EventSource, EventSourceBase, EventSourceContext, EventType, Result,
 };
 
 // ============================================================================
@@ -219,7 +219,6 @@ pub struct HyprlandStateSnapshotter {
     event_factory: EventFactory,
 }
 
-
 // Implement EventSourceBase to get common functionality
 impl EventSourceBase for HyprlandIPCMonitor {}
 
@@ -233,21 +232,25 @@ impl EventSource for HyprlandIPCMonitor {
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         // Get Hyprland instance signature
-        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| 
-            ErrorContext::new(CoreError::Configuration("HYPRLAND_INSTANCE_SIGNATURE not set".to_string()))
-                .with_operation("initialize_hyprland_monitor")
-                .with_context("env_var", "HYPRLAND_INSTANCE_SIGNATURE")
-                .with_context("suggestion", "Is Hyprland running?")
-                .build()
-        )?;
+        let hyprland_instance_sig = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
+            ErrorContext::new(CoreError::Configuration(
+                "HYPRLAND_INSTANCE_SIGNATURE not set".to_string(),
+            ))
+            .with_operation("initialize_hyprland_monitor")
+            .with_context("env_var", "HYPRLAND_INSTANCE_SIGNATURE")
+            .with_context("suggestion", "Is Hyprland running?")
+            .build()
+        })?;
 
         // Build socket path
-        let xdg_runtime = env::var("XDG_RUNTIME_DIR")
-            .map_err(|_| 
-                ErrorContext::new(CoreError::Configuration("XDG_RUNTIME_DIR not set".to_string()))
-                    .with_operation("initialize_hyprland_monitor")
-                    .with_context("env_var", "XDG_RUNTIME_DIR")
-                    .build())?;
+        let xdg_runtime = env::var("XDG_RUNTIME_DIR").map_err(|_| {
+            ErrorContext::new(CoreError::Configuration(
+                "XDG_RUNTIME_DIR not set".to_string(),
+            ))
+            .with_operation("initialize_hyprland_monitor")
+            .with_context("env_var", "XDG_RUNTIME_DIR")
+            .build()
+        })?;
         let socket_path = PathBuf::from(xdg_runtime)
             .join("hypr")
             .join(&hyprland_instance_sig)
@@ -309,8 +312,11 @@ impl HyprlandIPCMonitor {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to connect to Hyprland socket (current backoff: {:?}): {}", 
-                           self.connection_backoff.current_delay(), e);
+                    error!(
+                        "Failed to connect to Hyprland socket (current backoff: {:?}): {}",
+                        self.connection_backoff.current_delay(),
+                        e
+                    );
                     // Use exponential backoff for connection failures
                     self.connection_backoff.wait().await;
                 }
@@ -508,27 +514,34 @@ impl HyprlandIPCMonitor {
             .arg(command)
             .arg("-j")
             .output()
-            .map_err(|e| 
+            .map_err(|e| {
                 ErrorContext::new(CoreError::Io(format!("Failed to execute hyprctl: {}", e)))
                     .with_operation("get_hyprctl_data")
                     .with_context("command", command)
-                    .build())?;
+                    .build()
+            })?;
 
         if !output.status.success() {
-            return Err(ErrorContext::new(CoreError::Io("hyprctl failed".to_string()))
-                .with_operation("get_hyprctl_data")
-                .with_context("command", command)
-                .with_context("exit_status", output.status.to_string())
-                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
-                .build());
+            return Err(
+                ErrorContext::new(CoreError::Io("hyprctl failed".to_string()))
+                    .with_operation("get_hyprctl_data")
+                    .with_context("command", command)
+                    .with_context("exit_status", output.status.to_string())
+                    .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                    .build(),
+            );
         }
 
-        let data: Value = serde_json::from_slice(&output.stdout).map_err(|e| 
-            ErrorContext::new(CoreError::Serialization(format!("Failed to parse hyprctl output: {}", e)))
-                .with_operation("get_hyprctl_data")
-                .with_context("command", command)
-                .with_context("output_size", output.stdout.len().to_string())
-                .build())?;
+        let data: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+            ErrorContext::new(CoreError::Serialization(format!(
+                "Failed to parse hyprctl output: {}",
+                e
+            )))
+            .with_operation("get_hyprctl_data")
+            .with_context("command", command)
+            .with_context("output_size", output.stdout.len().to_string())
+            .build()
+        })?;
 
         // Update cache
         {

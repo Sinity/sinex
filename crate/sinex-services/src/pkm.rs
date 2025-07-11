@@ -1,8 +1,8 @@
 //! Personal Knowledge Management (PKM) service
 
 use crate::error::ServiceResult;
-use sinex_db::{annotations, knowledge_graph, DbPool};
 use sinex_db::models::{CreateAnnotationInput, CreateEntityInput, CreateRelationInput};
+use sinex_db::{annotations, knowledge_graph, DbPool};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ impl PkmService {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
-    
+
     /// Create a note annotation on an event
     pub async fn create_note(
         &self,
@@ -27,7 +27,7 @@ impl PkmService {
             "tags": tags,
             "created_at": chrono::Utc::now().to_rfc3339(),
         });
-        
+
         let annotation = annotations::create_annotation(
             &self.pool,
             CreateAnnotationInput {
@@ -39,10 +39,10 @@ impl PkmService {
             },
         )
         .await?;
-        
+
         Ok(annotation.annotation_id)
     }
-    
+
     /// Create knowledge graph entities from a provided list
     pub async fn create_entities_from_list(
         &self,
@@ -50,7 +50,7 @@ impl PkmService {
         entities: Vec<(String, String)>, // (name, type)
     ) -> ServiceResult<Vec<Ulid>> {
         let mut entity_ids = Vec::new();
-        
+
         for (name, entity_type) in entities {
             let entity = knowledge_graph::create_entity(
                 &self.pool,
@@ -66,13 +66,13 @@ impl PkmService {
                 },
             )
             .await?;
-            
+
             entity_ids.push(entity.entity_id);
         }
-        
+
         Ok(entity_ids)
     }
-    
+
     /// Create relationships between entities
     pub async fn link_entities(
         &self,
@@ -95,8 +95,7 @@ impl PkmService {
             },
         )
         .await?;
-        
+
         Ok(relationship.relation_id)
     }
-    
 }

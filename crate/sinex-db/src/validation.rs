@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use thiserror::Error;
 use tracing::warn;
 
+use crate::security::{SecurityError, SecurityValidator};
 use crate::RawEvent; // Re-exported from sinex-core
-use crate::security::{SecurityValidator, SecurityError};
 use sinex_core::{CoreError, ValidationChain};
 use sinex_ulid::Ulid;
 
@@ -186,7 +186,7 @@ fn extract_field_from_error(msg: &str) -> Option<&str> {
             return Some(&field_part[..colon_pos]);
         }
     }
-    
+
     // Fallback: try other formats
     None
 }
@@ -318,7 +318,7 @@ impl EventValidator {
             std::borrow::Cow::Owned(s) => s,
             std::borrow::Cow::Borrowed(s) => s.to_string(),
         };
-        
+
         // Basic field validation using ValidationChain
         convert_validation_result(
             ValidationChain::validate(sanitized_source, "source")
@@ -372,7 +372,7 @@ impl EventValidator {
         self.register_rule("filesystem", "file.created", |payload| {
             // Required: path (string), size (number >= 0)
             let path = validate_required_string_field(payload, "path")?;
-            
+
             // Sanitize the path
             let _sanitized_path = SecurityValidator::sanitize_path(&path)
                 .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
@@ -403,7 +403,7 @@ impl EventValidator {
         self.register_rule("filesystem", "file.modified", |payload| {
             // Required: path
             let path = validate_required_string_field(payload, "path")?;
-            
+
             // Sanitize the path
             let _sanitized_path = SecurityValidator::sanitize_path(&path)
                 .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
@@ -426,7 +426,7 @@ impl EventValidator {
         self.register_rule("filesystem", "file.deleted", |payload| {
             // Required: path
             let path = validate_required_string_field(payload, "path")?;
-            
+
             // Sanitize the path
             let _sanitized_path = SecurityValidator::sanitize_path(&path)
                 .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
@@ -443,7 +443,7 @@ impl EventValidator {
             // Required: old_path, new_path
             let old_path = validate_required_string_field(payload, "old_path")?;
             let new_path = validate_required_string_field(payload, "new_path")?;
-            
+
             // Sanitize both paths
             let _sanitized_old = SecurityValidator::sanitize_path(&old_path)
                 .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
@@ -512,13 +512,13 @@ impl EventValidator {
             |payload| {
                 // Maximum allowed depth for JSON (prevent stack overflow)
                 const MAX_JSON_DEPTH: usize = 1000;
-                // Maximum allowed elements in JSON (prevent memory exhaustion)  
+                // Maximum allowed elements in JSON (prevent memory exhaustion)
                 const MAX_JSON_ELEMENTS: usize = 10_000_000;
-                
+
                 // Check JSON depth
                 SecurityValidator::check_json_depth(payload, MAX_JSON_DEPTH)
                     .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
-                
+
                 // Check JSON size
                 SecurityValidator::check_json_size(payload, MAX_JSON_ELEMENTS)
                     .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
@@ -535,21 +535,23 @@ impl EventValidator {
                                     }
                                     Err(SecurityError::NullByteInjection) => {
                                         return Err(ValidationError::SecurityValidation(
-                                            "Null byte in path".to_string()
+                                            "Null byte in path".to_string(),
                                         ));
                                     }
                                     Err(e) => {
-                                        return Err(ValidationError::SecurityValidation(e.to_string()));
+                                        return Err(ValidationError::SecurityValidation(
+                                            e.to_string(),
+                                        ));
                                     }
                                 }
                             }
                         }
-                        
+
                         // Check all string values for null bytes
                         if let Value::String(s) = value {
                             if s.contains('\0') {
                                 return Err(ValidationError::SecurityValidation(
-                                    "Null byte injection detected".to_string()
+                                    "Null byte injection detected".to_string(),
                                 ));
                             }
                         }

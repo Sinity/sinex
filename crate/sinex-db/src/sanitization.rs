@@ -1,4 +1,4 @@
-use crate::security::{SecurityValidator, SecurityError};
+use crate::security::{SecurityError, SecurityValidator};
 use anyhow::Result;
 use serde_json::Value;
 use sinex_core::RawEvent;
@@ -12,7 +12,7 @@ impl EventSanitizer {
     /// while preserving the original attack data for security analysis
     pub fn sanitize_event(event: &mut RawEvent) -> Result<bool> {
         let mut was_modified = false;
-        
+
         // Sanitize the source field (where attacks come through in tests)
         match SecurityValidator::sanitize_path(&event.source) {
             Ok(Cow::Owned(sanitized)) => {
@@ -40,15 +40,15 @@ impl EventSanitizer {
                 was_modified = true;
             }
         }
-        
+
         // Sanitize payload content
         if Self::sanitize_json_payload(&mut event.payload)? {
             was_modified = true;
         }
-        
+
         Ok(was_modified)
     }
-    
+
     /// Sanitize path traversal attempts by removing dangerous sequences
     fn sanitize_path_traversal(input: &str) -> String {
         input
@@ -61,7 +61,7 @@ impl EventSanitizer {
             .replace("..%c0%af", "")
             .replace("..%c1%9c", "")
     }
-    
+
     /// Conservative string sanitization - remove dangerous characters
     fn sanitize_string_conservative(input: &str) -> String {
         input
@@ -69,11 +69,11 @@ impl EventSanitizer {
             .filter(|&c| c != '\0' && c.is_ascii_graphic() || c.is_ascii_whitespace())
             .collect()
     }
-    
+
     /// Sanitize JSON payload recursively
     fn sanitize_json_payload(payload: &mut Value) -> Result<bool> {
         let mut was_modified = false;
-        
+
         match payload {
             Value::String(s) => {
                 // Check for path traversal in string values
@@ -126,7 +126,7 @@ impl EventSanitizer {
                 // Numbers, booleans, null - no sanitization needed
             }
         }
-        
+
         Ok(was_modified)
     }
 }
@@ -134,55 +134,58 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::RawEventBuilder;
     use serde_json::json;
-    
+    use sinex_core::RawEventBuilder;
+
     #[test]
     fn test_path_traversal_sanitization() {
         let mut event = RawEventBuilder::new(
             "../../../etc/passwd",
-            "security.test", 
-            json!({"path": "../../sensitive/file.txt"})
-        ).build();
-        
+            "security.test",
+            json!({"path": "../../sensitive/file.txt"}),
+        )
+        .build();
+
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
-        
+
         // Source should be sanitized
         assert!(!event.source.contains(".."));
-        
+
         // Payload path should be sanitized
         if let Some(path) = event.payload.get("path").and_then(|v| v.as_str()) {
             assert!(!path.contains(".."));
         }
     }
-    
+
     #[test]
     fn test_null_byte_sanitization() {
         let mut event = RawEventBuilder::new(
             "test\0source",
             "security.test",
-            json!({"data": "test\0value"})
-        ).build();
-        
+            json!({"data": "test\0value"}),
+        )
+        .build();
+
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
-        
+
         // Null bytes should be removed
         assert!(!event.source.contains('\0'));
     }
-    
+
     #[test]
     fn test_sql_injection_preserved() {
         let mut event = RawEventBuilder::new(
             "security.test",
             "sql.injection",
-            json!({"query": "'; DROP TABLE events; --"})
-        ).build();
-        
+            json!({"query": "'; DROP TABLE events; --"}),
+        )
+        .build();
+
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(!was_modified);
-        
+
         // SQL injection should be preserved in payload as it's just string data
         assert_eq!(
             event.payload.get("query").unwrap().as_str().unwrap(),

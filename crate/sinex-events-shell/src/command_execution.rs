@@ -74,12 +74,12 @@ impl CommandCompletedPayload {
         error_output: Option<String>,
     ) -> Self {
         let end_time = shell_command_info.end_time.unwrap_or_else(chrono::Utc::now);
-        
+
         // Update shell command info with completion data
         if shell_command_info.end_time.is_none() {
             shell_command_info.end_time = Some(end_time);
         }
-        
+
         // Calculate execution time if not already set
         if shell_command_info.execution_time_ms.is_none() {
             let duration = end_time.signed_duration_since(shell_command_info.start_time);
@@ -101,12 +101,12 @@ impl CommandCompletedPayload {
             error_output,
         }
     }
-    
+
     /// Check if the command was successful (exit code 0)
     pub fn was_successful(&self) -> bool {
         self.exit_code.map(|code| code == 0).unwrap_or(false)
     }
-    
+
     /// Get a summary description of the command execution
     pub fn execution_summary(&self) -> String {
         let status = if self.was_successful() {
@@ -114,7 +114,7 @@ impl CommandCompletedPayload {
         } else {
             "failed"
         };
-        
+
         let duration = if let Some(ms) = self.execution_time_ms {
             if ms < 1000 {
                 format!(" in {}ms", ms)
@@ -124,7 +124,7 @@ impl CommandCompletedPayload {
         } else {
             String::new()
         };
-        
+
         format!("Command {}{}", status, duration)
     }
 }

@@ -146,7 +146,8 @@ impl BlobManager {
             );
 
             // Update original_filenames array if this is a new filename
-            self.add_original_filename(&existing.blob_id, filename).await?;
+            self.add_original_filename(&existing.blob_id, filename)
+                .await?;
 
             // Emit deduplication metric
             self.emit_operation_metric(
@@ -215,7 +216,7 @@ impl BlobManager {
 
         // Find the actual file path
         let path = self.find_symlink_path(annex_key).await?;
-        
+
         // Read the content
         let content = tokio::fs::read(&path)
             .await

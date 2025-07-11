@@ -2,11 +2,14 @@ pub mod clipboard;
 pub mod window_manager;
 
 // Re-export desktop event types and configs
-pub use clipboard::{ClipboardChanged, ClipboardSelection, ClipboardChangedPayload, ClipboardSelectionPayload, ClipboardConfig};
+pub use clipboard::{
+    ClipboardChanged, ClipboardChangedPayload, ClipboardConfig, ClipboardSelection,
+    ClipboardSelectionPayload,
+};
 pub use window_manager::{
-    MonitorFocused, StateSnapshot, WindowClosed, WindowFocused, WindowMoved, WindowOpened,
-    WorkspaceChanged, WindowFocusedPayload, WindowOpenedPayload, WindowClosedPayload, 
-    WindowMovedPayload, WorkspaceChangedPayload, MonitorFocusedPayload, StateSnapshotPayload,
+    MonitorFocused, MonitorFocusedPayload, StateSnapshot, StateSnapshotPayload, WindowClosed,
+    WindowClosedPayload, WindowFocused, WindowFocusedPayload, WindowMoved, WindowMovedPayload,
+    WindowOpened, WindowOpenedPayload, WorkspaceChanged, WorkspaceChangedPayload,
 };
 
 use sinex_core::register_events;

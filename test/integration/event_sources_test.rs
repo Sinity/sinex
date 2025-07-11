@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::time::{sleep, timeout};
 
 /// Consolidated event source integration tests
-/// 
+///
 /// This module consolidates tests from:
 /// - atuin_tests.rs (Atuin shell history integration)
 /// - atuin_tests_real.rs (Real Atuin integration tests)
@@ -341,7 +341,8 @@ async fn test_atuin_reader_initialization(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_ok(), "Should initialize with valid database");
 
@@ -351,7 +352,8 @@ async fn test_atuin_reader_initialization(_ctx: TestContext) -> TestResult {
         ..config
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
+    let event_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let reader = AtuinDbReader::initialize(event_ctx).await;
     assert!(reader.is_err(), "Should fail with non-existent database");
     Ok(())
@@ -391,7 +393,8 @@ async fn test_atuin_event_capture(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -467,7 +470,8 @@ async fn test_atuin_timestamp_conversion(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
+    let event_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&config).unwrap());
     let mut reader = AtuinDbReader::initialize(event_ctx).await.unwrap();
     let (tx, mut rx) = mpsc::channel(100);
 
@@ -592,14 +596,12 @@ async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestRe
     let (tx, mut rx) = mpsc::channel(100);
 
     // Start the source
-    let handle = tokio::spawn(async move {
-        source.stream_events(tx).await
-    });
+    let handle = tokio::spawn(async move { source.stream_events(tx).await });
 
     // Collect events until the source crashes
     let mut events = vec![];
     let start = std::time::Instant::now();
-    
+
     loop {
         match timeout(Duration::from_millis(100), rx.recv()).await {
             Ok(Some(event)) => {
@@ -620,7 +622,10 @@ async fn test_event_source_lifecycle_crash_handling(_ctx: TestContext) -> TestRe
     assert!(result.is_err(), "Source should have crashed");
 
     // Should have received some events before crashing
-    assert!(!events.is_empty(), "Should have received events before crash");
+    assert!(
+        !events.is_empty(),
+        "Should have received events before crash"
+    );
 
     Ok(())
 }
@@ -651,7 +656,10 @@ async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
 
     // Wait for the source to exit gracefully
     let result = handle.await.unwrap();
-    assert!(result.is_ok(), "Source should exit gracefully when receiver is dropped");
+    assert!(
+        result.is_ok(),
+        "Source should exit gracefully when receiver is dropped"
+    );
 
     // Should have received some events
     assert!(!events.is_empty(), "Should have received events");
@@ -662,15 +670,12 @@ async fn test_event_source_graceful_shutdown(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_event_source_restart_after_crash(_ctx: TestContext) -> TestResult {
     let _ctx = crate::common::event_sources::test_context(json!({}));
-    
+
     // First instance - will crash after 3 events
-    let mut source1 = CrashingEventSource::new(Duration::from_secs(10))
-        .with_crash_on_event(3);
+    let mut source1 = CrashingEventSource::new(Duration::from_secs(10)).with_crash_on_event(3);
     let (tx1, mut rx1) = mpsc::channel(100);
 
-    let handle1 = tokio::spawn(async move {
-        source1.stream_events(tx1).await
-    });
+    let handle1 = tokio::spawn(async move { source1.stream_events(tx1).await });
 
     // Collect events until crash
     let mut events1 = vec![];
@@ -683,15 +688,17 @@ async fn test_event_source_restart_after_crash(_ctx: TestContext) -> TestResult 
 
     let result1 = handle1.await.unwrap();
     assert!(result1.is_err(), "First instance should have crashed");
-    assert_eq!(events1.len(), 3, "Should have received 3 events before crash");
+    assert_eq!(
+        events1.len(),
+        3,
+        "Should have received 3 events before crash"
+    );
 
     // Second instance - restart after crash
     let mut source2 = CrashingEventSource::new(Duration::from_secs(10));
     let (tx2, mut rx2) = mpsc::channel(100);
 
-    let handle2 = tokio::spawn(async move {
-        source2.stream_events(tx2).await
-    });
+    let handle2 = tokio::spawn(async move { source2.stream_events(tx2).await });
 
     // Collect events from restarted source
     let mut events2 = vec![];
@@ -705,7 +712,10 @@ async fn test_event_source_restart_after_crash(_ctx: TestContext) -> TestResult 
     drop(rx2);
     let result2 = handle2.await.unwrap();
     assert!(result2.is_ok(), "Second instance should exit gracefully");
-    assert!(!events2.is_empty(), "Should have received events after restart");
+    assert!(
+        !events2.is_empty(),
+        "Should have received events after restart"
+    );
 
     Ok(())
 }
@@ -725,7 +735,7 @@ async fn test_clipboard_monitor_initialization(_ctx: TestContext) -> TestResult 
 
     let ctx = crate::common::event_sources::test_context(config);
     let result = ClipboardMonitor::initialize(ctx).await;
-    
+
     // Clipboard monitor may fail to initialize in headless environments
     // This is expected behavior, not a test failure
     match result {
@@ -753,9 +763,7 @@ async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
     let mut source = CrashingEventSource::new(Duration::from_secs(5));
     let (tx, mut rx) = mpsc::channel(1000);
 
-    let handle = tokio::spawn(async move {
-        source.stream_events(tx).await
-    });
+    let handle = tokio::spawn(async move { source.stream_events(tx).await });
 
     // Measure throughput over 1 second
     let start = std::time::Instant::now();
@@ -778,7 +786,11 @@ async fn test_event_source_throughput(_ctx: TestContext) -> TestResult {
 
     // Should have reasonable throughput (at least 5 events/second)
     let throughput = event_count as f64 / test_duration.as_secs_f64();
-    assert!(throughput >= 5.0, "Throughput too low: {:.2} events/sec", throughput);
+    assert!(
+        throughput >= 5.0,
+        "Throughput too low: {:.2} events/sec",
+        throughput
+    );
 
     Ok(())
 }
@@ -789,14 +801,12 @@ async fn test_event_source_memory_usage(_ctx: TestContext) -> TestResult {
     let mut source = CrashingEventSource::new(Duration::from_secs(2));
     let (tx, mut rx) = mpsc::channel(10); // Small buffer to test backpressure
 
-    let handle = tokio::spawn(async move {
-        source.stream_events(tx).await
-    });
+    let handle = tokio::spawn(async move { source.stream_events(tx).await });
 
     // Slowly consume events to test memory behavior under backpressure
     let mut events = vec![];
     let mut iterations = 0;
-    
+
     while iterations < 50 {
         match timeout(Duration::from_millis(100), rx.recv()).await {
             Ok(Some(event)) => {
@@ -815,7 +825,10 @@ async fn test_event_source_memory_usage(_ctx: TestContext) -> TestResult {
     let _ = handle.await;
 
     // Should have handled backpressure without issues
-    assert!(!events.is_empty(), "Should have received events despite backpressure");
+    assert!(
+        !events.is_empty(),
+        "Should have received events despite backpressure"
+    );
 
     Ok(())
 }
@@ -835,7 +848,8 @@ async fn test_event_source_error_conditions(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
+    let event_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&bad_config).unwrap());
     let result = AtuinDbReader::initialize(event_ctx).await;
     assert!(result.is_err(), "Should fail with non-existent database");
 
@@ -850,7 +864,9 @@ async fn test_event_source_error_conditions(_ctx: TestContext) -> TestResult {
         use_file_watch: false,
     };
 
-    let event_ctx = crate::common::event_sources::test_context(serde_json::to_value(&corrupted_config).unwrap());
+    let event_ctx = crate::common::event_sources::test_context(
+        serde_json::to_value(&corrupted_config).unwrap(),
+    );
     // Note: AtuinDbReader initialization only checks if file exists,
     // actual corruption would be detected during event streaming
     let reader = AtuinDbReader::initialize(event_ctx).await;
@@ -885,14 +901,15 @@ async fn test_multiple_event_sources_coordination(_ctx: TestContext) -> TestResu
         batch_size: 10,
         use_file_watch: false,
     };
-    
+
     let fs_config = json!({
         "watch_patterns": [format!("{}/*", temp_dir.path().to_str().unwrap())],
         "ignore_patterns": [],
         "debounce_ms": 50
     });
 
-    let atuin_ctx = crate::common::event_sources::test_context(serde_json::to_value(&atuin_config).unwrap());
+    let atuin_ctx =
+        crate::common::event_sources::test_context(serde_json::to_value(&atuin_config).unwrap());
     let fs_ctx = crate::common::event_sources::test_context(fs_config);
 
     let mut atuin_reader = AtuinDbReader::initialize(atuin_ctx).await?;
@@ -902,13 +919,9 @@ async fn test_multiple_event_sources_coordination(_ctx: TestContext) -> TestResu
     let (atuin_tx, mut atuin_rx) = mpsc::channel(100);
     let (fs_tx, mut fs_rx) = mpsc::channel(100);
 
-    let atuin_handle = tokio::spawn(async move {
-        atuin_reader.stream_events(atuin_tx).await
-    });
+    let atuin_handle = tokio::spawn(async move { atuin_reader.stream_events(atuin_tx).await });
 
-    let fs_handle = tokio::spawn(async move {
-        fs_watcher.stream_events(fs_tx).await
-    });
+    let fs_handle = tokio::spawn(async move { fs_watcher.stream_events(fs_tx).await });
 
     // Generate filesystem events
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -919,7 +932,8 @@ async fn test_multiple_event_sources_coordination(_ctx: TestContext) -> TestResu
     let mut atuin_events = 0;
     let mut fs_events = 0;
 
-    for _ in 0..100 { // Safety valve
+    for _ in 0..100 {
+        // Safety valve
         tokio::select! {
             event = atuin_rx.recv() => {
                 if let Some(event) = event {
@@ -958,11 +972,17 @@ async fn test_multiple_event_sources_coordination(_ctx: TestContext) -> TestResu
     fs_handle.abort();
 
     // Should have received events from both sources
-    assert!(!all_events.is_empty(), "Should have received events from sources");
-    
+    assert!(
+        !all_events.is_empty(),
+        "Should have received events from sources"
+    );
+
     // Verify we got different event types
     let sources: HashSet<_> = all_events.iter().map(|e| e.source.as_str()).collect();
-    assert!(sources.len() > 1, "Should have events from multiple sources");
+    assert!(
+        sources.len() > 1,
+        "Should have events from multiple sources"
+    );
 
     Ok(())
 }
@@ -988,4 +1008,3 @@ pub fn verify_atuin_payload(event: &RawEvent) -> anyhow::Result<()> {
 
     Ok(())
 }
-

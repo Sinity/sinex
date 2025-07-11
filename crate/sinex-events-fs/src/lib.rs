@@ -1,17 +1,17 @@
 pub mod filesystem;
-pub mod typed_monitor;
 pub mod typed_adapter;
+pub mod typed_monitor;
 
 // Re-export filesystem event types
 pub use filesystem::{
     DirCreated, DirCreatedPayload, DirDeleted, DirDeletedPayload, FileCreated, FileCreatedPayload,
-    FileDeleted, FileDeletedPayload, FileModified, FileModifiedPayload, FileMoved, FileMovedPayload,
-    FilesystemMonitor, FilesystemWatcher, FilesystemConfig,
+    FileDeleted, FileDeletedPayload, FileModified, FileModifiedPayload, FileMoved,
+    FileMovedPayload, FilesystemConfig, FilesystemMonitor, FilesystemWatcher,
 };
 
 // Re-export typed monitor and adapter
-pub use typed_monitor::TypedFilesystemMonitor;
 pub use typed_adapter::TypedFilesystemAdapter;
+pub use typed_monitor::TypedFilesystemMonitor;
 
 use sinex_core::register_events;
 

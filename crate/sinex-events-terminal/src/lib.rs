@@ -6,16 +6,21 @@ pub mod shell_history;
 pub mod terminal;
 
 // Re-export terminal event types and payloads
-pub use asciinema::{AsciinemaSessionEnded, AsciinemaSessionStarted, AsciinemaSessionStartedPayload, AsciinemaSessionEndedPayload};
+pub use asciinema::{
+    AsciinemaSessionEnded, AsciinemaSessionEndedPayload, AsciinemaSessionStarted,
+    AsciinemaSessionStartedPayload,
+};
 pub use atuin::{CommandExecutedAtuin, CommandExecutedAtuinPayload};
 pub use kitty::{
-    KittyCommandCompleted, KittyScrollbackIncremental, KittyTabCreated, 
-    KittyTabFocused, KittyTabClosed, KittyProcessChanged,
-    KittyCommandCompletedPayload, KittyScrollbackIncrementalPayload,
-    KittyTabCreatedPayload, KittyTabFocusedPayload, KittyTabClosedPayload, KittyProcessChangedPayload,
-    KittyEventSource, KittyConfig, KittyProcessInfo,
+    KittyCommandCompleted, KittyCommandCompletedPayload, KittyConfig, KittyEventSource,
+    KittyProcessChanged, KittyProcessChangedPayload, KittyProcessInfo, KittyScrollbackIncremental,
+    KittyScrollbackIncrementalPayload, KittyTabClosed, KittyTabClosedPayload, KittyTabCreated,
+    KittyTabCreatedPayload, KittyTabFocused, KittyTabFocusedPayload,
 };
-pub use scrollback::{CommandOutputCaptured, TerminalScrollbackCaptured, CommandOutputCapturedPayload, TerminalScrollbackCapturedPayload};
+pub use scrollback::{
+    CommandOutputCaptured, CommandOutputCapturedPayload, TerminalScrollbackCaptured,
+    TerminalScrollbackCapturedPayload,
+};
 pub use shell_history::{ShellHistoryCommand, ShellHistoryCommandPayload};
 pub use terminal::{CommandExecuted, CommandExecutedPayload};
 
@@ -26,13 +31,13 @@ register_events! {
     // Terminal recording sessions
     "session.started" => (shell.recording, AsciinemaSessionStartedPayload),
     "session.ended" => (shell.recording, AsciinemaSessionEndedPayload),
-    
+
     // Command execution (rich metadata from Atuin)
     "command.executed" => (shell.atuin, CommandExecutedAtuinPayload),
-    
+
     // Command execution (discovered from history files)
     "command.hist" => (shell.history, ShellHistoryCommandPayload),
-    
+
     // Real-time terminal events from Kitty
     "command.completed" => (shell.kitty, KittyCommandCompletedPayload),
     "tab.created" => (shell.kitty, KittyTabCreatedPayload),
@@ -40,7 +45,7 @@ register_events! {
     "tab.closed" => (shell.kitty, KittyTabClosedPayload),
     "process.changed" => (shell.kitty, KittyProcessChangedPayload),
     "content.streamed" => (shell.kitty, KittyScrollbackIncrementalPayload),
-    
+
     // Terminal content capture
     "output.captured" => (shell.scrollback, CommandOutputCapturedPayload),
     "content.captured" => (shell.scrollback, TerminalScrollbackCapturedPayload),

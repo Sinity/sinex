@@ -1,15 +1,15 @@
+use chrono::{DateTime, Utc};
 /// Strongly-typed event system to eliminate JsonValue from internal core
-/// 
+///
 /// This module implements the architectural improvement to use strongly-typed
 /// payloads throughout the system, deferring JSON serialization until the
 /// database boundary.
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 // Re-export types from sinex-events for internal use
-use crate::{RawEvent, EventSender};
+use crate::{EventSender, RawEvent};
 
 // Define our own error type to avoid circular dependency on sinex-core
 use thiserror::Error;
@@ -46,9 +46,9 @@ pub struct TypedRawEvent<P: Serialize> {
 impl<P: Serialize> TypedRawEvent<P> {
     /// Convert to JSON-based RawEvent for database storage
     pub fn to_json_event(self) -> RawEvent {
-        let payload_json = serde_json::to_value(&self.payload)
-            .expect("Payload must be serializable to JSON");
-        
+        let payload_json =
+            serde_json::to_value(&self.payload).expect("Payload must be serializable to JSON");
+
         RawEvent {
             id: self.id,
             source: self.source,
@@ -78,27 +78,27 @@ pub enum EventEnvelope {
     FileMoved(TypedRawEvent<FileMovedPayload>),
     DirCreated(TypedRawEvent<DirCreatedPayload>),
     DirDeleted(TypedRawEvent<DirDeletedPayload>),
-    
+
     // Terminal events
     CommandExecuted(TypedRawEvent<CommandExecutedPayload>),
     CommandCompleted(TypedRawEvent<CommandCompletedPayload>),
     SessionStarted(TypedRawEvent<SessionStartedPayload>),
     SessionEnded(TypedRawEvent<SessionEndedPayload>),
-    
+
     // Clipboard events
     ContentCopied(TypedRawEvent<ClipboardCopiedPayload>),
     ContentSelected(TypedRawEvent<ClipboardSelectedPayload>),
-    
+
     // Window manager events
     WindowOpened(TypedRawEvent<WindowOpenedPayload>),
     WindowClosed(TypedRawEvent<WindowClosedPayload>),
     WindowFocused(TypedRawEvent<WindowFocusedPayload>),
     WorkspaceSwitched(TypedRawEvent<WorkspaceSwitchedPayload>),
-    
+
     // System events
     JournalEntry(TypedRawEvent<JournalEntryPayload>),
     SystemStateChanged(TypedRawEvent<SystemStatePayload>),
-    
+
     // Generic fallback for unknown events
     Unknown(RawEvent),
 }
@@ -128,7 +128,7 @@ impl EventEnvelope {
             EventEnvelope::Unknown(event) => event,
         }
     }
-    
+
     /// Get the event ID regardless of type
     pub fn id(&self) -> Ulid {
         match self {
@@ -153,7 +153,7 @@ impl EventEnvelope {
             EventEnvelope::Unknown(event) => event.id,
         }
     }
-    
+
     /// Get the source name regardless of type
     pub fn source(&self) -> &str {
         match self {
@@ -363,34 +363,34 @@ impl<P: Serialize> TypedEventBuilder<P> {
             ts_orig: None,
         }
     }
-    
+
     pub fn with_host(mut self, host: impl Into<String>) -> Self {
         self.host = Some(host.into());
         self
     }
-    
+
     pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
         self.ingestor_version = Some(version.into());
         self
     }
-    
+
     pub fn with_orig_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.ts_orig = Some(timestamp);
         self
     }
-    
+
     pub fn build(self) -> TypedRawEvent<P> {
         TypedRawEvent {
             id: Ulid::new(),
             source: self.source,
             event_type: self.event_type,
             payload: self.payload,
-            host: self.host.unwrap_or_else(|| {
-                gethostname::gethostname().to_string_lossy().to_string()
-            }),
-            ingestor_version: self.ingestor_version.unwrap_or_else(|| {
-                env!("CARGO_PKG_VERSION").to_string()
-            }),
+            host: self
+                .host
+                .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string()),
+            ingestor_version: self
+                .ingestor_version
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             ts_ingest: Utc::now(),
             ts_orig: self.ts_orig,
         }
@@ -432,10 +432,11 @@ impl TypedEventPipelineAdapter {
         while let Some(envelope) = typed_rx.recv().await {
             // Convert typed event to JSON for database/legacy systems
             let json_event = envelope.to_json_event();
-            
+
             // Send to legacy pipeline
-            self.json_tx.send(json_event).await
-                .map_err(|e| TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e)))?;
+            self.json_tx.send(json_event).await.map_err(|e| {
+                TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e))
+            })?;
         }
         Ok(())
     }
@@ -479,71 +480,83 @@ pub struct TypedFilesystemEventBuilder {
 
 impl TypedFilesystemEventBuilder {
     pub fn new(source: impl Into<String>) -> Self {
-        Self { source: source.into() }
+        Self {
+            source: source.into(),
+        }
     }
-    
-    pub fn file_created(self, path: impl Into<String>, size: u64, permissions: Option<u32>) -> EventEnvelope {
+
+    pub fn file_created(
+        self,
+        path: impl Into<String>,
+        size: u64,
+        permissions: Option<u32>,
+    ) -> EventEnvelope {
         let payload = FileCreatedPayload {
             path: path.into(),
             size,
             created_at: Utc::now(),
             permissions,
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "file.created", payload).build();
         EventEnvelope::FileCreated(event)
     }
-    
-    pub fn file_modified(self, path: impl Into<String>, size: u64, modification_type: impl Into<String>) -> EventEnvelope {
+
+    pub fn file_modified(
+        self,
+        path: impl Into<String>,
+        size: u64,
+        modification_type: impl Into<String>,
+    ) -> EventEnvelope {
         let payload = FileModifiedPayload {
             path: path.into(),
             size,
             modified_at: Utc::now(),
             modification_type: modification_type.into(),
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "file.modified", payload).build();
         EventEnvelope::FileModified(event)
     }
-    
+
     pub fn file_deleted(self, path: impl Into<String>) -> EventEnvelope {
         let payload = FileDeletedPayload {
             path: path.into(),
             deleted_at: Utc::now(),
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "file.deleted", payload).build();
         EventEnvelope::FileDeleted(event)
     }
-    
+
     pub fn file_moved(self, path: impl Into<String>, old_path: Option<String>) -> EventEnvelope {
         let payload = FileMovedPayload {
             path: path.into(),
             old_path,
             moved_at: Utc::now(),
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "file.moved", payload).build();
         EventEnvelope::FileMoved(event)
     }
-    
+
     pub fn dir_created(self, path: impl Into<String>, permissions: Option<u32>) -> EventEnvelope {
         let payload = DirCreatedPayload {
             path: path.into(),
             created_at: Utc::now(),
             permissions,
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "dir.created", payload).build();
         EventEnvelope::DirCreated(event)
     }
-    
+
     pub fn dir_deleted(self, path: impl Into<String>) -> EventEnvelope {
         let payload = DirDeletedPayload {
             path: path.into(),
             deleted_at: Utc::now(),
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "dir.deleted", payload).build();
         EventEnvelope::DirDeleted(event)
     }
@@ -556,9 +569,11 @@ pub struct TypedTerminalEventBuilder {
 
 impl TypedTerminalEventBuilder {
     pub fn new(source: impl Into<String>) -> Self {
-        Self { source: source.into() }
+        Self {
+            source: source.into(),
+        }
     }
-    
+
     pub fn command_executed(
         self,
         command: impl Into<String>,
@@ -574,11 +589,11 @@ impl TypedTerminalEventBuilder {
             execution_time_ms,
             shell_type,
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "command.executed", payload).build();
         EventEnvelope::CommandExecuted(event)
     }
-    
+
     pub fn session_started(
         self,
         session_id: impl Into<String>,
@@ -592,7 +607,7 @@ impl TypedTerminalEventBuilder {
             shell: shell.into(),
             working_directory: working_directory.into(),
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "session.started", payload).build();
         EventEnvelope::SessionStarted(event)
     }
@@ -605,9 +620,11 @@ pub struct TypedClipboardEventBuilder {
 
 impl TypedClipboardEventBuilder {
     pub fn new(source: impl Into<String>) -> Self {
-        Self { source: source.into() }
+        Self {
+            source: source.into(),
+        }
     }
-    
+
     pub fn content_copied(
         self,
         content_type: impl Into<String>,
@@ -623,7 +640,7 @@ impl TypedClipboardEventBuilder {
             content_hash,
             source_app,
         };
-        
+
         let event = TypedEventBuilder::new(self.source, "copied", payload).build();
         EventEnvelope::ContentCopied(event)
     }
@@ -643,13 +660,16 @@ impl TypedToJsonAdapter {
     pub fn new(typed_rx: TypedEventReceiver, json_tx: EventSender) -> Self {
         Self { typed_rx, json_tx }
     }
-    
+
     /// Run the adapter, converting typed events to JSON events
     pub async fn run(mut self) -> TypedEventResult<()> {
         while let Some(envelope) = self.typed_rx.recv().await {
             let json_event = envelope.to_json_event();
             if let Err(e) = self.json_tx.send(json_event).await {
-                return Err(TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e)));
+                return Err(TypedEventError::ChannelSend(format!(
+                    "Failed to send converted event: {}",
+                    e
+                )));
             }
         }
         Ok(())
@@ -672,17 +692,17 @@ mod tests {
             created_at: Utc::now(),
             permissions: Some(0o644),
         };
-        
+
         let event = TypedEventBuilder::new(sources::FS, "file.created", payload)
             .with_host("test-host")
             .build();
-        
+
         assert_eq!(event.source, sources::FS);
         assert_eq!(event.event_type, "file.created");
         assert_eq!(event.payload.path, "/test.txt");
         assert_eq!(event.payload.size, 1024);
     }
-    
+
     #[test]
     fn test_event_envelope_conversion() {
         let payload = CommandExecutedPayload {
@@ -692,38 +712,39 @@ mod tests {
             execution_time_ms: Some(150),
             shell_type: Some("bash".to_string()),
         };
-        
-        let typed_event = TypedEventBuilder::new("terminal.kitty", "command.executed", payload)
-            .build();
-        
+
+        let typed_event =
+            TypedEventBuilder::new("terminal.kitty", "command.executed", payload).build();
+
         let envelope = EventEnvelope::CommandExecuted(typed_event);
         let json_event = envelope.to_json_event();
-        
+
         assert_eq!(json_event.source, "terminal.kitty");
         assert_eq!(json_event.event_type, "command.executed");
         assert_eq!(json_event.payload["command"], "ls -la");
         assert_eq!(json_event.payload["exit_status"], 0);
     }
-    
+
     #[test]
     fn test_type_safety() {
         // This should compile - correct payload for file.created
         let _file_event = TypedEventBuilder::new(
-            sources::FS, 
-            "file.created", 
+            sources::FS,
+            "file.created",
             FileCreatedPayload {
                 path: "/test".to_string(),
                 size: 0,
                 created_at: Utc::now(),
                 permissions: None,
-            }
-        ).build();
-        
+            },
+        )
+        .build();
+
         // The type system prevents mismatched payloads at compile time
         // This would not compile:
         // let _wrong_event = TypedEventBuilder::new(
-        //     sources::FS, 
-        //     "file.created", 
+        //     sources::FS,
+        //     "file.created",
         //     CommandExecutedPayload { ... }  // Wrong payload type!
         // ).build();
     }

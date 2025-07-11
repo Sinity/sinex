@@ -11,72 +11,47 @@ pub mod security;
 pub mod validation;
 
 // New API modules
-pub mod artifacts;
 pub mod annotations;
+pub mod artifacts;
 pub mod knowledge_graph;
 
 // Domain-specific query modules
-pub mod events;
-pub mod work_queue;
 pub mod agent;
+pub mod events;
 pub mod metrics_queries;
+pub mod work_queue;
 
 // Old queries module removed - all functions migrated to domain-specific modules
 
 // Re-export domain-specific query functions
-pub use events::{
-    get_event_by_id, 
-    insert_event_with_validator,
-    count_events,
+pub use agent::{update_agent_heartbeat, upsert_agent_manifest, AgentManifestParams};
+pub use annotations::{
+    create_annotation, delete_annotation, get_annotation_by_id, get_annotations_for_event,
+    get_recent_annotations, update_annotation_content,
 };
+pub use artifacts::{create_artifact, get_artifact_by_id, get_recent_artifacts};
+pub use events::{count_events, get_event_by_id, insert_event_with_validator};
+pub use knowledge_graph::{
+    create_entity, create_relation, get_entities_by_type, get_entity_by_id, get_entity_relations,
+    get_relation_by_id, search_entities,
+};
+pub use metrics_queries::{calculate_queue_depth_metrics, QueueDepthMetrics};
 pub use work_queue::{
-    DlqEventParams,
     add_to_work_queue,
+    add_to_work_queue_detailed,
     claim_work_queue_items,
+    complete_work_item,
     complete_work_queue_item,
+    fail_work_item,
     fail_work_queue_item,
-    insert_dlq_event,
-    insert_event,  // Missing export - needed by tests
+    get_dlq_items,
     // Compatibility functions for old queries API
     get_next_work_item,
     get_work_item_by_id,
-    get_dlq_items,
-    add_to_work_queue_detailed,
-    fail_work_item,
-    complete_work_item,
+    insert_dlq_event,
+    insert_event, // Missing export - needed by tests
+    DlqEventParams,
 };
-pub use agent::{
-    AgentManifestParams,
-    upsert_agent_manifest,
-    update_agent_heartbeat,
-};
-pub use metrics_queries::{
-    calculate_queue_depth_metrics,
-    QueueDepthMetrics,
-};
-pub use annotations::{
-    create_annotation,
-    get_annotations_for_event,
-    get_annotation_by_id,
-    update_annotation_content,
-    delete_annotation,
-    get_recent_annotations,
-};
-pub use artifacts::{
-    create_artifact,
-    get_artifact_by_id,
-    get_recent_artifacts,
-};
-pub use knowledge_graph::{
-    create_entity,
-    create_relation,
-    get_entity_by_id,
-    get_entities_by_type,
-    get_entity_relations,
-    get_relation_by_id,
-    search_entities,
-};
-
 
 // Enhanced queries have been removed - functionality moved to domain modules
 
@@ -89,26 +64,38 @@ pub use query_helpers::{
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
     pub use crate::models::{
-        AgentManifest, DlqErrorCategory, DlqEvent, EventPayloadSchema, QueueStatus, WorkQueueItem,
+        AgentManifest,
         // New API models (now enabled)
-        Artifact, ArtifactContent, CreateArtifactInput, CreateArtifactContentInput,
-        EventAnnotation, CreateAnnotationInput,
-        Entity, EntityRelation, CreateEntityInput, CreateRelationInput,
+        Artifact,
+        ArtifactContent,
+        CreateAnnotationInput,
+        CreateArtifactContentInput,
+        CreateArtifactInput,
+        CreateEntityInput,
+        CreateRelationInput,
+        DlqErrorCategory,
+        DlqEvent,
+        Entity,
+        EntityRelation,
+        EventAnnotation,
+        EventPayloadSchema,
+        QueueStatus,
+        WorkQueueItem,
     };
     // Use domain-specific modules
-    pub use crate::events::*;
-    pub use crate::work_queue::*;
     pub use crate::agent::*;
+    pub use crate::events::*;
     pub use crate::metrics_queries::*;
     pub use crate::query_helpers::{
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
     };
+    pub use crate::work_queue::*;
     // New API services (now enabled)
-    pub use crate::artifacts::*;
     pub use crate::annotations::*;
+    pub use crate::artifacts::*;
     pub use crate::knowledge_graph::*;
-    pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, Timestamp, PoolConfig};
+    pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
     pub use anyhow::Result;
     pub use sinex_core::{RawEvent, RawEventBuilder};
     pub use sinex_ulid::Ulid;
@@ -116,12 +103,12 @@ pub mod prelude {
 }
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
-use std::time::Duration;
 use std::env;
+use std::time::Duration;
 use tracing::{info, warn};
-use serde::{Deserialize, Serialize};
 
 // Common type aliases for database operations
 pub type DbPool = PgPool;
@@ -210,7 +197,10 @@ pub async fn create_pool_with_config_strict(config: &PoolConfig) -> Result<DbPoo
 }
 
 /// Validate pool configuration against PostgreSQL server limits
-async fn validate_pool_config_against_postgres(database_url: &str, config: &PoolConfig) -> Result<()> {
+async fn validate_pool_config_against_postgres(
+    database_url: &str,
+    config: &PoolConfig,
+) -> Result<()> {
     // Create a temporary minimal connection to check PostgreSQL settings
     let temp_pool = PgPoolOptions::new()
         .max_connections(1)
@@ -221,9 +211,9 @@ async fn validate_pool_config_against_postgres(database_url: &str, config: &Pool
     let max_connections_row = sqlx::query("SHOW max_connections")
         .fetch_one(&temp_pool)
         .await?;
-    
+
     let postgres_max_connections: i32 = max_connections_row.try_get("max_connections")?;
-    
+
     // Validate our pool size against PostgreSQL limits
     if config.max_connections as i32 > postgres_max_connections {
         return Err(anyhow::anyhow!(
@@ -236,7 +226,8 @@ async fn validate_pool_config_against_postgres(database_url: &str, config: &Pool
     }
 
     // Warn if we're using more than 80% of available connections
-    let usage_percentage = (config.max_connections as f64 / postgres_max_connections as f64) * 100.0;
+    let usage_percentage =
+        (config.max_connections as f64 / postgres_max_connections as f64) * 100.0;
     if usage_percentage > 80.0 {
         warn!(
             "Pool is configured to use {:.1}% of PostgreSQL max_connections. \

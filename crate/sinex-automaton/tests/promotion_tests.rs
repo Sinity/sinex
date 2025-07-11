@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
 use sinex_automaton::{EventScanner, ScannerConfig, WorkRouter};
+use sinex_db::{models::AgentManifest, JsonValue, RawEvent};
 use sinex_ulid::Ulid;
 
 /// Helper to create a test event

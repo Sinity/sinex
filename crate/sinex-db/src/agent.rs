@@ -20,10 +20,7 @@ pub struct AgentManifestParams {
 }
 
 /// Upsert an agent manifest following the exact same pattern as existing correct functions
-pub async fn upsert_agent_manifest(
-    pool: DbPoolRef<'_>,
-    params: AgentManifestParams,
-) -> Result<()> {
+pub async fn upsert_agent_manifest(pool: DbPoolRef<'_>, params: AgentManifestParams) -> Result<()> {
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.agent_manifests 
@@ -53,7 +50,7 @@ pub async fn upsert_agent_manifest(
     )
     .execute(pool)
     .await?;
-    
+
     Ok(())
 }
 
@@ -69,6 +66,6 @@ pub async fn update_agent_heartbeat(pool: DbPoolRef<'_>, agent_name: &str) -> Re
     )
     .execute(pool)
     .await?;
-    
+
     Ok(())
 }

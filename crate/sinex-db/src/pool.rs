@@ -25,7 +25,8 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
         .map_err(|_| anyhow::anyhow!("Failed to set global pool"))?;
 
     info!("Global database pool initialized");
-    POOL.get().ok_or_else(|| anyhow::anyhow!("Pool not initialized"))
+    POOL.get()
+        .ok_or_else(|| anyhow::anyhow!("Pool not initialized"))
 }
 
 // Deprecated function removed

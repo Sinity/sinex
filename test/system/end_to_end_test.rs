@@ -1,7 +1,7 @@
 //! # End-to-End System Tests
 //!
 //! Complete system validation tests that verify end-to-end behavior from event ingestion
-//! to query results. These tests exercise the entire pipeline: EventSource → Collector → 
+//! to query results. These tests exercise the entire pipeline: EventSource → Collector →
 //! Database → Worker → Query.
 //!
 //! ## Test Categories
@@ -18,8 +18,8 @@
 //! - **Resource usage**: Moderate CPU/memory, significant database I/O
 //! - **Dependencies**: PostgreSQL, test database isolation
 
-use crate::common::prelude::*;
 use crate::common::events;
+use crate::common::prelude::*;
 use crate::common::timing_optimization::EventCounter;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_collector::CollectorConfig;
@@ -334,10 +334,7 @@ async fn test_system_multi_source_correlation(ctx: TestContext) -> TestResult {
         .iter()
         .filter(|e| e.source == "wm.hyprland")
         .collect();
-    let fs_events: Vec<_> = window_events
-        .iter()
-        .filter(|e| e.source == "fs")
-        .collect();
+    let fs_events: Vec<_> = window_events.iter().filter(|e| e.source == "fs").collect();
 
     assert!(!shell_events.is_empty(), "Should find terminal events");
     assert!(!wm_events.is_empty(), "Should find window manager events");
@@ -970,7 +967,9 @@ async fn test_filesystem_unicode_normalization_collision(
 #[sinex_test]
 async fn test_filesystem_case_sensitivity_race(_ctx: TestContext) -> Result<(), anyhow::Error> {
     // Test rapid case variations of same filename
-    let case_variants = ["test.txt", "Test.txt", "TEST.txt", "TeSt.TxT", "test.TXT", "TEST.TXT"];
+    let case_variants = [
+        "test.txt", "Test.txt", "TEST.txt", "TeSt.TxT", "test.TXT", "TEST.TXT",
+    ];
 
     println!("Testing filesystem case sensitivity races:");
 

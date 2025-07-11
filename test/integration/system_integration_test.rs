@@ -11,18 +11,18 @@
 //! - Query interface testing
 
 use crate::common::prelude::*;
-use crate::common::{events, assertions};
+use crate::common::{assertions, events};
+use async_trait::async_trait;
+use sinex_collector::config::CollectorConfig;
+use sinex_core::{CoreError, EventSender, EventSource, EventSourceContext, RawEvent};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use tokio::sync::{mpsc, Mutex, RwLock};
-use std::process::Command;
-use sinex_core::{EventSource, EventSourceContext, RawEvent, EventSender, CoreError};
-use sinex_collector::config::CollectorConfig;
 use tempfile::TempDir;
-use async_trait::async_trait;
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 // =============================================================================
 // FULL SYSTEM STARTUP TESTS
@@ -285,7 +285,8 @@ async fn test_clipboard_source_health() -> Result<bool> {
 }
 
 async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
-    let test_event = EventFactory::new("worker_startup_test").create_event("system.health_check", json!({"test": true}));
+    let test_event = EventFactory::new("worker_startup_test")
+        .create_event("system.health_check", json!({"test": true}));
     let inserted_event_id = insert_event(pool, &test_event).await?;
 
     add_to_work_queue(pool, inserted_event_id, "test-agent", 3).await?;
@@ -380,7 +381,8 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
 }
 
 async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
-    let test_event = EventFactory::new("recovery_test").create_event("system.test", json!({"test": true}));
+    let test_event =
+        EventFactory::new("recovery_test").create_event("system.test", json!({"test": true}));
     let insert_result = insert_event(pool, &test_event).await;
 
     assert!(
@@ -512,37 +514,21 @@ async fn test_resource_limits_configuration(ctx: TestContext) -> TestResult {
 async fn test_deployment_checklist_automation(ctx: TestContext) -> TestResult {
     let mut checklist = DeploymentChecklist::new();
 
-    checklist.add_check("Database connectivity", || async {
-        Ok(true)
-    });
+    checklist.add_check("Database connectivity", || async { Ok(true) });
 
-    checklist.add_check("Required directories exist", || async {
-        Ok(true)
-    });
+    checklist.add_check("Required directories exist", || async { Ok(true) });
 
-    checklist.add_check("Configuration valid", || async {
-        Ok(true)
-    });
+    checklist.add_check("Configuration valid", || async { Ok(true) });
 
-    checklist.add_check("Migrations up to date", || async {
-        Ok(true)
-    });
+    checklist.add_check("Migrations up to date", || async { Ok(true) });
 
-    checklist.add_check("Health endpoints responding", || async {
-        Ok(true)
-    });
+    checklist.add_check("Health endpoints responding", || async { Ok(true) });
 
-    checklist.add_check("Resource limits configured", || async {
-        Ok(true)
-    });
+    checklist.add_check("Resource limits configured", || async { Ok(true) });
 
-    checklist.add_check("Backup strategy configured", || async {
-        Ok(true)
-    });
+    checklist.add_check("Backup strategy configured", || async { Ok(true) });
 
-    checklist.add_check("Monitoring configured", || async {
-        Ok(true)
-    });
+    checklist.add_check("Monitoring configured", || async { Ok(true) });
 
     let results = checklist.run_all().await?;
 
@@ -583,8 +569,9 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     let event_id = assert_event_inserted_with_context(
         ctx.pool(),
         &test_event,
-        "comprehensive_integration_test"
-    ).await?;
+        "comprehensive_integration_test",
+    )
+    .await?;
 
     println!("✓ Event inserted with ID: {}", event_id);
 
@@ -601,10 +588,10 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     // Test basic channel operations
     let (tx, mut rx) = mpsc::channel(10);
-    
+
     let send_result = tx.send("test_message".to_string()).await;
     assert!(send_result.is_ok(), "Channel send should succeed");
-    
+
     let received = rx.recv().await;
     assert!(received.is_some(), "Should receive message");
 
@@ -612,16 +599,16 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     // Test database state
     let event_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = $1", 
+        "SELECT COUNT(*) FROM raw.events WHERE source = $1",
         "integration_test"
     )
     .fetch_one(ctx.pool())
-    .await?;
+    .await?.unwrap_or(0);
 
     assert_with_context(
         event_count >= 1,
         "Should have at least one integration test event",
-        "database state verification"
+        "database state verification",
     )?;
 
     println!("✓ Database state validation completed");
@@ -656,12 +643,25 @@ struct ChaosEventSource {
 #[derive(Clone, Debug)]
 enum FailureMode {
     InitializationFailure,
-    StreamingCrash { after_events: usize },
-    Unresponsive { after_events: usize },
-    CorruptedEvents { corruption_rate: f32 },
-    IntermittentFailures { failure_rate: f32 },
-    RecoverableFailures { fail_count: usize, recovery_delay: Duration },
-    DependencyFailure { dependency: String },
+    StreamingCrash {
+        after_events: usize,
+    },
+    Unresponsive {
+        after_events: usize,
+    },
+    CorruptedEvents {
+        corruption_rate: f32,
+    },
+    IntermittentFailures {
+        failure_rate: f32,
+    },
+    RecoverableFailures {
+        fail_count: usize,
+        recovery_delay: Duration,
+    },
+    DependencyFailure {
+        dependency: String,
+    },
 }
 
 impl ChaosEventSource {
@@ -685,11 +685,14 @@ impl EventSource for ChaosEventSource {
     where
         Self: Sized,
     {
-        match &_ctx.config {
-            Some(config) if config.get("fail_init").and_then(|v| v.as_bool()).unwrap_or(false) => {
-                return Err(CoreError::Other("Simulated initialization failure".to_string()));
-            }
-            _ => {}
+        if _ctx.config
+            .get("fail_init")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(CoreError::Other(
+                "Simulated initialization failure".to_string(),
+            ));
         }
 
         Ok(Self::new(FailureMode::StreamingCrash { after_events: 5 }))
@@ -700,55 +703,58 @@ impl EventSource for ChaosEventSource {
             FailureMode::InitializationFailure => {
                 return Err(CoreError::Other("Initialization failed".to_string()));
             }
-            
+
             FailureMode::StreamingCrash { after_events } => {
                 for i in 0..*after_events {
                     let event = sinex_core::RawEventBuilder::new(
                         "test.chaos",
                         "test.event",
-                        json!({"event_num": i, "message": "test event"})
-                    ).build();
-                    
+                        json!({"event_num": i, "message": "test event"}),
+                    )
+                    .build();
+
                     if tx.send(event).await.is_err() {
                         return Err(CoreError::Other("Channel closed".to_string()));
                     }
-                    
+
                     self.events_sent.fetch_add(1, Ordering::Relaxed);
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
-                
+
                 return Err(CoreError::Other("Simulated crash after events".to_string()));
             }
-            
+
             FailureMode::CorruptedEvents { corruption_rate } => {
                 for i in 0..100 {
                     let is_corrupted = (i as f32 / 100.0) < *corruption_rate;
-                    
+
                     let event = if is_corrupted {
                         sinex_core::RawEventBuilder::new(
                             "test.chaos",
                             "corrupted.event",
-                            json!({"corrupted": true, "invalid_data": null})
-                        ).build()
+                            json!({"corrupted": true, "invalid_data": null}),
+                        )
+                        .build()
                     } else {
                         sinex_core::RawEventBuilder::new(
                             "test.chaos",
                             "test.event",
-                            json!({"event_num": i, "valid": true})
-                        ).build()
+                            json!({"event_num": i, "valid": true}),
+                        )
+                        .build()
                     };
-                    
+
                     if tx.send(event).await.is_err() {
                         return Ok(());
                     }
-                    
+
                     self.events_sent.fetch_add(1, Ordering::Relaxed);
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
                 Ok(())
             }
-            
-            _ => Ok(()) // Other modes simplified for brevity
+
+            _ => Ok(()), // Other modes simplified for brevity
         }
     }
 }
@@ -756,11 +762,11 @@ impl EventSource for ChaosEventSource {
 #[sinex_test]
 async fn test_event_source_initialization_failure(ctx: TestContext) -> TestResult {
     let config = json!({"fail_init": true});
-    let event_ctx = EventSourceContext::new(Some(config));
-    
+    let event_ctx = EventSourceContext::new(config);
+
     let result = ChaosEventSource::initialize(event_ctx).await;
     assert!(result.is_err(), "Expected initialization to fail");
-    
+
     Ok(())
 }
 
@@ -768,15 +774,13 @@ async fn test_event_source_initialization_failure(ctx: TestContext) -> TestResul
 async fn test_event_source_streaming_crash(ctx: TestContext) -> TestResult {
     let mut source = ChaosEventSource::new(FailureMode::StreamingCrash { after_events: 3 });
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-    
-    let stream_task = tokio::spawn(async move {
-        source.stream_events(tx).await
-    });
-    
+
+    let stream_task = tokio::spawn(async move { source.stream_events(tx).await });
+
     let mut received_events = 0;
     let timeout_duration = Duration::from_secs(5);
     let start = Instant::now();
-    
+
     while start.elapsed() < timeout_duration {
         match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
             Ok(Some(_event)) => {
@@ -786,45 +790,58 @@ async fn test_event_source_streaming_crash(ctx: TestContext) -> TestResult {
             Err(_) => break,
         }
     }
-    
+
     let result = stream_task.await.unwrap();
     assert!(result.is_err(), "Expected streaming to fail");
-    assert_eq!(received_events, 3, "Should have received exactly 3 events before crash");
-    
+    assert_eq!(
+        received_events, 3,
+        "Should have received exactly 3 events before crash"
+    );
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
-    let mut source = ChaosEventSource::new(FailureMode::CorruptedEvents { corruption_rate: 0.2 });
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
-    
-    let stream_task = tokio::spawn(async move {
-        source.stream_events(tx).await
+    let mut source = ChaosEventSource::new(FailureMode::CorruptedEvents {
+        corruption_rate: 0.2,
     });
-    
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
+
+    let stream_task = tokio::spawn(async move { source.stream_events(tx).await });
+
     let mut received_events = 0;
     let mut corrupted_events = 0;
-    
+
     while let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
         received_events += 1;
-        
+
         if event.event_type == "corrupted.event" {
             corrupted_events += 1;
         }
-        
+
         if event.event_type == "test.event" {
             sinex_db::insert_event(ctx.pool(), &event).await?;
         }
     }
-    
+
     assert!(received_events > 0, "Should have received some events");
-    assert!(corrupted_events > 0, "Should have received some corrupted events");
-    assert!(corrupted_events < received_events, "Not all events should be corrupted");
-    
+    assert!(
+        corrupted_events > 0,
+        "Should have received some corrupted events"
+    );
+    assert!(
+        corrupted_events < received_events,
+        "Not all events should be corrupted"
+    );
+
     let stored_count = sinex_db::count_events(ctx.pool()).await?;
-    assert_eq!(stored_count, received_events - corrupted_events, "Only valid events should be stored");
-    
+    assert_eq!(
+        stored_count,
+        received_events - corrupted_events,
+        "Only valid events should be stored"
+    );
+
     Ok(())
 }
 
@@ -1095,7 +1112,7 @@ async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestRe
 
     let components = vec![
         "database",
-        "filesystem_source", 
+        "filesystem_source",
         "terminal_source",
         "clipboard_source",
         "hyprland_source",
@@ -1186,12 +1203,10 @@ async fn check_filesystem_source_health() -> Result<HealthStatus> {
     let test_file = temp_dir.path().join("health_check.txt");
 
     match std::fs::write(&test_file, b"health check") {
-        Ok(()) => {
-            match std::fs::metadata(&test_file) {
-                Ok(_) => Ok(HealthStatus::Healthy),
-                Err(_) => Ok(HealthStatus::Degraded),
-            }
-        }
+        Ok(()) => match std::fs::metadata(&test_file) {
+            Ok(_) => Ok(HealthStatus::Healthy),
+            Err(_) => Ok(HealthStatus::Degraded),
+        },
         Err(_) => Ok(HealthStatus::Unhealthy),
     }
 }
@@ -1290,15 +1305,18 @@ async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
             "timestamp": chrono::Utc::now().to_rfc3339()
         }
     });
-    
+
     let event = RawEventBuilder::new("test.boundary", "small.payload", payload).build();
-    
+
     sinex_db::insert_event(ctx.pool(), &event).await?;
-    
+
     let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
     assert_eq!(retrieved.id, event.id);
-    assert_eq!(retrieved.payload["content"].as_str().unwrap().len(), small_content.len());
-    
+    assert_eq!(
+        retrieved.payload["content"].as_str().unwrap().len(),
+        small_content.len()
+    );
+
     Ok(())
 }
 
@@ -1310,30 +1328,37 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
         "size": large_content.len(),
         "type": "large_payload_test"
     });
-    
+
     let event = RawEventBuilder::new("test.boundary", "large.payload", payload).build();
-    
+
     let start = std::time::Instant::now();
     let result = sinex_db::insert_event(ctx.pool(), &event).await;
     let duration = start.elapsed();
-    
+
     match result {
-        Ok(()) => {
+        Ok(_inserted_event) => {
             println!("Large payload insert took: {:?}", duration);
-            
+
             let start_retrieval = std::time::Instant::now();
             let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
             let retrieval_duration = start_retrieval.elapsed();
-            
+
             println!("Large payload retrieval took: {:?}", retrieval_duration);
-            assert_eq!(retrieved.payload["very_large_text"].as_str().unwrap().len(), large_content.len());
+            assert_eq!(
+                retrieved.payload["very_large_text"].as_str().unwrap().len(),
+                large_content.len()
+            );
         }
         Err(e) => {
             println!("Large payload rejected (expected): {}", e);
-            assert!(e.to_string().contains("too large") || e.to_string().contains("limit") || e.to_string().contains("size"));
+            assert!(
+                e.to_string().contains("too large")
+                    || e.to_string().contains("limit")
+                    || e.to_string().contains("size")
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -1345,21 +1370,22 @@ async fn test_extreme_payload_rejection(ctx: TestContext) -> TestResult {
         "size": extreme_content.len(),
         "warning": "This should probably be rejected"
     });
-    
+
     let event = RawEventBuilder::new("test.boundary", "extreme.payload", payload).build();
-    
+
     let result = sinex_db::insert_event(ctx.pool(), &event).await;
     assert!(result.is_err(), "Extreme payloads should be rejected");
-    
+
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("too large") || 
-        error_msg.contains("limit") || 
-        error_msg.contains("size") ||
-        error_msg.contains("memory"),
-        "Error should indicate size/memory issue: {}", error_msg
+        error_msg.contains("too large")
+            || error_msg.contains("limit")
+            || error_msg.contains("size")
+            || error_msg.contains("memory"),
+        "Error should indicate size/memory issue: {}",
+        error_msg
     );
-    
+
     Ok(())
 }
 
@@ -1397,10 +1423,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
 
     assert!(output.status.success(), "CLI should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("fs"),
-        "Should show filesystem events"
-    );
+    assert!(stdout.contains("fs"), "Should show filesystem events");
 
     let output = Command::new("python3")
         .arg(&cli_path)
@@ -1595,7 +1618,14 @@ mod mock_types {
     }
 
     pub struct DeploymentChecklist {
-        checks: Vec<(&'static str, Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, anyhow::Error>>>>>)>,
+        checks: Vec<(
+            &'static str,
+            Box<
+                dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<bool, anyhow::Error>>>,
+                >,
+            >,
+        )>,
     }
 
     impl DeploymentChecklist {
@@ -2115,17 +2145,17 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
 
     // Verify all fields were stored
     type ManifestRow = (
-        String,                         // agent_name
-        Option<String>,                 // description
-        String,                         // version
-        String,                         // status
-        String,                         // agent_type
-        Option<serde_json::Value>,      // config_template_json
-        Option<serde_json::Value>,      // produces_event_types
-        Option<serde_json::Value>,      // subscribes_to_event_types
-        Option<serde_json::Value>,      // required_capabilities
-        Option<serde_json::Value>,      // llm_dependencies
-        Option<String>,                 // repo_url
+        String,                    // agent_name
+        Option<String>,            // description
+        String,                    // version
+        String,                    // status
+        String,                    // agent_type
+        Option<serde_json::Value>, // config_template_json
+        Option<serde_json::Value>, // produces_event_types
+        Option<serde_json::Value>, // subscribes_to_event_types
+        Option<serde_json::Value>, // required_capabilities
+        Option<serde_json::Value>, // llm_dependencies
+        Option<String>,            // repo_url
     );
     let manifest: ManifestRow = sqlx::query_as(
         "SELECT agent_name, description, version, status, agent_type,

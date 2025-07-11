@@ -37,8 +37,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, Expr, ItemFn, Lit, Meta, ReturnType, Type, TypePath, 
-    PathArguments, punctuated::Punctuated, token::Comma
+    parse_macro_input, punctuated::Punctuated, token::Comma, Expr, ItemFn, Lit, Meta,
+    PathArguments, ReturnType, Type, TypePath,
 };
 
 /// Procedural macro for automatic error context enrichment
@@ -96,8 +96,10 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
     if !is_result_return_type(&input_fn.sig.output) {
         return syn::Error::new_spanned(
             input_fn.sig.fn_token,
-            "with_context can only be applied to functions that return Result<T, E>"
-        ).to_compile_error().into();
+            "with_context can only be applied to functions that return Result<T, E>",
+        )
+        .to_compile_error()
+        .into();
     }
 
     // Extract function components
@@ -141,7 +143,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let __original_fn = async move || #return_type {
                     #fn_block
                 };
-                
+
                 __original_fn().await.map_err(|e| {
                     let core_err: sinex_core::CoreError = e.into();
                     #context_building
@@ -155,7 +157,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let __original_fn = move || #return_type {
                     #fn_block
                 };
-                
+
                 __original_fn().map_err(|e| {
                     let core_err: sinex_core::CoreError = e.into();
                     #context_building

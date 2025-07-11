@@ -3,14 +3,14 @@
 //! This module provides work queue database operations with proper error handling
 //! and clean API design, following the exact same pattern as existing *_correct.rs files.
 
+use crate::models::DlqEvent;
 use crate::models::WorkQueueItem;
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
+use crate::JsonValue;
 use anyhow::Result;
 use sinex_core::Timestamp;
 use sinex_ulid::Ulid;
-use crate::models::DlqEvent;
-use crate::JsonValue;
 
 /// Claim work queue items following the exact same pattern as existing correct functions
 pub async fn claim_work_queue_items(
@@ -57,7 +57,7 @@ pub async fn claim_work_queue_items(
     )
     .fetch_all(pool)
     .await?;
-    
+
     Ok(records
         .into_iter()
         .map(|record| WorkQueueItem {
@@ -81,7 +81,7 @@ pub async fn claim_work_queue_items(
 /// Complete a work queue item following the exact same pattern as existing correct functions
 pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
     let queue_uuid = ulid_to_uuid(queue_id);
-    
+
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue 
@@ -94,7 +94,7 @@ pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Re
     )
     .execute(pool)
     .await?;
-    
+
     Ok(())
 }
 
@@ -106,7 +106,7 @@ pub async fn fail_work_queue_item(
     next_retry_ts: Timestamp,
 ) -> Result<()> {
     let queue_uuid = ulid_to_uuid(queue_id);
-    
+
     sqlx::query!(
         r#"
         UPDATE sinex_schemas.work_queue 
@@ -125,7 +125,7 @@ pub async fn fail_work_queue_item(
     )
     .execute(pool)
     .await?;
-    
+
     Ok(())
 }
 
@@ -157,12 +157,9 @@ pub struct DlqEventParams {
 }
 
 /// Insert a DLQ event following the exact same pattern as existing correct functions
-pub async fn insert_dlq_event(
-    pool: DbPoolRef<'_>,
-    params: DlqEventParams,
-) -> Result<DlqEvent> {
+pub async fn insert_dlq_event(pool: DbPoolRef<'_>, params: DlqEventParams) -> Result<DlqEvent> {
     let failed_event_uuid = ulid_to_uuid(params.failed_event_id);
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.dlq_events 
@@ -197,7 +194,7 @@ pub async fn insert_dlq_event(
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(DlqEvent {
         dlq_id: uuid_to_ulid(record.dlq_id),
         failed_event_id: uuid_to_ulid(record.failed_event_id),
@@ -227,7 +224,7 @@ pub async fn add_to_work_queue(
     let queue_id = Ulid::new();
     let event_uuid = ulid_to_uuid(event_id);
     let queue_uuid = ulid_to_uuid(queue_id);
-    
+
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.work_queue 
@@ -241,12 +238,15 @@ pub async fn add_to_work_queue(
     )
     .execute(pool)
     .await?;
-    
+
     Ok(queue_id)
 }
 
 /// Get the next work item for processing (used by the old queries API)
-pub async fn get_next_work_item(pool: DbPoolRef<'_>, agent_name: &str) -> Result<Option<WorkQueueItem>> {
+pub async fn get_next_work_item(
+    pool: DbPoolRef<'_>,
+    agent_name: &str,
+) -> Result<Option<WorkQueueItem>> {
     let items = claim_work_queue_items(pool, agent_name, "worker_id", 1).await?;
     Ok(items.into_iter().next())
 }
@@ -254,7 +254,7 @@ pub async fn get_next_work_item(pool: DbPoolRef<'_>, agent_name: &str) -> Result
 /// Get a work item by its ID
 pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
     let queue_uuid = ulid_to_uuid(queue_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -278,7 +278,7 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(WorkQueueItem {
         queue_id: uuid_to_ulid(record.queue_id),
         raw_event_id: uuid_to_ulid(record.raw_event_id),
@@ -297,7 +297,11 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
 }
 
 /// Get DLQ items for an agent
-pub async fn get_dlq_items(pool: DbPoolRef<'_>, agent_name: &str, limit: i64) -> Result<Vec<DlqEvent>> {
+pub async fn get_dlq_items(
+    pool: DbPoolRef<'_>,
+    agent_name: &str,
+    limit: i64,
+) -> Result<Vec<DlqEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -326,7 +330,7 @@ pub async fn get_dlq_items(pool: DbPoolRef<'_>, agent_name: &str, limit: i64) ->
     )
     .fetch_all(pool)
     .await?;
-    
+
     Ok(records
         .into_iter()
         .map(|record| DlqEvent {

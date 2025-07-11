@@ -4,7 +4,7 @@ use proptest::strategy::ValueTree;
 use sinex_db::validation::{EventValidator, ValidationError};
 
 /// Property tests for schema validation functionality
-/// 
+///
 /// This module consolidates property tests from:
 /// - json_schema_property_tests.rs (JSON schema validation and security)
 /// - Additional schema-related property tests for validation chains
@@ -142,7 +142,7 @@ fn arb_problematic_payload() -> impl Strategy<Value = Value> {
 fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
     (
         "[a-zA-Z][a-zA-Z0-9_-]{2,20}",
-        "[a-zA-Z][a-zA-Z0-9_.-]{2,30}"
+        "[a-zA-Z][a-zA-Z0-9_.-]{2,30}",
     )
 }
 
@@ -261,7 +261,7 @@ async fn test_schema_evolution_properties() -> Result<(), anyhow::Error> {
         )
     )| {
         let validator = EventValidator::new();
-        
+
         // Create base event
         let base_event = RawEventBuilder::new(
             "test_source",
@@ -336,22 +336,22 @@ fn test_validation_chain_properties() {
         max_lengths in prop::collection::vec(5usize..=50, 1..=10)
     )| {
         use sinex_core::ValidationChain;
-        
+
         for (i, test_string) in test_strings.iter().enumerate() {
             let min_len = min_lengths[i % min_lengths.len()];
             let max_len = max_lengths[i % max_lengths.len()];
-            
+
             // Skip invalid combinations
             if min_len > max_len {
                 continue;
             }
-            
+
             let result = ValidationChain::validate(test_string.as_str(), "test_field")
                 .not_empty()
                 .min_length(min_len)
                 .max_length(max_len)
                 .into_result();
-            
+
             match result {
                 Ok(validated_value) => {
                     // If validation passed, the value should meet all criteria
@@ -365,7 +365,7 @@ fn test_validation_chain_properties() {
                     let fails_empty = test_string.is_empty();
                     let fails_min = test_string.len() < min_len;
                     let fails_max = test_string.len() > max_len;
-                    
+
                     prop_assert!(
                         fails_empty || fails_min || fails_max,
                         "If validation fails, string should violate at least one constraint: '{}' (len={}, min={}, max={})",
@@ -386,21 +386,21 @@ fn test_validation_chain_numeric_properties() {
         max_values in prop::collection::vec(any::<i64>(), 1..=10)
     )| {
         use sinex_core::ValidationChain;
-        
+
         for (i, &test_number) in test_numbers.iter().enumerate() {
             let min_val = min_values[i % min_values.len()];
             let max_val = max_values[i % max_values.len()];
-            
+
             // Skip invalid combinations
             if min_val > max_val {
                 continue;
             }
-            
+
             let result = ValidationChain::validate(test_number, "test_number")
                 .min_value(min_val)
                 .max(max_val)
                 .into_result();
-            
+
             match result {
                 Ok(validated_value) => {
                     // If validation passed, the value should meet all criteria
@@ -412,7 +412,7 @@ fn test_validation_chain_numeric_properties() {
                     // If validation failed, at least one criterion was not met
                     let fails_min = test_number < min_val;
                     let fails_max = test_number > max_val;
-                    
+
                     prop_assert!(
                         fails_min || fails_max,
                         "If validation fails, number should violate at least one constraint: {} (min={}, max={})",
@@ -439,13 +439,13 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
             let pool = ctx.pool();
-            
+
             // Create test schemas
             let mut created_schemas = Vec::new();
             for i in 0..schema_count {
                 let name = &schema_names[i % schema_names.len()];
                 let version = &schema_versions[i % schema_versions.len()];
-                
+
                 let schema_def = json!({
                     "type": "object",
                     "properties": {
@@ -460,7 +460,7 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                     },
                     "required": ["test_field"]
                 });
-                
+
                 // Insert schema into database
                 let _schema_id = Ulid::new();
                 let result = sqlx::query!(
@@ -471,15 +471,15 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                     version,
                     schema_def
                 ).execute(pool).await;
-                
+
                 if result.is_ok() {
                     created_schemas.push((name.clone(), version.clone()));
                 }
             }
-            
+
             // Load validator from database
             let validator = EventValidator::load_from_db(pool).await.expect("Should load validator");
-            
+
             // Test that schemas are accessible
             for (name, version) in &created_schemas {
                 // Create an event that should validate against this schema
@@ -491,9 +491,9 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                         "version": version
                     })
                 ).build();
-                
+
                 let result = validator.validate(&event);
-                
+
                 // Validation should either pass or fail gracefully
                 match result {
                     Ok(()) => {
@@ -510,7 +510,7 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                     }
                 }
             }
-            
+
             // Cleanup
             for (name, version) in created_schemas {
                 let _ = sqlx::query!(
@@ -519,7 +519,7 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                     version
                 ).execute(pool).await;
             }
-            
+
             Ok(())
         })?
     });
@@ -553,9 +553,13 @@ async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
         // Control characters
         ("test\nsource", "test.event", json!({"control": "test\r\n"})),
         // Very nested payload
-        ("test_source", "test.event", json!({
-            "level1": {"level2": {"level3": {"level4": {"level5": "deep"}}}}
-        })),
+        (
+            "test_source",
+            "test.event",
+            json!({
+                "level1": {"level2": {"level3": {"level4": {"level5": "deep"}}}}
+            }),
+        ),
     ];
 
     for (source, event_type, payload) in edge_cases {
@@ -563,7 +567,7 @@ async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
 
         // Should not panic
         let _result = validator.validate(&event);
-        
+
         // The main property we're testing is that it doesn't crash
         assert!(true);
     }
@@ -586,8 +590,7 @@ async fn test_event_validator_database_integration() -> Result<(), anyhow::Error
         .expect("Should be able to load from empty database");
 
     // Should be able to create events and validate them
-    let event =
-        RawEventBuilder::new("test_source", "test.event", json!({"key": "value"})).build();
+    let event = RawEventBuilder::new("test_source", "test.event", json!({"key": "value"})).build();
 
     // Validation should not fail (no schema means fallback to hardcoded rules)
     let result = validator.validate(&event);
@@ -619,7 +622,7 @@ fn test_validation_performance_properties() {
         validation_count in 10usize..=100
     )| {
         let validator = EventValidator::new();
-        
+
         for &payload_size in &payload_sizes {
             // Create payload of specified size
             let large_payload = json!({
@@ -627,26 +630,26 @@ fn test_validation_performance_properties() {
                 "size": payload_size,
                 "type": "performance_test"
             });
-            
+
             let event = RawEventBuilder::new("test_source", "test.event", large_payload).build();
-            
+
             // Measure validation time
             let start = std::time::Instant::now();
-            
+
             for _ in 0..validation_count {
                 let _ = validator.validate(&event);
             }
-            
+
             let elapsed = start.elapsed();
             let avg_time = elapsed.as_nanos() as f64 / validation_count as f64;
-            
+
             // Property: Average validation time should be reasonable
             prop_assert!(
                 avg_time < 1_000_000.0, // Less than 1ms per validation
                 "Validation too slow: {:.2}ns average for {} byte payload",
                 avg_time, payload_size
             );
-            
+
             // Property: Validation time should not grow exponentially with size
             if payload_size > 1000 {
                 prop_assert!(
@@ -712,21 +715,33 @@ mod unit_tests {
     #[test]
     fn test_payload_generators() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        
+
         // Test normal payload generator
         let payload = arb_event_payload().new_tree(&mut runner).unwrap().current();
-        assert!(payload.is_object() || payload.is_string() || payload.is_number() || payload.is_boolean() || payload.is_null());
-        
+        assert!(
+            payload.is_object()
+                || payload.is_string()
+                || payload.is_number()
+                || payload.is_boolean()
+                || payload.is_null()
+        );
+
         // Test problematic payload generator
-        let problematic = arb_problematic_payload().new_tree(&mut runner).unwrap().current();
+        let problematic = arb_problematic_payload()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
         assert!(problematic.is_object()); // All problematic payloads are objects
     }
 
     #[test]
     fn test_source_type_generator() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        let (source, event_type) = arb_event_source_type().new_tree(&mut runner).unwrap().current();
-        
+        let (source, event_type) = arb_event_source_type()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
+
         assert!(!source.is_empty());
         assert!(!event_type.is_empty());
         assert!(source.len() >= 3); // 1 + 2 minimum
@@ -736,38 +751,38 @@ mod unit_tests {
     #[test]
     fn test_validation_chain_basic_functionality() {
         use sinex_core::ValidationChain;
-        
+
         // Test successful validation
         let result = ValidationChain::validate("hello", "test")
             .not_empty()
             .min_length(3)
             .max_length(10)
             .into_result();
-        
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "hello");
-        
+
         // Test failed validation
         let result = ValidationChain::validate("", "test")
             .not_empty()
             .into_result();
-        
+
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validation_error_types() {
         use sinex_core::ValidationChain;
-        
+
         // Test different error types
         let empty_error = ValidationChain::validate("", "test")
             .not_empty()
             .into_result();
-        
+
         let length_error = ValidationChain::validate("x", "test")
             .min_length(5)
             .into_result();
-        
+
         // Both should be errors but potentially different types
         assert!(empty_error.is_err());
         assert!(length_error.is_err());

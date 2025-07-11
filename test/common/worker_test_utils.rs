@@ -4,12 +4,12 @@
 //! including work queue management, worker lifecycle simulation, and assertion helpers.
 
 use crate::common::prelude::*;
-use sinex_db::query_helpers::uuid_to_ulid;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_work_queue_count, wait_for_work_queue_status_count,
 };
-use sinex_db::models::WorkQueueItem;
 use chrono::Utc;
+use sinex_db::models::WorkQueueItem;
+use sinex_db::query_helpers::uuid_to_ulid;
 /// Insert test items (simplified alias)
 pub async fn insert_test_items(pool: &DbPool, item_count: usize) -> Result<Vec<Ulid>> {
     setup_test_worker(pool, "test_worker", item_count).await
@@ -38,7 +38,7 @@ pub async fn setup_test_worker(
 
     // Create events and work queue items atomically in a single transaction
     let mut tx = pool.begin().await?;
-    
+
     for i in 0..item_count {
         // Create a raw event to reference
         let event = crate::common::events::generic_adversarial_event(
@@ -51,7 +51,7 @@ pub async fn setup_test_worker(
         // Insert event and work queue item atomically using raw SQL
         let queue_id = Ulid::new();
         let event_id = event.id;
-        
+
         // Insert the raw event first
         sqlx::query!(
             r#"
@@ -82,10 +82,10 @@ pub async fn setup_test_worker(
         )
         .execute(&mut *tx)
         .await?;
-        
+
         queue_ids.push(queue_id);
     }
-    
+
     // Commit the transaction to ensure atomicity
     tx.commit().await?;
 
@@ -93,7 +93,7 @@ pub async fn setup_test_worker(
 }
 
 /// Create a test work queue item with event and agent setup
-/// 
+///
 /// This unified function replaces the previous insert_test_work_item and create_test_work_item
 /// functions to eliminate duplication while maintaining all functionality.
 pub async fn create_test_work_item_with_status(
@@ -102,7 +102,7 @@ pub async fn create_test_work_item_with_status(
     status: Option<&str>,
 ) -> Result<Ulid> {
     let status = status.unwrap_or("pending");
-    
+
     // Create agent manifest first
     crate::common::create_test_agent(pool, target_agent).await?;
 
@@ -166,7 +166,7 @@ pub async fn get_work_item(pool: &DbPool, queue_id: Ulid) -> Result<Option<WorkQ
     )
     .fetch_optional(pool)
     .await?;
-    
+
     match row {
         Some(r) => Ok(Some(WorkQueueItem {
             queue_id: uuid_to_ulid(r.queue_id),

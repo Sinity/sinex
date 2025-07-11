@@ -4,7 +4,7 @@
 
 // Re-export production wait helpers for backwards compatibility
 pub use sinex_core::wait_helpers::{
-    wait_for_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count
+    wait_for_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count,
 };
 
 /// Test-compatible wait_for_condition that accepts anyhow::Result closures
@@ -18,10 +18,11 @@ where
     let wrapped_condition = move || {
         let fut = condition();
         async move {
-            fut.await.map_err(|e| sinex_core::CoreError::Other(e.to_string()))
+            fut.await
+                .map_err(|e| sinex_core::CoreError::Other(e.to_string()))
         }
     };
-    
+
     sinex_core::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
         .await
         .map(|_| ())
@@ -30,8 +31,8 @@ where
 
 /// Test-compatible wait_for_condition_or_timeout that accepts anyhow::Result closures
 pub async fn wait_for_condition_or_timeout<F, Fut>(
-    condition: F, 
-    timeout_secs: u64
+    condition: F,
+    timeout_secs: u64,
 ) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,

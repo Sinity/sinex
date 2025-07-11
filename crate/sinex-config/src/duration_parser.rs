@@ -7,9 +7,9 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
     if s.is_empty() {
         return Err("Empty duration string".to_string());
     }
-    
+
     let s = s.trim();
-    
+
     if let Some(num_str) = s.strip_suffix('s') {
         let seconds: u64 = num_str.parse().map_err(|_| "Invalid number format")?;
         Ok(Duration::from_secs(seconds))

@@ -6,8 +6,9 @@ use tokio::process::Command;
 use tracing::{debug, error, info};
 
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
-    OptionalTimestamp, Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
+    sources, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender, EventSource,
+    EventSourceBase, EventSourceContext, EventType, JsonValue, OptionalTimestamp, RawEvent, Result,
+    Timestamp,
 };
 
 // ============================================================================
@@ -167,19 +168,25 @@ impl EventSource for JournalMonitor {
             .arg("--version")
             .output()
             .await
-            .map_err(|e| 
-                ErrorContext::new(CoreError::Configuration(format!("journalctl not found: {}", e)))
-                    .with_operation("initialize_journal_monitor")
-                    .with_context("tool", "journalctl")
-                    .with_context("command", "--version")
-                    .build())?;
-
-        if !check.status.success() {
-            return Err(ErrorContext::new(CoreError::Configuration("journalctl command failed".to_string()))
+            .map_err(|e| {
+                ErrorContext::new(CoreError::Configuration(format!(
+                    "journalctl not found: {}",
+                    e
+                )))
                 .with_operation("initialize_journal_monitor")
                 .with_context("tool", "journalctl")
-                .with_context("exit_status", check.status.to_string())
-                .build());
+                .with_context("command", "--version")
+                .build()
+            })?;
+
+        if !check.status.success() {
+            return Err(ErrorContext::new(CoreError::Configuration(
+                "journalctl command failed".to_string(),
+            ))
+            .with_operation("initialize_journal_monitor")
+            .with_context("tool", "journalctl")
+            .with_context("exit_status", check.status.to_string())
+            .build());
         }
 
         // Load last cursor if cursor file exists
@@ -260,19 +267,22 @@ impl JournalMonitor {
             .args(&args)
             .output()
             .await
-            .map_err(|e| 
+            .map_err(|e| {
                 ErrorContext::new(CoreError::Io(format!("Failed to run journalctl: {}", e)))
                     .with_operation("import_historical")
                     .with_context("args", format!("{:?}", args))
-                    .build())?;
+                    .build()
+            })?;
 
         if !output.status.success() {
-            return Err(ErrorContext::new(CoreError::Io("journalctl failed".to_string()))
-                .with_operation("import_historical")
-                .with_context("exit_status", output.status.to_string())
-                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
-                .with_context("args", format!("{:?}", args))
-                .build());
+            return Err(
+                ErrorContext::new(CoreError::Io("journalctl failed".to_string()))
+                    .with_operation("import_historical")
+                    .with_context("exit_status", output.status.to_string())
+                    .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                    .with_context("args", format!("{:?}", args))
+                    .build(),
+            );
         }
 
         let mut entries_count = 0u64;
@@ -386,20 +396,19 @@ impl JournalMonitor {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| 
+            .map_err(|e| {
                 ErrorContext::new(CoreError::Io(format!("Failed to spawn journalctl: {}", e)))
                     .with_operation("follow_journal")
                     .with_context("args", format!("{:?}", args))
-                    .build())?;
+                    .build()
+            })?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| 
-                ErrorContext::new(CoreError::Io("No stdout".to_string()))
-                    .with_operation("follow_journal")
-                    .with_context("process", "journalctl")
-                    .build())?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ErrorContext::new(CoreError::Io("No stdout".to_string()))
+                .with_operation("follow_journal")
+                .with_context("process", "journalctl")
+                .build()
+        })?;
 
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout);
@@ -445,33 +454,36 @@ impl JournalMonitor {
     }
 
     fn parse_journal_entry(&self, entry: &JsonValue) -> Result<Option<RawEvent>> {
-        let obj = entry
-            .as_object()
-            .ok_or_else(|| 
-                ErrorContext::new(CoreError::Serialization("Invalid journal entry".to_string()))
-                    .with_operation("parse_journal_entry")
-                    .with_context("entry_type", "not_object")
-                    .build())?;
+        let obj = entry.as_object().ok_or_else(|| {
+            ErrorContext::new(CoreError::Serialization(
+                "Invalid journal entry".to_string(),
+            ))
+            .with_operation("parse_journal_entry")
+            .with_context("entry_type", "not_object")
+            .build()
+        })?;
 
         // Extract required fields
         let cursor = obj
             .get("__CURSOR")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| 
+            .ok_or_else(|| {
                 ErrorContext::new(CoreError::Validation("Missing cursor".to_string()))
                     .with_operation("parse_journal_entry")
                     .with_context("field", "__CURSOR")
-                    .build())?;
+                    .build()
+            })?;
 
         let timestamp_us = obj
             .get("__REALTIME_TIMESTAMP")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<i64>().ok())
-            .ok_or_else(|| 
+            .ok_or_else(|| {
                 ErrorContext::new(CoreError::Validation("Missing timestamp".to_string()))
                     .with_operation("parse_journal_entry")
                     .with_context("field", "__REALTIME_TIMESTAMP")
-                    .build())?;
+                    .build()
+            })?;
 
         let message = obj
             .get("MESSAGE")
@@ -480,12 +492,13 @@ impl JournalMonitor {
             .to_string();
 
         // Parse timestamp
-        let timestamp = sinex_core::timestamp_micros_to_datetime(timestamp_us)
-            .ok_or_else(|| 
+        let timestamp =
+            sinex_core::timestamp_micros_to_datetime(timestamp_us).ok_or_else(|| {
                 ErrorContext::new(CoreError::Validation("Invalid timestamp".to_string()))
                     .with_operation("parse_journal_entry")
                     .with_context("timestamp_us", timestamp_us.to_string())
-                    .build())?;
+                    .build()
+            })?;
 
         // Extract optional fields
         let hostname = obj
@@ -608,12 +621,13 @@ impl JournalMonitor {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
 
-            tokio::fs::write(cursor_file, cursor).await.map_err(|e| 
+            tokio::fs::write(cursor_file, cursor).await.map_err(|e| {
                 ErrorContext::new(CoreError::Io(format!("Failed to save cursor: {}", e)))
                     .with_operation("save_cursor")
                     .with_context("cursor_file", cursor_file)
                     .with_context("cursor", cursor)
-                    .build())?;
+                    .build()
+            })?;
         }
         Ok(())
     }

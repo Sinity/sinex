@@ -4,15 +4,15 @@
 //! and command execution monitoring across different shell environments.
 
 pub mod atuin;
-pub mod shell_history;
 pub mod command_execution;
+pub mod shell_history;
 
 // Re-export shell event types and payloads
 pub use atuin::{AtuinCommandExecuted, AtuinCommandExecutedPayload, AtuinHistoryImporter};
-pub use shell_history::{ShellHistoryCommand, ShellHistoryCommandPayload, ShellHistoryMonitor};
 pub use command_execution::{
-    CommandExecuted, CommandExecutedPayload, CommandCompleted, CommandCompletedPayload
+    CommandCompleted, CommandCompletedPayload, CommandExecuted, CommandExecutedPayload,
 };
+pub use shell_history::{ShellHistoryCommand, ShellHistoryCommandPayload, ShellHistoryMonitor};
 
 use sinex_core::register_events;
 
@@ -20,10 +20,10 @@ use sinex_core::register_events;
 register_events! {
     // Command execution (rich metadata from Atuin)
     "command.executed" => (shell.atuin, AtuinCommandExecutedPayload),
-    
+
     // Command execution (discovered from history files)
     "command.imported" => (shell.history, ShellHistoryCommandPayload),
-    
+
     // Generic command execution events
     "command.completed" => (shell.generic, CommandCompletedPayload),
 }
@@ -45,7 +45,9 @@ pub struct ShellCommandInfo {
 
 impl ShellCommandInfo {
     /// Parse a command line into command and arguments
-    pub fn parse_command_line(command_line: &str) -> Result<(String, Vec<String>), shell_words::ParseError> {
+    pub fn parse_command_line(
+        command_line: &str,
+    ) -> Result<(String, Vec<String>), shell_words::ParseError> {
         let words = shell_words::split(command_line)?;
         if words.is_empty() {
             Ok((String::new(), Vec::new()))
@@ -53,7 +55,7 @@ impl ShellCommandInfo {
             Ok((words[0].clone(), words[1..].to_vec()))
         }
     }
-    
+
     /// Get the full command line as a single string
     pub fn full_command(&self) -> String {
         if self.args.is_empty() {
@@ -62,7 +64,7 @@ impl ShellCommandInfo {
             format!("{} {}", self.command, self.args.join(" "))
         }
     }
-    
+
     /// Check if this is a long-running command (> 1 second)
     pub fn is_long_running(&self) -> bool {
         self.execution_time_ms.map(|t| t > 1000).unwrap_or(false)
@@ -74,19 +76,19 @@ impl ShellCommandInfo {
 pub struct ShellConfig {
     /// Enable Atuin history integration
     pub enable_atuin: bool,
-    
+
     /// Enable shell history file monitoring
     pub enable_history_files: bool,
-    
+
     /// Shell history file paths to monitor
     pub history_paths: Vec<String>,
-    
+
     /// Minimum command length to capture
     pub min_command_length: usize,
-    
+
     /// Commands to ignore (prefixes)
     pub ignore_commands: Vec<String>,
-    
+
     /// Maximum execution time to track (in milliseconds)
     pub max_execution_time_ms: u64,
 }

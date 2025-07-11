@@ -763,9 +763,12 @@ mod tests {
             .into_result();
         assert!(result.is_ok());
 
-        let result = ValidationChain::validate("file-with-dashes_and_underscores.txt".to_string(), "filename")
-            .no_shell_metacharacters()
-            .into_result();
+        let result = ValidationChain::validate(
+            "file-with-dashes_and_underscores.txt".to_string(),
+            "filename",
+        )
+        .no_shell_metacharacters()
+        .into_result();
         assert!(result.is_ok());
 
         // Unsafe strings with shell metacharacters
@@ -971,7 +974,9 @@ mod tests {
                 if self.0 {
                     Ok(())
                 } else {
-                    Err(CoreError::Validation("simple validation failed".to_string()))
+                    Err(CoreError::Validation(
+                        "simple validation failed".to_string(),
+                    ))
                 }
             }
         }
@@ -990,22 +995,25 @@ mod tests {
             .with_validator(SimpleValidator(false))
             .validate_all();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Multiple validation errors"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Multiple validation errors"));
     }
 
     #[test]
     fn test_error_accumulation_details() {
         let chain = ValidationChain::validate("a".to_string(), "test_field")
-            .not_empty()    // Should pass
-            .min_length(5)  // Should fail - too short
+            .not_empty() // Should pass
+            .min_length(5) // Should fail - too short
             .max_length(10) // Should pass
             .min_length(20); // Should fail - way too short
 
         assert!(!chain.is_valid());
-        
+
         let errors = chain.errors();
         assert_eq!(errors.len(), 2); // Two min_length failures
-        
+
         let error_result = chain.into_result();
         assert!(error_result.is_err());
         let error_msg = error_result.unwrap_err().to_string();
@@ -1022,7 +1030,7 @@ mod tests {
             .custom(|s| s.contains('@'), "must contain @ symbol")
             .custom(|s| s.contains('.'), "must contain . symbol")
             .into_result();
-        
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "test@example.com");
     }

@@ -92,27 +92,47 @@ pub trait EventSource: Send + Sync + 'static {
 
     /// Create a filesystem event builder
     fn filesystem(&self) -> sinex_events::FilesystemEventBuilder {
-        sinex_events::FilesystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+        sinex_events::FilesystemEventBuilder::new(
+            Self::SOURCE_NAME,
+            &self.source_host(),
+            &self.source_version(),
+        )
     }
 
     /// Create a terminal event builder
     fn terminal(&self) -> sinex_events::TerminalEventBuilder {
-        sinex_events::TerminalEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+        sinex_events::TerminalEventBuilder::new(
+            Self::SOURCE_NAME,
+            &self.source_host(),
+            &self.source_version(),
+        )
     }
 
     /// Create a clipboard event builder
     fn clipboard(&self) -> sinex_events::ClipboardEventBuilder {
-        sinex_events::ClipboardEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+        sinex_events::ClipboardEventBuilder::new(
+            Self::SOURCE_NAME,
+            &self.source_host(),
+            &self.source_version(),
+        )
     }
 
     /// Create a window manager event builder
     fn window_manager(&self) -> sinex_events::WindowManagerEventBuilder {
-        sinex_events::WindowManagerEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+        sinex_events::WindowManagerEventBuilder::new(
+            Self::SOURCE_NAME,
+            &self.source_host(),
+            &self.source_version(),
+        )
     }
 
     /// Create a system event builder
     fn system(&self) -> sinex_events::SystemEventBuilder {
-        sinex_events::SystemEventBuilder::new(Self::SOURCE_NAME, &self.source_host(), &self.source_version())
+        sinex_events::SystemEventBuilder::new(
+            Self::SOURCE_NAME,
+            &self.source_host(),
+            &self.source_version(),
+        )
     }
 
     // ===== Metadata Helper Methods =====
@@ -261,12 +281,12 @@ impl EventRegistryBuilder {
             schema_generators: HashMap::new(),
         }
     }
-    
+
     pub fn add_event_type(
-        &mut self, 
+        &mut self,
         event_name: &'static str,
         source_name: &'static str,
-        schema_generator: fn() -> RootSchema
+        schema_generator: fn() -> RootSchema,
     ) {
         if !self.event_types.contains(&event_name) {
             self.event_types.push(event_name);
@@ -276,14 +296,14 @@ impl EventRegistryBuilder {
     }
 
     /// Auto-registration method for compatibility
-    pub fn with_auto_registration<F>(mut self, register_fn: F) -> Self 
+    pub fn with_auto_registration<F>(mut self, register_fn: F) -> Self
     where
         F: FnOnce(&mut Self),
     {
         register_fn(&mut self);
         self
     }
-    
+
     pub fn build(mut self) -> EventRegistry {
         self.event_types.sort();
         EventRegistry {
@@ -300,9 +320,6 @@ impl Default for EventRegistryBuilder {
     }
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,7 +327,7 @@ mod tests {
     #[test]
     fn test_event_registry_builder() {
         let mut builder = EventRegistryBuilder::new();
-        
+
         builder.add_event_type("test.event", "test.source", || {
             use schemars::schema::*;
             RootSchema {
@@ -322,9 +339,9 @@ mod tests {
                 definitions: Default::default(),
             }
         });
-        
+
         let registry = builder.build();
-        
+
         assert_eq!(registry.event_types, &["test.event"]);
         assert_eq!(registry.event_to_source, &[("test.event", "test.source")]);
         assert!(registry.schema_generators.contains_key("test.event"));
@@ -332,32 +349,35 @@ mod tests {
         assert_eq!(registry.source_for_event("test.event"), Some("test.source"));
     }
 
-
     #[test]
     fn test_event_registry_deduplication() {
         let mut builder = EventRegistryBuilder::new();
-        
+
         // Add the same event type multiple times
         builder.add_event_type("duplicate.event", "source1", || {
             use schemars::schema::*;
             RootSchema::default()
         });
-        
+
         builder.add_event_type("duplicate.event", "source2", || {
             use schemars::schema::*;
             RootSchema::default()
         });
-        
+
         let registry = builder.build();
-        
+
         // Should only appear once in event_types
         assert_eq!(registry.event_types, &["duplicate.event"]);
-        
+
         // But should have multiple source mappings
         assert_eq!(registry.event_to_source.len(), 2);
-        assert!(registry.event_to_source.contains(&("duplicate.event", "source1")));
-        assert!(registry.event_to_source.contains(&("duplicate.event", "source2")));
-        
+        assert!(registry
+            .event_to_source
+            .contains(&("duplicate.event", "source1")));
+        assert!(registry
+            .event_to_source
+            .contains(&("duplicate.event", "source2")));
+
         // Should have only one schema generator
         assert_eq!(registry.schema_generators.len(), 1);
     }
@@ -366,7 +386,7 @@ mod tests {
     fn test_auto_registration_concept() {
         // This test shows how event crates can auto-register themselves
         let mut builder = EventRegistryBuilder::new();
-        
+
         // Simulate what sinex-events-fs would do
         builder.add_event_type("file.created", "fs", || {
             use schemars::schema::*;
@@ -403,7 +423,7 @@ mod tests {
                 definitions: Default::default(),
             }
         });
-        
+
         // Simulate what sinex-events-desktop would do
         builder.add_event_type("copied", "clipboard", || {
             use schemars::schema::*;
@@ -423,9 +443,7 @@ mod tests {
                             );
                             props
                         },
-                        required: vec!["content_type".to_string()]
-                            .into_iter()
-                            .collect(),
+                        required: vec!["content_type".to_string()].into_iter().collect(),
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -433,19 +451,19 @@ mod tests {
                 definitions: Default::default(),
             }
         });
-        
+
         let registry = builder.build();
-        
+
         // Verify the auto-registered events work correctly
         assert!(registry.has_event("file.created"));
         assert!(registry.has_event("copied"));
         assert_eq!(registry.source_for_event("file.created"), Some("fs"));
         assert_eq!(registry.source_for_event("copied"), Some("clipboard"));
-        
+
         // Verify schemas work
         let file_schema = registry.schema_for_event("file.created").unwrap();
         assert!(file_schema.schema.object.is_some());
-        
+
         let clipboard_schema = registry.schema_for_event("copied").unwrap();
         assert!(clipboard_schema.schema.object.is_some());
     }

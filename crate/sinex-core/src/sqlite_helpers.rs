@@ -1,6 +1,6 @@
 //! SQLite operation helpers to reduce boilerplate
 //!
-//! This module provides utilities for common SQLite operations with 
+//! This module provides utilities for common SQLite operations with
 //! consistent error handling and context.
 
 use crate::{CoreError, ErrorContext, Result};
@@ -14,31 +14,36 @@ impl SqliteConnection {
     /// Open a read-only SQLite connection with error context
     pub fn open_readonly<P: AsRef<Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
-        
-        Connection::open_with_flags(path_ref, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| {
-                ErrorContext::new(CoreError::Database(format!("Failed to open database: {}", e)))
-                    .with_operation(operation)
-                    .with_context("db_path", path_ref.display().to_string())
-                    .with_context("access_mode", "read_only")
-                    .build()
-            })
+
+        Connection::open_with_flags(path_ref, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
+            ErrorContext::new(CoreError::Database(format!(
+                "Failed to open database: {}",
+                e
+            )))
+            .with_operation(operation)
+            .with_context("db_path", path_ref.display().to_string())
+            .with_context("access_mode", "read_only")
+            .build()
+        })
     }
-    
+
     /// Open a read-write SQLite connection with error context
     pub fn open_readwrite<P: AsRef<Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
-        
+
         Connection::open_with_flags(
-            path_ref, 
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
+            path_ref,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
         .map_err(|e| {
-            ErrorContext::new(CoreError::Database(format!("Failed to open database: {}", e)))
-                .with_operation(operation)
-                .with_context("db_path", path_ref.display().to_string())
-                .with_context("access_mode", "read_write")
-                .build()
+            ErrorContext::new(CoreError::Database(format!(
+                "Failed to open database: {}",
+                e
+            )))
+            .with_operation(operation)
+            .with_context("db_path", path_ref.display().to_string())
+            .with_context("access_mode", "read_write")
+            .build()
         })
     }
 }
@@ -50,13 +55,15 @@ pub trait SqliteStatementExt {
 
 impl SqliteStatementExt for Connection {
     fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement> {
-        self.prepare(sql)
-            .map_err(|e| {
-                ErrorContext::new(CoreError::Database(format!("Failed to prepare statement: {}", e)))
-                    .with_operation(operation)
-                    .with_context("sql_length", sql.len().to_string())
-                    .build()
-            })
+        self.prepare(sql).map_err(|e| {
+            ErrorContext::new(CoreError::Database(format!(
+                "Failed to prepare statement: {}",
+                e
+            )))
+            .with_operation(operation)
+            .with_context("sql_length", sql.len().to_string())
+            .build()
+        })
     }
 }
 
@@ -75,31 +82,34 @@ impl<'a> SqliteQueryBuilder<'a> {
             context: Vec::new(),
         }
     }
-    
+
     pub fn query_type(mut self, query_type: &'a str) -> Self {
         self.query_type = Some(query_type);
         self
     }
-    
+
     pub fn context(mut self, key: &'a str, value: impl ToString) -> Self {
         self.context.push((key, value.to_string()));
         self
     }
-    
+
     /// Wrap a database operation with consistent error handling
-    pub fn wrap_error<T, E: std::fmt::Display>(self, result: std::result::Result<T, E>) -> Result<T> {
+    pub fn wrap_error<T, E: std::fmt::Display>(
+        self,
+        result: std::result::Result<T, E>,
+    ) -> Result<T> {
         result.map_err(|e| {
             let mut ctx = ErrorContext::new(CoreError::Database(e.to_string()))
                 .with_operation(self.operation);
-                
+
             if let Some(qt) = self.query_type {
                 ctx = ctx.with_context("query_type", qt);
             }
-            
+
             for (key, value) in self.context {
                 ctx = ctx.with_context(key, value);
             }
-            
+
             ctx.build()
         })
     }
@@ -120,35 +130,39 @@ impl<T, E: std::fmt::Display> QueryResultExt<T> for std::result::Result<T, E> {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
-    
+
     #[test]
     fn test_sqlite_connection_helpers() {
         // Create a temporary database
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
-        
+
         // Test read-write connection
         let conn = SqliteConnection::open_readwrite(path, "test_operation").unwrap();
         conn.execute("CREATE TABLE test (id INTEGER)", []).unwrap();
         drop(conn);
-        
+
         // Test read-only connection
         let conn = SqliteConnection::open_readonly(path, "test_operation").unwrap();
-        let count: i32 = conn.query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0)).unwrap();
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 0);
     }
-    
+
     #[test]
     fn test_statement_prepare_helper() {
         let temp_file = NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_file.path()).unwrap();
-        
+
         conn.execute("CREATE TABLE test (id INTEGER)", []).unwrap();
-        
+
         // Test prepare with context
-        let stmt = conn.prepare_with_context("SELECT * FROM test", "test_query").unwrap();
+        let stmt = conn
+            .prepare_with_context("SELECT * FROM test", "test_query")
+            .unwrap();
         drop(stmt);
-        
+
         // Test prepare error
         let result = conn.prepare_with_context("SELECT * FROM nonexistent", "test_query");
         assert!(result.is_err());

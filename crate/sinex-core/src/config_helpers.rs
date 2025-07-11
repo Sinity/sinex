@@ -3,8 +3,8 @@
 //! This module provides production-ready configuration helpers, validators,
 //! and extraction utilities that were originally developed in the test suite.
 
+use crate::config_extractors::{parse_duration, ConfigExtractor, ConfigValidator};
 use crate::{ConfigValue, CoreError, Result, ValidationChain};
-use crate::config_extractors::{ConfigExtractor, ConfigValidator, parse_duration};
 use std::collections::HashMap;
 
 /// Configuration factory for creating validated configurations
@@ -75,20 +75,29 @@ impl ConfigFactory {
         move |config: &ConfigValue| {
             // Validate database section
             if let Err(e) = Self::database_validator()(config) {
-                return Err(CoreError::Configuration(format!("Database configuration invalid: {}", e)));
+                return Err(CoreError::Configuration(format!(
+                    "Database configuration invalid: {}",
+                    e
+                )));
             }
 
             // Validate collector section if present
             if config.optional_str("collector.buffer_size").is_some() {
                 if let Err(e) = Self::collector_validator()(config) {
-                    return Err(CoreError::Configuration(format!("Collector configuration invalid: {}", e)));
+                    return Err(CoreError::Configuration(format!(
+                        "Collector configuration invalid: {}",
+                        e
+                    )));
                 }
             }
 
             // Validate observability section if present
             if config.optional_str("observability.metrics_port").is_some() {
                 if let Err(e) = Self::observability_validator()(config) {
-                    return Err(CoreError::Configuration(format!("Observability configuration invalid: {}", e)));
+                    return Err(CoreError::Configuration(format!(
+                        "Observability configuration invalid: {}",
+                        e
+                    )));
                 }
             }
 
@@ -182,7 +191,8 @@ impl ConfigExtraction {
         if !valid_levels.contains(&log_level) {
             return Err(CoreError::Configuration(format!(
                 "Invalid log level '{}', must be one of: {}",
-                log_level, valid_levels.join(", ")
+                log_level,
+                valid_levels.join(", ")
             )));
         }
 
@@ -220,11 +230,12 @@ impl ConfigExtraction {
             ValidationChain::validate(path.clone(), "sources.filesystem.watch_paths")
                 .not_empty()
                 .into_result()?;
-            
+
             // Additional path validation
             if crate::validation::validate_path(path).is_err() {
                 return Err(CoreError::Configuration(format!(
-                    "Invalid filesystem watch path: {}", path
+                    "Invalid filesystem watch path: {}",
+                    path
                 )));
             }
         }
@@ -285,7 +296,9 @@ impl ConfigMerger {
                 for (key, value) in overlay_table {
                     if let Some(base_value) = base_table.get(&key) {
                         // Recursive merge for nested tables
-                        if matches!(base_value, ConfigValue::Table(_)) && matches!(value, ConfigValue::Table(_)) {
+                        if matches!(base_value, ConfigValue::Table(_))
+                            && matches!(value, ConfigValue::Table(_))
+                        {
                             base_table.insert(key, Self::merge_configs(base_value.clone(), value)?);
                         } else {
                             // Replace value for non-table types
@@ -340,9 +353,11 @@ impl ConfigMerger {
     /// Set a nested value in the configuration using dot notation
     fn set_nested_value(config: &mut ConfigValue, path: &str, value: String) -> Result<()> {
         let parts: Vec<&str> = path.split('.').collect();
-        
+
         if parts.is_empty() {
-            return Err(CoreError::Configuration("Empty configuration path".to_string()));
+            return Err(CoreError::Configuration(
+                "Empty configuration path".to_string(),
+            ));
         }
 
         // Navigate to the parent table
@@ -350,9 +365,9 @@ impl ConfigMerger {
         for part in &parts[..parts.len() - 1] {
             match current {
                 ConfigValue::Table(ref mut table) => {
-                    current = table.entry(part.to_string()).or_insert_with(|| {
-                        ConfigValue::Table(toml::map::Map::new())
-                    });
+                    current = table
+                        .entry(part.to_string())
+                        .or_insert_with(|| ConfigValue::Table(toml::map::Map::new()));
                 }
                 _ => {
                     return Err(CoreError::Configuration(format!(
@@ -376,7 +391,7 @@ impl ConfigMerger {
             } else {
                 ConfigValue::String(value)
             };
-            
+
             table.insert(final_key.to_string(), config_value);
         } else {
             return Err(CoreError::Configuration(format!(
@@ -460,11 +475,17 @@ mod tests {
         .unwrap();
 
         let merged = ConfigMerger::merge_configs(base, overlay).unwrap();
-        
-        assert_eq!(merged.require_str("database.url").unwrap(), "postgresql://localhost/default");
+
+        assert_eq!(
+            merged.require_str("database.url").unwrap(),
+            "postgresql://localhost/default"
+        );
         assert_eq!(merged.require_i64("database.pool_size").unwrap(), 20);
         assert_eq!(merged.require_i64("collector.buffer_size").unwrap(), 1000);
-        assert_eq!(merged.require_i64("observability.metrics_port").unwrap(), 8080);
+        assert_eq!(
+            merged.require_i64("observability.metrics_port").unwrap(),
+            8080
+        );
     }
 
     #[test]

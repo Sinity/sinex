@@ -1,21 +1,18 @@
 /// Typed filesystem monitor - uses strongly typed events
 use async_trait::async_trait;
 use notify::Watcher;
-use std::path::PathBuf;
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{debug, error, info};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
-use sinex_core::{
-    sources,
-    filesystem, timeouts,
-};
+use sinex_core::{filesystem, sources, timeouts};
 use sinex_events::{
-    TypedEventSender, EventEnvelope, TypedFilesystemEventBuilder,
-    EnforcedTypedEventSource, TypedEventResult, TypedEventError,
+    EnforcedTypedEventSource, EventEnvelope, TypedEventError, TypedEventResult, TypedEventSender,
+    TypedFilesystemEventBuilder,
 };
 
 use crate::filesystem::{FilesystemConfig, RenameOperation};
@@ -36,9 +33,10 @@ impl EnforcedTypedEventSource for TypedFilesystemMonitor {
     const SOURCE_NAME: &'static str = sources::FS;
 
     async fn initialize(config_value: serde_json::Value) -> TypedEventResult<Self> {
-        let config: FilesystemConfig = serde_json::from_value(config_value)
-            .map_err(|e| TypedEventError::Serialization(format!("Failed to parse config: {}", e)))?;
-        
+        let config: FilesystemConfig = serde_json::from_value(config_value).map_err(|e| {
+            TypedEventError::Serialization(format!("Failed to parse config: {}", e))
+        })?;
+
         info!(
             patterns = ?config.watch_patterns,
             "Initializing typed filesystem monitor"
@@ -66,9 +64,7 @@ impl EnforcedTypedEventSource for TypedFilesystemMonitor {
             None,
             notify_tx,
         )
-        .map_err(|e| {
-            TypedEventError::Other(format!("Failed to create debouncer: {}", e))
-        })?;
+        .map_err(|e| TypedEventError::Other(format!("Failed to create debouncer: {}", e)))?;
 
         // Watch all matching paths
         let mut watched_paths = std::collections::HashSet::new();
@@ -97,7 +93,11 @@ impl EnforcedTypedEventSource for TypedFilesystemMonitor {
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
                 std::fs::create_dir_all(base_path).map_err(|e| {
-                    TypedEventError::Other(format!("Failed to create directory {}: {}", base_path.display(), e))
+                    TypedEventError::Other(format!(
+                        "Failed to create directory {}: {}",
+                        base_path.display(),
+                        e
+                    ))
                 })?;
             }
 
@@ -107,10 +107,14 @@ impl EnforcedTypedEventSource for TypedFilesystemMonitor {
                     .watcher()
                     .watch(base_path, notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        TypedEventError::Other(format!("Failed to watch path {}: {}", base_path.display(), e))
+                        TypedEventError::Other(format!(
+                            "Failed to watch path {}: {}",
+                            base_path.display(),
+                            e
+                        ))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
-                
+
                 if let Ok(canonical) = base_path.canonicalize() {
                     self.watch_roots.push(canonical);
                 }
@@ -182,9 +186,7 @@ impl TypedFilesystemMonitor {
         let path = &paths[0];
 
         // Validate path is within watch roots
-        let within_roots = watch_roots.iter().any(|root| {
-            path.starts_with(root)
-        });
+        let within_roots = watch_roots.iter().any(|root| path.starts_with(root));
 
         if !within_roots {
             debug!("Path outside watch roots: {:?}", path);
@@ -225,82 +227,91 @@ impl TypedFilesystemMonitor {
             };
 
             if matches {
-                debug!("Ignoring path due to pattern: {} (pattern: {})", path_str, pattern);
+                debug!(
+                    "Ignoring path due to pattern: {} (pattern: {})",
+                    path_str, pattern
+                );
                 return None;
             }
         }
 
         // Create typed event using TypedFilesystemEventBuilder
         let builder = TypedFilesystemEventBuilder::new(sources::FS);
-        
+
         match event.kind {
-            notify::EventKind::Create(create_kind) => {
-                match create_kind {
-                    notify::event::CreateKind::File | notify::event::CreateKind::Any => {
-                        if let Ok(metadata) = std::fs::metadata(path) {
-                            let permissions = {
-                                #[cfg(unix)]
-                                { Some(metadata.permissions().mode()) }
-                                #[cfg(not(unix))]
-                                { None }
-                            };
-                            
-                            Some(builder.file_created(
-                                path.to_string_lossy(),
-                                metadata.len(),
-                                permissions
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    notify::event::CreateKind::Folder => {
+            notify::EventKind::Create(create_kind) => match create_kind {
+                notify::event::CreateKind::File | notify::event::CreateKind::Any => {
+                    if let Ok(metadata) = std::fs::metadata(path) {
                         let permissions = {
                             #[cfg(unix)]
                             {
-                                std::fs::metadata(path)
-                                    .ok()
-                                    .map(|m| m.permissions().mode())
+                                Some(metadata.permissions().mode())
                             }
                             #[cfg(not(unix))]
-                            { None }
+                            {
+                                None
+                            }
                         };
-                        
-                        Some(builder.dir_created(path.to_string_lossy(), permissions))
-                    }
-                    notify::event::CreateKind::Other => {
-                        if path.is_dir() {
-                            let permissions = {
-                                #[cfg(unix)]
-                                {
-                                    std::fs::metadata(path)
-                                        .ok()
-                                        .map(|m| m.permissions().mode())
-                                }
-                                #[cfg(not(unix))]
-                                { None }
-                            };
-                            
-                            Some(builder.dir_created(path.to_string_lossy(), permissions))
-                        } else if let Ok(metadata) = std::fs::metadata(path) {
-                            let permissions = {
-                                #[cfg(unix)]
-                                { Some(metadata.permissions().mode()) }
-                                #[cfg(not(unix))]
-                                { None }
-                            };
-                            
-                            Some(builder.file_created(
-                                path.to_string_lossy(),
-                                metadata.len(),
-                                permissions
-                            ))
-                        } else {
-                            None
-                        }
+
+                        Some(builder.file_created(
+                            path.to_string_lossy(),
+                            metadata.len(),
+                            permissions,
+                        ))
+                    } else {
+                        None
                     }
                 }
-            }
+                notify::event::CreateKind::Folder => {
+                    let permissions = {
+                        #[cfg(unix)]
+                        {
+                            std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            None
+                        }
+                    };
+
+                    Some(builder.dir_created(path.to_string_lossy(), permissions))
+                }
+                notify::event::CreateKind::Other => {
+                    if path.is_dir() {
+                        let permissions = {
+                            #[cfg(unix)]
+                            {
+                                std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                None
+                            }
+                        };
+
+                        Some(builder.dir_created(path.to_string_lossy(), permissions))
+                    } else if let Ok(metadata) = std::fs::metadata(path) {
+                        let permissions = {
+                            #[cfg(unix)]
+                            {
+                                Some(metadata.permissions().mode())
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                None
+                            }
+                        };
+
+                        Some(builder.file_created(
+                            path.to_string_lossy(),
+                            metadata.len(),
+                            permissions,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+            },
             notify::EventKind::Modify(modify_kind) => {
                 match modify_kind {
                     notify::event::ModifyKind::Name(name_kind) => {
@@ -312,26 +323,30 @@ impl TypedFilesystemMonitor {
                                     timestamp: Instant::now(),
                                     cookie: Some(cookie_u32),
                                 };
-                                
+
                                 if let Ok(mut tracker) = rename_tracker.lock() {
                                     tracker.insert(cookie_u32, rename_op);
-                                    debug!("Tracked rename FROM: {} with cookie {}", path.display(), cookie_u32);
+                                    debug!(
+                                        "Tracked rename FROM: {} with cookie {}",
+                                        path.display(),
+                                        cookie_u32
+                                    );
                                 }
-                                
+
                                 None
                             }
                             notify::event::RenameMode::To => {
                                 let cookie_u32 = 0u32; // Simplified for newer notify versions
-                                
+
                                 let old_path = if let Ok(mut tracker) = rename_tracker.lock() {
                                     tracker.remove(&cookie_u32).map(|op| op.source_path)
                                 } else {
                                     None
                                 };
-                                
+
                                 Some(builder.file_moved(
                                     path.to_string_lossy(),
-                                    old_path.map(|p| p.to_string_lossy().to_string())
+                                    old_path.map(|p| p.to_string_lossy().to_string()),
                                 ))
                             }
                             _ => None,
@@ -343,7 +358,7 @@ impl TypedFilesystemMonitor {
                                 Some(builder.file_modified(
                                     path.to_string_lossy(),
                                     metadata.len(),
-                                    format!("{:?}", modify_kind)
+                                    format!("{:?}", modify_kind),
                                 ))
                             } else {
                                 None
@@ -368,6 +383,7 @@ impl TypedFilesystemMonitor {
     fn cleanup_old_rename_operations(rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>) {
         let mut tracker = rename_tracker.lock().unwrap();
         let now = Instant::now();
-        tracker.retain(|_, op| now.duration_since(op.timestamp) < timeouts::RENAME_OPERATION_TIMEOUT);
+        tracker
+            .retain(|_, op| now.duration_since(op.timestamp) < timeouts::RENAME_OPERATION_TIMEOUT);
     }
 }

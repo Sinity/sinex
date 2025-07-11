@@ -1,21 +1,16 @@
 //! JSON-RPC server for CLI communication
 
 use anyhow::Result;
-use axum::{
-    routing::post,
-    extract::State,
-    Json,
-    Router,
-};
+use axum::{extract::State, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
-use crate::service_container::ServiceContainer;
 use crate::handlers::*;
+use crate::service_container::ServiceContainer;
 
 #[derive(Debug, Clone, Deserialize)]
 struct JsonRpcRequest {
@@ -52,7 +47,7 @@ impl JsonRpcResponse {
             id,
         }
     }
-    
+
     fn error(id: Option<Value>, code: i32, message: String) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -78,45 +73,46 @@ async fn handle_rpc(
     State(state): State<AppState>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
-    debug!("Received RPC request: method={}, params={:?}", request.method, request.params);
-    
+    debug!(
+        "Received RPC request: method={}, params={:?}",
+        request.method, request.params
+    );
+
     let result = match request.method.as_str() {
         // Analytics methods
         "analytics.event_count_by_source" => {
             handle_event_count_by_source(state.services.analytics.as_ref(), request.params).await
         }
-        
+
         "analytics.activity_heatmap" => {
             handle_activity_heatmap(state.services.analytics.as_ref(), request.params).await
         }
-        
+
         // PKM methods
-        "pkm.create_note" => {
-            handle_create_note(state.services.pkm.as_ref(), request.params).await
-        }
-        
+        "pkm.create_note" => handle_create_note(state.services.pkm.as_ref(), request.params).await,
+
         "pkm.create_entities_from_list" => {
             handle_create_entities(state.services.pkm.as_ref(), request.params).await
         }
-        
+
         "pkm.link_entities" => {
             handle_link_entities(state.services.pkm.as_ref(), request.params).await
         }
-        
+
         // Search methods
         "search.search_events" => {
             handle_search_events(state.services.search.as_ref(), request.params).await
         }
-        
+
         // Content methods
         "content.store_blob" => {
             handle_store_blob(state.services.content.as_ref(), request.params).await
         }
-        
+
         "content.retrieve_blob" => {
             handle_retrieve_blob(state.services.content.as_ref(), request.params).await
         }
-        
+
         _ => {
             return Json(JsonRpcResponse::error(
                 request.id,
@@ -125,7 +121,7 @@ async fn handle_rpc(
             ));
         }
     };
-    
+
     match result {
         Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
         Err(err) => {
@@ -139,36 +135,35 @@ async fn handle_rpc(
     }
 }
 
-
 /// Run the RPC server on the specified socket
 pub async fn run(socket_path: PathBuf, services: ServiceContainer) -> Result<()> {
     // Remove existing socket if it exists
     if socket_path.exists() {
         std::fs::remove_file(&socket_path)?;
     }
-    
+
     // Create parent directory if needed
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     let state = AppState { services };
-    
+
     let app = Router::new()
         .route("/rpc", post(handle_rpc))
         .layer(
             ServiceBuilder::new()
                 .layer(CorsLayer::permissive())
-                .into_inner()
+                .into_inner(),
         )
         .with_state(state);
-    
+
     // For simplicity, bind to TCP instead of Unix socket for now
     let addr = "127.0.0.1:9999";
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("RPC server listening on {}", addr);
-    
+
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }

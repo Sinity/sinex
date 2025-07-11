@@ -7,7 +7,7 @@ use std::sync::Barrier;
 use std::thread;
 
 /// Property tests for event-related functionality
-/// 
+///
 /// This module consolidates property tests from:
 /// - raw_event_property_tests.rs (RawEvent serialization and validation)
 /// - event_registry_property_tests.rs (EventRegistry thread-safety and lookups)
@@ -36,12 +36,17 @@ fn json_values_equal(a: &Value, b: &Value) -> bool {
             }
         }
         (Value::Array(arr1), Value::Array(arr2)) => {
-            arr1.len() == arr2.len() && arr1.iter().zip(arr2.iter()).all(|(a, b)| json_values_equal(a, b))
+            arr1.len() == arr2.len()
+                && arr1
+                    .iter()
+                    .zip(arr2.iter())
+                    .all(|(a, b)| json_values_equal(a, b))
         }
         (Value::Object(obj1), Value::Object(obj2)) => {
-            obj1.len() == obj2.len() && obj1.iter().all(|(k, v)| {
-                obj2.get(k).is_some_and(|v2| json_values_equal(v, v2))
-            })
+            obj1.len() == obj2.len()
+                && obj1
+                    .iter()
+                    .all(|(k, v)| obj2.get(k).is_some_and(|v2| json_values_equal(v, v2)))
         }
         _ => a == b,
     }
@@ -169,7 +174,7 @@ fn test_raw_event_serde_roundtrip() {
         prop_assert_eq!(event.host, deserialized.host);
         prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
-        
+
         // For payload, use a custom comparison that handles floating-point precision
         prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
     });
@@ -686,7 +691,7 @@ mod stress_tests {
         const NUM_THREADS: usize = 20;
 
         let builder = sinex_core::unified_collector::EventRegistryBuilder::new();
-    let registry = Arc::new(builder.build());
+        let registry = Arc::new(builder.build());
         let should_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut handles = Vec::new();
 
@@ -799,14 +804,17 @@ mod unit_tests {
     #[test]
     fn test_arb_generators_produce_valid_values() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        
+
         // Test source name generator
         let source = arb_source_name().new_tree(&mut runner).unwrap().current();
         assert!(!source.is_empty());
         assert!(source.len() <= 52); // 50 + 2 minimum
 
         // Test event type generator
-        let event_type = arb_event_type_name().new_tree(&mut runner).unwrap().current();
+        let event_type = arb_event_type_name()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
         assert!(!event_type.is_empty());
 
         // Test hostname generator

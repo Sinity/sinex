@@ -3,17 +3,17 @@ use notify::Watcher;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{EventSender, Timestamp};
+use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 use sinex_core::{
-    event_type_constants, sources, EventSource, EventSourceBase, EventSourceContext, EventType,
-    RawEvent, Result, EventFactory, timeouts, filesystem,
+    event_type_constants, filesystem, sources, timeouts, EventFactory, EventSource,
+    EventSourceBase, EventSourceContext, EventType, RawEvent, Result,
 };
 
 // ============================================================================
@@ -159,7 +159,7 @@ pub type FilesystemWatcher = FilesystemMonitor;
 
 impl FilesystemMonitor {
     async fn new(config: FilesystemConfig) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             config,
             watch_roots: Vec::new(),
             event_factory: EventFactory::new(sources::FS),
@@ -167,23 +167,25 @@ impl FilesystemMonitor {
         })
     }
 
-
     /// Clean up old rename operations that didn't complete
     fn cleanup_old_rename_operations(rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>) {
         const RENAME_TIMEOUT: Duration = timeouts::RENAME_OPERATION_TIMEOUT;
-        
+
         if let Ok(mut tracker) = rename_tracker.lock() {
             let now = Instant::now();
             let mut to_remove = Vec::new();
-            
+
             for (cookie, rename_op) in tracker.iter() {
                 if now.duration_since(rename_op.timestamp) > RENAME_TIMEOUT {
-                    debug!("Cleaning up orphaned rename operation: cookie {} from {}", 
-                          cookie, rename_op.source_path.display());
+                    debug!(
+                        "Cleaning up orphaned rename operation: cookie {} from {}",
+                        cookie,
+                        rename_op.source_path.display()
+                    );
                     to_remove.push(*cookie);
                 }
             }
-            
+
             for cookie in to_remove {
                 tracker.remove(&cookie);
             }
@@ -204,7 +206,10 @@ impl FilesystemMonitor {
         // Validate path stays within watch roots
         let mut path_valid = false;
         for root in watch_roots {
-            match sinex_core::validation::validate_path_within_root(&path_str, &root.to_string_lossy()) {
+            match sinex_core::validation::validate_path_within_root(
+                &path_str,
+                &root.to_string_lossy(),
+            ) {
                 Ok(_) => {
                     path_valid = true;
                     break;
@@ -212,9 +217,12 @@ impl FilesystemMonitor {
                 Err(_) => continue,
             }
         }
-        
+
         if !path_valid {
-            error!("Path validation failed: path '{}' escapes all watch roots", path_str);
+            error!(
+                "Path validation failed: path '{}' escapes all watch roots",
+                path_str
+            );
             return None;
         }
 
@@ -282,24 +290,41 @@ impl FilesystemMonitor {
 
         // Create event using EventFactory
         let raw_event = match event.kind {
-            notify::EventKind::Create(create_kind) => {
-                match create_kind {
-                    notify::event::CreateKind::File | notify::event::CreateKind::Any => {
-                        let metadata = std::fs::metadata(path).ok()?;
-                        let mut builder = event_factory.filesystem()
-                            .path(path.to_string_lossy())
-                            .created()
-                            .size(metadata.len());
+            notify::EventKind::Create(create_kind) => match create_kind {
+                notify::event::CreateKind::File | notify::event::CreateKind::Any => {
+                    let metadata = std::fs::metadata(path).ok()?;
+                    let mut builder = event_factory
+                        .filesystem()
+                        .path(path.to_string_lossy())
+                        .created()
+                        .size(metadata.len());
 
-                        #[cfg(unix)]
-                        {
+                    #[cfg(unix)]
+                    {
+                        builder = builder.permissions(metadata.permissions().mode());
+                    }
+
+                    builder.build()
+                }
+                notify::event::CreateKind::Folder => {
+                    let mut builder = event_factory
+                        .filesystem()
+                        .path(path.to_string_lossy())
+                        .created();
+
+                    #[cfg(unix)]
+                    {
+                        if let Ok(metadata) = std::fs::metadata(path) {
                             builder = builder.permissions(metadata.permissions().mode());
                         }
-
-                        builder.build()
                     }
-                    notify::event::CreateKind::Folder => {
-                        let mut builder = event_factory.filesystem()
+
+                    builder.build()
+                }
+                notify::event::CreateKind::Other => {
+                    if path.is_dir() {
+                        let mut builder = event_factory
+                            .filesystem()
                             .path(path.to_string_lossy())
                             .created();
 
@@ -311,38 +336,23 @@ impl FilesystemMonitor {
                         }
 
                         builder.build()
-                    }
-                    notify::event::CreateKind::Other => {
-                        if path.is_dir() {
-                            let mut builder = event_factory.filesystem()
-                                .path(path.to_string_lossy())
-                                .created();
+                    } else {
+                        let metadata = std::fs::metadata(path).ok()?;
+                        let mut builder = event_factory
+                            .filesystem()
+                            .path(path.to_string_lossy())
+                            .created()
+                            .size(metadata.len());
 
-                            #[cfg(unix)]
-                            {
-                                if let Ok(metadata) = std::fs::metadata(path) {
-                                    builder = builder.permissions(metadata.permissions().mode());
-                                }
-                            }
-
-                            builder.build()
-                        } else {
-                            let metadata = std::fs::metadata(path).ok()?;
-                            let mut builder = event_factory.filesystem()
-                                .path(path.to_string_lossy())
-                                .created()
-                                .size(metadata.len());
-
-                            #[cfg(unix)]
-                            {
-                                builder = builder.permissions(metadata.permissions().mode());
-                            }
-
-                            builder.build()
+                        #[cfg(unix)]
+                        {
+                            builder = builder.permissions(metadata.permissions().mode());
                         }
+
+                        builder.build()
                     }
                 }
-            }
+            },
             notify::EventKind::Modify(modify_kind) => {
                 match modify_kind {
                     notify::event::ModifyKind::Name(name_kind) => {
@@ -357,12 +367,16 @@ impl FilesystemMonitor {
                                     timestamp: Instant::now(),
                                     cookie: Some(cookie_u32),
                                 };
-                                
+
                                 if let Ok(mut tracker) = rename_tracker.lock() {
                                     tracker.insert(cookie_u32, rename_op);
-                                    debug!("Tracked rename FROM: {} with cookie {}", path.display(), cookie_u32);
+                                    debug!(
+                                        "Tracked rename FROM: {} with cookie {}",
+                                        path.display(),
+                                        cookie_u32
+                                    );
                                 }
-                                
+
                                 // Don't emit event yet - wait for the TO event
                                 return None;
                             }
@@ -370,26 +384,37 @@ impl FilesystemMonitor {
                                 // File being renamed TO this path
                                 // Note: Cookie handling simplified for newer notify versions
                                 let cookie_u32 = 0u32; // Default cookie value
-                                        
+
                                 // Look for matching FROM operation
                                 if let Ok(mut tracker) = rename_tracker.lock() {
                                     if let Some(rename_op) = tracker.remove(&cookie_u32) {
-                                        debug!("Completed rename: {} -> {} with cookie {}", 
-                                              rename_op.source_path.display(), 
-                                              path.display(), 
-                                              cookie_u32);
-                                        
+                                        debug!(
+                                            "Completed rename: {} -> {} with cookie {}",
+                                            rename_op.source_path.display(),
+                                            path.display(),
+                                            cookie_u32
+                                        );
+
                                         // Emit proper move event with both paths
-                                        return Some(event_factory.filesystem()
-                                            .path(path.to_string_lossy())
-                                            .moved_from(rename_op.source_path.to_string_lossy().to_string())
-                                            .build());
+                                        return Some(
+                                            event_factory
+                                                .filesystem()
+                                                .path(path.to_string_lossy())
+                                                .moved_from(
+                                                    rename_op
+                                                        .source_path
+                                                        .to_string_lossy()
+                                                        .to_string(),
+                                                )
+                                                .build(),
+                                        );
                                     }
                                 }
-                                
+
                                 // Fallback: treat as create if no matching FROM found
                                 let metadata = std::fs::metadata(path).ok()?;
-                                let mut builder = event_factory.filesystem()
+                                let mut builder = event_factory
+                                    .filesystem()
                                     .path(path.to_string_lossy())
                                     .created()
                                     .size(metadata.len());
@@ -403,7 +428,8 @@ impl FilesystemMonitor {
                             }
                             _ => {
                                 // Other rename operations - treat as generic move
-                                event_factory.filesystem()
+                                event_factory
+                                    .filesystem()
                                     .path(path.to_string_lossy())
                                     .moved_from("unknown")
                                     .build()
@@ -413,13 +439,15 @@ impl FilesystemMonitor {
                     _ => {
                         // Regular modification
                         if let Ok(metadata) = std::fs::metadata(path) {
-                            event_factory.filesystem()
+                            event_factory
+                                .filesystem()
                                 .path(path.to_string_lossy())
                                 .modified()
                                 .size(metadata.len())
                                 .build()
                         } else {
-                            event_factory.filesystem()
+                            event_factory
+                                .filesystem()
                                 .path(path.to_string_lossy())
                                 .modified()
                                 .build()
@@ -429,7 +457,8 @@ impl FilesystemMonitor {
             }
             notify::EventKind::Remove(_remove_kind) => {
                 // For all remove types, create a deleted event
-                event_factory.filesystem()
+                event_factory
+                    .filesystem()
                     .path(path.to_string_lossy())
                     .deleted()
                     .build()
@@ -537,7 +566,7 @@ impl EventSource for FilesystemMonitor {
                             .build()
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
-                
+
                 // Add to watch roots for validation
                 if let Ok(canonical) = base_path.canonicalize() {
                     self.watch_roots.push(canonical);
@@ -557,7 +586,13 @@ impl EventSource for FilesystemMonitor {
                 match result {
                     Ok(events) => {
                         for event in events {
-                            if let Some(raw_event) = Self::process_notify_event_static(&event, &config, &watch_roots, &event_factory, &rename_tracker) {
+                            if let Some(raw_event) = Self::process_notify_event_static(
+                                &event,
+                                &config,
+                                &watch_roots,
+                                &event_factory,
+                                &rename_tracker,
+                            ) {
                                 if let Err(e) = event_tx.blocking_send(raw_event) {
                                     error!("Failed to send event: {}", e);
                                     return;

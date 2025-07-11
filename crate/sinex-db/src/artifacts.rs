@@ -10,7 +10,7 @@ pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) ->
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let created_from_event_uuid: Option<Uuid> = input.created_from_event_id.map(ulid_to_uuid);
     let blob_uuid: Option<Uuid> = input.blob_id.map(ulid_to_uuid);
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO core.artifacts (
@@ -66,9 +66,12 @@ pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) ->
 }
 
 /// Get an artifact by ID
-pub async fn get_artifact_by_id(pool: DbPoolRef<'_>, artifact_id: Ulid) -> Result<Option<Artifact>> {
+pub async fn get_artifact_by_id(
+    pool: DbPoolRef<'_>,
+    artifact_id: Ulid,
+) -> Result<Option<Artifact>> {
     let artifact_uuid: Uuid = ulid_to_uuid(artifact_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 

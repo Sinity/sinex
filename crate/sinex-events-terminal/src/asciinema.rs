@@ -10,8 +10,8 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
+    sources, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender, EventSource,
+    EventSourceBase, EventSourceContext, EventType, JsonValue, RawEvent, Result, Timestamp,
 };
 
 // ============================================================================
@@ -148,19 +148,26 @@ impl EventSource for AsciinemaRecorder {
         if !config.recordings_dir.exists() {
             tokio::fs::create_dir_all(&config.recordings_dir)
                 .await
-                .map_err(|e| 
-                    ErrorContext::new(CoreError::Io(format!("Failed to create recordings directory: {}", e)))
-                        .with_operation("initialize_asciinema_recorder")
-                        .with_context("recordings_dir", config.recordings_dir.display().to_string())
-                        .build())?;
+                .map_err(|e| {
+                    ErrorContext::new(CoreError::Io(format!(
+                        "Failed to create recordings directory: {}",
+                        e
+                    )))
+                    .with_operation("initialize_asciinema_recorder")
+                    .with_context(
+                        "recordings_dir",
+                        config.recordings_dir.display().to_string(),
+                    )
+                    .build()
+                })?;
         }
 
         // Initialize BlobManager if configured with both annex path and database
-        let annex_repo_path = ctx
-            .annex_repo_path
-            .clone()
-            .or(config.git_annex_repo.as_ref().map(|p| p.to_string_lossy().to_string()));
-            
+        let annex_repo_path = ctx.annex_repo_path.clone().or(config
+            .git_annex_repo
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()));
+
         let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
             (Some(repo_path), Some(db_pool)) => {
                 let path = std::path::PathBuf::from(repo_path);
@@ -170,11 +177,16 @@ impl EventSource for AsciinemaRecorder {
                     use sinex_annex::GitAnnex;
                     GitAnnex::init(&path, Some("sinex-asciinema-annex"))
                         .await
-                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                        .map_err(|e| {
+                            ErrorContext::new(CoreError::Configuration(format!(
+                                "Failed to initialize git-annex: {}",
+                                e
+                            )))
                             .with_operation("initialize_asciinema_recorder")
                             .with_context("repo_path", path.display().to_string())
                             .with_context("repo_name", "sinex-asciinema-annex")
-                            .build())?;
+                            .build()
+                        })?;
                 }
 
                 let annex_config = sinex_annex::AnnexConfig {
@@ -254,12 +266,14 @@ impl AsciinemaRecorder {
         let home_path = PathBuf::from(&home);
 
         // Create asciinema recordings directory if it doesn't exist
-        tokio::fs::create_dir_all(&self.config.recordings_dir).await.map_err(|e| {
-            sinex_core::CoreError::io_error(&self.config.recordings_dir)
-                .with_operation("create_recordings_dir")
-                .with_source(e)
-                .build()
-        })?;
+        tokio::fs::create_dir_all(&self.config.recordings_dir)
+            .await
+            .map_err(|e| {
+                sinex_core::CoreError::io_error(&self.config.recordings_dir)
+                    .with_operation("create_recordings_dir")
+                    .with_source(e)
+                    .build()
+            })?;
 
         // Setup shell integration for each supported shell
         self.setup_bash_integration(&home_path).await?;
@@ -282,18 +296,24 @@ impl AsciinemaRecorder {
 
     async fn setup_fish_integration(&self, home_path: &Path) -> Result<()> {
         let fish_config_dir = home_path.join(".config/fish");
-        tokio::fs::create_dir_all(&fish_config_dir).await.map_err(|e| {
-            sinex_core::CoreError::io_error(&fish_config_dir)
-                .with_operation("create_fish_config_dir")
-                .with_source(e)
-                .build()
-        })?;
+        tokio::fs::create_dir_all(&fish_config_dir)
+            .await
+            .map_err(|e| {
+                sinex_core::CoreError::io_error(&fish_config_dir)
+                    .with_operation("create_fish_config_dir")
+                    .with_source(e)
+                    .build()
+            })?;
 
         let fish_config_path = fish_config_dir.join("config.fish");
         self.add_shell_integration(&fish_config_path, "fish").await
     }
 
-    async fn add_shell_integration(&self, shell_config_path: &PathBuf, shell_name: &str) -> Result<()> {
+    async fn add_shell_integration(
+        &self,
+        shell_config_path: &PathBuf,
+        shell_name: &str,
+    ) -> Result<()> {
         // Check if shell config exists
         if !shell_config_path.exists() {
             // Create minimal shell config if it doesn't exist
@@ -306,12 +326,15 @@ impl AsciinemaRecorder {
         }
 
         // Read current config
-        let mut config_content = tokio::fs::read_to_string(shell_config_path).await.map_err(|e| {
-            sinex_core::CoreError::io_error(shell_config_path)
-                .with_operation("read_shell_config")
-                .with_source(e)
-                .build()
-        })?;
+        let mut config_content =
+            tokio::fs::read_to_string(shell_config_path)
+                .await
+                .map_err(|e| {
+                    sinex_core::CoreError::io_error(shell_config_path)
+                        .with_operation("read_shell_config")
+                        .with_source(e)
+                        .build()
+                })?;
 
         // Check if sinex integration is already present
         if config_content.contains("# SINEX AUTO-RECORDING") {
@@ -327,14 +350,19 @@ impl AsciinemaRecorder {
         config_content.push_str(&integration_code);
 
         // Write updated config
-        tokio::fs::write(shell_config_path, config_content).await.map_err(|e| {
-            sinex_core::CoreError::io_error(shell_config_path)
-                .with_operation("write_shell_config")
-                .with_source(e)
-                .build()
-        })?;
+        tokio::fs::write(shell_config_path, config_content)
+            .await
+            .map_err(|e| {
+                sinex_core::CoreError::io_error(shell_config_path)
+                    .with_operation("write_shell_config")
+                    .with_source(e)
+                    .build()
+            })?;
 
-        info!("Added sinex auto-recording integration to {}", shell_config_path.display());
+        info!(
+            "Added sinex auto-recording integration to {}",
+            shell_config_path.display()
+        );
         Ok(())
     }
 
@@ -409,7 +437,13 @@ end
                 recordings_dir = recordings_dir,
                 record_command = record_command
             ),
-            _ => return Err(sinex_core::CoreError::configuration(format!("Unsupported shell: {}", shell_name)).build())
+            _ => {
+                return Err(sinex_core::CoreError::configuration(format!(
+                    "Unsupported shell: {}",
+                    shell_name
+                ))
+                .build())
+            }
         };
 
         Ok(integration_code)
@@ -552,7 +586,8 @@ end
                             if let Some(ref blob_manager) = self.blob_manager {
                                 match self.add_to_git_annex(blob_manager, path, &session_id).await {
                                     Ok((filename, annex_key)) => {
-                                        payload.git_annex_path = Some(std::path::PathBuf::from(filename));
+                                        payload.git_annex_path =
+                                            Some(std::path::PathBuf::from(filename));
                                         payload.git_annex_key = Some(annex_key);
                                     }
                                     Err(e) => {
@@ -599,10 +634,12 @@ end
         if let Ok(Some(line)) = lines.next_line().await {
             sinex_core::parse_json_file(&line, path, "read_asciinema_header")
         } else {
-            Err(ErrorContext::new(CoreError::Validation("No header found".to_string()))
-                .with_operation("parse_asciinema_header")
-                .with_context("file_path", path.display().to_string())
-                .build())
+            Err(
+                ErrorContext::new(CoreError::Validation("No header found".to_string()))
+                    .with_operation("parse_asciinema_header")
+                    .with_context("file_path", path.display().to_string())
+                    .build(),
+            )
         }
     }
 
