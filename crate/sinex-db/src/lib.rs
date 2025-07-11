@@ -27,6 +27,7 @@ pub mod metrics_queries;
 pub use events::{
     get_event_by_id, 
     insert_event_with_validator,
+    count_events,
 };
 pub use work_queue::{
     DlqEventParams,

@@ -9,6 +9,7 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant};
+use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, Barrier, Mutex};
 
 // =============================================================================

@@ -30,9 +30,9 @@ resolver = "2"
 # Clippy configuration for zero warnings enforcement
 [workspace.lints.clippy]
 # Treat all clippy warnings as errors for production code
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 # Allow some pedantic lints that are too noisy
 module_name_repetitions = "allow"
 similar_names = "allow"

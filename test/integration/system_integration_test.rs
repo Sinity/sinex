@@ -11,10 +11,12 @@
 //! - Query interface testing
 
 use crate::common::prelude::*;
+use crate::common::{events, assertions};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use std::process::Command;
 use sinex_core::{EventSource, EventSourceContext, RawEvent, EventSender, CoreError};
@@ -1817,11 +1819,11 @@ async fn test_large_file_event_capture(
     )
     .build();
 
-    let large_event = insert_event(pool, &large_file_event).await?;
-    let medium_event = insert_event(pool, &medium_file_event).await?;
+    let large_event_id = insert_event(pool, &large_file_event).await?;
+    let medium_event_id = insert_event(pool, &medium_file_event).await?;
 
-    let retrieved_large = sinex_db::get_event_by_id(pool, large_event.id).await?;
-    let retrieved_medium = sinex_db::get_event_by_id(pool, medium_event.id).await?;
+    let retrieved_large = sinex_db::get_event_by_id(pool, large_event_id).await?;
+    let retrieved_medium = sinex_db::get_event_by_id(pool, medium_event_id).await?;
 
     pretty_assertions::assert_eq!(retrieved_large.source, "fs");
     pretty_assertions::assert_eq!(retrieved_large.event_type, "file.created");
@@ -1899,9 +1901,9 @@ async fn test_event_processing_with_annex_blobs(
 
     let mut event_ids = Vec::new();
     for event in &events {
-        let inserted_event = insert_event(pool, event).await?;
-        event_ids.push(inserted_event.id);
-        add_to_work_queue(pool, inserted_event.id, "annex-test-agent", 3).await?;
+        let inserted_event_id = insert_event(pool, event).await?;
+        event_ids.push(inserted_event_id);
+        add_to_work_queue(pool, inserted_event_id, "annex-test-agent", 3).await?;
     }
 
     let mut processed_events = Vec::new();
@@ -1986,9 +1988,9 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Er
     )
     .build();
 
-    let inserted_event = insert_event(pool, &fallback_event).await?;
+    let inserted_event_id = insert_event(pool, &fallback_event).await?;
 
-    let retrieved_event = sinex_db::get_event_by_id(pool, inserted_event.id).await?;
+    let retrieved_event = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
     pretty_assertions::assert_eq!(
         retrieved_event.payload["storage_type"].as_str().unwrap(),
         "inline"
@@ -2035,9 +2037,9 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
         )
         .build();
 
-        let inserted_event = insert_event(pool, &failure_event).await?;
+        let inserted_event_id = insert_event(pool, &failure_event).await?;
 
-        let retrieved = sinex_db::get_event_by_id(pool, inserted_event.id).await?;
+        let retrieved = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
         pretty_assertions::assert_eq!(
             retrieved.payload["git_annex_error"].as_str().unwrap(),
             error_message

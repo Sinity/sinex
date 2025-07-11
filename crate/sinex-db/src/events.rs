@@ -99,3 +99,14 @@ pub async fn insert_event_with_validator(
         payload: record.payload,
     })
 }
+
+/// Count total number of events in the database
+pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
+    let record = sqlx::query!(
+        "SELECT COUNT(*) as count FROM raw.events"
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(record.count.unwrap_or(0))
+}
