@@ -3,30 +3,30 @@
 //! This crate provides the fundamental event types and builders used throughout
 //! the Sinex system, extracted from sinex-core for focused responsibility.
 
-pub mod raw_event;
 pub mod event_builders;
+pub mod raw_event;
 pub mod strongly_typed_events;
 
 // Re-export core event types
-pub use raw_event::{RawEvent, RawEventBuilder, Timestamp, OptionalTimestamp, JsonValue};
+pub use raw_event::{JsonValue, OptionalTimestamp, RawEvent, RawEventBuilder, Timestamp};
 
 // Re-export event builders
 pub use event_builders::{
-    EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder,
-    WindowManagerEventBuilder, SystemEventBuilder, FileOperation, ClipboardContentType,
+    ClipboardContentType, ClipboardEventBuilder, EventFactory, FileOperation,
+    FilesystemEventBuilder, SystemEventBuilder, TerminalEventBuilder, WindowManagerEventBuilder,
     WindowManagerEventType,
 };
 
 // Re-export strongly typed events
 pub use strongly_typed_events::{
-    EnforcedTypedEventSource, TypedEventPipelineAdapter, TypedEventError, TypedEventResult,
-    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
-    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
-    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
-    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
-    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload,
-    TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder,
-    TypedToJsonAdapter,
+    typed_event_channel, ClipboardCopiedPayload, ClipboardSelectedPayload, CommandCompletedPayload,
+    CommandExecutedPayload, DirCreatedPayload, DirDeletedPayload, EnforcedTypedEventSource,
+    EventEnvelope, FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
+    JournalEntryPayload, SessionEndedPayload, SessionStartedPayload, SystemStatePayload,
+    TypedClipboardEventBuilder, TypedEventBuilder, TypedEventError, TypedEventPipelineAdapter,
+    TypedEventReceiver, TypedEventResult, TypedEventSender, TypedFilesystemEventBuilder,
+    TypedRawEvent, TypedTerminalEventBuilder, TypedToJsonAdapter, WindowClosedPayload,
+    WindowFocusedPayload, WindowOpenedPayload, WorkspaceSwitchedPayload,
 };
 
 // Common type aliases

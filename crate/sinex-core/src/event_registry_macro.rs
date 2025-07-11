@@ -1,5 +1,5 @@
 /// Macro-based event registry for simplified event type registration
-/// 
+///
 /// This replaces the verbose auto-registration pattern with a single macro
 /// that generates the same functionality with much less boilerplate.
 ///
@@ -28,7 +28,7 @@ macro_rules! register_events {
             )*
         }
     };
-    
+
     // Helper macro to convert dotted source names to strings
     (@source_name $first:ident $(. $rest:ident)*) => {
         concat!(stringify!($first) $(, ".", stringify!($rest))*)
@@ -39,33 +39,33 @@ macro_rules! register_events {
 mod tests {
     #[allow(unused_imports)]
     use crate::unified_collector::EventRegistryBuilder;
-    use serde::{Serialize, Deserialize};
     use schemars::JsonSchema;
-    
+    use serde::{Deserialize, Serialize};
+
     #[derive(Serialize, Deserialize, JsonSchema)]
     struct TestPayload {
         message: String,
     }
-    
+
     #[test]
     fn test_macro_basic() {
         register_events! {
             "test.event" => (test_source, TestPayload),
         }
-        
+
         let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
         let _registry = builder.build();
         // Registry should contain our test event
         // This is a basic compilation test
     }
-    
-    #[test] 
+
+    #[test]
     fn test_macro_dotted_source() {
         register_events! {
             "test.event" => (terminal.kitty, TestPayload),
         }
-        
+
         let mut builder = crate::unified_collector::EventRegistryBuilder::new();
         register_events(&mut builder);
         let _registry = builder.build();

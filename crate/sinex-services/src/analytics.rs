@@ -2,8 +2,8 @@
 
 use crate::error::ServiceResult;
 use sinex_db::DbPool;
-use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::postgres::types::PgInterval;
+use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 pub struct AnalyticsService {
@@ -14,7 +14,7 @@ impl AnalyticsService {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
-    
+
     /// Get event count by source for a time range
     pub async fn get_event_count_by_source(
         &self,
@@ -22,7 +22,7 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut result = HashMap::new();
-        
+
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 let rows = sqlx::query!(
@@ -38,7 +38,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let Some(count) = row.count {
                         result.insert(row.source, count);
@@ -56,7 +56,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let Some(count) = row.count {
                         result.insert(row.source, count);
@@ -64,10 +64,10 @@ impl AnalyticsService {
                 }
             }
         };
-        
+
         Ok(result)
     }
-    
+
     /// Get event count by event type for a time range
     pub async fn get_event_count_by_type(
         &self,
@@ -75,7 +75,7 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut result = HashMap::new();
-        
+
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 let rows = sqlx::query!(
@@ -91,7 +91,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let Some(count) = row.count {
                         result.insert(row.event_type, count);
@@ -109,7 +109,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let Some(count) = row.count {
                         result.insert(row.event_type, count);
@@ -117,10 +117,10 @@ impl AnalyticsService {
                 }
             }
         };
-        
+
         Ok(result)
     }
-    
+
     /// Get time series data with configurable intervals
     pub async fn get_events_over_time(
         &self,
@@ -133,7 +133,7 @@ impl AnalyticsService {
             days: 0,
             microseconds: interval_minutes as i64 * 60 * 1_000_000,
         };
-        
+
         let rows = sqlx::query!(
             r#"
             SELECT 
@@ -150,7 +150,7 @@ impl AnalyticsService {
         )
         .fetch_all(&self.pool)
         .await?;
-        
+
         Ok(rows
             .into_iter()
             .filter_map(|r| match (r.bucket, r.count) {
@@ -159,7 +159,7 @@ impl AnalyticsService {
             })
             .collect())
     }
-    
+
     /// Get most frequent commands from terminal events
     pub async fn get_top_commands(
         &self,
@@ -168,7 +168,7 @@ impl AnalyticsService {
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
         let mut result = Vec::new();
-        
+
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 let rows = sqlx::query!(
@@ -190,7 +190,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let (Some(cmd), Some(count)) = (row.command, row.count) {
                         result.push((cmd, count));
@@ -214,7 +214,7 @@ impl AnalyticsService {
                 )
                 .fetch_all(&self.pool)
                 .await?;
-                
+
                 for row in rows {
                     if let (Some(cmd), Some(count)) = (row.command, row.count) {
                         result.push((cmd, count));
@@ -222,10 +222,10 @@ impl AnalyticsService {
                 }
             }
         };
-        
+
         Ok(result)
     }
-    
+
     /// Get most active time periods
     pub async fn activity_heatmap(
         &self,
@@ -237,7 +237,7 @@ impl AnalyticsService {
             days: 0,
             microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
         };
-        
+
         let rows = sqlx::query!(
             r#"
             SELECT 
@@ -253,7 +253,7 @@ impl AnalyticsService {
         )
         .fetch_all(&self.pool)
         .await?;
-        
+
         Ok(rows
             .into_iter()
             .filter_map(|r| match (r.bucket, r.count) {

@@ -8,25 +8,22 @@
 //! - Shell integration and environment setup
 
 use crate::common::prelude::*;
+use chrono::Utc;
+use sinex_core::{EventSource, EventSourceContext, EventType};
 use sinex_events_terminal::{
+    asciinema::{AsciinemaConfig, AsciinemaRecorder},
     kitty::{
-        KittyEventSource, KittyConfig, KittyCommandCompleted, 
-        KittyScrollbackIncremental, KittyTabCreated, KittyTabFocused, KittyTabClosed, 
-        KittyProcessChanged, KittyCommandCompletedPayload,
-        KittyTabCreatedPayload, KittyProcessChangedPayload, KittyProcessInfo,
+        KittyCommandCompleted, KittyCommandCompletedPayload, KittyConfig, KittyEventSource,
+        KittyProcessChanged, KittyProcessChangedPayload, KittyProcessInfo,
+        KittyScrollbackIncremental, KittyTabClosed, KittyTabCreated, KittyTabCreatedPayload,
+        KittyTabFocused,
     },
     scrollback::{
-        ScrollbackCapture, ScrollbackConfig, TerminalScrollbackCaptured,
-        TerminalScrollbackCapturedPayload, CommandOutputCaptured,
-        CommandOutputCapturedPayload,
+        CommandOutputCaptured, CommandOutputCapturedPayload, ScrollbackCapture, ScrollbackConfig,
+        TerminalScrollbackCaptured, TerminalScrollbackCapturedPayload,
     },
-    asciinema::{AsciinemaConfig, AsciinemaRecorder},
-};
-use sinex_core::{
-    EventSource, EventSourceContext, EventType
 };
 use std::path::PathBuf;
-use chrono::Utc;
 use tempfile::TempDir;
 
 // =============================================================================
@@ -38,10 +35,13 @@ use tempfile::TempDir;
 async fn test_kitty_event_source_creation(_ctx: TestContext) -> TestResult {
     // Test that we can create a KittyEventSource - this will likely fail to find socket but should not panic
     let ctx = EventSourceContext::for_test(); // Use test constructor
-    
+
     // This should not panic and create the source (socket discovery may fail but that's expected)
     let result = KittyEventSource::initialize(ctx).await;
-    assert!(result.is_ok(), "Should be able to create KittyEventSource even without socket");
+    assert!(
+        result.is_ok(),
+        "Should be able to create KittyEventSource even without socket"
+    );
     Ok(())
 }
 
@@ -53,12 +53,15 @@ async fn test_kitty_config_serialization(_ctx: TestContext) -> TestResult {
         socket_path: Some("/tmp/kitty.sock".to_string()),
         enabled: true,
     };
-    
+
     // Should serialize/deserialize properly
     let serialized = serde_json::to_string(&config).expect("Should serialize");
     let deserialized: KittyConfig = serde_json::from_str(&serialized).expect("Should deserialize");
-    
-    assert_eq!(config.poll_interval_seconds, deserialized.poll_interval_seconds);
+
+    assert_eq!(
+        config.poll_interval_seconds,
+        deserialized.poll_interval_seconds
+    );
     assert_eq!(config.socket_path, deserialized.socket_path);
     assert_eq!(config.enabled, deserialized.enabled);
     Ok(())
@@ -95,15 +98,18 @@ async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult
         shell_integration_used: true,
         completion_timestamp: Utc::now().to_rfc3339(),
     };
-    
+
     let serialized = serde_json::to_string(&cmd_payload)?;
     let deserialized: KittyCommandCompletedPayload = serde_json::from_str(&serialized)?;
-    
+
     assert_eq!(cmd_payload.command, deserialized.command);
-    assert_eq!(cmd_payload.working_directory, deserialized.working_directory);
+    assert_eq!(
+        cmd_payload.working_directory,
+        deserialized.working_directory
+    );
     assert_eq!(cmd_payload.kitty_window_id, deserialized.kitty_window_id);
     assert_eq!(cmd_payload.exit_status, deserialized.exit_status);
-    
+
     // Test KittyProcessChangedPayload
     let process_payload = KittyProcessChangedPayload {
         kitty_window_id: "1".to_string(),
@@ -123,14 +129,23 @@ async fn test_kitty_event_payload_serialization(_ctx: TestContext) -> TestResult
         change_timestamp: Utc::now().to_rfc3339(),
         working_directory: Some("/home/user".to_string()),
     };
-    
+
     let serialized = serde_json::to_string(&process_payload)?;
     let deserialized: KittyProcessChangedPayload = serde_json::from_str(&serialized)?;
-    
-    assert_eq!(process_payload.previous_process.as_ref().unwrap().pid, deserialized.previous_process.as_ref().unwrap().pid);
-    assert_eq!(process_payload.current_process.name, deserialized.current_process.name);
-    assert_eq!(process_payload.kitty_window_id, deserialized.kitty_window_id);
-    
+
+    assert_eq!(
+        process_payload.previous_process.as_ref().unwrap().pid,
+        deserialized.previous_process.as_ref().unwrap().pid
+    );
+    assert_eq!(
+        process_payload.current_process.name,
+        deserialized.current_process.name
+    );
+    assert_eq!(
+        process_payload.kitty_window_id,
+        deserialized.kitty_window_id
+    );
+
     Ok(())
 }
 
@@ -154,16 +169,19 @@ async fn test_kitty_config_socket_paths(_ctx: TestContext) -> TestResult {
             enabled: false,
         },
     ];
-    
+
     for config in configs {
         let serialized = serde_json::to_string(&config)?;
         let deserialized: KittyConfig = serde_json::from_str(&serialized)?;
-        
-        assert_eq!(config.poll_interval_seconds, deserialized.poll_interval_seconds);
+
+        assert_eq!(
+            config.poll_interval_seconds,
+            deserialized.poll_interval_seconds
+        );
         assert_eq!(config.socket_path, deserialized.socket_path);
         assert_eq!(config.enabled, deserialized.enabled);
     }
-    
+
     Ok(())
 }
 
@@ -178,15 +196,15 @@ async fn test_kitty_tab_event_payloads(_ctx: TestContext) -> TestResult {
         is_active: true,
         creation_timestamp: Utc::now().to_rfc3339(),
     };
-    
+
     let serialized = serde_json::to_string(&tab_payload)?;
     let deserialized: KittyTabCreatedPayload = serde_json::from_str(&serialized)?;
-    
+
     assert_eq!(tab_payload.kitty_tab_id, deserialized.kitty_tab_id);
     assert_eq!(tab_payload.kitty_window_id, deserialized.kitty_window_id);
     assert_eq!(tab_payload.tab_title, deserialized.tab_title);
     assert_eq!(tab_payload.tab_index, deserialized.tab_index);
-    
+
     Ok(())
 }
 
@@ -198,7 +216,7 @@ async fn test_kitty_tab_event_payloads(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_scrollback_config_default(_ctx: TestContext) -> TestResult {
     let config = ScrollbackConfig::default();
-    
+
     assert_eq!(config.capture_interval_secs, 180); // 3 minutes
     assert_eq!(config.max_scrollback_lines, 10000);
     assert!(!config.include_ansi_codes);
@@ -228,21 +246,40 @@ async fn test_scrollback_config_serialization(_ctx: TestContext) -> TestResult {
         enable_chunking: false,
         annex_threshold_bytes: 32_000,
     };
-    
+
     let serialized = serde_json::to_string(&config).expect("Should serialize");
-    let deserialized: ScrollbackConfig = serde_json::from_str(&serialized).expect("Should deserialize");
-    
+    let deserialized: ScrollbackConfig =
+        serde_json::from_str(&serialized).expect("Should deserialize");
+
     assert_eq!(config.kitty_socket_path, deserialized.kitty_socket_path);
-    assert_eq!(config.capture_interval_secs, deserialized.capture_interval_secs);
-    assert_eq!(config.max_scrollback_lines, deserialized.max_scrollback_lines);
+    assert_eq!(
+        config.capture_interval_secs,
+        deserialized.capture_interval_secs
+    );
+    assert_eq!(
+        config.max_scrollback_lines,
+        deserialized.max_scrollback_lines
+    );
     assert_eq!(config.include_ansi_codes, deserialized.include_ansi_codes);
-    assert_eq!(config.capture_command_output, deserialized.capture_command_output);
+    assert_eq!(
+        config.capture_command_output,
+        deserialized.capture_command_output
+    );
     assert_eq!(config.auto_annex, deserialized.auto_annex);
     assert_eq!(config.capture_on_command, deserialized.capture_on_command);
-    assert_eq!(config.command_capture_delay_ms, deserialized.command_capture_delay_ms);
-    assert_eq!(config.chunking_threshold_bytes, deserialized.chunking_threshold_bytes);
+    assert_eq!(
+        config.command_capture_delay_ms,
+        deserialized.command_capture_delay_ms
+    );
+    assert_eq!(
+        config.chunking_threshold_bytes,
+        deserialized.chunking_threshold_bytes
+    );
     assert_eq!(config.enable_chunking, deserialized.enable_chunking);
-    assert_eq!(config.annex_threshold_bytes, deserialized.annex_threshold_bytes);
+    assert_eq!(
+        config.annex_threshold_bytes,
+        deserialized.annex_threshold_bytes
+    );
     Ok(())
 }
 
@@ -275,19 +312,31 @@ async fn test_scrollback_payload_serialization(_ctx: TestContext) -> TestResult 
         has_ansi_codes: false,
         timestamp: Utc::now(),
     };
-    
+
     let serialized = serde_json::to_string(&scrollback_payload)?;
     let deserialized: TerminalScrollbackCapturedPayload = serde_json::from_str(&serialized)?;
-    
+
     assert_eq!(scrollback_payload.window_id, deserialized.window_id);
-    assert_eq!(scrollback_payload.scrollback_text, deserialized.scrollback_text);
-    assert_eq!(scrollback_payload.scrollback_lines, deserialized.scrollback_lines);
-    assert_eq!(scrollback_payload.scrollback_size_bytes, deserialized.scrollback_size_bytes);
-    assert_eq!(scrollback_payload.has_ansi_codes, deserialized.has_ansi_codes);
+    assert_eq!(
+        scrollback_payload.scrollback_text,
+        deserialized.scrollback_text
+    );
+    assert_eq!(
+        scrollback_payload.scrollback_lines,
+        deserialized.scrollback_lines
+    );
+    assert_eq!(
+        scrollback_payload.scrollback_size_bytes,
+        deserialized.scrollback_size_bytes
+    );
+    assert_eq!(
+        scrollback_payload.has_ansi_codes,
+        deserialized.has_ansi_codes
+    );
     assert_eq!(scrollback_payload.is_chunked, deserialized.is_chunked);
     assert_eq!(scrollback_payload.terminal_type, deserialized.terminal_type);
     assert_eq!(scrollback_payload.git_annex_key, deserialized.git_annex_key);
-    
+
     Ok(())
 }
 
@@ -302,17 +351,17 @@ async fn test_command_output_payload_serialization(_ctx: TestContext) -> TestRes
         cwd: "/home/user".to_string(),
         timestamp: Utc::now(),
     };
-    
+
     let serialized = serde_json::to_string(&cmd_output_payload)?;
     let deserialized: CommandOutputCapturedPayload = serde_json::from_str(&serialized)?;
-    
+
     assert_eq!(cmd_output_payload.command_text, deserialized.command_text);
     assert_eq!(cmd_output_payload.output_text, deserialized.output_text);
     assert_eq!(cmd_output_payload.window_id, deserialized.window_id);
     assert_eq!(cmd_output_payload.output_type, deserialized.output_type);
     assert_eq!(cmd_output_payload.cwd, deserialized.cwd);
     assert_eq!(cmd_output_payload.timestamp, deserialized.timestamp);
-    
+
     Ok(())
 }
 
@@ -335,26 +384,38 @@ async fn test_scrollback_chunking_configuration(_ctx: TestContext) -> TestResult
             ..Default::default()
         },
     ];
-    
+
     for config in chunking_configs {
         // Test serialization
         let serialized = serde_json::to_string(&config)?;
         let deserialized: ScrollbackConfig = serde_json::from_str(&serialized)?;
-        
-        assert_eq!(config.chunking_threshold_bytes, deserialized.chunking_threshold_bytes);
+
+        assert_eq!(
+            config.chunking_threshold_bytes,
+            deserialized.chunking_threshold_bytes
+        );
         assert_eq!(config.enable_chunking, deserialized.enable_chunking);
-        assert_eq!(config.annex_threshold_bytes, deserialized.annex_threshold_bytes);
+        assert_eq!(
+            config.annex_threshold_bytes,
+            deserialized.annex_threshold_bytes
+        );
         assert_eq!(config.auto_annex, deserialized.auto_annex);
-        
+
         // Test logical constraints
         if config.enable_chunking {
-            assert!(config.chunking_threshold_bytes > 0, "Chunking threshold must be positive");
+            assert!(
+                config.chunking_threshold_bytes > 0,
+                "Chunking threshold must be positive"
+            );
         }
         if config.auto_annex {
-            assert!(config.annex_threshold_bytes > 0, "Annex threshold must be positive");
+            assert!(
+                config.annex_threshold_bytes > 0,
+                "Annex threshold must be positive"
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -363,7 +424,7 @@ async fn test_scrollback_chunking_configuration(_ctx: TestContext) -> TestResult
 async fn test_scrollback_capture_timing(_ctx: TestContext) -> TestResult {
     let timing_configs = vec![
         ScrollbackConfig {
-            capture_interval_secs: 60,   // 1 minute
+            capture_interval_secs: 60, // 1 minute
             capture_on_command: true,
             command_capture_delay_ms: 100,
             ..Default::default()
@@ -375,20 +436,29 @@ async fn test_scrollback_capture_timing(_ctx: TestContext) -> TestResult {
             ..Default::default()
         },
     ];
-    
+
     for config in timing_configs {
-        assert!(config.capture_interval_secs > 0, "Capture interval must be positive");
+        assert!(
+            config.capture_interval_secs > 0,
+            "Capture interval must be positive"
+        );
         // command_capture_delay_ms is u64, so always non-negative
-        
+
         // Test serialization
         let serialized = serde_json::to_string(&config)?;
         let deserialized: ScrollbackConfig = serde_json::from_str(&serialized)?;
-        
-        assert_eq!(config.capture_interval_secs, deserialized.capture_interval_secs);
+
+        assert_eq!(
+            config.capture_interval_secs,
+            deserialized.capture_interval_secs
+        );
         assert_eq!(config.capture_on_command, deserialized.capture_on_command);
-        assert_eq!(config.command_capture_delay_ms, deserialized.command_capture_delay_ms);
+        assert_eq!(
+            config.command_capture_delay_ms,
+            deserialized.command_capture_delay_ms
+        );
     }
-    
+
     Ok(())
 }
 
@@ -402,7 +472,7 @@ async fn test_asciinema_auto_recording_setup(_ctx: TestContext) -> TestResult {
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
     let temp_home = temp_dir.path().to_path_buf();
-    
+
     // Create asciinema config with auto-recording enabled
     let config = AsciinemaConfig {
         recordings_dir: temp_home.join(".local/share/asciinema/asciicast"),
@@ -413,40 +483,40 @@ async fn test_asciinema_auto_recording_setup(_ctx: TestContext) -> TestResult {
         git_annex_repo: Some(temp_home.join("sinex-annex")),
         auto_annex: true,
     };
-    
+
     // Set HOME environment variable for the test
     std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
-    
+
     // Create event source context
     let event_ctx = EventSourceContext::new(serde_json::to_value(&config)?);
-    
+
     // Initialize the asciinema recorder
     let _recorder = AsciinemaRecorder::initialize(event_ctx).await?;
-    
+
     // Verify that shell integration files were created/modified
     let bashrc_path = temp_home.join(".bashrc");
     let zshrc_path = temp_home.join(".zshrc");
     let fish_config_path = temp_home.join(".config/fish/config.fish");
-    
+
     // Check that the shell files contain sinex integration
     if bashrc_path.exists() {
         let bashrc_content = tokio::fs::read_to_string(&bashrc_path).await?;
         assert!(bashrc_content.contains("# SINEX AUTO-RECORDING"));
         assert!(bashrc_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     }
-    
+
     if zshrc_path.exists() {
         let zshrc_content = tokio::fs::read_to_string(&zshrc_path).await?;
         assert!(zshrc_content.contains("# SINEX AUTO-RECORDING"));
         assert!(zshrc_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     }
-    
+
     if fish_config_path.exists() {
         let fish_content = tokio::fs::read_to_string(&fish_config_path).await?;
         assert!(fish_content.contains("# SINEX AUTO-RECORDING"));
         assert!(fish_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     }
-    
+
     Ok(())
 }
 
@@ -455,7 +525,7 @@ async fn test_asciinema_auto_recording_setup(_ctx: TestContext) -> TestResult {
 async fn test_asciinema_config_serialization(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_path_buf();
-    
+
     let config = AsciinemaConfig {
         recordings_dir: temp_path.join("recordings"),
         file_pattern: "session_*.cast".to_string(),
@@ -465,18 +535,24 @@ async fn test_asciinema_config_serialization(_ctx: TestContext) -> TestResult {
         git_annex_repo: Some(temp_path.join("annex")),
         auto_annex: false,
     };
-    
+
     let serialized = serde_json::to_string(&config)?;
     let deserialized: AsciinemaConfig = serde_json::from_str(&serialized)?;
-    
+
     assert_eq!(config.recordings_dir, deserialized.recordings_dir);
     assert_eq!(config.file_pattern, deserialized.file_pattern);
-    assert_eq!(config.polling_interval_secs, deserialized.polling_interval_secs);
-    assert_eq!(config.auto_start_recording, deserialized.auto_start_recording);
+    assert_eq!(
+        config.polling_interval_secs,
+        deserialized.polling_interval_secs
+    );
+    assert_eq!(
+        config.auto_start_recording,
+        deserialized.auto_start_recording
+    );
     assert_eq!(config.record_command, deserialized.record_command);
     assert_eq!(config.git_annex_repo, deserialized.git_annex_repo);
     assert_eq!(config.auto_annex, deserialized.auto_annex);
-    
+
     Ok(())
 }
 
@@ -485,7 +561,7 @@ async fn test_asciinema_config_serialization(_ctx: TestContext) -> TestResult {
 async fn test_asciinema_config_validation(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path().to_path_buf();
-    
+
     let valid_configs = vec![
         AsciinemaConfig {
             recordings_dir: temp_path.join("recordings"),
@@ -506,23 +582,38 @@ async fn test_asciinema_config_validation(_ctx: TestContext) -> TestResult {
             auto_annex: true,
         },
     ];
-    
+
     for config in valid_configs {
         // Validate constraints
-        assert!(config.polling_interval_secs > 0, "Polling interval must be positive");
-        assert!(!config.file_pattern.is_empty(), "File pattern cannot be empty");
-        assert!(!config.record_command.is_empty(), "Record command cannot be empty");
-        
+        assert!(
+            config.polling_interval_secs > 0,
+            "Polling interval must be positive"
+        );
+        assert!(
+            !config.file_pattern.is_empty(),
+            "File pattern cannot be empty"
+        );
+        assert!(
+            !config.record_command.is_empty(),
+            "Record command cannot be empty"
+        );
+
         if config.auto_annex {
-            assert!(config.git_annex_repo.is_some(), "Git annex repo required when auto_annex is true");
+            assert!(
+                config.git_annex_repo.is_some(),
+                "Git annex repo required when auto_annex is true"
+            );
         }
-        
+
         // Test serialization
         let serialized = serde_json::to_string(&config)?;
         let deserialized: AsciinemaConfig = serde_json::from_str(&serialized)?;
-        assert_eq!(config.polling_interval_secs, deserialized.polling_interval_secs);
+        assert_eq!(
+            config.polling_interval_secs,
+            deserialized.polling_interval_secs
+        );
     }
-    
+
     Ok(())
 }
 
@@ -531,21 +622,33 @@ async fn test_asciinema_config_validation(_ctx: TestContext) -> TestResult {
 async fn test_asciinema_shell_integration_setup(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_home = temp_dir.path().to_path_buf();
-    
+
     // Create initial shell configuration files
     let bashrc_path = temp_home.join(".bashrc");
     let zshrc_path = temp_home.join(".zshrc");
     let fish_config_dir = temp_home.join(".config/fish");
     let fish_config_path = fish_config_dir.join("config.fish");
-    
+
     // Create directories
     tokio::fs::create_dir_all(&fish_config_dir).await?;
-    
+
     // Create basic shell config files
-    tokio::fs::write(&bashrc_path, "# Basic bashrc\nexport PATH=$PATH:/usr/local/bin\n").await?;
-    tokio::fs::write(&zshrc_path, "# Basic zshrc\nautoload -U compinit\ncompinit\n").await?;
-    tokio::fs::write(&fish_config_path, "# Basic fish config\nset -gx PATH $PATH /usr/local/bin\n").await?;
-    
+    tokio::fs::write(
+        &bashrc_path,
+        "# Basic bashrc\nexport PATH=$PATH:/usr/local/bin\n",
+    )
+    .await?;
+    tokio::fs::write(
+        &zshrc_path,
+        "# Basic zshrc\nautoload -U compinit\ncompinit\n",
+    )
+    .await?;
+    tokio::fs::write(
+        &fish_config_path,
+        "# Basic fish config\nset -gx PATH $PATH /usr/local/bin\n",
+    )
+    .await?;
+
     // Create asciinema config
     let config = AsciinemaConfig {
         recordings_dir: temp_home.join(".local/share/asciinema/asciicast"),
@@ -556,30 +659,30 @@ async fn test_asciinema_shell_integration_setup(_ctx: TestContext) -> TestResult
         git_annex_repo: Some(temp_home.join("sinex-annex")),
         auto_annex: true,
     };
-    
+
     // Set HOME environment variable
     std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
-    
+
     // Create event source context and initialize recorder
     let event_ctx = EventSourceContext::new(serde_json::to_value(&config)?);
     let _recorder = AsciinemaRecorder::initialize(event_ctx).await?;
-    
+
     // Verify shell integration was added
     let bashrc_content = tokio::fs::read_to_string(&bashrc_path).await?;
     assert!(bashrc_content.contains("# SINEX AUTO-RECORDING"));
     assert!(bashrc_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     assert!(bashrc_content.contains("# Basic bashrc")); // Original content preserved
-    
+
     let zshrc_content = tokio::fs::read_to_string(&zshrc_path).await?;
     assert!(zshrc_content.contains("# SINEX AUTO-RECORDING"));
     assert!(zshrc_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     assert!(zshrc_content.contains("# Basic zshrc")); // Original content preserved
-    
+
     let fish_content = tokio::fs::read_to_string(&fish_config_path).await?;
     assert!(fish_content.contains("# SINEX AUTO-RECORDING"));
     assert!(fish_content.contains("SINEX_TERMINAL_SESSION_ULID"));
     assert!(fish_content.contains("# Basic fish config")); // Original content preserved
-    
+
     Ok(())
 }
 
@@ -589,7 +692,7 @@ async fn test_asciinema_recording_directory_setup(_ctx: TestContext) -> TestResu
     let temp_dir = TempDir::new()?;
     let temp_home = temp_dir.path().to_path_buf();
     let recordings_dir = temp_home.join(".local/share/asciinema/asciicast");
-    
+
     let config = AsciinemaConfig {
         recordings_dir: recordings_dir.clone(),
         file_pattern: "*.cast".to_string(),
@@ -599,26 +702,35 @@ async fn test_asciinema_recording_directory_setup(_ctx: TestContext) -> TestResu
         git_annex_repo: Some(temp_home.join("sinex-annex")),
         auto_annex: true,
     };
-    
+
     // Set HOME environment variable
     std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
-    
+
     // Create event source context and initialize recorder
     let event_ctx = EventSourceContext::new(serde_json::to_value(&config)?);
     let _recorder = AsciinemaRecorder::initialize(event_ctx).await?;
-    
+
     // Verify recordings directory was created
-    assert!(recordings_dir.exists(), "Recordings directory should be created");
-    assert!(recordings_dir.is_dir(), "Recordings path should be a directory");
-    
+    assert!(
+        recordings_dir.exists(),
+        "Recordings directory should be created"
+    );
+    assert!(
+        recordings_dir.is_dir(),
+        "Recordings path should be a directory"
+    );
+
     // Verify git annex repo was set up if specified
     if let Some(annex_path) = &config.git_annex_repo {
         if config.auto_annex {
             // Check if git annex initialization was attempted
             // (This might fail in test environment but should not panic)
-            assert!(annex_path.exists() || !annex_path.exists(), "Annex setup should not panic");
+            assert!(
+                annex_path.exists() || !annex_path.exists(),
+                "Annex setup should not panic"
+            );
         }
     }
-    
+
     Ok(())
 }

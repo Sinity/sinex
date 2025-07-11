@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::{JsonValue, ErrorContext, CoreError};
+use sinex_core::{CoreError, ErrorContext, JsonValue};
 use sinex_db::DbPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,21 +66,27 @@ async fn get_system_health(
     {
         Ok(heartbeats) => heartbeats,
         Err(e) => {
-            let error_context = ErrorContext::new(CoreError::Database(format!("Failed to fetch heartbeats: {}", e)))
-                .with_operation("get_system_health")
-                .with_context("table", "component_heartbeats")
-                .with_context("cutoff_time", cutoff.to_rfc3339())
-                .with_context("query_type", "fetch_recent_heartbeats")
-                .with_context("suggestion", "Check database connectivity and component_heartbeats table structure")
-                .build();
-            
+            let error_context = ErrorContext::new(CoreError::Database(format!(
+                "Failed to fetch heartbeats: {}",
+                e
+            )))
+            .with_operation("get_system_health")
+            .with_context("table", "component_heartbeats")
+            .with_context("cutoff_time", cutoff.to_rfc3339())
+            .with_context("query_type", "fetch_recent_heartbeats")
+            .with_context(
+                "suggestion",
+                "Check database connectivity and component_heartbeats table structure",
+            )
+            .build();
+
             error!(
                 error = %error_context,
                 cutoff_time = %cutoff,
                 operation = "get_system_health",
                 "Database query failed while fetching component heartbeats"
             );
-            
+
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
@@ -240,7 +246,9 @@ async fn list_components(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonVal
 }
 
 /// Get monitoring alerts - silent sources and resource exhaustion
-async fn get_monitoring_alerts(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonValue>, StatusCode> {
+async fn get_monitoring_alerts(
+    State(pool): State<Arc<DbPool>>,
+) -> Result<Json<JsonValue>, StatusCode> {
     // Look for recent silent source events
     let silent_sources = match sqlx::query!(
         r#"
@@ -326,8 +334,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Get database URL from environment
-    let database_url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL environment variable is required but not set"))?;
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!("DATABASE_URL environment variable is required but not set")
+    })?;
 
     // Connect to database
     let pool = Arc::new(sinex_db::create_pool(&database_url).await?);

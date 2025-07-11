@@ -19,6 +19,7 @@ pub struct CollectorMetrics {
 }
 
 impl CollectorMetrics {
+
     pub fn new() -> Result<Self, prometheus::Error> {
         Ok(Self {
             events_processed: CounterVec::new(
@@ -84,6 +85,7 @@ impl CollectorMetrics {
             )?,
         })
     }
+
 
     pub fn register_with(self, registry: &Registry) -> Result<Arc<Self>, prometheus::Error> {
         registry.register(Box::new(self.events_processed.clone()))?;

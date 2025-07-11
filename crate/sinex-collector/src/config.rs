@@ -1,15 +1,15 @@
+use crate::config_utils::resolve_system_safe_path;
 use anyhow::{anyhow, Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_core::{ConfigValidator, ConfigValue};
 use sinex_db::security::SecurityValidator;
 use std::collections::HashMap;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::env;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
-use crate::config_utils::resolve_system_safe_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectorConfig {
@@ -30,9 +30,11 @@ pub struct CollectorConfig {
 }
 
 impl CollectorConfig {
+
     pub fn load() -> Result<Self> {
         Self::load_with_validation(true)
     }
+
 
     pub fn load_with_validation(validate: bool) -> Result<Self> {
         // Try environment variable first
@@ -48,9 +50,9 @@ impl CollectorConfig {
         }
 
         // Try standard locations with configurable system config directory
-        let system_config_dir = env::var("SINEX_SYSTEM_CONFIG_DIR")
-            .unwrap_or_else(|_| "/etc/sinex".to_string());
-        
+        let system_config_dir =
+            env::var("SINEX_SYSTEM_CONFIG_DIR").unwrap_or_else(|_| "/etc/sinex".to_string());
+
         let paths = vec![
             Some(PathBuf::from("sinex-collector.toml")),
             // Legacy config file removed
@@ -58,7 +60,10 @@ impl CollectorConfig {
                 p.push("sinex/collector.toml");
                 p
             }),
-            Some(PathBuf::from(format!("{}/collector.toml", system_config_dir))),
+            Some(PathBuf::from(format!(
+                "{}/collector.toml",
+                system_config_dir
+            ))),
         ];
 
         for path in paths.into_iter().flatten() {
@@ -79,29 +84,45 @@ impl CollectorConfig {
         Ok(config)
     }
 
+
     pub fn load_from_file(path: &Path) -> Result<Self> {
         // Security: Validate path is not a symlink attack
         let metadata = std::fs::symlink_metadata(path)
             .with_context(|| format!("Cannot read metadata for config file: {}", path.display()))?;
-        
+
         if metadata.file_type().is_symlink() {
             // Resolve symlink and validate target is within allowed directories
-            let canonical_path = path.canonicalize()
-                .with_context(|| format!("Cannot resolve symlink target for config file: {}", path.display()))?;
-            
+            let canonical_path = path.canonicalize().with_context(|| {
+                format!(
+                    "Cannot resolve symlink target for config file: {}",
+                    path.display()
+                )
+            })?;
+
             // Validate canonical path is a regular file
-            let canonical_metadata = std::fs::metadata(&canonical_path)
-                .with_context(|| format!("Cannot read canonical path metadata: {}", canonical_path.display()))?;
-            
+            let canonical_metadata = std::fs::metadata(&canonical_path).with_context(|| {
+                format!(
+                    "Cannot read canonical path metadata: {}",
+                    canonical_path.display()
+                )
+            })?;
+
             if !canonical_metadata.is_file() {
-                return Err(anyhow!("Config symlink target is not a regular file: {}", canonical_path.display()));
+                return Err(anyhow!(
+                    "Config symlink target is not a regular file: {}",
+                    canonical_path.display()
+                ));
             }
-            
-            warn!("Loading config from symlink: {} -> {}", path.display(), canonical_path.display());
+
+            warn!(
+                "Loading config from symlink: {} -> {}",
+                path.display(),
+                canonical_path.display()
+            );
         }
-        
+
         let content = std::fs::read_to_string(path)?;
-        
+
         // Validate configuration content for security issues
         SecurityValidator::validate_config_content(&content)
             .map_err(|e| anyhow!("Security validation failed: {}", e))?;
@@ -144,6 +165,7 @@ impl CollectorConfig {
     }
 
     /// Validate the configuration
+
     pub fn validate(&self) -> Result<()> {
         let mut errors = Vec::new();
 
@@ -212,41 +234,37 @@ impl CollectorConfig {
         // Check against known event types (matching actual Rust EVENT_NAME constants)
         let known_events = [
             // Terminal/command events
-            "command.executed",         // Atuin command history
-            "command.hist",             // Shell history files
-            "command.completed",        // KittyCommandCompleted  
-            "command.failed",           // KittyCommandFailed
-            "command.imported",         // AtuinCommandImported, ShellHistoryCommandImported
-            "session.started",          // ShellSessionStarted
-            "session.ended",            // ShellSessionEnded
-            
+            "command.executed",  // Atuin command history
+            "command.hist",      // Shell history files
+            "command.completed", // KittyCommandCompleted
+            "command.failed",    // KittyCommandFailed
+            "command.imported",  // AtuinCommandImported, ShellHistoryCommandImported
+            "session.started",   // ShellSessionStarted
+            "session.ended",     // ShellSessionEnded
             // Terminal recording
-            "recording.started",        // AsciinemaSessionStarted
-            "recording.ended",          // AsciinemaSessionEnded
-            "output.captured",          // ScrollbackCaptured
-            
+            "recording.started", // AsciinemaSessionStarted
+            "recording.ended",   // AsciinemaSessionEnded
+            "output.captured",   // ScrollbackCaptured
             // Filesystem events
-            "file.created",             // FileCreated
-            "file.modified",            // FileModified
-            "file.deleted",             // FileDeleted
-            "file.moved",               // FileMoved
-            "dir.created",              // DirCreated
-            "dir.deleted",              // DirDeleted
-            
+            "file.created",  // FileCreated
+            "file.modified", // FileModified
+            "file.deleted",  // FileDeleted
+            "file.moved",    // FileMoved
+            "dir.created",   // DirCreated
+            "dir.deleted",   // DirDeleted
             // Window manager events
-            "window.opened",            // WindowOpened
-            "window.closed",            // WindowClosed
-            "window.focused",           // WindowFocused
-            "window.moved",             // WindowMoved
-            "window.resized",           // WindowResized
-            "workspace.switched",       // WorkspaceSwitched
-            "workspace.created",        // WorkspaceCreated
-            "workspace.destroyed",      // WorkspaceDestroyed
-            "display.connected",        // DisplayConnected
-            "display.disconnected",     // DisplayDisconnected
-            "monitor.focused",          // MonitorFocused
-            "state.captured",           // StateCapture
-            
+            "window.opened",        // WindowOpened
+            "window.closed",        // WindowClosed
+            "window.focused",       // WindowFocused
+            "window.moved",         // WindowMoved
+            "window.resized",       // WindowResized
+            "workspace.switched",   // WorkspaceSwitched
+            "workspace.created",    // WorkspaceCreated
+            "workspace.destroyed",  // WorkspaceDestroyed
+            "display.connected",    // DisplayConnected
+            "display.disconnected", // DisplayDisconnected
+            "monitor.focused",      // MonitorFocused
+            "state.captured",       // StateCapture
             // D-Bus events
             "signal.received",          // DbusSignalReceived
             "method.called",            // DbusMethodCalled
@@ -258,13 +276,11 @@ impl CollectorConfig {
             "network.state_changed",    // DbusNetworkStateChanged
             "bluetooth.device_changed", // DbusBluetoothDeviceChanged
             "mount.changed",            // DbusMountChanged
-            
             // Clipboard events
-            "copied",                   // ClipboardCopied
-            "selected",                 // ClipboardSelected
-            
+            "copied",   // ClipboardCopied
+            "selected", // ClipboardSelected
             // System journal
-            "entry.written",            // JournaldEntryWritten
+            "entry.written", // JournaldEntryWritten
         ];
 
         if !known_events.contains(&event_type) {
@@ -306,15 +322,10 @@ impl CollectorConfig {
             "command.executed" | "command.completed" | "output.captured" => {
                 self.validate_kitty_config(config)
             }
-            "file.created" | "file.modified" | "file.deleted" | "file.moved" | "dir.created" | "dir.deleted" => {
-                self.validate_filesystem_config(config)
-            }
-            "copied" | "selected" => {
-                self.validate_clipboard_config(config)
-            }
-            "recording.started" | "recording.ended" => {
-                self.validate_asciinema_config(config)
-            }
+            "file.created" | "file.modified" | "file.deleted" | "file.moved" | "dir.created"
+            | "dir.deleted" => self.validate_filesystem_config(config),
+            "copied" | "selected" => self.validate_clipboard_config(config),
+            "recording.started" | "recording.ended" => self.validate_asciinema_config(config),
             _ => {
                 // For unknown events, just validate that it's a valid TOML table
                 if !config.is_table() {
@@ -409,6 +420,7 @@ impl CollectorConfig {
     }
 
     /// Perform cross-validation checks
+
     pub fn cross_validate(&self) -> Result<()> {
         let mut errors = Vec::new();
 
@@ -431,7 +443,8 @@ impl CollectorConfig {
                         errors.push(format!("Event '{}' is enabled but missing required 'socket_path' configuration", event_type));
                     }
                 }
-                "file.created" | "file.modified" | "file.deleted" | "file.moved" | "dir.created" | "dir.deleted" => {
+                "file.created" | "file.modified" | "file.deleted" | "file.moved"
+                | "dir.created" | "dir.deleted" => {
                     if event_config.get("watch_patterns").is_none() {
                         errors.push(format!("Event '{}' is enabled but missing required 'watch_patterns' configuration", event_type));
                     }
@@ -569,8 +582,16 @@ impl Default for CollectorConfig {
                 table.insert(
                     "watch_patterns".to_string(),
                     ConfigValue::Array(vec![
-                        ConfigValue::String(resolve_system_safe_path("~/Documents/**/*", Some("SINEX_DOCUMENTS_DIR"), "/var/lib/sinex/documents")),
-                        ConfigValue::String(resolve_system_safe_path("~/Code/**/*", Some("SINEX_CODE_DIR"), "/var/lib/sinex/code")),
+                        ConfigValue::String(resolve_system_safe_path(
+                            "~/Documents/**/*",
+                            Some("SINEX_DOCUMENTS_DIR"),
+                            "/var/lib/sinex/documents",
+                        )),
+                        ConfigValue::String(resolve_system_safe_path(
+                            "~/Code/**/*",
+                            Some("SINEX_CODE_DIR"),
+                            "/var/lib/sinex/code",
+                        )),
                     ]),
                 );
                 table.insert(
@@ -591,7 +612,11 @@ impl Default for CollectorConfig {
                 let mut table = toml::map::Map::new();
                 table.insert(
                     "db_path".to_string(),
-                    ConfigValue::String(resolve_system_safe_path("~/.local/share/atuin/history.db", Some("ATUIN_DB_PATH"), "/var/lib/sinex/atuin")),
+                    ConfigValue::String(resolve_system_safe_path(
+                        "~/.local/share/atuin/history.db",
+                        Some("ATUIN_DB_PATH"),
+                        "/var/lib/sinex/atuin",
+                    )),
                 );
                 table.insert(
                     "polling_interval_secs".to_string(),
@@ -608,8 +633,7 @@ impl Default for CollectorConfig {
                 table.insert(
                     "socket_path".to_string(),
                     ConfigValue::String(
-                        env::var("KITTY_SOCKET_PATH")
-                            .unwrap_or_else(|_| "/tmp/kitty".to_string())
+                        env::var("KITTY_SOCKET_PATH").unwrap_or_else(|_| "/tmp/kitty".to_string()),
                     ),
                 );
                 table.insert("poll_interval_seconds".to_string(), ConfigValue::Integer(2));
@@ -676,6 +700,7 @@ impl ConfigManager {
     }
 
     /// Start watching for configuration changes
+
     pub async fn start_watching(&mut self) -> Result<mpsc::Receiver<CollectorConfig>> {
         let (update_tx, update_rx) = mpsc::channel(10);
 
@@ -743,6 +768,7 @@ impl ConfigManager {
     }
 
     /// Manually update the configuration
+
     pub async fn update_config(&self, new_config: CollectorConfig) -> Result<()> {
         {
             let mut config_guard = self.config.write().await;
@@ -759,6 +785,7 @@ impl ConfigManager {
     }
 
     /// Save current configuration to file
+
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
         let config = self.get_config().await;
         let content = toml::to_string_pretty(&config)?;

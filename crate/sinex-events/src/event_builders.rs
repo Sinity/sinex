@@ -4,8 +4,8 @@
 //! Based on proven patterns from the test infrastructure, these builders eliminate
 //! manual RawEvent construction and ensure consistency across all event sources.
 
-use crate::{RawEventBuilder, JsonValue};
 use crate::event_types;
+use crate::{JsonValue, RawEventBuilder};
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::collections::HashMap;
@@ -187,9 +187,10 @@ impl FilesystemEventBuilder {
             }
         }
 
-        let mut builder = RawEventBuilder::new(&self.source_name, operation.as_event_type(), payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version);
+        let mut builder =
+            RawEventBuilder::new(&self.source_name, operation.as_event_type(), payload)
+                .with_host(&self.host)
+                .with_ingestor_version(&self.ingestor_version);
 
         if let Some(ts) = self.timestamp {
             builder = builder.with_orig_timestamp(ts);
@@ -322,7 +323,8 @@ impl TerminalEventBuilder {
         }
 
         // Add timestamp
-        payload["completion_timestamp"] = json!(self.timestamp.unwrap_or_else(Utc::now).to_rfc3339());
+        payload["completion_timestamp"] =
+            json!(self.timestamp.unwrap_or_else(Utc::now).to_rfc3339());
 
         let mut builder = RawEventBuilder::new(&self.source_name, event_type, payload)
             .with_host(&self.host)
@@ -427,8 +429,10 @@ impl ClipboardEventBuilder {
         let content = self.content.unwrap_or_default();
         let content_type = self.content_type.unwrap_or(ClipboardContentType::Text);
 
-        let selection_type = self.selection_type.unwrap_or_else(|| "clipboard".to_string());
-        
+        let selection_type = self
+            .selection_type
+            .unwrap_or_else(|| "clipboard".to_string());
+
         let mut payload = json!({
             "content_type": content_type.as_str(),
             "content_size": content.len() as u64,

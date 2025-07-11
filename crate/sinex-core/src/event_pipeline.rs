@@ -1,19 +1,19 @@
 /// Multi-stage event processing pipeline architecture
-/// 
+///
 /// This module implements a formalized event processing pipeline with distinct stages:
 /// 1. Collection - Raw event capture from sources
 /// 2. Validation - Schema validation and integrity checks
 /// 3. Enrichment - Metadata augmentation and normalization
 /// 4. Storage - Persistence to database
 /// 5. Distribution - Work queue and downstream processing
-/// 
+///
 /// Each stage has clear input/output contracts and error handling.
-use crate::{RawEvent, EventSender, EventReceiver, Result, CoreError, JsonValue};
+use crate::{CoreError, EventReceiver, EventSender, JsonValue, RawEvent, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Pipeline configuration
 #[derive(Debug, Clone)]
@@ -76,11 +76,11 @@ impl<T> StageResult<T> {
     pub fn is_success(&self) -> bool {
         matches!(self, StageResult::Success(_))
     }
-    
+
     pub fn is_dropped(&self) -> bool {
         matches!(self, StageResult::Dropped(_))
     }
-    
+
     pub fn is_failed(&self) -> bool {
         matches!(self, StageResult::Failed(_))
     }
@@ -117,11 +117,11 @@ impl StagedEvent {
             }),
         }
     }
-    
+
     pub fn add_metadata(&mut self, key: impl Into<String>, value: JsonValue) {
         self.stage_metadata.insert(key.into(), value);
     }
-    
+
     pub fn record_stage_duration(&mut self, stage: &str, duration_us: u64) {
         if let Some(timing) = &mut self.timing {
             match stage {
@@ -140,13 +140,13 @@ impl StagedEvent {
 pub trait PipelineStage: Send + Sync {
     type Input: Send;
     type Output: Send;
-    
+
     /// Stage name for logging and metrics
     fn stage_name(&self) -> &'static str;
-    
+
     /// Process a single event through this stage
     async fn process(&self, input: Self::Input) -> StageResult<Self::Output>;
-    
+
     /// Process a batch of events (default implementation processes individually)
     async fn process_batch(&self, inputs: Vec<Self::Input>) -> Vec<StageResult<Self::Output>> {
         let mut results = Vec::with_capacity(inputs.len());
@@ -155,10 +155,10 @@ pub trait PipelineStage: Send + Sync {
         }
         results
     }
-    
+
     /// Get current stage metrics
     fn metrics(&self) -> StageMetrics;
-    
+
     /// Reset stage metrics
     fn reset_metrics(&self);
 }
@@ -182,25 +182,26 @@ impl ValidationStage {
             metrics: Arc::new(RwLock::new(StageMetrics::default())),
         }
     }
-    
+
     pub async fn register_schema(&self, event_type: String, schema: schemars::schema::RootSchema) {
         let mut registry = self.schema_registry.write().await;
         registry.insert(event_type, schema);
     }
-    
+
     async fn validate_event_schema(&self, event: &RawEvent) -> Result<()> {
         let schemas = self.schema_registry.read().await;
-        
+
         if let Some(_schema) = schemas.get(&event.event_type) {
             // TODO: Implement actual JSON schema validation
             // For now, just validate basic structure
             if event.payload.is_null() {
                 return Err(CoreError::Validation(format!(
-                    "Event {} has null payload", event.event_type
+                    "Event {} has null payload",
+                    event.event_type
                 )));
             }
         }
-        
+
         Ok(())
     }
 }
@@ -209,41 +210,44 @@ impl ValidationStage {
 impl PipelineStage for ValidationStage {
     type Input = StagedEvent;
     type Output = StagedEvent;
-    
+
     fn stage_name(&self) -> &'static str {
         "validation"
     }
-    
+
     #[instrument(skip(self, input), fields(event_id = %input.event.id))]
     async fn process(&self, mut input: Self::Input) -> StageResult<Self::Output> {
         let start = std::time::Instant::now();
-        
+
         match self.validate_event_schema(&input.event).await {
             Ok(()) => {
                 let duration_us = start.elapsed().as_micros() as u64;
                 input.record_stage_duration("validation", duration_us);
-                
+
                 let mut metrics = self.metrics.write().await;
                 metrics.events_processed += 1;
                 metrics.processing_time_ms += duration_us / 1000;
-                
+
                 debug!("Event {} validated successfully", input.event.id);
                 StageResult::Success(input)
             }
             Err(e) => {
                 let mut metrics = self.metrics.write().await;
                 metrics.errors += 1;
-                
+
                 error!("Event {} failed validation: {}", input.event.id, e);
                 StageResult::Failed(e)
             }
         }
     }
-    
+
     fn metrics(&self) -> StageMetrics {
-        self.metrics.try_read().map(|m| m.clone()).unwrap_or_default()
+        self.metrics
+            .try_read()
+            .map(|m| m.clone())
+            .unwrap_or_default()
     }
-    
+
     fn reset_metrics(&self) {
         if let Ok(mut metrics) = self.metrics.try_write() {
             *metrics = StageMetrics::default();
@@ -272,18 +276,18 @@ impl EnrichmentStage {
             metrics: Arc::new(RwLock::new(StageMetrics::default())),
         }
     }
-    
+
     fn enrich_event(&self, event: &mut RawEvent) {
         // Ensure host is set
         if event.host.is_empty() {
             event.host = self.hostname.clone();
         }
-        
+
         // Ensure ingestor version is set
         if event.ingestor_version.is_none() {
             event.ingestor_version = Some(self.version.clone());
         }
-        
+
         // Normalize timestamps if needed
         if event.ts_orig.is_none() {
             event.ts_orig = Some(event.ts_ingest);
@@ -295,36 +299,39 @@ impl EnrichmentStage {
 impl PipelineStage for EnrichmentStage {
     type Input = StagedEvent;
     type Output = StagedEvent;
-    
+
     fn stage_name(&self) -> &'static str {
         "enrichment"
     }
-    
+
     #[instrument(skip(self, input), fields(event_id = %input.event.id))]
     async fn process(&self, mut input: Self::Input) -> StageResult<Self::Output> {
         let start = std::time::Instant::now();
-        
+
         self.enrich_event(&mut input.event);
-        
+
         // Add enrichment metadata
         input.add_metadata("enriched_at", chrono::Utc::now().to_rfc3339().into());
         input.add_metadata("enricher_version", self.version.clone().into());
-        
+
         let duration_us = start.elapsed().as_micros() as u64;
         input.record_stage_duration("enrichment", duration_us);
-        
+
         let mut metrics = self.metrics.write().await;
         metrics.events_processed += 1;
         metrics.processing_time_ms += duration_us / 1000;
-        
+
         debug!("Event {} enriched successfully", input.event.id);
         StageResult::Success(input)
     }
-    
+
     fn metrics(&self) -> StageMetrics {
-        self.metrics.try_read().map(|m| m.clone()).unwrap_or_default()
+        self.metrics
+            .try_read()
+            .map(|m| m.clone())
+            .unwrap_or_default()
     }
-    
+
     fn reset_metrics(&self) {
         if let Ok(mut metrics) = self.metrics.try_write() {
             *metrics = StageMetrics::default();
@@ -345,7 +352,7 @@ impl StorageStage {
             metrics: Arc::new(RwLock::new(StageMetrics::default())),
         }
     }
-    
+
     async fn store_event(&self, event: &RawEvent) -> Result<()> {
         sqlx::query!(
             r#"
@@ -367,7 +374,7 @@ impl StorageStage {
         )
         .execute(&self.db_pool)
         .await?;
-        
+
         Ok(())
     }
 }
@@ -376,43 +383,46 @@ impl StorageStage {
 impl PipelineStage for StorageStage {
     type Input = StagedEvent;
     type Output = StagedEvent;
-    
+
     fn stage_name(&self) -> &'static str {
         "storage"
     }
-    
+
     #[instrument(skip(self, input), fields(event_id = %input.event.id))]
     async fn process(&self, mut input: Self::Input) -> StageResult<Self::Output> {
         let start = std::time::Instant::now();
-        
+
         match self.store_event(&input.event).await {
             Ok(()) => {
                 let duration_us = start.elapsed().as_micros() as u64;
                 input.record_stage_duration("storage", duration_us);
-                
+
                 input.add_metadata("stored_at", chrono::Utc::now().to_rfc3339().into());
-                
+
                 let mut metrics = self.metrics.write().await;
                 metrics.events_processed += 1;
                 metrics.processing_time_ms += duration_us / 1000;
-                
+
                 debug!("Event {} stored successfully", input.event.id);
                 StageResult::Success(input)
             }
             Err(e) => {
                 let mut metrics = self.metrics.write().await;
                 metrics.errors += 1;
-                
+
                 error!("Event {} failed storage: {}", input.event.id, e);
                 StageResult::Failed(e)
             }
         }
     }
-    
+
     fn metrics(&self) -> StageMetrics {
-        self.metrics.try_read().map(|m| m.clone()).unwrap_or_default()
+        self.metrics
+            .try_read()
+            .map(|m| m.clone())
+            .unwrap_or_default()
     }
-    
+
     fn reset_metrics(&self) {
         if let Ok(mut metrics) = self.metrics.try_write() {
             *metrics = StageMetrics::default();
@@ -433,7 +443,7 @@ impl DistributionStage {
             metrics: Arc::new(RwLock::new(StageMetrics::default())),
         }
     }
-    
+
     async fn distribute_event(&self, event: &RawEvent) -> Result<()> {
         // Add to work queue for downstream processing
         sqlx::query!(
@@ -446,7 +456,7 @@ impl DistributionStage {
         )
         .execute(&self.db_pool)
         .await?;
-        
+
         Ok(())
     }
 }
@@ -455,43 +465,46 @@ impl DistributionStage {
 impl PipelineStage for DistributionStage {
     type Input = StagedEvent;
     type Output = StagedEvent;
-    
+
     fn stage_name(&self) -> &'static str {
         "distribution"
     }
-    
+
     #[instrument(skip(self, input), fields(event_id = %input.event.id))]
     async fn process(&self, mut input: Self::Input) -> StageResult<Self::Output> {
         let start = std::time::Instant::now();
-        
+
         match self.distribute_event(&input.event).await {
             Ok(()) => {
                 let duration_us = start.elapsed().as_micros() as u64;
                 input.record_stage_duration("distribution", duration_us);
-                
+
                 input.add_metadata("distributed_at", chrono::Utc::now().to_rfc3339().into());
-                
+
                 let mut metrics = self.metrics.write().await;
                 metrics.events_processed += 1;
                 metrics.processing_time_ms += duration_us / 1000;
-                
+
                 debug!("Event {} distributed successfully", input.event.id);
                 StageResult::Success(input)
             }
             Err(e) => {
                 let mut metrics = self.metrics.write().await;
                 metrics.errors += 1;
-                
+
                 error!("Event {} failed distribution: {}", input.event.id, e);
                 StageResult::Failed(e)
             }
         }
     }
-    
+
     fn metrics(&self) -> StageMetrics {
-        self.metrics.try_read().map(|m| m.clone()).unwrap_or_default()
+        self.metrics
+            .try_read()
+            .map(|m| m.clone())
+            .unwrap_or_default()
     }
-    
+
     fn reset_metrics(&self) {
         if let Ok(mut metrics) = self.metrics.try_write() {
             *metrics = StageMetrics::default();
@@ -519,14 +532,17 @@ impl EventPipeline {
             distribution_stage: DistributionStage::new(db_pool),
         }
     }
-    
+
     /// Process a single event through the complete pipeline
     #[instrument(skip(self, event), fields(event_id = %event.id))]
     pub async fn process_event(&self, event: RawEvent) -> Result<()> {
         let mut staged_event = StagedEvent::new(event);
-        
-        info!("Processing event {} through pipeline", staged_event.event.id);
-        
+
+        info!(
+            "Processing event {} through pipeline",
+            staged_event.event.id
+        );
+
         // Stage 1: Validation
         staged_event = match self.validation_stage.process(staged_event).await {
             StageResult::Success(event) => event,
@@ -539,7 +555,7 @@ impl EventPipeline {
                 return Err(e);
             }
         };
-        
+
         // Stage 2: Enrichment
         staged_event = match self.enrichment_stage.process(staged_event).await {
             StageResult::Success(event) => event,
@@ -552,7 +568,7 @@ impl EventPipeline {
                 return Err(e);
             }
         };
-        
+
         // Stage 3: Storage
         staged_event = match self.storage_stage.process(staged_event).await {
             StageResult::Success(event) => event,
@@ -565,11 +581,14 @@ impl EventPipeline {
                 return Err(e);
             }
         };
-        
+
         // Stage 4: Distribution
         match self.distribution_stage.process(staged_event).await {
             StageResult::Success(event) => {
-                info!("Event {} processed successfully through all stages", event.event.id);
+                info!(
+                    "Event {} processed successfully through all stages",
+                    event.event.id
+                );
                 Ok(())
             }
             StageResult::Dropped(reason) => {
@@ -582,22 +601,26 @@ impl EventPipeline {
             }
         }
     }
-    
+
     /// Start pipeline with input and output channels
-    pub async fn start(&self, mut input: EventReceiver, _output: Option<EventSender>) -> Result<()> {
+    pub async fn start(
+        &self,
+        mut input: EventReceiver,
+        _output: Option<EventSender>,
+    ) -> Result<()> {
         info!("Starting event processing pipeline");
-        
+
         while let Some(event) = input.recv().await {
             if let Err(e) = self.process_event(event).await {
                 error!("Pipeline processing error: {}", e);
                 // Continue processing other events
             }
         }
-        
+
         info!("Event processing pipeline stopped");
         Ok(())
     }
-    
+
     /// Get comprehensive pipeline metrics
     pub fn get_metrics(&self) -> PipelineMetrics {
         PipelineMetrics {
@@ -607,7 +630,7 @@ impl EventPipeline {
             distribution: self.distribution_stage.metrics(),
         }
     }
-    
+
     /// Reset all pipeline metrics
     pub fn reset_metrics(&self) {
         self.validation_stage.reset_metrics();
@@ -630,25 +653,25 @@ impl PipelineMetrics {
     pub fn total_events_processed(&self) -> u64 {
         self.storage.events_processed // Use storage as authoritative count
     }
-    
+
     pub fn total_events_dropped(&self) -> u64 {
-        self.validation.events_dropped + 
-        self.enrichment.events_dropped + 
-        self.storage.events_dropped + 
-        self.distribution.events_dropped
+        self.validation.events_dropped
+            + self.enrichment.events_dropped
+            + self.storage.events_dropped
+            + self.distribution.events_dropped
     }
-    
+
     pub fn total_errors(&self) -> u64 {
-        self.validation.errors + 
-        self.enrichment.errors + 
-        self.storage.errors + 
-        self.distribution.errors
+        self.validation.errors
+            + self.enrichment.errors
+            + self.storage.errors
+            + self.distribution.errors
     }
-    
+
     pub fn total_processing_time_ms(&self) -> u64 {
-        self.validation.processing_time_ms + 
-        self.enrichment.processing_time_ms + 
-        self.storage.processing_time_ms + 
-        self.distribution.processing_time_ms
+        self.validation.processing_time_ms
+            + self.enrichment.processing_time_ms
+            + self.storage.processing_time_ms
+            + self.distribution.processing_time_ms
     }
 }

@@ -80,4 +80,3 @@ mod property;
 
 #[cfg(test)]
 mod adversarial;
-

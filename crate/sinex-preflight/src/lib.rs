@@ -4,7 +4,7 @@ pub mod resources;
 pub mod services;
 pub mod verification;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VerificationStatus {
     Pass,
     Warning,

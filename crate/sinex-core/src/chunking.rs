@@ -8,7 +8,7 @@ use std::io::Read;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkingConfig {
     pub min_size: u32,
-    pub avg_size: u32, 
+    pub avg_size: u32,
     pub max_size: u32,
     pub enable_blake3_hashing: bool,
 }
@@ -16,9 +16,9 @@ pub struct ChunkingConfig {
 impl Default for ChunkingConfig {
     fn default() -> Self {
         Self {
-            min_size: 8192,    // 8KB minimum
-            avg_size: 16384,   // 16KB average
-            max_size: 32768,   // 32KB maximum
+            min_size: 8192,  // 8KB minimum
+            avg_size: 16384, // 16KB average
+            max_size: 32768, // 32KB maximum
             enable_blake3_hashing: true,
         }
     }
@@ -91,7 +91,7 @@ impl ChunkingService {
 
         for chunk_result in stream_chunker {
             let chunk_data = chunk_result?;
-            
+
             let blake3_hash = if self.config.enable_blake3_hashing {
                 let mut hasher = Hasher::new();
                 hasher.update(&chunk_data.data);
@@ -196,7 +196,10 @@ pub mod event_chunking {
     use crate::JsonValue;
 
     /// Chunk large JSON event payloads
-    pub fn chunk_json_payload(payload: &JsonValue, config: &ChunkingConfig) -> Result<Vec<ContentChunk>> {
+    pub fn chunk_json_payload(
+        payload: &JsonValue,
+        config: &ChunkingConfig,
+    ) -> Result<Vec<ContentChunk>> {
         let json_string = serde_json::to_string(payload)?;
         let chunker = ChunkingService::new(config.clone());
         chunker.chunk_string(&json_string)
@@ -244,9 +247,11 @@ mod tests {
     fn test_small_data_chunking() {
         let service = ChunkingService::with_default_config();
         let data = b"Hello, world! This is a small piece of test data.";
-        
-        let chunks = service.chunk_bytes(data).expect("Should chunk successfully");
-        
+
+        let chunks = service
+            .chunk_bytes(data)
+            .expect("Should chunk successfully");
+
         // Small data should result in one chunk
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].data, data);
@@ -259,12 +264,14 @@ mod tests {
         let service = ChunkingService::with_default_config();
         // Create data larger than max chunk size
         let data = vec![b'A'; 100_000]; // 100KB of 'A'
-        
-        let chunks = service.chunk_bytes(&data).expect("Should chunk successfully");
-        
+
+        let chunks = service
+            .chunk_bytes(&data)
+            .expect("Should chunk successfully");
+
         // Should result in multiple chunks
         assert!(chunks.len() > 1);
-        
+
         // Verify chunks reconstruct original data
         let mut reconstructed = Vec::new();
         for chunk in &chunks {
@@ -276,42 +283,47 @@ mod tests {
     #[test]
     fn test_json_payload_chunking() {
         use crate::JsonValue;
-        
+
         let config = ChunkingConfig::default();
-        
+
         // Create large JSON payload
         let mut large_object = serde_json::Map::new();
         for i in 0..1000 {
-            large_object.insert(format!("key_{}", i), JsonValue::String(format!("value_{}_with_lots_of_data_to_make_it_large", i)));
+            large_object.insert(
+                format!("key_{}", i),
+                JsonValue::String(format!("value_{}_with_lots_of_data_to_make_it_large", i)),
+            );
         }
         let payload = JsonValue::Object(large_object);
-        
+
         let chunks = event_chunking::chunk_json_payload(&payload, &config)
             .expect("Should chunk JSON payload");
-        
+
         assert!(chunks.len() > 1, "Large JSON should be chunked");
-        
+
         // Test reconstruction
-        let reconstructed = event_chunking::reconstruct_json_from_chunks(&chunks)
-            .expect("Should reconstruct JSON");
-        
+        let reconstructed =
+            event_chunking::reconstruct_json_from_chunks(&chunks).expect("Should reconstruct JSON");
+
         assert_eq!(reconstructed, payload);
     }
 
     #[test]
     fn test_chunk_deduplication() {
         let service = ChunkingService::with_default_config();
-        
+
         // Create data with repeated patterns
         let mut data = Vec::new();
         let pattern = b"This is a repeated pattern for testing deduplication. ";
         for _ in 0..100 {
             data.extend_from_slice(pattern);
         }
-        
-        let chunks = service.chunk_bytes(&data).expect("Should chunk successfully");
+
+        let chunks = service
+            .chunk_bytes(&data)
+            .expect("Should chunk successfully");
         let (deduped_chunks, stats) = deduplication::deduplicate_chunks(chunks);
-        
+
         assert!(deduped_chunks.len() <= stats.original_chunks);
         if stats.duplicate_chunks > 0 {
             assert!(stats.bytes_saved > 0);

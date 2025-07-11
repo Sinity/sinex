@@ -3,13 +3,13 @@
 //! This module provides production-ready enhancements to the existing channel helpers,
 //! including performance measurement, health monitoring, and advanced error reporting.
 
-use crate::{CoreError, Result, EventSender, RawEvent};
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
+use crate::{CoreError, EventSender, RawEvent, Result};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::{Instant, timeout};
+use tokio::time::{timeout, Instant};
 
 /// Enhanced event sender with comprehensive monitoring and error reporting
 pub struct EnhancedEventSender {
@@ -34,26 +34,37 @@ impl EnhancedEventSender {
     pub async fn send_event(&self, event: RawEvent, context: &str) -> Result<()> {
         let start_time = Instant::now();
         let event_type = event.event_type.clone();
-        
+
         self.performance_tracker.record_send_attempt();
 
         match self.inner.send(event).await {
             Ok(()) => {
                 self.monitor.record_send();
-                self.performance_tracker.record_send_success(start_time.elapsed());
-                tracing::trace!("[{}] Sent {} event: {}", self.source_name, event_type, context);
+                self.performance_tracker
+                    .record_send_success(start_time.elapsed());
+                tracing::trace!(
+                    "[{}] Sent {} event: {}",
+                    self.source_name,
+                    event_type,
+                    context
+                );
                 Ok(())
             }
             Err(e) => {
                 let error_msg = format!("Failed to send {} event: {}", event_type, e);
                 self.monitor.record_error(error_msg.clone());
-                self.performance_tracker.record_send_failure(start_time.elapsed());
-                
+                self.performance_tracker
+                    .record_send_failure(start_time.elapsed());
+
                 tracing::error!("[{}] {}: {}", self.source_name, error_msg, context);
-                
+
                 Err(CoreError::Other(format!(
                     "{} (source: {}, event_type: {}, context: {}, duration_ms: {})",
-                    error_msg, self.source_name, event_type, context, start_time.elapsed().as_millis()
+                    error_msg,
+                    self.source_name,
+                    event_type,
+                    context,
+                    start_time.elapsed().as_millis()
                 )))
             }
         }
@@ -72,10 +83,14 @@ impl EnhancedEventSender {
         match timeout(timeout_duration, self.send_event(event, context)).await {
             Ok(result) => result,
             Err(_) => {
-                let error_msg = format!("Send timeout for {} event after {:?}", event_type, timeout_duration);
+                let error_msg = format!(
+                    "Send timeout for {} event after {:?}",
+                    event_type, timeout_duration
+                );
                 self.monitor.record_error(error_msg.clone());
-                self.performance_tracker.record_send_failure(start_time.elapsed());
-                
+                self.performance_tracker
+                    .record_send_failure(start_time.elapsed());
+
                 Err(CoreError::Other(format!(
                     "{} (source: {}, event_type: {}, timeout: {:?}, context: {})",
                     error_msg, self.source_name, event_type, timeout_duration, context
@@ -85,7 +100,11 @@ impl EnhancedEventSender {
     }
 
     /// Send events in batch with performance monitoring
-    pub async fn send_batch(&self, events: Vec<RawEvent>, context: &str) -> Result<BatchSendResult> {
+    pub async fn send_batch(
+        &self,
+        events: Vec<RawEvent>,
+        context: &str,
+    ) -> Result<BatchSendResult> {
         let start_time = Instant::now();
         let total_events = events.len();
         let mut successful = 0;
@@ -114,7 +133,10 @@ impl EnhancedEventSender {
 
         tracing::info!(
             "[{}] Batch send completed: {}/{} successful in {:?}",
-            self.source_name, successful, total_events, duration
+            self.source_name,
+            successful,
+            total_events,
+            duration
         );
 
         Ok(result)
@@ -134,7 +156,7 @@ impl EnhancedEventSender {
     pub fn health_report(&self) -> ChannelHealthReport {
         let stats = self.stats();
         let perf = self.performance_metrics();
-        
+
         ChannelHealthReport {
             source_name: self.source_name.clone(),
             sent_count: stats.sent,
@@ -152,14 +174,14 @@ impl EnhancedEventSender {
     pub fn is_healthy(&self) -> bool {
         let stats = self.stats();
         let perf = self.performance_metrics();
-        
+
         // Healthy if:
         // - Error rate is low (< 5%)
         // - Queue depth is reasonable (< 1000)
         // - Average latency is acceptable (< 100ms)
-        perf.success_rate > 0.95 &&
-        stats.queue_depth < 1000 &&
-        perf.average_send_latency < Duration::from_millis(100)
+        perf.success_rate > 0.95
+            && stats.queue_depth < 1000
+            && perf.average_send_latency < Duration::from_millis(100)
     }
 
     /// Reset monitoring counters (useful for testing or periodic resets)
@@ -196,12 +218,14 @@ impl PerformanceTracker {
 
     pub fn record_send_success(&self, duration: Duration) {
         self.send_successes.fetch_add(1, Ordering::Relaxed);
-        self.total_send_duration.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_send_duration
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     pub fn record_send_failure(&self, duration: Duration) {
         self.send_failures.fetch_add(1, Ordering::Relaxed);
-        self.total_send_duration.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_send_duration
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     pub fn get_metrics(&self) -> PerformanceMetrics {
@@ -324,7 +348,14 @@ pub struct ChannelHealthReport {
 impl ChannelHealthReport {
     pub fn print_summary(&self) {
         println!("=== Channel Health Report: {} ===", self.source_name);
-        println!("Health status: {}", if self.is_healthy { "✓ HEALTHY" } else { "✗ UNHEALTHY" });
+        println!(
+            "Health status: {}",
+            if self.is_healthy {
+                "✓ HEALTHY"
+            } else {
+                "✗ UNHEALTHY"
+            }
+        );
         println!("Events sent: {}", self.sent_count);
         println!("Errors: {}", self.error_count);
         println!("Queue depth: {}", self.queue_depth);
@@ -377,22 +408,28 @@ impl ChannelDiagnostics {
         test_event: RawEvent,
     ) -> Result<DiagnosticsReport> {
         let start_time = Instant::now();
-        
+
         // Test basic send
-        let basic_send_result = sender.send_event(test_event.clone(), "diagnostics_basic").await;
-        
+        let basic_send_result = sender
+            .send_event(test_event.clone(), "diagnostics_basic")
+            .await;
+
         // Test timeout send
         let timeout_result = sender
-            .send_event_timeout(test_event.clone(), Duration::from_millis(100), "diagnostics_timeout")
+            .send_event_timeout(
+                test_event.clone(),
+                Duration::from_millis(100),
+                "diagnostics_timeout",
+            )
             .await;
-        
+
         // Test batch send
         let batch_events = vec![test_event.clone(), test_event.clone(), test_event];
         let batch_result = sender.send_batch(batch_events, "diagnostics_batch").await;
-        
+
         let total_duration = start_time.elapsed();
         let health_report = sender.health_report();
-        
+
         Ok(DiagnosticsReport {
             basic_send_success: basic_send_result.is_ok(),
             timeout_send_success: timeout_result.is_ok(),
@@ -418,20 +455,47 @@ pub struct DiagnosticsReport {
 impl DiagnosticsReport {
     pub fn print_summary(&self) {
         println!("=== Channel Diagnostics Report ===");
-        println!("Basic send: {}", if self.basic_send_success { "✓ PASS" } else { "✗ FAIL" });
-        println!("Timeout send: {}", if self.timeout_send_success { "✓ PASS" } else { "✗ FAIL" });
-        println!("Batch send: {}", if self.batch_send_success { "✓ PASS" } else { "✗ FAIL" });
-        println!("Batch success rate: {:.2}%", self.batch_success_rate * 100.0);
+        println!(
+            "Basic send: {}",
+            if self.basic_send_success {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            }
+        );
+        println!(
+            "Timeout send: {}",
+            if self.timeout_send_success {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            }
+        );
+        println!(
+            "Batch send: {}",
+            if self.batch_send_success {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            }
+        );
+        println!(
+            "Batch success rate: {:.2}%",
+            self.batch_success_rate * 100.0
+        );
         println!("Total diagnostics time: {:?}", self.total_duration);
-        println!("Overall health score: {:.2}", self.health_report.health_score());
+        println!(
+            "Overall health score: {:.2}",
+            self.health_report.health_score()
+        );
     }
 
     pub fn is_passing(&self) -> bool {
-        self.basic_send_success &&
-        self.timeout_send_success &&
-        self.batch_send_success &&
-        self.batch_success_rate > 0.9 &&
-        self.health_report.is_healthy
+        self.basic_send_success
+            && self.timeout_send_success
+            && self.batch_send_success
+            && self.batch_success_rate > 0.9
+            && self.health_report.is_healthy
     }
 }
 
@@ -445,11 +509,14 @@ mod tests {
     async fn test_enhanced_event_sender() {
         let (enhanced_sender, mut rx) = create_enhanced_event_sender(10, "test_source".to_string());
 
-        let test_event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-            .build();
+        let test_event =
+            RawEventBuilder::new("test", "test.event", json!({"data": "test"})).build();
 
         // Test basic send
-        assert!(enhanced_sender.send_event(test_event.clone(), "test_context").await.is_ok());
+        assert!(enhanced_sender
+            .send_event(test_event.clone(), "test_context")
+            .await
+            .is_ok());
 
         // Verify event was received
         let received = rx.recv().await.unwrap();
@@ -471,8 +538,11 @@ mod tests {
             RawEventBuilder::new("test", "test.event3", json!({"data": "test3"})).build(),
         ];
 
-        let result = enhanced_sender.send_batch(test_events, "batch_test").await.unwrap();
-        
+        let result = enhanced_sender
+            .send_batch(test_events, "batch_test")
+            .await
+            .unwrap();
+
         assert_eq!(result.total_events, 3);
         assert_eq!(result.successful, 3);
         assert_eq!(result.failed, 0);
@@ -489,12 +559,14 @@ mod tests {
     async fn test_performance_tracking() {
         let (enhanced_sender, _rx) = create_enhanced_event_sender(10, "test_source".to_string());
 
-        let test_event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-            .build();
+        let test_event =
+            RawEventBuilder::new("test", "test.event", json!({"data": "test"})).build();
 
         // Send a few events
         for i in 0..5 {
-            let _ = enhanced_sender.send_event(test_event.clone(), &format!("test_{}", i)).await;
+            let _ = enhanced_sender
+                .send_event(test_event.clone(), &format!("test_{}", i))
+                .await;
         }
 
         let metrics = enhanced_sender.performance_metrics();
@@ -507,12 +579,14 @@ mod tests {
     async fn test_health_report() {
         let (enhanced_sender, _rx) = create_enhanced_event_sender(10, "test_source".to_string());
 
-        let test_event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-            .build();
+        let test_event =
+            RawEventBuilder::new("test", "test.event", json!({"data": "test"})).build();
 
         // Send some events
         for _ in 0..3 {
-            let _ = enhanced_sender.send_event(test_event.clone(), "health_test").await;
+            let _ = enhanced_sender
+                .send_event(test_event.clone(), "health_test")
+                .await;
         }
 
         let health_report = enhanced_sender.health_report();

@@ -9,8 +9,8 @@
 //! - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 //! - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
-use crate::common::prelude::*;
 use crate::common::events;
+use crate::common::prelude::*;
 use chrono::Datelike;
 use futures::future::join_all;
 use std::sync::{
@@ -94,7 +94,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 
     // Get pool stats
     println!("  Pool size: {}", pool.size());
-    
+
     let num_workers = 200; // Much more than typical pool size
     let hold_duration = Duration::from_secs(2);
 
@@ -127,17 +127,19 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
                     tokio::time::sleep(hold_duration).await;
 
                     // Try to use connection
-                    match sqlx::query!("SELECT 1 as test")
-                        .fetch_one(&mut *conn)
-                        .await
-                    {
+                    match sqlx::query!("SELECT 1 as test").fetch_one(&mut *conn).await {
                         Ok(_) => println!("    Worker {} used connection successfully", worker_id),
-                        Err(e) => println!("    Worker {} failed to use connection: {}", worker_id, e),
+                        Err(e) => {
+                            println!("    Worker {} failed to use connection: {}", worker_id, e)
+                        }
                     }
                 }
                 Ok(Err(e)) => {
                     fail_count.fetch_add(1, Ordering::SeqCst);
-                    println!("    Worker {} failed to acquire connection: {}", worker_id, e);
+                    println!(
+                        "    Worker {} failed to acquire connection: {}",
+                        worker_id, e
+                    );
                 }
                 Err(_) => {
                     timeout_count.fetch_add(1, Ordering::SeqCst);
@@ -165,9 +167,12 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 
     // Some connections should be acquired successfully
     assert!(successful > 0, "Some connections should be acquired");
-    
+
     // Pool exhaustion should cause some failures or timeouts
-    assert!(failed + timeouts > 0, "Pool exhaustion should cause some failures");
+    assert!(
+        failed + timeouts > 0,
+        "Pool exhaustion should cause some failures"
+    );
 
     Ok(())
 }
@@ -176,40 +181,37 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     println!("Testing database transaction limits:");
-    
+
     // Test large batch operations (using pool directly for high volume)
     let operation_count = 10000;
-    
+
     let start = Instant::now();
     for i in 0..operation_count {
         let event = RawEventBuilder::new(
             "boundary_test",
             "transaction.test",
-            json!({"operation_id": i})
-        ).build();
-        
-        match sinex_db::events::insert_event_with_validator(
-            pool,
-            &event,
-            None,
-        ).await {
+            json!({"operation_id": i}),
+        )
+        .build();
+
+        match sinex_db::events::insert_event_with_validator(pool, &event, None).await {
             Ok(_) => {}
             Err(e) => {
                 println!("Transaction failed at operation {}: {}", i, e);
                 break;
             }
         }
-        
+
         if i % 1000 == 0 {
             println!("  Completed {} operations", i);
         }
     }
-    
+
     let elapsed = start.elapsed();
     println!("  Completed large batch operation in {:?}", elapsed);
-    
+
     Ok(())
 }
 
@@ -217,18 +219,19 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Insert test data
     for i in 0..100 {
         let event = RawEventBuilder::new(
             "complexity_test",
             "query.test",
-            json!({"value": i, "category": i % 10})
-        ).build();
-        
+            json!({"value": i, "category": i % 10}),
+        )
+        .build();
+
         insert_event(pool, &event).await?;
     }
-    
+
     // Test increasingly complex queries
     let complex_queries = vec![
         // Simple query
@@ -240,10 +243,10 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
         // Very complex query with multiple joins and subqueries
         ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM raw.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM raw.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
     ];
-    
+
     for (query, description) in complex_queries {
         println!("Testing query complexity: {}", description);
-        
+
         let start = Instant::now();
         match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(pool)).await {
             Ok(Ok(rows)) => {
@@ -258,7 +261,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -360,7 +363,8 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
                         // This simulates a hung connection
                         tokio::time::sleep(Duration::from_millis(200)).await;
                         Ok::<(), sqlx::Error>(())
-                    }).await;
+                    })
+                    .await;
 
                     match fake_result {
                         Ok(_) => {
@@ -409,7 +413,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
 
     // Some operations should succeed despite partitions
     assert!(successes > 0, "Some operations should succeed");
-    
+
     // Partitions should cause some failures
     assert!(failures > 0, "Network partitions should cause failures");
 
@@ -420,20 +424,20 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     println!("Testing connection limit exhaustion:");
-    
+
     // Try to create many simultaneous connections
     let connection_attempts = 500;
     let mut handles = vec![];
     let successful_connections = Arc::new(AtomicU64::new(0));
     let failed_connections = Arc::new(AtomicU64::new(0));
-    
+
     for conn_id in 0..connection_attempts {
         let pool_clone = pool.clone();
         let success_count = successful_connections.clone();
         let fail_count = failed_connections.clone();
-        
+
         let handle = tokio::spawn(async move {
             match timeout(Duration::from_secs(2), pool_clone.acquire()).await {
                 Ok(Ok(_conn)) => {
@@ -455,23 +459,23 @@ async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult {
                 }
             }
         });
-        
+
         handles.push(handle);
     }
-    
+
     join_all(handles).await;
-    
+
     let successful = successful_connections.load(Ordering::SeqCst);
     let failed = failed_connections.load(Ordering::SeqCst);
-    
+
     println!("Connection limit test results:");
     println!("  Attempted connections: {}", connection_attempts);
     println!("  Successful connections: {}", successful);
     println!("  Failed connections: {}", failed);
-    
+
     // System should handle reasonable connection load
     assert!(successful > 0, "Some connections should succeed");
-    
+
     Ok(())
 }
 
@@ -483,14 +487,14 @@ async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> TestResult {
     // Test ULID timestamp overflow conditions
-    
+
     // Create a ULID with maximum timestamp value
     let max_timestamp_ms: u64 = (1u64 << 48) - 1; // Max 48-bit value = 281474976710655
 
     // This timestamp is valid for ULID (year ~10889)
     println!("Max ULID timestamp ms: {}", max_timestamp_ms);
     println!("i64::MAX: {}", i64::MAX);
-    
+
     // Create bytes for ULID with max timestamp
     let mut bytes = [0u8; 16];
     bytes[0] = (max_timestamp_ms >> 40) as u8;
@@ -507,15 +511,22 @@ async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> TestRe
 
     println!("Max ULID timestamp: {:?}", timestamp);
     println!("Timestamp year: {}", timestamp.year());
-    
+
     // The max ULID timestamp (48-bit) fits comfortably in i64
-    assert_eq!(timestamp.year(), 10889, "Expected year 10889 for max ULID timestamp");
-    
+    assert_eq!(
+        timestamp.year(),
+        10889,
+        "Expected year 10889 for max ULID timestamp"
+    );
+
     // Verify timestamp conversion is safe
     let inner_ulid = ulid.inner();
     let timestamp_ms = inner_ulid.timestamp_ms();
-    assert!(timestamp_ms < i64::MAX as u64, "ULID timestamps always fit in i64");
-    
+    assert!(
+        timestamp_ms < i64::MAX as u64,
+        "ULID timestamps always fit in i64"
+    );
+
     println!("✅ ULID timestamp conversion is safe - max ULID timestamp fits in i64");
     Ok(())
 }
@@ -524,7 +535,7 @@ async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> TestResult {
     // Test: Demonstrate potential ordering violations under high frequency
-    
+
     let mut ulids = Vec::new();
     let mut ordering_violations = 0;
 
@@ -569,7 +580,7 @@ async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test with values near integer limits
     let test_values = vec![
         (i32::MAX as i64 - 1, "i32::MAX - 1"),
@@ -577,23 +588,24 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
         (i32::MAX as i64 + 1, "i32::MAX + 1"),
         (i64::MAX - 1, "i64::MAX - 1"),
     ];
-    
+
     for (test_value, description) in test_values {
         println!("Testing numeric boundary: {} ({})", test_value, description);
-        
+
         let event = RawEventBuilder::new(
             "numeric_test",
             "boundary.test",
             json!({
                 "counter": test_value,
                 "description": description
-            })
-        ).build();
-        
+            }),
+        )
+        .build();
+
         match insert_event(pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
-                
+
                 // Try to query it back
                 match sqlx::query!(
                     "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
@@ -607,7 +619,10 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
                         if retrieved_value == test_value {
                             println!("  SUCCESS: Value retrieved correctly");
                         } else {
-                            println!("  ERROR: Value corruption {} != {}", retrieved_value, test_value);
+                            println!(
+                                "  ERROR: Value corruption {} != {}",
+                                retrieved_value, test_value
+                            );
                         }
                     }
                     Err(e) => {
@@ -620,7 +635,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -628,7 +643,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test floating point values at precision boundaries
     let test_values = vec![
         (f64::MAX, "f64::MAX"),
@@ -641,23 +656,27 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
         (std::f64::consts::PI, "PI"),
         (std::f64::consts::E, "E"),
     ];
-    
+
     for (test_value, description) in test_values {
-        println!("Testing floating point boundary: {} ({})", test_value, description);
-        
+        println!(
+            "Testing floating point boundary: {} ({})",
+            test_value, description
+        );
+
         let event = RawEventBuilder::new(
             "float_test",
             "precision.test",
             json!({
                 "value": test_value,
                 "description": description
-            })
-        ).build();
-        
+            }),
+        )
+        .build();
+
         match insert_event(pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
-                
+
                 // Try to query it back
                 match sqlx::query!(
                     "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
@@ -668,15 +687,21 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
                 {
                     Ok(row) => {
                         let retrieved_value = row.payload["value"].as_f64().unwrap_or(-1.0);
-                        
+
                         if test_value.is_nan() && retrieved_value.is_nan() {
                             println!("  SUCCESS: NaN preserved");
-                        } else if test_value.is_infinite() && retrieved_value.is_infinite() && test_value.is_sign_positive() == retrieved_value.is_sign_positive() {
+                        } else if test_value.is_infinite()
+                            && retrieved_value.is_infinite()
+                            && test_value.is_sign_positive() == retrieved_value.is_sign_positive()
+                        {
                             println!("  SUCCESS: Infinity preserved");
                         } else if (retrieved_value - test_value).abs() < f64::EPSILON {
                             println!("  SUCCESS: Value retrieved with acceptable precision");
                         } else {
-                            println!("  WARNING: Precision loss {} != {}", retrieved_value, test_value);
+                            println!(
+                                "  WARNING: Precision loss {} != {}",
+                                retrieved_value, test_value
+                            );
                         }
                     }
                     Err(e) => {
@@ -689,7 +714,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -701,7 +726,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult {
     println!("Testing memory allocation boundaries:");
-    
+
     // Test progressively larger memory allocations
     let allocation_sizes = vec![
         (1024 * 1024, "1MB"),
@@ -710,20 +735,20 @@ async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult {
         (500 * 1024 * 1024, "500MB"),
         (1024 * 1024 * 1024, "1GB"),
     ];
-    
+
     for (size, description) in allocation_sizes {
         println!("  Testing allocation: {}", description);
-        
+
         let start = Instant::now();
-        
+
         // Test allocation
         let allocation_result = std::panic::catch_unwind(|| {
             let _large_vec: Vec<u8> = vec![0; size];
             println!("    Allocation successful");
         });
-        
+
         let elapsed = start.elapsed();
-        
+
         match allocation_result {
             Ok(_) => {
                 println!("    SUCCESS: Allocated {} in {:?}", description, elapsed);
@@ -732,11 +757,11 @@ async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult {
                 println!("    FAILED: Allocation of {} failed (OOM?)", description);
             }
         }
-        
+
         // Give system time to clean up
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    
+
     Ok(())
 }
 
@@ -744,21 +769,21 @@ async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     println!("Testing concurrent resource exhaustion:");
-    
+
     let worker_count = 50;
     let operations_per_worker = 20;
     let successful_operations = Arc::new(AtomicU64::new(0));
     let failed_operations = Arc::new(AtomicU64::new(0));
-    
+
     let mut handles = vec![];
-    
+
     for worker_id in 0..worker_count {
         let pool_clone = pool.clone();
         let success_count = successful_operations.clone();
         let fail_count = failed_operations.clone();
-        
+
         let handle = tokio::spawn(async move {
             for op_id in 0..operations_per_worker {
                 // Create resource-intensive operation
@@ -767,13 +792,10 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
                     "operation_id": op_id,
                     "large_data": "x".repeat(1024 * 1024) // 1MB string
                 });
-                
-                let event = RawEventBuilder::new(
-                    "resource_test",
-                    "exhaustion.test",
-                    large_payload
-                ).build();
-                
+
+                let event =
+                    RawEventBuilder::new("resource_test", "exhaustion.test", large_payload).build();
+
                 match timeout(Duration::from_secs(5), insert_event(&pool_clone, &event)).await {
                     Ok(Ok(_)) => {
                         success_count.fetch_add(1, Ordering::SeqCst);
@@ -791,32 +813,38 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
                         }
                     }
                 }
-                
+
                 // Small delay to allow resource recovery
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
-        
+
         handles.push(handle);
     }
-    
+
     let start = Instant::now();
     join_all(handles).await;
     let elapsed = start.elapsed();
-    
+
     let successful = successful_operations.load(Ordering::SeqCst);
     let failed = failed_operations.load(Ordering::SeqCst);
     let total_operations = worker_count * operations_per_worker;
-    
+
     println!("Concurrent resource exhaustion results:");
     println!("  Total operations: {}", total_operations);
     println!("  Successful operations: {}", successful);
     println!("  Failed operations: {}", failed);
-    println!("  Success rate: {:.2}%", (successful as f64 / total_operations as f64) * 100.0);
+    println!(
+        "  Success rate: {:.2}%",
+        (successful as f64 / total_operations as f64) * 100.0
+    );
     println!("  Total time: {:?}", elapsed);
-    
+
     // Most operations should succeed despite resource pressure
-    assert!(successful > total_operations / 2, "Most operations should succeed despite resource pressure");
-    
+    assert!(
+        successful > total_operations / 2,
+        "Most operations should succeed despite resource pressure"
+    );
+
     Ok(())
 }

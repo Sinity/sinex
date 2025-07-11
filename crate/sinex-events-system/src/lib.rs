@@ -3,15 +3,19 @@ pub mod journal;
 
 // Re-export system event types and payloads
 pub use dbus::{
-    BluetoothEvent, DbusMethodCall, DbusSignal, HardwareEvent, MediaPlaybackChanged, MountEvent,
-    NetworkEvent, PolicyKitEvent, PowerEvent, ScreenSaverEvent, SessionEvent, SystemNotification,
-    DbusSignalPayload, DbusMethodCallPayload, NotificationPayload, MediaPlaybackPayload,
-    PowerEventPayload, HardwareEventPayload, SessionEventPayload, PolicyKitEventPayload,
-    BluetoothEventPayload, NetworkEventPayload, ScreenSaverEventPayload, MountEventPayload,
+    BluetoothEvent, BluetoothEventPayload, DbusMethodCall, DbusMethodCallPayload, DbusSignal,
+    DbusSignalPayload, HardwareEvent, HardwareEventPayload, MediaPlaybackChanged,
+    MediaPlaybackPayload, MountEvent, MountEventPayload, NetworkEvent, NetworkEventPayload,
+    NotificationPayload, PolicyKitEvent, PolicyKitEventPayload, PowerEvent, PowerEventPayload,
+    ScreenSaverEvent, ScreenSaverEventPayload, SessionEvent, SessionEventPayload,
+    SystemNotification,
 };
-pub use journal::{JournalEntry, JournalSync, JournalEntryPayload, JournalSyncPayload};
+pub use journal::{JournalEntry, JournalEntryPayload, JournalSync, JournalSyncPayload};
 
 use sinex_core::register_events;
+
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
 
 // Register all system event types using the macro
 register_events! {

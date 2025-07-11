@@ -2,8 +2,8 @@
 use crate::DbPoolRef;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sinex_core::{ErrorContext, CoreError};
-use tracing::{error, debug};
+use sinex_core::{CoreError, ErrorContext};
+use tracing::{debug, error};
 
 /// Queue depth metric per agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,36 +164,48 @@ pub async fn calculate_overall_queue_stats(pool: DbPoolRef<'_>) -> Result<(i64, 
 /// Calculate all queue metrics with enhanced error context
 pub async fn calculate_all_queue_metrics(pool: DbPoolRef<'_>) -> Result<QueueMetrics> {
     let metrics_start = std::time::Instant::now();
-    
+
     let result = tokio::try_join!(
         calculate_queue_depth_metrics(pool),
         calculate_dequeue_latency_metrics(pool),
         calculate_per_agent_lag_metrics(pool),
         calculate_overall_queue_stats(pool)
     );
-    
-    let (queue_depth, dequeue_latency, agent_lag, (total_pending, total_processing, total_failed)) = 
+
+    let (queue_depth, dequeue_latency, agent_lag, (total_pending, total_processing, total_failed)) =
         result.map_err(|e| {
-            let error_context = ErrorContext::new(CoreError::Database(format!("Queue metrics calculation failed: {}", e)))
-                .with_operation("calculate_all_queue_metrics")
-                .with_context("duration_ms", metrics_start.elapsed().as_millis().to_string())
-                .with_context("table", "work_queue")
-                .with_context("metric_types", "queue_depth,dequeue_latency,agent_lag,overall_stats")
-                .with_context("suggestion", "Check database connectivity and work_queue table performance")
-                .build();
-            
+            let error_context = ErrorContext::new(CoreError::Database(format!(
+                "Queue metrics calculation failed: {}",
+                e
+            )))
+            .with_operation("calculate_all_queue_metrics")
+            .with_context(
+                "duration_ms",
+                metrics_start.elapsed().as_millis().to_string(),
+            )
+            .with_context("table", "work_queue")
+            .with_context(
+                "metric_types",
+                "queue_depth,dequeue_latency,agent_lag,overall_stats",
+            )
+            .with_context(
+                "suggestion",
+                "Check database connectivity and work_queue table performance",
+            )
+            .build();
+
             error!(
                 error = %error_context,
                 duration_ms = metrics_start.elapsed().as_millis(),
                 operation = "calculate_all_queue_metrics",
                 "Failed to calculate queue metrics"
             );
-            
+
             anyhow::Error::from(error_context)
         })?;
 
     let total_metrics = queue_depth.len() + dequeue_latency.len() + agent_lag.len();
-    
+
     debug!(
         duration_ms = metrics_start.elapsed().as_millis(),
         queue_depth_agents = queue_depth.len(),

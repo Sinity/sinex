@@ -11,22 +11,30 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use futures::future::join_all;
 use serde_json::json;
-use sinex_automaton::{create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter};
+use sinex_automaton::{
+    create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter,
+};
 use sinex_db::{
-    create_pool, models::{AgentManifest, WorkQueueItem}, work_queue::{
-        add_to_work_queue, claim_work_queue_items, complete_work_queue_item, 
-        fail_work_queue_item, get_work_item_by_id, get_dlq_items, insert_dlq_event, DlqEventParams
-    }, 
+    agent::upsert_agent_manifest,
+    create_pool,
     events::insert_event_with_validator,
-    agent::upsert_agent_manifest, AgentManifestParams, DbPool, JsonValue, RawEvent
+    models::{AgentManifest, WorkQueueItem},
+    work_queue::{
+        add_to_work_queue, claim_work_queue_items, complete_work_queue_item, fail_work_queue_item,
+        get_dlq_items, get_work_item_by_id, insert_dlq_event, DlqEventParams,
+    },
+    AgentManifestParams, DbPool, JsonValue, RawEvent,
 };
 use sinex_ulid::Ulid;
 use sinex_worker::EventProcessor;
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use std::time::Duration as StdDuration;
-use tokio::{time::sleep, sync::Barrier};
-use futures::future::join_all;
+use tokio::{sync::Barrier, time::sleep};
 
 // Test result type
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -54,11 +62,7 @@ fn create_test_event(source: &str, event_type: &str, payload: JsonValue) -> RawE
 }
 
 /// Helper to create a test agent manifest
-fn create_test_manifest(
-    agent_name: &str, 
-    status: &str, 
-    subscriptions: JsonValue
-) -> AgentManifest {
+fn create_test_manifest(agent_name: &str, status: &str, subscriptions: JsonValue) -> AgentManifest {
     AgentManifest {
         agent_name: agent_name.to_string(),
         description: Some("Test agent".to_string()),
@@ -120,14 +124,16 @@ impl MockEventProcessor {
     fn get_processed_count(&self) -> u64 {
         self.processed_count.load(Ordering::Relaxed)
     }
-
 }
 
 #[async_trait]
 impl EventProcessor for MockEventProcessor {
     async fn process_event(&self, _pool: &DbPool, item: &WorkQueueItem) -> Result<()> {
         // Record the call
-        self.processing_calls.lock().unwrap().push(item.raw_event_id);
+        self.processing_calls
+            .lock()
+            .unwrap()
+            .push(item.raw_event_id);
 
         // Simulate processing time
         sleep(self.processing_delay).await;
@@ -196,7 +202,7 @@ async fn test_work_router_basic_routing() -> TestResult {
             }),
         ),
         create_test_manifest(
-            "metrics-agent", 
+            "metrics-agent",
             "running",
             json!({
                 "*": ["heartbeat", "metric"]
@@ -204,7 +210,7 @@ async fn test_work_router_basic_routing() -> TestResult {
         ),
         create_test_manifest(
             "stopped-agent",
-            "stopped", 
+            "stopped",
             json!({
                 "fs": ["file.created"]
             }),
@@ -251,7 +257,11 @@ async fn test_event_scanner_basic_functionality() -> TestResult {
     let events = vec![
         create_test_event("fs", "file.created", json!({"path": "/test1.txt"})),
         create_test_event("fs", "file.modified", json!({"path": "/test2.txt"})),
-        create_test_event("shell.kitty", "command.executed", json!({"cmd": "echo test"})),
+        create_test_event(
+            "shell.kitty",
+            "command.executed",
+            json!({"cmd": "echo test"}),
+        ),
     ];
 
     for event in &events {
@@ -282,7 +292,7 @@ async fn test_scanner_unqueued_events_detection() -> TestResult {
     // Insert events
     let event1 = create_test_event("fs", "file.created", json!({"path": "/test1.txt"}));
     let event2 = create_test_event("fs", "file.modified", json!({"path": "/test2.txt"}));
-    
+
     insert_event_with_validator(&pool, &event1, None).await?;
     insert_event_with_validator(&pool, &event2, None).await?;
 
@@ -311,7 +321,7 @@ async fn test_work_queue_item_claiming() -> TestResult {
     // Create test events and add to work queue
     let event1 = create_test_event("fs", "file.created", json!({"path": "/test1.txt"}));
     let event2 = create_test_event("fs", "file.created", json!({"path": "/test2.txt"}));
-    
+
     insert_event_with_validator(&pool, &event1, None).await?;
     insert_event_with_validator(&pool, &event2, None).await?;
 
@@ -343,9 +353,15 @@ async fn test_work_queue_skip_locked_behavior() -> TestResult {
     register_test_agent(&pool, "test-agent", json!({"fs": ["file.created"]})).await?;
 
     // Create multiple events
-    let events: Vec<_> = (0..5).map(|i| {
-        create_test_event("fs", "file.created", json!({"path": format!("/test{}.txt", i)}))
-    }).collect();
+    let events: Vec<_> = (0..5)
+        .map(|i| {
+            create_test_event(
+                "fs",
+                "file.created",
+                json!({"path": format!("/test{}.txt", i)}),
+            )
+        })
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -403,9 +419,15 @@ async fn test_event_processor_integration() -> TestResult {
     let processor = MockEventProcessor::new("test-processor", 2);
 
     // Create test events and add to work queue
-    let events: Vec<_> = (0..3).map(|i| {
-        create_test_event("fs", "file.created", json!({"path": format!("/test{}.txt", i)}))
-    }).collect();
+    let events: Vec<_> = (0..3)
+        .map(|i| {
+            create_test_event(
+                "fs",
+                "file.created",
+                json!({"path": format!("/test{}.txt", i)}),
+            )
+        })
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -427,7 +449,8 @@ async fn test_event_processor_integration() -> TestResult {
     assert_eq!(calls.len(), 2);
 
     // Verify items were completed (remaining items)
-    let remaining_items = claim_work_queue_items(&pool, "test-processor", "test-worker-2", 10).await?;
+    let remaining_items =
+        claim_work_queue_items(&pool, "test-processor", "test-worker-2", 10).await?;
     assert_eq!(remaining_items.len(), 1); // One item should remain
 
     Ok(())
@@ -451,7 +474,13 @@ async fn test_work_queue_retry_logic() -> TestResult {
     let _item = &claimed_items[0];
 
     // Simulate failure and schedule retry
-    fail_work_queue_item(&pool, queue_id, "test retry", Utc::now() - Duration::minutes(1)).await?;
+    fail_work_queue_item(
+        &pool,
+        queue_id,
+        "test retry",
+        Utc::now() - Duration::minutes(1),
+    )
+    .await?;
 
     // Verify item is back in failed_retryable state
     let updated_item = get_work_item_by_id(&pool, queue_id).await?;
@@ -504,9 +533,11 @@ async fn test_dlq_integration() -> TestResult {
     // Verify we can retrieve DLQ items (may have multiple from previous test runs)
     let dlq_items = get_dlq_items(&pool, "dlq-agent", 10).await?;
     assert!(!dlq_items.is_empty(), "Should have at least one DLQ item");
-    
+
     // Find our specific DLQ item
-    let our_dlq_item = dlq_items.iter().find(|item| item.failed_event_id == event.id);
+    let our_dlq_item = dlq_items
+        .iter()
+        .find(|item| item.failed_event_id == event.id);
     assert!(our_dlq_item.is_some(), "Should find our DLQ item");
     assert_eq!(our_dlq_item.unwrap().failed_event_id, event.id);
 
@@ -519,16 +550,18 @@ async fn test_end_to_end_scanner_router_integration() -> TestResult {
 
     // Register test agents in database
     register_test_agent(
-        &pool, 
+        &pool,
         "fs-processor",
         json!({"fs": ["file.created", "file.modified"]}),
-    ).await?;
-    
+    )
+    .await?;
+
     register_test_agent(
         &pool,
-        "shell-processor", 
+        "shell-processor",
         json!({"shell.kitty": ["command.executed"]}),
-    ).await?;
+    )
+    .await?;
 
     // Create test events
     let events = vec![
@@ -572,9 +605,9 @@ async fn test_concurrency_safety() -> TestResult {
     register_test_agent(&pool, "concurrent-agent", json!({"test": ["event"]})).await?;
 
     // Create many test events
-    let events: Vec<_> = (0..20).map(|i| {
-        create_test_event("test", "event", json!({"index": i}))
-    }).collect();
+    let events: Vec<_> = (0..20)
+        .map(|i| create_test_event("test", "event", json!({"index": i})))
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -582,38 +615,46 @@ async fn test_concurrency_safety() -> TestResult {
     }
 
     // Create multiple mock processors
-    let processors: Vec<_> = (0..3).map(|_i| {
-        Arc::new(MockEventProcessor::new("concurrent-agent", 3))
-    }).collect();
+    let processors: Vec<_> = (0..3)
+        .map(|_i| Arc::new(MockEventProcessor::new("concurrent-agent", 3)))
+        .collect();
 
     // Process concurrently
-    let tasks: Vec<_> = processors.iter().enumerate().map(|(i, processor)| {
-        let pool = pool.clone();
-        let processor = processor.clone();
-        tokio::spawn(async move {
-            let mut total_processed = 0;
-            loop {
-                let items = claim_work_queue_items(
-                    &pool,
-                    "concurrent-agent",
-                    &format!("concurrent-worker-{}", i),
-                    3,
-                ).await.unwrap();
+    let tasks: Vec<_> = processors
+        .iter()
+        .enumerate()
+        .map(|(i, processor)| {
+            let pool = pool.clone();
+            let processor = processor.clone();
+            tokio::spawn(async move {
+                let mut total_processed = 0;
+                loop {
+                    let items = claim_work_queue_items(
+                        &pool,
+                        "concurrent-agent",
+                        &format!("concurrent-worker-{}", i),
+                        3,
+                    )
+                    .await
+                    .unwrap();
 
-                if items.is_empty() {
-                    break;
-                }
+                    if items.is_empty() {
+                        break;
+                    }
 
-                for item in items {
-                    if processor.process_event(&pool, &item).await.is_ok() {
-                        complete_work_queue_item(&pool, item.queue_id).await.unwrap();
-                        total_processed += 1;
+                    for item in items {
+                        if processor.process_event(&pool, &item).await.is_ok() {
+                            complete_work_queue_item(&pool, item.queue_id)
+                                .await
+                                .unwrap();
+                            total_processed += 1;
+                        }
                     }
                 }
-            }
-            total_processed
+                total_processed
+            })
         })
-    }).collect();
+        .collect();
 
     let results = join_all(tasks).await;
     let total_processed: usize = results.into_iter().map(|r| r.unwrap()).sum();
@@ -636,9 +677,9 @@ async fn test_worker_crash_recovery() -> TestResult {
     register_test_agent(&pool, "crash-agent", json!({"test": ["crash_event"]})).await?;
 
     // Create test events
-    let events: Vec<_> = (0..5).map(|i| {
-        create_test_event("test", "crash_event", json!({"crash_test": i}))
-    }).collect();
+    let events: Vec<_> = (0..5)
+        .map(|i| create_test_event("test", "crash_event", json!({"crash_test": i})))
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -697,11 +738,17 @@ async fn test_deadletter_queue_workflow() -> TestResult {
     let items = claim_work_queue_items(&pool, "dlq-test-agent", "dlq-worker", 1).await?;
     assert_eq!(items.len(), 1);
     let item = &items[0];
-    
+
     let result = processor.process_event(&pool, item).await;
     assert!(result.is_err());
-    
-    fail_work_queue_item(&pool, item.queue_id, "First failure", chrono::Utc::now() - chrono::Duration::minutes(1)).await?;
+
+    fail_work_queue_item(
+        &pool,
+        item.queue_id,
+        "First failure",
+        chrono::Utc::now() - chrono::Duration::minutes(1),
+    )
+    .await?;
 
     // Verify item is in failed_retryable state
     let updated_item = get_work_item_by_id(&pool, queue_id).await?;
@@ -750,9 +797,11 @@ async fn test_deadletter_queue_workflow() -> TestResult {
     // Verify we can retrieve DLQ items (may have multiple from previous test runs)
     let dlq_items = get_dlq_items(&pool, "dlq-test-agent", 10).await?;
     assert!(!dlq_items.is_empty(), "Should have at least one DLQ item");
-    
+
     // Find our specific DLQ item
-    let our_dlq_item = dlq_items.iter().find(|item| item.failed_event_id == event.id);
+    let our_dlq_item = dlq_items
+        .iter()
+        .find(|item| item.failed_event_id == event.id);
     assert!(our_dlq_item.is_some(), "Should find our DLQ item");
     assert_eq!(our_dlq_item.unwrap().failed_event_id, event.id);
 
@@ -767,11 +816,11 @@ async fn test_worker_metrics_tracking() -> TestResult {
     register_test_agent(&pool, "metrics-agent", json!({"test": ["metric_event"]})).await?;
 
     let processor = MockEventProcessor::new("metrics-agent", 2);
-    
+
     // Create test events - some will succeed, some will fail
-    let events: Vec<_> = (0..4).map(|i| {
-        create_test_event("test", "metric_event", json!({"metric_test": i}))
-    }).collect();
+    let events: Vec<_> = (0..4)
+        .map(|i| create_test_event("test", "metric_event", json!({"metric_test": i})))
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -781,7 +830,7 @@ async fn test_worker_metrics_tracking() -> TestResult {
     // Process first batch successfully
     let batch1 = claim_work_queue_items(&pool, "metrics-agent", "metrics-worker", 2).await?;
     assert_eq!(batch1.len(), 2);
-    
+
     for item in &batch1 {
         processor.process_event(&pool, item).await?;
         complete_work_queue_item(&pool, item.queue_id).await?;
@@ -789,14 +838,20 @@ async fn test_worker_metrics_tracking() -> TestResult {
 
     // Set processor to fail for next batch
     processor.set_should_fail(true);
-    
+
     let batch2 = claim_work_queue_items(&pool, "metrics-agent", "metrics-worker", 2).await?;
     assert_eq!(batch2.len(), 2);
-    
+
     for item in &batch2 {
         let result = processor.process_event(&pool, item).await;
         assert!(result.is_err());
-        fail_work_queue_item(&pool, item.queue_id, "Metrics test failure", chrono::Utc::now() + chrono::Duration::minutes(5)).await?;
+        fail_work_queue_item(
+            &pool,
+            item.queue_id,
+            "Metrics test failure",
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+        )
+        .await?;
     }
 
     // Verify processor tracked calls correctly
@@ -818,19 +873,17 @@ async fn test_agent_subscription_filtering() -> TestResult {
         &pool,
         "fs-agent",
         json!({"fs": ["file.created", "file.modified"]}),
-    ).await?;
-    
+    )
+    .await?;
+
     register_test_agent(
         &pool,
         "shell-agent",
         json!({"shell.kitty": ["command.executed"]}),
-    ).await?;
-    
-    register_test_agent(
-        &pool,
-        "wildcard-agent",
-        json!({"*": ["heartbeat"]}),
-    ).await?;
+    )
+    .await?;
+
+    register_test_agent(&pool, "wildcard-agent", json!({"*": ["heartbeat"]})).await?;
 
     // Create events of different types
     let fs_event = create_test_event("fs", "file.created", json!({"path": "/test.txt"}));
@@ -839,7 +892,7 @@ async fn test_agent_subscription_filtering() -> TestResult {
     let unknown_event = create_test_event("unknown", "unknown_type", json!({}));
 
     let events = vec![&fs_event, &shell_event, &heartbeat_event, &unknown_event];
-    
+
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
     }
@@ -849,7 +902,8 @@ async fn test_agent_subscription_filtering() -> TestResult {
     let router = WorkRouter::from_manifests(manifests);
 
     // Create work entries
-    let work_created = create_work_entries(&pool, events.into_iter().cloned().collect(), &router).await?;
+    let work_created =
+        create_work_entries(&pool, events.into_iter().cloned().collect(), &router).await?;
     assert_eq!(work_created, 3); // fs, shell, and heartbeat events should create work
 
     // Verify each agent gets appropriate work
@@ -858,7 +912,7 @@ async fn test_agent_subscription_filtering() -> TestResult {
     let wildcard_work = claim_work_queue_items(&pool, "wildcard-agent", "test-worker", 10).await?;
 
     assert_eq!(fs_work.len(), 1); // Only fs event
-    assert_eq!(shell_work.len(), 1); // Only shell event  
+    assert_eq!(shell_work.len(), 1); // Only shell event
     assert_eq!(wildcard_work.len(), 1); // Only heartbeat event
 
     // Verify correct events were routed
@@ -904,7 +958,7 @@ async fn test_exponential_backoff_scheduling() -> TestResult {
         // Verify backoff increases
         match attempt {
             0 => assert!((48.0..=72.0).contains(&expected_delay)), // ~60s with jitter
-            1 => assert!((96.0..=144.0).contains(&expected_delay)), // ~120s with jitter  
+            1 => assert!((96.0..=144.0).contains(&expected_delay)), // ~120s with jitter
             2 => assert!((192.0..=288.0).contains(&expected_delay)), // ~240s with jitter
             _ => {}
         }
@@ -924,7 +978,12 @@ async fn test_worker_idempotency() -> TestResult {
     let pool = setup_test_database().await?;
 
     // Register test agent
-    register_test_agent(&pool, "idempotent-agent", json!({"test": ["idempotent_event"]})).await?;
+    register_test_agent(
+        &pool,
+        "idempotent-agent",
+        json!({"test": ["idempotent_event"]}),
+    )
+    .await?;
 
     let processor = MockEventProcessor::new("idempotent-agent", 1);
 
@@ -935,13 +994,14 @@ async fn test_worker_idempotency() -> TestResult {
 
     // Process the same event multiple times (simulate duplicate processing)
     for i in 0..3 {
-        let items = claim_work_queue_items(&pool, "idempotent-agent", &format!("worker-{}", i), 1).await?;
-        
+        let items =
+            claim_work_queue_items(&pool, "idempotent-agent", &format!("worker-{}", i), 1).await?;
+
         if items.is_empty() {
             // No more items to process (expected after first completion)
             break;
         }
-        
+
         assert_eq!(items.len(), 1);
         let item = &items[0];
 
@@ -951,8 +1011,12 @@ async fn test_worker_idempotency() -> TestResult {
 
         // After first completion, no more items should be available
         if i == 0 {
-            let remaining_items = claim_work_queue_items(&pool, "idempotent-agent", "test-worker", 10).await?;
-            assert!(remaining_items.is_empty(), "No items should remain after completion");
+            let remaining_items =
+                claim_work_queue_items(&pool, "idempotent-agent", "test-worker", 10).await?;
+            assert!(
+                remaining_items.is_empty(),
+                "No items should remain after completion"
+            );
             break;
         }
     }
@@ -973,9 +1037,9 @@ async fn test_batch_processing_limits() -> TestResult {
     register_test_agent(&pool, "batch-agent", json!({"test": ["batch_event"]})).await?;
 
     // Create many test events (more than typical batch size)
-    let events: Vec<_> = (0..15).map(|i| {
-        create_test_event("test", "batch_event", json!({"batch_index": i}))
-    }).collect();
+    let events: Vec<_> = (0..15)
+        .map(|i| create_test_event("test", "batch_event", json!({"batch_index": i})))
+        .collect();
 
     for event in &events {
         insert_event_with_validator(&pool, event, None).await?;
@@ -1001,7 +1065,7 @@ async fn test_batch_processing_limits() -> TestResult {
     all_claimed_ids.extend(batch_3.iter().map(|item| item.queue_id));
     all_claimed_ids.extend(batch_5.iter().map(|item| item.queue_id));
     all_claimed_ids.extend(batch_10.iter().map(|item| item.queue_id));
-    
+
     all_claimed_ids.sort();
     let unique_count = all_claimed_ids.len();
     all_claimed_ids.dedup();

@@ -1,15 +1,15 @@
-use crate::common::prelude::*;
 use crate::common::create_test_agent;
+use crate::common::prelude::*;
 use proptest::prelude::*;
-use sinex_db::{
-    work_queue::{claim_work_queue_items, complete_work_queue_item, add_to_work_queue as insert_work_queue_item},
+use sinex_db::work_queue::{
+    add_to_work_queue as insert_work_queue_item, claim_work_queue_items, complete_work_queue_item,
 };
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 
 /// Property tests for work queue functionality
-/// 
+///
 /// This module consolidates property tests from:
 /// - work_queue_property_tests.rs (work queue correctness and concurrency)
 /// - Additional queue-related property tests for different queue implementations
@@ -380,7 +380,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
             // Create many work queue items
             let mut queue_ids = Vec::new();
             let creation_start = Instant::now();
-            
+
             for i in 0..queue_size {
                 let event = crate::common::insert_event_with_validator(
                     &pool,
@@ -398,7 +398,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
             }
 
             let creation_time = creation_start.elapsed();
-            
+
             // Property: Queue creation should be reasonably fast
             prop_assert!(
                 creation_time.as_millis() < (queue_size as u128 * 10), // 10ms per item max
@@ -421,7 +421,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
 
                 join_set.spawn(async move {
                     let mut processed_locally = 0;
-                    
+
                     // Process items until none are left
                     loop {
                         match claim_work_queue_items(&pool_clone, &agent_name_clone, &worker_id, batch_size).await {
@@ -429,7 +429,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
                                 if items.is_empty() {
                                     break; // No more items
                                 }
-                                
+
                                 for item in items {
                                     let is_duplicate = tracker_clone.mark_processed(item.queue_id);
                                     if !is_duplicate {
@@ -445,7 +445,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
                             }
                         }
                     }
-                    
+
                     processed_locally
                 });
             }
@@ -458,7 +458,7 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
 
             let processing_time = processing_start.elapsed();
             let tracker_processed = tracker.processed_count();
-            
+
             // Property: All items should be processed exactly once
             prop_assert!(
                 tracker.get_duplicates().is_empty(),
@@ -659,14 +659,14 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
                 join_set.spawn(async move {
                     let mut operations_done = 0;
                     let mut completed_items = Vec::new();
-                    
+
                     while operations_done < operations_per_worker {
                         match claim_work_queue_items(&pool_clone, &agent_name_clone, &worker_id, 1).await {
                             Ok(items) => {
                                 if let Some(item) = items.first() {
                                     // Simulate some work
                                     tokio::time::sleep(Duration::from_millis(10)).await;
-                                    
+
                                     // Complete with 80% probability (simulate some failures)
                                     if (worker_num + operations_done) % 5 != 0 {
                                         if complete_work_queue_item(&pool_clone, item.queue_id).await.is_ok() {
@@ -674,7 +674,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
                                         }
                                     }
                                     // 20% chance we don't complete (simulate worker crash)
-                                    
+
                                     operations_done += 1;
                                 } else {
                                     // No items available, short break
@@ -689,7 +689,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
                             }
                         }
                     }
-                    
+
                     completed_items
                 });
             }
@@ -838,18 +838,18 @@ mod unit_tests {
         // Test that crash simulation is deterministic with same seed
         let seed = 12345u64;
         let worker_id = "test_worker";
-        
+
         // Simple hash calculation similar to the one in worker_with_crashes
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let worker_hash = {
             let mut hasher = DefaultHasher::new();
             worker_id.hash(&mut hasher);
             seed.hash(&mut hasher);
             hasher.finish()
         };
-        
+
         // Same calculation should produce same hash
         let worker_hash2 = {
             let mut hasher = DefaultHasher::new();
@@ -857,9 +857,9 @@ mod unit_tests {
             seed.hash(&mut hasher);
             hasher.finish()
         };
-        
+
         assert_eq!(worker_hash, worker_hash2);
-        
+
         // Different worker_id should produce different hash
         let different_worker_hash = {
             let mut hasher = DefaultHasher::new();
@@ -867,7 +867,7 @@ mod unit_tests {
             seed.hash(&mut hasher);
             hasher.finish()
         };
-        
+
         assert_ne!(worker_hash, different_worker_hash);
     }
 
@@ -876,9 +876,9 @@ mod unit_tests {
         // Test that ProcessingTracker works correctly under concurrent access
         let tracker = ProcessingTracker::new();
         let tracker_clone = tracker.clone();
-        
+
         let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
-        
+
         // Process some IDs
         for (i, id) in ids.iter().enumerate() {
             let is_dup = if i < 5 {
@@ -886,19 +886,19 @@ mod unit_tests {
             } else {
                 tracker_clone.mark_processed(*id)
             };
-            
+
             assert!(!is_dup, "First processing should not be duplicate");
         }
-        
+
         assert_eq!(tracker.processed_count(), 10);
         assert!(tracker.get_duplicates().is_empty());
-        
+
         // Try to process the same IDs again - should detect duplicates
         for id in &ids[0..3] {
             let is_dup = tracker.mark_processed(*id);
             assert!(is_dup, "Second processing should be duplicate");
         }
-        
+
         assert_eq!(tracker.processed_count(), 10); // Count shouldn't increase
         assert_eq!(tracker.get_duplicates().len(), 3); // Should have 3 duplicates
     }
@@ -944,19 +944,19 @@ proptest! {
         base_retry_ms in 100u64..5000,
     ) {
         let mut retry_delays = Vec::new();
-        
+
         for attempt in 0..failure_count {
             let delay_ms = base_retry_ms * (2_u64.pow(attempt as u32));
             let max_delay_ms = 30 * 60 * 1000; // 30 minutes max
             let actual_delay = delay_ms.min(max_delay_ms);
-            
+
             retry_delays.push(actual_delay);
-            
+
             // Verify delay is reasonable
             assert!(actual_delay >= base_retry_ms);
             assert!(actual_delay <= max_delay_ms);
         }
-        
+
         // Verify delays are non-decreasing (exponential backoff)
         for window in retry_delays.windows(2) {
             if let [prev, next] = window {

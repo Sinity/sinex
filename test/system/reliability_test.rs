@@ -421,15 +421,10 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
-            let partial_events = wait_for_filtered_event_count(
-                pool,
-                "source = $1",
-                &["interrupted.shutdown"],
-                0,
-                3,
-            )
-            .await
-            .unwrap_or(0);
+            let partial_events =
+                wait_for_filtered_event_count(pool, "source = $1", &["interrupted.shutdown"], 0, 3)
+                    .await
+                    .unwrap_or(0);
 
             Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
         })

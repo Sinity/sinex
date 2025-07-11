@@ -13,7 +13,7 @@ use sqlx::types::Uuid;
 /// Get an event by ID following the exact same pattern as existing correct functions
 pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
     let event_uuid = ulid_to_uuid(event_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -33,7 +33,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(RawEvent {
         id: uuid_to_ulid(record.id),
         source: record.source,
@@ -57,10 +57,10 @@ pub async fn insert_event_with_validator(
     if let Some(validator) = validator {
         validator.validate(event)?;
     }
-    
+
     // Convert ULID to UUID for SQLx compatibility
     let payload_schema_uuid: Option<Uuid> = event.payload_schema_id.map(ulid_to_uuid);
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
@@ -86,7 +86,7 @@ pub async fn insert_event_with_validator(
     )
     .fetch_one(pool)
     .await?;
-    
+
     Ok(RawEvent {
         id: uuid_to_ulid(record.id),
         source: record.source,
@@ -98,4 +98,13 @@ pub async fn insert_event_with_validator(
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
     })
+}
+
+/// Count total number of events in the database
+pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
+    let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
+        .fetch_one(pool)
+        .await?;
+
+    Ok(record.count.unwrap_or(0))
 }

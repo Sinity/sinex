@@ -21,16 +21,16 @@
 
 use crate::common::database_pool::TestDatabase;
 // Event builders moved to sinex-core
-use crate::common::prelude::*;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
     wait_for_work_queue_count,
 };
+use sinex_db::query_helpers::uuid_to_ulid;
+use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use sinex_events::EventFactory;
-use sinex_db::query_helpers::uuid_to_ulid;
 
 /// Event builder factory for fluent API access
 pub struct EventBuilderFactory;
@@ -140,6 +140,12 @@ impl TestContext {
         self.db.pool()
     }
 
+    /// Get the database URL for environment variable setting
+    pub fn database_url(&self) -> String {
+        std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string())
+    }
+
     /// Get the test name
     pub fn test_name(&self) -> &str {
         &self.config.test_name
@@ -200,7 +206,7 @@ impl TestContext {
             .await?
             .unwrap_or_else(|| "unknown".to_string());
         eprintln!("  [event_count] Querying database: {}", db_name);
-        
+
         let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
             .fetch_one(self.pool())
             .await?;
@@ -320,8 +326,12 @@ impl TestContext {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
     {
-        wait_for_condition_or_timeout(condition, self.config.default_timeout.as_secs()).await
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, e)) as Box<dyn std::error::Error>)
+        wait_for_condition_or_timeout(condition, self.config.default_timeout.as_secs())
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, e))
+                    as Box<dyn std::error::Error>
+            })
     }
 
     /// Wait a short time for processing (replaces arbitrary sleeps)
@@ -340,7 +350,7 @@ impl TestContext {
             let pool_clone = pool.clone();
             let mut attempt = 0;
             let max_attempts = 10;
-            
+
             while attempt < max_attempts {
                 tokio::time::sleep(Duration::from_millis(5)).await;
                 let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
@@ -348,7 +358,7 @@ impl TestContext {
                     .await
                     .map(|c| c.unwrap_or(0))
                     .unwrap_or(0);
-                
+
                 if count == final_count {
                     break;
                 }
@@ -456,7 +466,7 @@ impl TestContext {
             .fetch_one(self.pool())
             .await?
             .unwrap_or(0);
-        
+
         if count != 0 {
             let error = CoreError::validation("Work queue is not empty")
                 .with_context("actual_count", count)
@@ -468,10 +478,12 @@ impl TestContext {
     }
 
     /// Assert that an event was inserted successfully with context
-    pub async fn assert_event_inserted(&self, event: &RawEvent) -> Result<Ulid, Box<dyn std::error::Error>> {
+    pub async fn assert_event_inserted(
+        &self,
+        event: &RawEvent,
+    ) -> Result<Ulid, Box<dyn std::error::Error>> {
         assert_event_inserted_with_context(self.pool(), event, &self.config.test_name).await
     }
-
 
     /// Create events with custom time distribution
     pub fn create_time_distributed_batch(
@@ -514,15 +526,19 @@ impl TestContext {
     }
 
     /// Create multiple events and insert them atomically
-    pub async fn create_and_insert_events(&self, source: &str, count: usize) -> Result<Vec<Ulid>, Box<dyn std::error::Error>> {
+    pub async fn create_and_insert_events(
+        &self,
+        source: &str,
+        count: usize,
+    ) -> Result<Vec<Ulid>, Box<dyn std::error::Error>> {
         let events = self.create_event_batch(source, count);
         let mut ids = Vec::new();
-        
+
         for event in events {
             self.insert_event(&event).await?;
             ids.push(event.id);
         }
-        
+
         Ok(ids)
     }
 
@@ -534,7 +550,12 @@ impl TestContext {
     }
 
     /// Create a test event with timing information
-    pub fn create_timed_event(&self, source: &str, event_type: &str, timestamp: chrono::DateTime<chrono::Utc>) -> RawEvent {
+    pub fn create_timed_event(
+        &self,
+        source: &str,
+        event_type: &str,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> RawEvent {
         self.event_builder(source, event_type)
             .payload(json!({
                 "test_event": true,

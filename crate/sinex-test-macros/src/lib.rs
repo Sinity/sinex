@@ -9,7 +9,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Expr, ItemFn, Lit, Meta, visit::Visit};
+use syn::{parse_macro_input, visit::Visit, Expr, ItemFn, Lit, Meta};
 
 /// Parse timeout attribute from macro arguments
 /// Supports `timeout = 30` syntax
@@ -45,7 +45,9 @@ struct ProptestDetector {
 
 impl ProptestDetector {
     fn new() -> Self {
-        Self { has_proptest: false }
+        Self {
+            has_proptest: false,
+        }
     }
 }
 
@@ -70,7 +72,7 @@ fn has_proptest_usage(block: &syn::Block) -> bool {
 /// Transform proptest! calls to work with async runtime
 fn transform_proptest_calls(block: &syn::Block) -> syn::Block {
     use syn::parse_quote;
-    
+
     // For now, we'll wrap the entire block in a runtime bridge
     // In a more sophisticated implementation, we'd traverse and transform specific proptest! calls
     parse_quote! {
@@ -84,7 +86,7 @@ fn transform_proptest_calls(block: &syn::Block) -> syn::Block {
                     rt.handle().clone()
                 }
             };
-            
+
             // Execute the original block within the runtime context
             #block
         }
@@ -122,7 +124,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             .to_compile_error()
             .into();
     }
-    
+
     // Process function body based on proptest usage
     let fn_body = if has_proptest {
         // Transform proptest calls to work with async runtime
@@ -130,7 +132,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         *input.block.clone()
     };
-    
+
     let fn_vis = &input.vis;
 
     // Check if function takes TestContext parameter
@@ -164,7 +166,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         // Acquire database from manager (guaranteed cleanup)
                         let managed_db = database_pool::acquire_test_database().await?;
 
-                        // Create test context  
+                        // Create test context
                         let ctx = TestContext::with_managed_database(managed_db, TestConfig {
                             test_name: test_name.to_string(),
                             ..Default::default()
@@ -186,7 +188,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     }
                                 }
                             });
-                            
+
                             // Execute the proptest within async context
                             let proptest_result = tokio::task::spawn_blocking(move || {
                                 // Create a new runtime for proptest execution
@@ -196,13 +198,13 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     #fn_body
                                 })
                             }).await;
-                            
+
                             // Cancel progress task
                             if !progress_task.is_finished() {
                                 progress_task.abort();
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                             }
-                            
+
                             proptest_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
                         };
 
@@ -243,7 +245,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         // Acquire database from manager (guaranteed cleanup)
                         let managed_db = database_pool::acquire_test_database().await?;
 
-                        // Create test context  
+                        // Create test context
                         let ctx = TestContext::with_managed_database(managed_db, TestConfig {
                             test_name: test_name.to_string(),
                             ..Default::default()
@@ -265,7 +267,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     }
                                 }
                             });
-                            
+
                             let test_result = async { #fn_body }.await;
                             // Gracefully cancel progress task to avoid abrupt shutdown
                             if !progress_task.is_finished() {
@@ -306,20 +308,20 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-                
+
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #fn_body }
                 ).await
                 .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?;
-                
+
                 let elapsed = start.elapsed();
                 if result.is_ok() {
                     eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                 } else {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                 }
-                
+
                 result
             }
         }

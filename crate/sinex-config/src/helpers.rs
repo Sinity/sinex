@@ -1,7 +1,7 @@
 //! Configuration helper types and utilities
 
-use serde::{Deserialize, Serialize};
 use crate::validators::ValidationReport;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
@@ -29,7 +29,7 @@ impl CollectorConfig {
     pub fn get_validation_report(&self) -> ValidationReport {
         ValidationReport::default()
     }
-    
+
     pub fn cross_validate(&self) -> Result<(), String> {
         Ok(())
     }

@@ -182,22 +182,22 @@ impl CoreError {
     pub fn has_context_key(&self, key: &str) -> bool {
         self.to_string().contains(&format!("{}: ", key))
     }
-    
+
     /// Quick error creation for missing required items
     pub fn missing(item_type: &str, item_name: &str) -> Self {
         Self::Validation(format!("Missing {}: {}", item_type, item_name))
     }
-    
+
     /// Quick error creation for invalid values
     pub fn invalid(field: &str, value: impl Display, reason: &str) -> Self {
         Self::Validation(format!("Invalid {} '{}': {}", field, value, reason))
     }
-    
+
     /// Quick error creation for not found items
     pub fn not_found(item_type: &str, identifier: impl Display) -> Self {
         Self::Validation(format!("{} not found: {}", item_type, identifier))
     }
-    
+
     /// Quick error creation for timeout
     pub fn timeout(operation: &str, duration: std::time::Duration) -> Self {
         Self::Other(format!("{} timed out after {:?}", operation, duration))
@@ -354,9 +354,10 @@ mod tests {
     fn test_error_context_chaining() {
         // Create an initial error
         let initial_error = CoreError::Database("Primary key violation".to_string());
-        
+
         // Chain additional context
-        let chained_error = initial_error.context()
+        let chained_error = initial_error
+            .context()
             .with_context("table", "raw_events")
             .with_context("operation", "INSERT")
             .with_source("UNIQUE constraint failed")
@@ -431,7 +432,7 @@ mod tests {
             .build();
 
         let error_str = error.to_string();
-        
+
         // Check all context is included
         assert!(error_str.contains(&event_id.to_string()));
         assert!(error_str.contains("/data/events/invalid.json"));
@@ -448,7 +449,7 @@ mod tests {
         // Test error with no additional context
         let error = CoreError::database("Simple error").build();
         let error_str = error.to_string();
-        
+
         assert_eq!(error_str, "Database error: Simple error");
         assert!(!error_str.contains("("));
         assert!(!error_str.contains("Caused by:"));
@@ -496,15 +497,27 @@ mod tests {
         // Verify all fields are populated correctly
         assert_eq!(error_info.error_type, "Configuration");
         assert_eq!(error_info.message, "Database URL not found");
-        
+
         assert_eq!(error_info.context.len(), 2);
-        assert_eq!(error_info.context.get("config_file"), Some(&"/etc/sinex/config.toml".to_string()));
-        assert_eq!(error_info.context.get("section"), Some(&"database".to_string()));
-        
+        assert_eq!(
+            error_info.context.get("config_file"),
+            Some(&"/etc/sinex/config.toml".to_string())
+        );
+        assert_eq!(
+            error_info.context.get("section"),
+            Some(&"database".to_string())
+        );
+
         assert_eq!(error_info.source_chain.len(), 2);
-        assert_eq!(error_info.source_chain[0], "Environment variable DATABASE_URL not set");
-        assert_eq!(error_info.source_chain[1], "Config file missing database section");
-        
+        assert_eq!(
+            error_info.source_chain[0],
+            "Environment variable DATABASE_URL not set"
+        );
+        assert_eq!(
+            error_info.source_chain[1],
+            "Config file missing database section"
+        );
+
         // Stack trace should be None in this implementation
         assert!(error_info.stack_trace.is_none());
     }
@@ -515,12 +528,11 @@ mod tests {
             Err(sqlx::Error::RowNotFound)
         }
 
-        let result: crate::Result<String> = failing_db_operation()
-            .with_context(|| {
-                CoreError::database("Failed to fetch user")
-                    .with_context("operation", "get_user_by_id")
-                    .with_context("user_id", 12345)
-            });
+        let result: crate::Result<String> = failing_db_operation().with_context(|| {
+            CoreError::database("Failed to fetch user")
+                .with_context("operation", "get_user_by_id")
+                .with_context("user_id", 12345)
+        });
 
         assert!(result.is_err());
         let error_str = result.unwrap_err().to_string();
@@ -532,11 +544,9 @@ mod tests {
     #[test]
     fn test_path_display_formatting() {
         use std::path::PathBuf;
-        
+
         let path = PathBuf::from("/home/user/documents/file.txt");
-        let error = CoreError::io_error(&path)
-            .with_operation("read")
-            .build();
+        let error = CoreError::io_error(&path).with_operation("read").build();
 
         let error_str = error.to_string();
         assert!(error_str.contains("/home/user/documents/file.txt"));
@@ -548,7 +558,7 @@ mod tests {
     fn test_ulid_and_timestamp_formatting() {
         let event_id = Ulid::new();
         let timestamp = Utc::now();
-        
+
         let error = CoreError::processing_failed()
             .with_event_id(event_id)
             .with_timestamp(timestamp)

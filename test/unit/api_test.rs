@@ -10,14 +10,18 @@
 
 use crate::common::prelude::*;
 use sinex_db::{
-    create_annotation, get_annotation_by_id, get_annotations_for_event, update_annotation_content, delete_annotation, get_recent_annotations,
-    create_artifact, get_artifact_by_id, get_recent_artifacts,
-    create_entity, get_entities_by_type, create_relation, get_entity_relations,
-    models::*,
+    create_annotation, create_artifact, create_entity, create_relation, delete_annotation,
+    get_annotation_by_id, get_annotations_for_event, get_artifact_by_id, get_entities_by_type,
+    get_entity_relations, get_recent_annotations, get_recent_artifacts, models::*,
+    update_annotation_content,
 };
 
 // Helper function to create and insert a test event
-async fn create_and_insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> anyhow::Result<RawEvent> {
+async fn create_and_insert_test_event(
+    pool: &DbPool,
+    source: &str,
+    event_type: &str,
+) -> anyhow::Result<RawEvent> {
     let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     // Insert the event and return the inserted event (which has the actual DB ID)
     let inserted_event = crate::common::insert_event_with_validator(
@@ -29,7 +33,8 @@ async fn create_and_insert_test_event(pool: &DbPool, source: &str, event_type: &
         event.ts_orig,
         event.ingestor_version.as_deref(),
         event.payload_schema_id,
-    ).await?;
+    )
+    .await?;
     Ok(inserted_event)
 }
 
@@ -43,7 +48,7 @@ async fn test_create_annotation_basic(ctx: TestContext) -> TestResult {
     // Create a real event first to satisfy foreign key constraint
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateAnnotationInput {
         event_id,
         annotation_type: "classification".to_string(),
@@ -56,7 +61,10 @@ async fn test_create_annotation_basic(ctx: TestContext) -> TestResult {
 
     assert_eq!(annotation.event_id, event_id);
     assert_eq!(annotation.annotation_type, "classification");
-    assert_eq!(annotation.content, "This event represents a file creation operation");
+    assert_eq!(
+        annotation.content,
+        "This event represents a file creation operation"
+    );
     assert_eq!(annotation.created_by, "test_user");
     assert_eq!(annotation.metadata["confidence"], 0.95);
 
@@ -68,7 +76,7 @@ async fn test_create_annotation_basic(ctx: TestContext) -> TestResult {
 async fn test_create_annotation_minimal(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateAnnotationInput {
         event_id,
         annotation_type: "note".to_string(),
@@ -93,7 +101,7 @@ async fn test_create_annotation_minimal(ctx: TestContext) -> TestResult {
 async fn test_get_annotation_by_id(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateAnnotationInput {
         event_id,
         annotation_type: "tag".to_string(),
@@ -130,7 +138,7 @@ async fn test_get_annotation_by_id_not_found(ctx: TestContext) -> TestResult {
 async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     // Create multiple annotations for the same event
     let inputs = vec![
         CreateAnnotationInput {
@@ -161,7 +169,8 @@ async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
     }
 
     // Create annotation for different event to ensure filtering works
-    let other_event = create_and_insert_test_event(ctx.pool(), "other_source", "other_event").await?;
+    let other_event =
+        create_and_insert_test_event(ctx.pool(), "other_source", "other_event").await?;
     let other_event_id = other_event.id;
     let other_input = CreateAnnotationInput {
         event_id: other_event_id,
@@ -174,9 +183,9 @@ async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
 
     // Get annotations for our event
     let annotations = get_annotations_for_event(ctx.pool(), event_id).await?;
-    
+
     assert_eq!(annotations.len(), 3);
-    
+
     // Should be ordered by creation time DESC, so most recent first
     assert_eq!(annotations[0].content, "Manually verified");
     assert_eq!(annotations[1].content, "neutral");
@@ -195,7 +204,7 @@ async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
 async fn test_update_annotation_content(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateAnnotationInput {
         event_id,
         annotation_type: "summary".to_string(),
@@ -214,11 +223,18 @@ async fn test_update_annotation_content(ctx: TestContext) -> TestResult {
     let updated_annotation = update_annotation_content(
         ctx.pool(),
         created_annotation.annotation_id,
-        "Updated summary with more details"
-    ).await?;
+        "Updated summary with more details",
+    )
+    .await?;
 
-    assert_eq!(updated_annotation.annotation_id, created_annotation.annotation_id);
-    assert_eq!(updated_annotation.content, "Updated summary with more details");
+    assert_eq!(
+        updated_annotation.annotation_id,
+        created_annotation.annotation_id
+    );
+    assert_eq!(
+        updated_annotation.content,
+        "Updated summary with more details"
+    );
     assert_eq!(updated_annotation.annotation_type, "summary");
     assert_eq!(updated_annotation.created_by, "summarizer");
     assert!(updated_annotation.updated_at > original_updated_at);
@@ -231,7 +247,7 @@ async fn test_update_annotation_content(ctx: TestContext) -> TestResult {
 async fn test_delete_annotation(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateAnnotationInput {
         event_id,
         annotation_type: "temp".to_string(),
@@ -264,7 +280,7 @@ async fn test_get_recent_annotations(ctx: TestContext) -> TestResult {
     let event2 = create_and_insert_test_event(ctx.pool(), "test_source2", "test_event2").await?;
     let event_id1 = event1.id;
     let event_id2 = event2.id;
-    
+
     // Create multiple annotations across different events
     let inputs = vec![
         CreateAnnotationInput {
@@ -297,7 +313,7 @@ async fn test_get_recent_annotations(ctx: TestContext) -> TestResult {
     // Get recent annotations with limit
     let recent = get_recent_annotations(ctx.pool(), 2).await?;
     assert_eq!(recent.len(), 2);
-    
+
     // Should be ordered by creation time DESC
     assert_eq!(recent[0].content, "Third annotation");
     assert_eq!(recent[1].content, "Second annotation");
@@ -310,7 +326,7 @@ async fn test_get_recent_annotations(ctx: TestContext) -> TestResult {
 async fn test_annotation_complex_metadata(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let complex_metadata = json!({
         "analysis": {
             "nlp": {
@@ -358,7 +374,7 @@ async fn test_annotation_complex_metadata(ctx: TestContext) -> TestResult {
 async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
         artifact_type: "media".to_string(),
@@ -378,7 +394,10 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
     assert_eq!(artifact.artifact_type, "media");
     assert_eq!(artifact.mime_type, Some("image/png".to_string()));
     assert_eq!(artifact.size_bytes, Some(1024));
-    assert_eq!(artifact.original_path, Some("/artifacts/screenshot_123.png".to_string()));
+    assert_eq!(
+        artifact.original_path,
+        Some("/artifacts/screenshot_123.png".to_string())
+    );
     assert_eq!(artifact.metadata["width"], 1920);
     assert_eq!(artifact.metadata["height"], 1080);
 
@@ -390,7 +409,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
 async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
         artifact_type: "file".to_string(),
@@ -425,7 +444,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
 async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     // Create multiple artifacts for the same event
     let inputs = vec![
         CreateArtifactInput {
@@ -460,12 +479,13 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
 
     // Get recent artifacts and filter by event
     let all_artifacts = get_recent_artifacts(ctx.pool(), 100).await?;
-    let artifacts: Vec<_> = all_artifacts.into_iter()
+    let artifacts: Vec<_> = all_artifacts
+        .into_iter()
         .filter(|a| a.created_from_event_id == Some(event_id))
         .collect();
-    
+
     assert_eq!(artifacts.len(), 2);
-    
+
     // Verify all belong to the correct event
     for artifact in &artifacts {
         assert_eq!(artifact.created_from_event_id, Some(event_id));
@@ -483,7 +503,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
 async fn test_delete_artifact(ctx: TestContext) -> TestResult {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
-    
+
     let input = CreateArtifactInput {
         created_from_event_id: Some(event_id),
         artifact_type: "file".to_string(),
@@ -591,24 +611,24 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
             name: "document.txt".to_string(),
             metadata: Some(json!({"size": 1024})),
             canonical_name: Some("document.txt".to_string()),
-        aliases: None,
-        description: None,
+            aliases: None,
+            description: None,
         },
         CreateEntityInput {
             entity_type: "concept".to_string(),
             name: "image.png".to_string(),
             metadata: Some(json!({"size": 2048})),
             canonical_name: Some("image.png".to_string()),
-        aliases: None,
-        description: None,
+            aliases: None,
+            description: None,
         },
         CreateEntityInput {
             entity_type: "tool".to_string(),
             name: "editor".to_string(),
             metadata: Some(json!({"pid": 1234})),
             canonical_name: Some("editor".to_string()),
-        aliases: None,
-        description: None,
+            aliases: None,
+            description: None,
         },
     ];
 
@@ -619,7 +639,7 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
     // Query for file entities
     let file_entities = get_entities_by_type(ctx.pool(), "file", 10).await?;
     assert_eq!(file_entities.len(), 2);
-    
+
     for entity in &file_entities {
         assert_eq!(entity.entity_type, "file");
     }
@@ -692,7 +712,8 @@ async fn test_query_relationships(ctx: TestContext) -> TestResult {
 /// Test configuration validation with valid input
 #[sinex_test]
 async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
-    let config: ConfigValue = toml::from_str(r#"
+    let config: ConfigValue = toml::from_str(
+        r#"
         [database]
         url = "postgresql://localhost/test"
         pool_size = 10
@@ -705,15 +726,17 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
         [event_sources.terminal]
         enabled = true
         socket_path = "/tmp/kitty.sock"
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Use proper ConfigExtractor methods
     let db_url = config.require_str("database.url")?;
     assert_eq!(db_url, "postgresql://localhost/test");
-    
+
     let pool_size = config.require_u64("database.pool_size")?;
     assert_eq!(pool_size, 10);
-    
+
     let fs_enabled = config.require_bool("event_sources.filesystem.enabled")?;
     assert!(fs_enabled);
 
@@ -723,7 +746,8 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
 /// Test configuration validation with invalid input
 #[sinex_test]
 async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult {
-    let config: ConfigValue = toml::from_str(r#"
+    let config: ConfigValue = toml::from_str(
+        r#"
         [database]
         url = ""  # Invalid: empty URL
         pool_size = -1  # Invalid: negative pool size
@@ -732,27 +756,35 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
         [event_sources.filesystem]
         enabled = true
         paths = []  # Invalid: empty paths array
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Test validation with ConfigExtractor methods
     let url = config.require_str("database.url")?;
-    
+
     // Test validation chains for empty URL
     let url_validation = ValidationChain::validate(url, "database.url")
         .not_empty()
         .into_result();
     assert!(url_validation.is_err(), "Empty URL should fail validation");
-    
+
     // Test negative pool size handling (TOML parses -1 as i64)
     let pool_size_result = config.require_u64("database.pool_size");
-    assert!(pool_size_result.is_err(), "Negative pool size should fail u64 extraction");
-    
+    assert!(
+        pool_size_result.is_err(),
+        "Negative pool size should fail u64 extraction"
+    );
+
     // Test empty paths array validation
     let paths = config.require_array("event_sources.filesystem.paths")?;
     let paths_validation = ValidationChain::validate(paths, "filesystem.paths")
         .custom(|paths| !paths.is_empty(), "paths cannot be empty")
         .into_result();
-    assert!(paths_validation.is_err(), "Empty paths array should fail validation");
+    assert!(
+        paths_validation.is_err(),
+        "Empty paths array should fail validation"
+    );
 
     Ok(())
 }
@@ -760,25 +792,31 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
 /// Test configuration validation with missing fields
 #[sinex_test]
 async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> TestResult {
-    let config: ConfigValue = toml::from_str(r#"
+    let config: ConfigValue = toml::from_str(
+        r#"
         [database]
         url = "postgresql://localhost/test"
         # Missing pool_size
         # Missing event_sources section
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Test ConfigExtractor methods with missing fields
     // Should be able to get existing field
     let db_url = config.require_str("database.url")?;
     assert_eq!(db_url, "postgresql://localhost/test");
-    
+
     // Should fail for missing field
     let pool_size_result = config.require_u64("database.pool_size");
     assert!(pool_size_result.is_err(), "Missing pool_size should fail");
-    
+
     // Should fail for missing nested field
     let fs_enabled_result = config.require_bool("event_sources.filesystem.enabled");
-    assert!(fs_enabled_result.is_err(), "Missing event_sources should fail");
+    assert!(
+        fs_enabled_result.is_err(),
+        "Missing event_sources should fail"
+    );
 
     Ok(())
 }
@@ -786,7 +824,8 @@ async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> Test
 /// Test configuration validation with type conversion
 #[sinex_test]
 async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> TestResult {
-    let config: ConfigValue = toml::from_str(r#"
+    let config: ConfigValue = toml::from_str(
+        r#"
         [numbers]
         as_string = "42"
         as_number = 42
@@ -795,20 +834,22 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
         [booleans]
         as_string = "true"
         as_bool = true
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Test ConfigExtractor type conversion methods
     // TOML parses "42" as string, number as i64, float as f64
     let num_str = config.require_str("numbers.as_string")?;
     assert_eq!(num_str, "42");
-    
+
     let num_value = config.require_i64("numbers.as_number")?;
     assert_eq!(num_value, 42);
-    
+
     // Test boolean extraction
     let bool_value = config.require_bool("booleans.as_bool")?;
     assert!(bool_value);
-    
+
     // Test string extraction for boolean string
     let bool_str = config.require_str("booleans.as_string")?;
     assert_eq!(bool_str, "true");
@@ -819,7 +860,8 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
 /// Test multi-validator functionality
 #[sinex_test]
 async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
-    let config: ConfigValue = toml::from_str(r#"
+    let config: ConfigValue = toml::from_str(
+        r#"
         [server]
         host = "localhost"
         port = 8080
@@ -828,21 +870,26 @@ async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
         [database]
         url = "postgresql://localhost/test"
         pool_size = 10
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Test direct validation using ValidationChain (simpler approach)
     let host = config.require_str("server.host")?;
     ValidationChain::validate(host, "server.host")
         .not_empty()
-        .custom(|host| *host == "localhost" || host.starts_with("127."), "must be localhost or 127.x.x.x")
+        .custom(
+            |host| *host == "localhost" || host.starts_with("127."),
+            "must be localhost or 127.x.x.x",
+        )
         .into_result()?;
-    
+
     let port = config.require_i64("server.port")?;
     ValidationChain::validate(port, "server.port")
         .min(1)
         .max(65535)
         .into_result()?;
-    
+
     let pool_size = config.require_i64("database.pool_size")?;
     ValidationChain::validate(pool_size, "database.pool_size")
         .min(1)
@@ -862,21 +909,21 @@ async fn test_test_context_basic_functionality(ctx: TestContext) -> TestResult {
     // Test basic context properties
     let test_name = ctx.test_name();
     assert!(!test_name.is_empty(), "Test name should not be empty");
-    
+
     // Test database pool access
     let pool = ctx.pool();
     assert!(pool.is_closed() == false, "Database pool should be open");
-    
+
     // Test event count functionality
     let initial_count = ctx.event_count().await?;
     assert!(initial_count >= 0, "Event count should be non-negative");
-    
+
     // Test event creation
     let event = ctx.filesystem_event("/test/file.txt");
     assert_eq!(event.source, "fs");
     assert_eq!(event.event_type, "file.created");
     assert_eq!(event.payload["path"], "/test/file.txt");
-    
+
     Ok(())
 }
 
@@ -884,15 +931,19 @@ async fn test_test_context_basic_functionality(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_test_context_event_insertion(ctx: TestContext) -> TestResult {
     let initial_count = ctx.event_count().await?;
-    
+
     // Insert an event using context
     let event = ctx.filesystem_event("/test/insertion.txt");
     ctx.insert_event(&event).await?;
-    
+
     // Verify count increased
     let new_count = ctx.event_count().await?;
-    assert_eq!(new_count, initial_count + 1, "Event count should increase by 1");
-    
+    assert_eq!(
+        new_count,
+        initial_count + 1,
+        "Event count should increase by 1"
+    );
+
     Ok(())
 }
 
@@ -900,16 +951,17 @@ async fn test_test_context_event_insertion(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_test_context_event_builder(ctx: TestContext) -> TestResult {
     // Test event builder functionality
-    let event = ctx.event_builder("test_source", "test_event")
+    let event = ctx
+        .event_builder("test_source", "test_event")
         .payload(json!({"key": "value"}))
         .build();
-    
+
     assert_eq!(event.source, "test_source");
     assert_eq!(event.event_type, "test_event");
     assert_eq!(event.payload["key"], "value");
     assert!(!event.host.is_empty());
     assert_eq!(event.id.to_string().len(), 26); // ULID length
-    
+
     Ok(())
 }
 
@@ -918,7 +970,7 @@ async fn test_test_context_event_builder(ctx: TestContext) -> TestResult {
 async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
     // Test wait for event count
     let initial_count = ctx.event_count().await?;
-    
+
     // Insert events in background
     let pool = ctx.pool().clone();
     tokio::spawn(async move {
@@ -926,16 +978,19 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
             let event = EventBuilder::generic("test", "background")
                 .payload(json!({"index": i}))
                 .build();
-            sinex_db::events::insert_event_with_validator(&pool, &event, None).await.unwrap();
+            sinex_db::events::insert_event_with_validator(&pool, &event, None)
+                .await
+                .unwrap();
         }
     });
-    
+
     // Wait for events to be inserted
-    ctx.wait_for_event_count((initial_count + 3) as usize).await?;
-    
+    ctx.wait_for_event_count((initial_count + 3) as usize)
+        .await?;
+
     let final_count = ctx.event_count().await?;
     assert_eq!(final_count, initial_count + 3, "Should have 3 more events");
-    
+
     Ok(())
 }
 
@@ -944,17 +999,21 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
 async fn test_test_context_work_queue_operations(ctx: TestContext) -> TestResult {
     // Test work queue operations
     ctx.assert_work_queue_empty().await?;
-    
+
     // Test wait for work queue
     // This is mainly testing that the method exists and doesn't panic
     let timeout_result = tokio::time::timeout(
         std::time::Duration::from_millis(100),
-        ctx.wait_for_work_queue(0)
-    ).await;
-    
+        ctx.wait_for_work_queue(0),
+    )
+    .await;
+
     // Should either complete immediately or timeout
-    assert!(timeout_result.is_ok() || timeout_result.is_err(), "Should handle wait appropriately");
-    
+    assert!(
+        timeout_result.is_ok() || timeout_result.is_err(),
+        "Should handle wait appropriately"
+    );
+
     Ok(())
 }
 
@@ -966,25 +1025,32 @@ async fn test_test_context_work_queue_operations(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_comprehensive_ulid_generation(_ctx: TestContext) -> TestResult {
     let ulid = Ulid::new();
-    
+
     // Test basic properties
-    assert_eq!(ulid.to_string().len(), 26, "ULID string should be 26 characters");
-    
+    assert_eq!(
+        ulid.to_string().len(),
+        26,
+        "ULID string should be 26 characters"
+    );
+
     // Test timestamp extraction
     let timestamp = ulid.timestamp();
     let now = chrono::Utc::now();
     let diff = (now - timestamp).num_milliseconds().abs();
-    assert!(diff < 1000, "ULID timestamp should be within 1 second of now");
-    
+    assert!(
+        diff < 1000,
+        "ULID timestamp should be within 1 second of now"
+    );
+
     // Test byte representation
     let bytes = ulid.to_bytes();
     assert_eq!(bytes.len(), 16, "ULID bytes should be 16 bytes");
-    
+
     // Test UUID conversion
     let uuid = ulid.to_uuid();
     let restored_ulid = Ulid::from_uuid(uuid);
     assert_eq!(ulid, restored_ulid, "ULID should survive UUID roundtrip");
-    
+
     Ok(())
 }
 
@@ -992,23 +1058,26 @@ async fn test_comprehensive_ulid_generation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_comprehensive_ulid_ordering(_ctx: TestContext) -> TestResult {
     let mut ulids = Vec::new();
-    
+
     // Generate multiple ULIDs
     for _ in 0..100 {
         ulids.push(Ulid::new());
     }
-    
+
     // Test uniqueness
     let mut unique_ulids = HashSet::new();
     for ulid in &ulids {
         assert!(unique_ulids.insert(ulid), "All ULIDs should be unique");
     }
-    
+
     // Test ordering
     for i in 1..ulids.len() {
-        assert!(ulids[i] >= ulids[i-1], "ULIDs should be monotonically increasing");
+        assert!(
+            ulids[i] >= ulids[i - 1],
+            "ULIDs should be monotonically increasing"
+        );
     }
-    
+
     Ok(())
 }
 
@@ -1017,30 +1086,34 @@ async fn test_comprehensive_ulid_ordering(_ctx: TestContext) -> TestResult {
 async fn test_comprehensive_ulid_string_parsing(_ctx: TestContext) -> TestResult {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
-    
+
     // Test parsing
     let parsed = Ulid::from_str(&ulid_str)?;
     assert_eq!(ulid, parsed, "ULID should parse correctly");
-    
+
     // Test case insensitive parsing
     let lower_str = ulid_str.to_lowercase();
     let parsed_lower = Ulid::from_str(&lower_str)?;
     assert_eq!(ulid, parsed_lower, "ULID should parse case-insensitively");
-    
+
     // Test invalid strings
     let invalid_strings = vec![
         "",
         "invalid",
-        "01234567890123456789012345", // too short
+        "01234567890123456789012345",  // too short
         "012345678901234567890123456", // too long
-        "ZZZZZZZZZZZZZZZZZZZZZZZZZZ", // invalid characters
+        "ZZZZZZZZZZZZZZZZZZZZZZZZZZ",  // invalid characters
     ];
-    
+
     for invalid in invalid_strings {
         let result = Ulid::from_str(invalid);
-        assert!(result.is_err(), "Invalid ULID string '{}' should fail parsing", invalid);
+        assert!(
+            result.is_err(),
+            "Invalid ULID string '{}' should fail parsing",
+            invalid
+        );
     }
-    
+
     Ok(())
 }
 
@@ -1049,33 +1122,41 @@ async fn test_comprehensive_ulid_string_parsing(_ctx: TestContext) -> TestResult
 async fn test_comprehensive_ulid_performance(_ctx: TestContext) -> TestResult {
     let start = std::time::Instant::now();
     let iterations = 10_000;
-    
+
     // Generate many ULIDs
     let mut ulids = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         ulids.push(Ulid::new());
     }
-    
+
     let generation_time = start.elapsed();
     let ops_per_sec = iterations as f64 / generation_time.as_secs_f64();
-    
+
     // Should be able to generate at least 10,000 ULIDs per second
-    assert!(ops_per_sec > 10_000.0, "ULID generation should be fast: {} ops/sec", ops_per_sec);
-    
+    assert!(
+        ops_per_sec > 10_000.0,
+        "ULID generation should be fast: {} ops/sec",
+        ops_per_sec
+    );
+
     // Test string conversion performance
     let start = std::time::Instant::now();
     let strings: Vec<String> = ulids.iter().map(|u| u.to_string()).collect();
     let string_time = start.elapsed();
-    
+
     let string_ops_per_sec = iterations as f64 / string_time.as_secs_f64();
-    assert!(string_ops_per_sec > 10_000.0, "ULID string conversion should be fast: {} ops/sec", string_ops_per_sec);
-    
+    assert!(
+        string_ops_per_sec > 10_000.0,
+        "ULID string conversion should be fast: {} ops/sec",
+        string_ops_per_sec
+    );
+
     // Verify all strings are valid
     assert_eq!(strings.len(), iterations);
     for s in &strings {
         assert_eq!(s.len(), 26, "All ULID strings should be 26 characters");
     }
-    
+
     Ok(())
 }
 
@@ -1086,29 +1167,29 @@ async fn test_comprehensive_ulid_edge_cases(_ctx: TestContext) -> TestResult {
     let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
     let epoch_ulid = Ulid::from_datetime(epoch);
     assert_eq!(epoch_ulid.timestamp().timestamp(), 0);
-    
+
     // Test with far future timestamp
     let future = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
     let future_ulid = Ulid::from_datetime(future);
     assert_eq!(future_ulid.timestamp().timestamp(), 2_000_000_000);
-    
+
     // Test ordering with same timestamp
     let same_time = chrono::Utc::now();
     let ulid1 = Ulid::from_datetime(same_time);
     let ulid2 = Ulid::from_datetime(same_time);
-    
+
     // Should have same timestamp but different random parts
     assert_eq!(ulid1.timestamp(), ulid2.timestamp());
     assert_ne!(ulid1, ulid2);
-    
+
     // Test byte order
     let bytes1 = ulid1.to_bytes();
     let bytes2 = ulid2.to_bytes();
-    
+
     // First 6 bytes (timestamp) should be same
     assert_eq!(&bytes1[0..6], &bytes2[0..6]);
     // Last 10 bytes (random) should be different
     assert_ne!(&bytes1[6..16], &bytes2[6..16]);
-    
+
     Ok(())
 }

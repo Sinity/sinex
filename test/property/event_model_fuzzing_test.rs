@@ -4,7 +4,7 @@
 //! processing pipeline to ensure robustness against malformed, extreme, or unexpected data.
 //!
 //! # Goals
-//! 
+//!
 //! 1. **Prevent panics in production**: Any possible input should either process successfully
 //!    or fail gracefully, never crash the system
 //! 2. **Test boundary conditions**: Empty strings, max values, unicode edge cases
@@ -19,12 +19,12 @@
 //! - Test with malformed but parseable JSON structures
 //! - Focus on the `output_event` function which is the main processing pipeline entry point
 
+use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_collector::{output_event, OutputConfig};
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
-use chrono::{DateTime, Utc, TimeZone};
-use serde_json::{Value as JsonValue, Map as JsonMap};
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data
@@ -37,35 +37,28 @@ fn problematic_strings() -> impl Strategy<Value = String> {
         Just("".to_string()),
         Just(" ".to_string()),
         Just("\t\n\r".to_string()),
-        
         // Very long strings (potential buffer overflow)
         prop::collection::vec(any::<char>(), 0..10000)
             .prop_map(|chars| chars.into_iter().collect()),
-        
         // Unicode edge cases
-        Just("🦀🔥💀".to_string()), // Emoji
-        Just("тест测试テスト".to_string()), // Mixed scripts
+        Just("🦀🔥💀".to_string()),                   // Emoji
+        Just("тест测试テスト".to_string()),           // Mixed scripts
         Just("\u{200B}\u{FEFF}\u{00A0}".to_string()), // Zero-width and special chars
-        Just("𝕋𝕖𝕤𝕥".to_string()), // Mathematical symbols
-        
+        Just("𝕋𝕖𝕤𝕥".to_string()),                     // Mathematical symbols
         // Control characters
         Just("\x00\x01\x02\x03".to_string()),
         Just("\x7F".to_string()),
-        
         // SQL injection attempts (should be handled gracefully)
         Just("'; DROP TABLE events; --".to_string()),
         Just("' OR 1=1 --".to_string()),
-        
         // JSON breaking characters
         Just("\"\\\"".to_string()),
         Just("{\"nested\": true}".to_string()),
         Just("[1,2,3]".to_string()),
-        
         // Path injection
         Just("../../../etc/passwd".to_string()),
         Just("/dev/null".to_string()),
         Just("\\\\server\\share\\file".to_string()),
-        
         // Regular problematic strings
         prop::string::string_regex("[\\x00-\\x1F\\x7F-\\x9F]*").unwrap(),
         prop::string::string_regex("[\\p{C}]*").unwrap(), // Control characters
@@ -108,17 +101,13 @@ fn problematic_timestamps() -> impl Strategy<Value = DateTime<Utc>> {
     prop_oneof![
         // Unix epoch
         Just(Utc.timestamp_opt(0, 0).unwrap()),
-        
         // Very early dates
         Just(Utc.timestamp_opt(-2208988800, 0).unwrap()), // 1900-01-01
-        
-        // Very far future dates  
+        // Very far future dates
         Just(Utc.timestamp_opt(4102444800, 0).unwrap()), // 2100-01-01
-        
         // Edge of 32-bit time_t
         Just(Utc.timestamp_opt(2147483647, 0).unwrap()), // 2038-01-19
         Just(Utc.timestamp_opt(-2147483648, 0).unwrap()), // 1901-12-13
-        
         // Random timestamps
         (-2208988800i64..4102444800i64).prop_map(|ts| {
             match Utc.timestamp_opt(ts, 0) {
@@ -134,24 +123,20 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
     prop_oneof![
         // Null values
         Just(JsonValue::Null),
-        
         // Empty structures
         Just(JsonValue::Object(JsonMap::new())),
         Just(JsonValue::Array(vec![])),
-        
         // Deeply nested structures (potential stack overflow)
         prop::collection::vec(any::<i32>(), 0..1000)
             .prop_map(|v| JsonValue::Array(v.into_iter().map(JsonValue::from).collect())),
-        
         // Very large objects
-        prop::collection::hash_map(problematic_strings(), any::<i32>(), 0..500)
-            .prop_map(|m| {
-                let map: JsonMap<String, JsonValue> = m.into_iter()
-                    .map(|(k, v)| (k, JsonValue::from(v)))
-                    .collect();
-                JsonValue::Object(map)
-            }),
-        
+        prop::collection::hash_map(problematic_strings(), any::<i32>(), 0..500).prop_map(|m| {
+            let map: JsonMap<String, JsonValue> = m
+                .into_iter()
+                .map(|(k, v)| (k, JsonValue::from(v)))
+                .collect();
+            JsonValue::Object(map)
+        }),
         // Mixed type arrays
         Just(JsonValue::Array(vec![
             JsonValue::Null,
@@ -160,13 +145,11 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
             JsonValue::from("mixed"),
             JsonValue::Object(JsonMap::new()),
         ])),
-        
         // Extreme numbers
         edge_case_numbers().prop_map(JsonValue::from),
         Just(JsonValue::from(f64::INFINITY)),
         Just(JsonValue::from(f64::NEG_INFINITY)),
         Just(JsonValue::from(f64::NAN)),
-        
         // Problematic strings as JSON
         problematic_strings().prop_map(JsonValue::from),
     ]
@@ -176,27 +159,40 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
 fn fuzzed_raw_events() -> impl Strategy<Value = RawEvent> {
     (
         any::<Ulid>(),
-        problematic_strings(), // source
-        problematic_strings(), // event_type
-        problematic_timestamps(), // ts_ingest
+        problematic_strings(),                      // source
+        problematic_strings(),                      // event_type
+        problematic_timestamps(),                   // ts_ingest
         prop::option::of(problematic_timestamps()), // ts_orig
-        problematic_strings(), // host
-        prop::option::of(problematic_strings()), // ingestor_version
-        prop::option::of(any::<Ulid>()), // payload_schema_id
-        malformed_json_values(), // payload
-    ).prop_map(|(id, source, event_type, ts_ingest, ts_orig, host, ingestor_version, payload_schema_id, payload)| {
-        RawEvent {
-            id,
-            source,
-            event_type,
-            ts_ingest,
-            ts_orig,
-            host,
-            ingestor_version,
-            payload_schema_id,
-            payload,
-        }
-    })
+        problematic_strings(),                      // host
+        prop::option::of(problematic_strings()),    // ingestor_version
+        prop::option::of(any::<Ulid>()),            // payload_schema_id
+        malformed_json_values(),                    // payload
+    )
+        .prop_map(
+            |(
+                id,
+                source,
+                event_type,
+                ts_ingest,
+                ts_orig,
+                host,
+                ingestor_version,
+                payload_schema_id,
+                payload,
+            )| {
+                RawEvent {
+                    id,
+                    source,
+                    event_type,
+                    ts_ingest,
+                    ts_orig,
+                    host,
+                    ingestor_version,
+                    payload_schema_id,
+                    payload,
+                }
+            },
+        )
 }
 
 // ============================================================================
@@ -206,150 +202,205 @@ fn fuzzed_raw_events() -> impl Strategy<Value = RawEvent> {
 /// Generate fuzzed filesystem event payloads
 fn fuzzed_filesystem_payloads() -> impl Strategy<Value = JsonValue> {
     (
-        problematic_strings(), // path
-        edge_case_u64(), // size
-        problematic_timestamps(), // created_at/modified_at
-        prop::option::of(edge_case_numbers()), // permissions
+        problematic_strings(),                   // path
+        edge_case_u64(),                         // size
+        problematic_timestamps(),                // created_at/modified_at
+        prop::option::of(edge_case_numbers()),   // permissions
         prop::option::of(problematic_strings()), // modification_type
         prop::option::of(problematic_strings()), // old_path
-    ).prop_map(|(path, size, timestamp, permissions, modification_type, old_path)| {
-        let mut payload = serde_json::json!({
-            "path": path,
-            "size": size,
-            "created_at": timestamp,
-            "modified_at": timestamp,
-            "deleted_at": timestamp,
-            "moved_at": timestamp,
-        });
-        
-        if let Some(perms) = permissions {
-            payload["permissions"] = JsonValue::from(perms);
-        }
-        if let Some(mod_type) = modification_type {
-            payload["modification_type"] = JsonValue::from(mod_type);
-        }
-        if let Some(old) = old_path {
-            payload["old_path"] = JsonValue::from(old);
-        }
-        
-        payload
-    })
+    )
+        .prop_map(
+            |(path, size, timestamp, permissions, modification_type, old_path)| {
+                let mut payload = serde_json::json!({
+                    "path": path,
+                    "size": size,
+                    "created_at": timestamp,
+                    "modified_at": timestamp,
+                    "deleted_at": timestamp,
+                    "moved_at": timestamp,
+                });
+
+                if let Some(perms) = permissions {
+                    payload["permissions"] = JsonValue::from(perms);
+                }
+                if let Some(mod_type) = modification_type {
+                    payload["modification_type"] = JsonValue::from(mod_type);
+                }
+                if let Some(old) = old_path {
+                    payload["old_path"] = JsonValue::from(old);
+                }
+
+                payload
+            },
+        )
 }
 
 /// Generate fuzzed terminal event payloads
 fn fuzzed_terminal_payloads() -> impl Strategy<Value = JsonValue> {
     prop_oneof![
         // Command execution payload
-        (problematic_strings(), prop::option::of(problematic_strings()), 
-         prop::option::of(edge_case_numbers()), prop::option::of(edge_case_u64()))
-        .prop_map(|(command, working_directory, exit_status, execution_time_ms)| {
-            serde_json::json!({
-                "command": command,
-                "working_directory": working_directory,
-                "exit_status": exit_status,
-                "execution_time_ms": execution_time_ms,
-            })
-        }),
+        (
+            problematic_strings(),
+            prop::option::of(problematic_strings()),
+            prop::option::of(edge_case_numbers()),
+            prop::option::of(edge_case_u64())
+        )
+            .prop_map(
+                |(command, working_directory, exit_status, execution_time_ms)| {
+                    serde_json::json!({
+                        "command": command,
+                        "working_directory": working_directory,
+                        "exit_status": exit_status,
+                        "execution_time_ms": execution_time_ms,
+                    })
+                }
+            ),
         // Session payload
-        (problematic_strings(), problematic_strings(), problematic_strings(), edge_case_u64())
-        .prop_map(|(session_id, terminal_type, shell, duration_ms)| {
-            serde_json::json!({
-                "session_id": session_id,
-                "terminal_type": terminal_type,
-                "shell": shell,
-                "duration_ms": duration_ms,
-            })
-        }),
+        (
+            problematic_strings(),
+            problematic_strings(),
+            problematic_strings(),
+            edge_case_u64()
+        )
+            .prop_map(|(session_id, terminal_type, shell, duration_ms)| {
+                serde_json::json!({
+                    "session_id": session_id,
+                    "terminal_type": terminal_type,
+                    "shell": shell,
+                    "duration_ms": duration_ms,
+                })
+            }),
         // Command output payload
-        (problematic_strings(), edge_case_u64(), edge_case_numbers(), problematic_timestamps())
-        .prop_map(|(command_output, output_size_bytes, output_line_count, completion_timestamp)| {
-            serde_json::json!({
-                "command_output": command_output,
-                "output_size_bytes": output_size_bytes,
-                "output_line_count": output_line_count,
-                "completion_timestamp": completion_timestamp,
-            })
-        }),
+        (
+            problematic_strings(),
+            edge_case_u64(),
+            edge_case_numbers(),
+            problematic_timestamps()
+        )
+            .prop_map(
+                |(command_output, output_size_bytes, output_line_count, completion_timestamp)| {
+                    serde_json::json!({
+                        "command_output": command_output,
+                        "output_size_bytes": output_size_bytes,
+                        "output_line_count": output_line_count,
+                        "completion_timestamp": completion_timestamp,
+                    })
+                }
+            ),
     ]
 }
 
 /// Generate fuzzed clipboard event payloads
 fn fuzzed_clipboard_payloads() -> impl Strategy<Value = JsonValue> {
     (
-        problematic_strings(), // content_type
-        edge_case_u64(), // content_size
+        problematic_strings(),                   // content_type
+        edge_case_u64(),                         // content_size
         prop::option::of(problematic_strings()), // text_preview
         prop::option::of(problematic_strings()), // content_hash
         prop::option::of(problematic_strings()), // source_app
-        problematic_strings(), // selection_type
-    ).prop_map(|(content_type, content_size, text_preview, content_hash, source_app, selection_type)| {
-        serde_json::json!({
-            "content_type": content_type,
-            "content_size": content_size,
-            "text_preview": text_preview,
-            "content_hash": content_hash,
-            "source_app": source_app,
-            "selection_type": selection_type,
-        })
-    })
+        problematic_strings(),                   // selection_type
+    )
+        .prop_map(
+            |(
+                content_type,
+                content_size,
+                text_preview,
+                content_hash,
+                source_app,
+                selection_type,
+            )| {
+                serde_json::json!({
+                    "content_type": content_type,
+                    "content_size": content_size,
+                    "text_preview": text_preview,
+                    "content_hash": content_hash,
+                    "source_app": source_app,
+                    "selection_type": selection_type,
+                })
+            },
+        )
 }
 
 /// Generate fuzzed window manager event payloads
 fn fuzzed_window_manager_payloads() -> impl Strategy<Value = JsonValue> {
     (
-        problematic_strings(), // window_address
-        problematic_strings(), // window_class
-        problematic_strings(), // window_title
-        problematic_strings(), // workspace_id
-        problematic_timestamps(), // opened_at/closed_at/focused_at
-        problematic_strings(), // workspace_name
+        problematic_strings(),                   // window_address
+        problematic_strings(),                   // window_class
+        problematic_strings(),                   // window_title
+        problematic_strings(),                   // workspace_id
+        problematic_timestamps(),                // opened_at/closed_at/focused_at
+        problematic_strings(),                   // workspace_name
         prop::option::of(problematic_strings()), // previous_workspace_id
-        problematic_timestamps(), // switched_at
-    ).prop_map(|(window_address, window_class, window_title, workspace_id, timestamp,
-                workspace_name, previous_workspace_id, switched_at)| {
-        serde_json::json!({
-            "window_address": window_address,
-            "window_class": window_class,
-            "window_title": window_title,
-            "workspace_id": workspace_id,
-            "opened_at": timestamp,
-            "closed_at": timestamp,
-            "focused_at": timestamp,
-            "workspace_name": workspace_name,
-            "previous_workspace_id": previous_workspace_id,
-            "switched_at": switched_at,
-        })
-    })
+        problematic_timestamps(),                // switched_at
+    )
+        .prop_map(
+            |(
+                window_address,
+                window_class,
+                window_title,
+                workspace_id,
+                timestamp,
+                workspace_name,
+                previous_workspace_id,
+                switched_at,
+            )| {
+                serde_json::json!({
+                    "window_address": window_address,
+                    "window_class": window_class,
+                    "window_title": window_title,
+                    "workspace_id": workspace_id,
+                    "opened_at": timestamp,
+                    "closed_at": timestamp,
+                    "focused_at": timestamp,
+                    "workspace_name": workspace_name,
+                    "previous_workspace_id": previous_workspace_id,
+                    "switched_at": switched_at,
+                })
+            },
+        )
 }
 
 /// Generate fuzzed system event payloads
 fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
     (
-        problematic_strings(), // message
-        prop::option::of(any::<u8>()), // priority
+        problematic_strings(),                   // message
+        prop::option::of(any::<u8>()),           // priority
         prop::option::of(problematic_strings()), // unit
-        prop::option::of(edge_case_numbers()), // pid
+        prop::option::of(edge_case_numbers()),   // pid
         prop::option::of(problematic_strings()), // cursor
         prop::collection::hash_map(problematic_strings(), problematic_strings(), 0..50), // fields
-        problematic_timestamps(), // timestamp
-        problematic_strings(), // state_type
-        malformed_json_values(), // state_data
-        problematic_timestamps(), // changed_at
-    ).prop_map(|(message, priority, unit, pid, cursor, fields, timestamp,
-                state_type, state_data, changed_at)| {
-        serde_json::json!({
-            "message": message,
-            "priority": priority,
-            "unit": unit,
-            "pid": pid,
-            "cursor": cursor,
-            "fields": fields,
-            "timestamp": timestamp,
-            "state_type": state_type,
-            "state_data": state_data,
-            "changed_at": changed_at,
-        })
-    })
+        problematic_timestamps(),                // timestamp
+        problematic_strings(),                   // state_type
+        malformed_json_values(),                 // state_data
+        problematic_timestamps(),                // changed_at
+    )
+        .prop_map(
+            |(
+                message,
+                priority,
+                unit,
+                pid,
+                cursor,
+                fields,
+                timestamp,
+                state_type,
+                state_data,
+                changed_at,
+            )| {
+                serde_json::json!({
+                    "message": message,
+                    "priority": priority,
+                    "unit": unit,
+                    "pid": pid,
+                    "cursor": cursor,
+                    "fields": fields,
+                    "timestamp": timestamp,
+                    "state_type": state_type,
+                    "state_data": state_data,
+                    "changed_at": changed_at,
+                })
+            },
+        )
 }
 
 // ============================================================================
@@ -378,7 +429,7 @@ proptest! {
             };
 
             let mut file_handle = None;
-            
+
             // The critical assertion: output_event should never panic, regardless of input
             // It should either succeed or return an error gracefully
             let result = output_event(
@@ -388,7 +439,7 @@ proptest! {
                 None, // No validator in fuzz test
                 &mut file_handle,
             ).await;
-            
+
             // We don't care if it succeeds or fails, just that it doesn't panic
             // This will catch any unwrap() calls or other panic sources
             match result {
@@ -647,13 +698,13 @@ proptest! {
     ) {
         // Test that ULID creation with extreme timestamps doesn't panic
         let ulid = Ulid::new();
-        
+
         // Test conversion to UUID (used in database operations)
         let _uuid = ulid.to_uuid();
-        
+
         // Test string conversion
         let _string = ulid.to_string();
-        
+
         // Test that we can create an event with this timestamp
         let event = RawEvent {
             id: ulid,
@@ -666,7 +717,7 @@ proptest! {
             payload_schema_id: None,
             payload: serde_json::json!({}),
         };
-        
+
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);
     }
@@ -694,7 +745,7 @@ proptest! {
 
         // Test serialization with problematic strings
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test that we can create the struct without panicking
         assert!(true); // If we get here, no panic occurred
     }
@@ -816,7 +867,7 @@ mod additional_tests {
     #[test]
     fn test_panic_safety_with_catch_unwind() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        
+
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
             rt.block_on(async {
@@ -846,7 +897,8 @@ mod additional_tests {
                 };
 
                 let mut file_handle = None;
-                let _result = output_event(&event, &output_config, None, None, &mut file_handle).await;
+                let _result =
+                    output_event(&event, &output_config, None, None, &mut file_handle).await;
             });
         });
 
