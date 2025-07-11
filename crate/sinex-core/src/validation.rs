@@ -4,12 +4,14 @@ use sanitize_filename::sanitize;
 use serde_json::Value;
 use std::path::{Component, PathBuf};
 use unicode_normalization::UnicodeNormalization;
+use sinex_macros::with_context;
 
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
 
 /// Validate a file path for security issues
+#[with_context(operation = "validate_path")]
 pub fn validate_path(path: &str) -> Result<PathBuf> {
     // Check for null bytes
     if path.contains('\0') {
@@ -45,6 +47,7 @@ pub fn validate_path(path: &str) -> Result<PathBuf> {
 }
 
 /// Sanitize a filename component for safe storage and display
+#[with_context(operation = "sanitize_filename_component")]
 pub fn sanitize_filename_component(filename: &str) -> Result<String> {
     if filename.is_empty() {
         return Err(CoreError::Validation("Filename cannot be empty".into()));
@@ -64,6 +67,7 @@ pub fn sanitize_filename_component(filename: &str) -> Result<String> {
 }
 
 /// Validate a file path stays within a watch root directory
+#[with_context(operation = "validate_path_within_root")]
 pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     // First do basic validation
     let path_buf = validate_path(path)?;
@@ -118,6 +122,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
 }
 
 /// Validate JSON with size and depth limits
+#[with_context(operation = "validate_json")]
 pub fn validate_json(json_str: &str) -> Result<Value> {
     // Size check
     if json_str.len() > MAX_JSON_SIZE {
@@ -137,6 +142,7 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
     Ok(value)
 }
 
+#[with_context(operation = "validate_json_structure")]
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(CoreError::Validation(format!(

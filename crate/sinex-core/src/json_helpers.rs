@@ -3,113 +3,99 @@
 //! This module provides utilities for parsing JSON with consistent
 //! error context and validation.
 
-use crate::{CoreError, ErrorContext, Result};
+use crate::{CoreError, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sinex_macros::with_context;
 
 /// Parse JSON from a string with error context
+#[with_context]
 pub fn parse_json<T: DeserializeOwned>(
     json_str: &str,
     context_type: &str,
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        ErrorContext::new(CoreError::Serialization(format!(
-            "Failed to parse {}",
-            context_type
-        )))
-        .with_operation(operation)
-        .with_context("json_length", json_str.len().to_string())
-        .with_context("error", e.to_string())
-        .build()
+        CoreError::Serialization(format!("Failed to parse {}", context_type))
+            .context()
+            .with_operation(operation)
+            .with_context("json_length", json_str.len().to_string())
+            .with_context("error", e.to_string())
+            .build()
     })
 }
 
 /// Parse JSON from a string with file path context
+#[with_context]
 pub fn parse_json_file<T: DeserializeOwned>(
     json_str: &str,
     file_path: impl AsRef<std::path::Path>,
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        ErrorContext::new(CoreError::Serialization(
-            "Failed to parse JSON file".to_string(),
-        ))
-        .with_operation(operation)
-        .with_context("file_path", file_path.as_ref().display().to_string())
-        .with_context("json_length", json_str.len().to_string())
-        .with_context("error", e.to_string())
-        .build()
+        CoreError::Serialization("Failed to parse JSON file".to_string())
+            .context()
+            .with_operation(operation)
+            .with_context("file_path", file_path.as_ref().display().to_string())
+            .with_context("json_length", json_str.len().to_string())
+            .with_context("error", e.to_string())
+            .build()
     })
 }
 
 /// Parse JSON Value from a string with error context
+#[with_context]
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
     serde_json::from_str(json_str).map_err(|e| {
-        ErrorContext::new(CoreError::Serialization(format!(
-            "Failed to parse {} as JSON",
-            context_type
-        )))
-        .with_operation(operation)
-        .with_context(
-            "json_preview",
-            json_str.chars().take(100).collect::<String>(),
-        )
-        .with_context("error", e.to_string())
-        .build()
+        CoreError::Serialization(format!("Failed to parse {} as JSON", context_type))
+            .context()
+            .with_operation(operation)
+            .with_context("json_preview", json_str.chars().take(100).collect::<String>())
+            .with_context("error", e.to_string())
+            .build()
     })
 }
 
 /// Safely extract a field from a JSON Value
+#[with_context]
 pub fn extract_field<T: DeserializeOwned>(
     value: &Value,
     field_name: &str,
     operation: &str,
 ) -> Result<T> {
     let field_value = value.get(field_name).ok_or_else(|| {
-        ErrorContext::new(CoreError::Validation(format!(
-            "Missing field: {}",
-            field_name
-        )))
-        .with_operation(operation)
-        .with_context(
-            "available_fields",
-            format!(
-                "{:?}",
-                value
-                    .as_object()
-                    .map(|o| o.keys().collect::<Vec<_>>())
-                    .unwrap_or_default()
-            ),
-        )
-        .build()
+        CoreError::Validation(format!("Missing field: {}", field_name))
+            .context()
+            .with_operation(operation)
+            .with_context(
+                "available_fields",
+                format!("{:?}", value.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()),
+            )
+            .build()
     })?;
 
     serde_json::from_value(field_value.clone()).map_err(|e| {
-        ErrorContext::new(CoreError::Serialization(format!(
-            "Failed to deserialize field: {}",
-            field_name
-        )))
-        .with_operation(operation)
-        .with_context("error", e.to_string())
-        .build()
+        CoreError::Serialization(format!("Failed to deserialize field: {}", field_name))
+            .context()
+            .with_operation(operation)
+            .with_context("error", e.to_string())
+            .build()
     })
 }
 
 /// Convert a value to JSON with error context
+#[with_context]
 pub fn to_json_value<T: serde::Serialize>(
     value: &T,
     context_type: &str,
     operation: &str,
 ) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| {
-        ErrorContext::new(CoreError::Serialization(format!(
-            "Failed to serialize {}",
-            context_type
-        )))
-        .with_operation(operation)
-        .with_context("error", e.to_string())
-        .build()
+        CoreError::Serialization(format!("Failed to serialize {}", context_type))
+            .context()
+            .with_operation(operation)
+            .with_context("error", e.to_string())
+            .build()
     })
 }
 

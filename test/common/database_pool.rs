@@ -554,7 +554,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             core.event_embeddings,
             core.entity_relations,
             core.artifact_embeddings,
-            core.artifact_contents,
+            core.revisions,
             core.artifact_tags,
             core.artifact_relations,
             core.entities,
@@ -584,7 +584,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             "DELETE FROM core.entity_relations",
             // Delete from artifact-related tables
             "DELETE FROM core.artifact_embeddings",
-            "DELETE FROM core.artifact_contents",
+            "DELETE FROM core.revisions",
             "DELETE FROM core.artifact_tags",
             "DELETE FROM core.artifact_relations",
             // Delete from work queue
@@ -661,8 +661,8 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             "SELECT COUNT(*) FROM core.artifact_relations",
         ),
         (
-            "core.artifact_contents",
-            "SELECT COUNT(*) FROM core.artifact_contents",
+            "core.revisions",
+            "SELECT COUNT(*) FROM core.revisions",
         ),
     ];
 

@@ -6,6 +6,7 @@
 
 use crate::{ConfigValue, CoreError, Result};
 use regex::Regex;
+use sinex_macros::with_context;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -70,6 +71,7 @@ impl ConfigExtractor for ConfigValue {
         })
     }
 
+    #[with_context(operation = "require_u64")]
     fn require_u64(&self, path: &str) -> Result<u64> {
         let value = navigate_path(self, path)?;
         let i = value.as_integer().ok_or_else(|| {

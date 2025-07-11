@@ -2,10 +2,12 @@ use crate::models::{Artifact, CreateArtifactInput};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
 use anyhow::Result;
+use sinex_core::{with_context, CoreError};
 use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
 /// Create a new artifact following the exact same pattern as add_to_work_queue
+#[with_context]
 pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) -> Result<Artifact> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let created_from_event_uuid: Option<Uuid> = input.created_from_event_id.map(ulid_to_uuid);
@@ -66,6 +68,7 @@ pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) ->
 }
 
 /// Get an artifact by ID
+#[with_context]
 pub async fn get_artifact_by_id(
     pool: DbPoolRef<'_>,
     artifact_id: Ulid,
@@ -116,6 +119,7 @@ pub async fn get_artifact_by_id(
 }
 
 /// Get recent artifacts
+#[with_context]
 pub async fn get_recent_artifacts(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Artifact>> {
     let records = sqlx::query!(
         r#"

@@ -6,28 +6,29 @@
 use crate::{CoreError, ErrorContext, Result};
 use rusqlite::{Connection, OpenFlags, Statement};
 use std::path::Path;
+use sinex_macros::with_context;
 
 /// Helper for opening SQLite databases with consistent error handling
 pub struct SqliteConnection;
 
 impl SqliteConnection {
     /// Open a read-only SQLite connection with error context
+    #[with_context]
     pub fn open_readonly<P: AsRef<Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
 
         Connection::open_with_flags(path_ref, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
-            ErrorContext::new(CoreError::Database(format!(
-                "Failed to open database: {}",
-                e
-            )))
-            .with_operation(operation)
-            .with_context("db_path", path_ref.display().to_string())
-            .with_context("access_mode", "read_only")
-            .build()
+            CoreError::Database(format!("Failed to open database: {}", e))
+                .context()
+                .with_operation(operation)
+                .with_context("db_path", path_ref.display().to_string())
+                .with_context("access_mode", "read_only")
+                .build()
         })
     }
 
     /// Open a read-write SQLite connection with error context
+    #[with_context]
     pub fn open_readwrite<P: AsRef<Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
 
@@ -36,14 +37,12 @@ impl SqliteConnection {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
         .map_err(|e| {
-            ErrorContext::new(CoreError::Database(format!(
-                "Failed to open database: {}",
-                e
-            )))
-            .with_operation(operation)
-            .with_context("db_path", path_ref.display().to_string())
-            .with_context("access_mode", "read_write")
-            .build()
+            CoreError::Database(format!("Failed to open database: {}", e))
+                .context()
+                .with_operation(operation)
+                .with_context("db_path", path_ref.display().to_string())
+                .with_context("access_mode", "read_write")
+                .build()
         })
     }
 }
@@ -54,15 +53,14 @@ pub trait SqliteStatementExt {
 }
 
 impl SqliteStatementExt for Connection {
+    #[with_context]
     fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement> {
         self.prepare(sql).map_err(|e| {
-            ErrorContext::new(CoreError::Database(format!(
-                "Failed to prepare statement: {}",
-                e
-            )))
-            .with_operation(operation)
-            .with_context("sql_length", sql.len().to_string())
-            .build()
+            CoreError::Database(format!("Failed to prepare statement: {}", e))
+                .context()
+                .with_operation(operation)
+                .with_context("sql_length", sql.len().to_string())
+                .build()
         })
     }
 }

@@ -6,6 +6,7 @@
 use crate::DbPoolRef;
 use crate::JsonValue;
 use anyhow::Result;
+use sinex_core::{with_context, CoreError};
 
 /// Parameters for upserting an agent manifest
 pub struct AgentManifestParams {
@@ -20,6 +21,7 @@ pub struct AgentManifestParams {
 }
 
 /// Upsert an agent manifest following the exact same pattern as existing correct functions
+#[with_context]
 pub async fn upsert_agent_manifest(pool: DbPoolRef<'_>, params: AgentManifestParams) -> Result<()> {
     sqlx::query!(
         r#"
@@ -55,6 +57,7 @@ pub async fn upsert_agent_manifest(pool: DbPoolRef<'_>, params: AgentManifestPar
 }
 
 /// Update agent heartbeat following the exact same pattern as existing correct functions
+#[with_context]
 pub async fn update_agent_heartbeat(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     sqlx::query!(
         r#"

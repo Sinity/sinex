@@ -7,10 +7,12 @@ use crate::validation::EventValidator;
 use crate::DbPoolRef;
 use anyhow::Result;
 use sinex_core::RawEvent;
+use sinex_core::{with_context, CoreError};
 use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
 /// Get an event by ID following the exact same pattern as existing correct functions
+#[with_context]
 pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
     let event_uuid = ulid_to_uuid(event_id);
 
@@ -48,6 +50,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
 }
 
 /// Insert an event with validation following the exact same pattern as existing correct functions
+#[with_context]
 pub async fn insert_event_with_validator(
     pool: DbPoolRef<'_>,
     event: &RawEvent,
@@ -101,6 +104,7 @@ pub async fn insert_event_with_validator(
 }
 
 /// Count total number of events in the database
+#[with_context]
 pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
     let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
         .fetch_one(pool)

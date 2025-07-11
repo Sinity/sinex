@@ -3,7 +3,8 @@
 //! This module provides a unified interface for file system monitoring,
 //! reducing boilerplate across event sources that need to watch files.
 
-use crate::{buffers, CoreError, ErrorContext, Result};
+use crate::{buffers, CoreError, Result};
+use sinex_macros::with_context;
 use notify::event::{DataChange, ModifyKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ pub struct FileWatcher {
 
 impl FileWatcher {
     /// Create a new file watcher
+    #[with_context(operation = "create_file_watcher")]
     pub fn new(config: FileWatcherConfig) -> Result<Self> {
         let (tx, rx) = mpsc::channel(config.channel_size);
         let watched_paths = Arc::new(config.paths.clone());
@@ -69,14 +71,7 @@ impl FileWatcher {
                 }
             }
         })
-        .map_err(|e| {
-            ErrorContext::new(CoreError::Configuration(format!(
-                "Failed to create file watcher: {}",
-                e
-            )))
-            .with_operation("create_file_watcher")
-            .build()
-        })?;
+        .map_err(|e| CoreError::Configuration(format!("Failed to create file watcher: {}", e)))?;
 
         // Set up watches
         let mode = if config.recursive {
@@ -88,13 +83,8 @@ impl FileWatcher {
         for path in &config.paths {
             if path.exists() {
                 watcher.watch(path, mode).map_err(|e| {
-                    ErrorContext::new(CoreError::Configuration(format!(
-                        "Failed to watch path: {}",
-                        e
-                    )))
-                    .with_operation("setup_file_watch")
-                    .with_context("path", path.display().to_string())
-                    .build()
+                    CoreError::Configuration(format!("Failed to watch path: {}", e))
+                        .context().with_context("path", path.display().to_string()).build()
                 })?;
             }
         }
@@ -108,13 +98,8 @@ impl FileWatcher {
                         watcher
                             .watch(parent, RecursiveMode::NonRecursive)
                             .map_err(|e| {
-                                ErrorContext::new(CoreError::Configuration(format!(
-                                    "Failed to watch parent directory: {}",
-                                    e
-                                )))
-                                .with_operation("setup_parent_watch")
-                                .with_context("parent", parent.display().to_string())
-                                .build()
+                                CoreError::Configuration(format!("Failed to watch parent directory: {}", e))
+                                    .context().with_context("parent", parent.display().to_string()).build()
                             })?;
                     }
                 }
@@ -182,6 +167,7 @@ impl FileWatcherBuilder {
         self
     }
 
+    #[with_context(operation = "build_file_watcher")]
     pub fn build(self) -> Result<FileWatcher> {
         FileWatcher::new(self.config)
     }

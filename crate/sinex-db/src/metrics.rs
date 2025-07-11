@@ -3,6 +3,7 @@ use crate::DbPoolRef;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sinex_core::{CoreError, ErrorContext};
+use sinex_core::with_context;
 use tracing::{debug, error};
 
 /// Queue depth metric per agent
@@ -44,6 +45,7 @@ pub struct QueueMetrics {
 
 /// Calculate queue depth metrics per agent
 /// Counts pending and retryable items
+#[with_context]
 pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<QueueDepthMetric>> {
     let records = sqlx::query!(
         r#"
@@ -72,6 +74,7 @@ pub async fn calculate_queue_depth_metrics(pool: DbPoolRef<'_>) -> Result<Vec<Qu
 
 /// Calculate dequeue latency metrics per agent  
 /// Measures time from queue insertion to processing start
+#[with_context]
 pub async fn calculate_dequeue_latency_metrics(
     pool: DbPoolRef<'_>,
 ) -> Result<Vec<DequeueLatencyMetric>> {
@@ -110,6 +113,7 @@ pub async fn calculate_dequeue_latency_metrics(
 
 /// Calculate per-agent lag metrics
 /// Shows how far behind each agent is in processing
+#[with_context]
 pub async fn calculate_per_agent_lag_metrics(pool: DbPoolRef<'_>) -> Result<Vec<AgentLagMetric>> {
     let records = sqlx::query!(
         r#"
@@ -141,6 +145,7 @@ pub async fn calculate_per_agent_lag_metrics(pool: DbPoolRef<'_>) -> Result<Vec<
 }
 
 /// Calculate overall queue statistics
+#[with_context]
 pub async fn calculate_overall_queue_stats(pool: DbPoolRef<'_>) -> Result<(i64, i64, i64)> {
     let stats = sqlx::query!(
         r#"
@@ -312,6 +317,7 @@ pub fn format_prometheus_metrics(metrics: &QueueMetrics) -> String {
 }
 
 /// Generate Prometheus metrics and return formatted string
+#[with_context]
 pub async fn generate_prometheus_metrics(pool: DbPoolRef<'_>) -> Result<String> {
     let metrics = calculate_all_queue_metrics(pool).await?;
     Ok(format_prometheus_metrics(&metrics))

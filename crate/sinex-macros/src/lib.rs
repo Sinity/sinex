@@ -135,6 +135,15 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Extract return type for the closure
     let return_type = &fn_sig.output;
 
+    // Determine the correct error type path based on context
+    // If we're in sinex-core crate itself, use crate::CoreError
+    // Otherwise, use sinex_core::CoreError
+    let error_type = quote! {
+        #[allow(unused_imports)]
+        use crate::CoreError as __CoreError;
+        let core_err: __CoreError = e.into();
+    };
+
     // Generate the transformed function
     let transformed = if is_async {
         quote! {
@@ -145,7 +154,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
 
                 __original_fn().await.map_err(|e| {
-                    let core_err: sinex_core::CoreError = e.into();
+                    #error_type
                     #context_building
                 })
             }
@@ -159,7 +168,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
 
                 __original_fn().map_err(|e| {
-                    let core_err: sinex_core::CoreError = e.into();
+                    #error_type
                     #context_building
                 })
             }

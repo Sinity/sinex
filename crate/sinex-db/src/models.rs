@@ -307,18 +307,15 @@ pub struct Artifact {
     pub blob_id: Option<Ulid>,
 }
 
-/// Artifact content version
-/// Maps to core.artifact_contents table
+/// Revision (content version)
+/// Maps to core.revisions table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct ArtifactContent {
-    #[sqlx(rename = "id")]
-    pub content_id: Ulid,
+pub struct Revision {
+    pub id: Ulid,
     pub artifact_id: Ulid,
     pub version: i32,
-    #[sqlx(rename = "content")]
-    pub content_text: String,
-    #[sqlx(rename = "content_type")]
-    pub content_format: String,
+    pub content: String,
+    pub content_type: String,
     pub extracted_text: Option<String>,
     pub word_count: Option<i32>,
     pub char_count: Option<i32>,
@@ -342,13 +339,13 @@ pub struct CreateArtifactInput {
     pub blob_id: Option<Ulid>,
 }
 
-/// Input for creating artifact content
+/// Input for creating revision
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateArtifactContentInput {
+pub struct CreateRevisionInput {
     pub artifact_id: Ulid,
     pub version: Option<i32>,
-    pub content_text: String,
-    pub content_format: String,
+    pub content: String,
+    pub content_type: String,
     pub extracted_text: Option<String>,
     pub metadata: Option<JsonValue>,
     pub created_from_event_id: Option<Ulid>,

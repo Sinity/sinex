@@ -2,10 +2,12 @@ use crate::models::{CreateAnnotationInput, EventAnnotation};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
 use anyhow::Result;
+use sinex_macros::with_context;
 use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
 /// Create a new event annotation following the exact same pattern as add_to_work_queue
+#[with_context]
 pub async fn create_annotation(
     pool: DbPoolRef<'_>,
     input: CreateAnnotationInput,
@@ -50,6 +52,7 @@ pub async fn create_annotation(
 }
 
 /// Get annotations for a specific event
+#[with_context]
 pub async fn get_annotations_for_event(
     pool: DbPoolRef<'_>,
     event_id: Ulid,
@@ -94,6 +97,7 @@ pub async fn get_annotations_for_event(
 }
 
 /// Get annotation by ID
+#[with_context]
 pub async fn get_annotation_by_id(
     pool: DbPoolRef<'_>,
     annotation_id: Ulid,
@@ -132,6 +136,7 @@ pub async fn get_annotation_by_id(
 }
 
 /// Update annotation content
+#[with_context]
 pub async fn update_annotation_content(
     pool: DbPoolRef<'_>,
     annotation_id: Ulid,
@@ -173,6 +178,7 @@ pub async fn update_annotation_content(
 }
 
 /// Delete annotation
+#[with_context]
 pub async fn delete_annotation(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Result<bool> {
     let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
 
@@ -187,6 +193,7 @@ pub async fn delete_annotation(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Resu
 }
 
 /// Get recent annotations
+#[with_context]
 pub async fn get_recent_annotations(
     pool: DbPoolRef<'_>,
     limit: i64,

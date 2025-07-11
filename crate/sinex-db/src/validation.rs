@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde_json::Value;
+use sinex_core::{with_context, CoreError};
 use std::collections::HashMap;
 use thiserror::Error;
 use tracing::warn;
@@ -255,6 +256,7 @@ impl EventValidator {
     }
 
     /// Load JSON schemas from database and create a validator
+    #[with_context]
     pub async fn load_from_db(pool: crate::DbPoolRef<'_>) -> Result<Self> {
         let mut validator = Self::new();
 

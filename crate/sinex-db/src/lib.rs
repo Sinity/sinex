@@ -67,9 +67,9 @@ pub mod prelude {
         AgentManifest,
         // New API models (now enabled)
         Artifact,
-        ArtifactContent,
+        Revision,
         CreateAnnotationInput,
-        CreateArtifactContentInput,
+        CreateRevisionInput,
         CreateArtifactInput,
         CreateEntityInput,
         CreateRelationInput,

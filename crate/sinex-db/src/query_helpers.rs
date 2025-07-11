@@ -80,6 +80,7 @@
 
 use crate::{DbPool, DbPoolRef};
 use sinex_core::{retry, timeouts};
+use sinex_macros::with_context;
 use sinex_ulid::Ulid;
 use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
@@ -138,6 +139,7 @@ impl Default for RetryConfig {
 }
 
 /// Execute a function within a transaction with automatic rollback on error
+#[with_context]
 pub async fn with_transaction<F, Fut, T>(pool: &DbPool, f: F) -> DbResult<T>
 where
     F: FnOnce(&mut Transaction<'static, Postgres>) -> Fut,
@@ -163,6 +165,7 @@ where
 }
 
 /// Execute a function within a transaction with retry logic for deadlocks
+#[with_context]
 pub async fn with_retry_transaction<F, Fut, T>(
     pool: &DbPool,
     config: RetryConfig,
@@ -222,6 +225,7 @@ pub fn is_retryable_db_error(err: &DbError) -> bool {
 // Use sqlx::query! macros directly for better type safety and clarity.
 
 /// Check if a record exists
+#[with_context]
 pub async fn exists(
     pool: DbPoolRef<'_>,
     table: &str,
@@ -242,6 +246,7 @@ pub async fn exists(
 }
 
 /// Count records matching a condition
+#[with_context]
 pub async fn count(
     pool: DbPoolRef<'_>,
     table: &str,
