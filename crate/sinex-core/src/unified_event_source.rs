@@ -1,20 +1,22 @@
 /// Unified EventSource trait with integrated event factory
-/// 
+///
 /// This module implements the architectural improvement to merge EventFactory
 /// functionality directly into the EventSourceBase trait, eliminating boilerplate
 /// and providing type safety.
 use crate::unified_collector::EventSource;
-use crate::{CoreError, EventSender, EventSourceContext, RawEvent, RawEventBuilder, Result, JsonValue};
-use sinex_events::{
-    FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder,
-    WindowManagerEventBuilder, SystemEventBuilder
+use crate::{
+    CoreError, EventSender, EventSourceContext, JsonValue, RawEvent, RawEventBuilder, Result,
 };
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::de::DeserializeOwned;
+use sinex_events::{
+    ClipboardEventBuilder, FilesystemEventBuilder, SystemEventBuilder, TerminalEventBuilder,
+    WindowManagerEventBuilder,
+};
 
 /// Enhanced EventSourceBase trait with integrated event factory
-/// 
+///
 /// This trait merges the EventFactory functionality directly into the EventSource,
 /// eliminating boilerplate and ensuring type safety.
 #[async_trait]
@@ -400,21 +402,21 @@ mod tests {
 
     // Mock EventSource for testing
     struct TestFilesystemSource;
-    
+
     #[async_trait]
     impl EventSource for TestFilesystemSource {
         type Config = ();
         const SOURCE_NAME: &'static str = sources::FS;
-        
+
         async fn initialize(_ctx: EventSourceContext) -> Result<Self> {
             Ok(Self)
         }
-        
+
         async fn stream_events(&mut self, _tx: EventSender) -> Result<()> {
             Ok(())
         }
     }
-    
+
     impl UnifiedEventSource for TestFilesystemSource {}
 
     #[test]
@@ -435,11 +437,14 @@ mod tests {
     fn test_no_boilerplate_event_factory() {
         // No more EventFactory::new() boilerplate needed
         let source = TestFilesystemSource;
-        
+
         // Direct builder access from source
-        let event = UnifiedEventSource::filesystem(&source).path("/test").created().build();
+        let event = UnifiedEventSource::filesystem(&source)
+            .path("/test")
+            .created()
+            .build();
         assert_eq!(event.source, sources::FS);
-        
+
         // Source name is enforced by the type system
         // Cannot accidentally use wrong source name
     }

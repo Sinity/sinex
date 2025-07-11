@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use tracing::{error, info};
 
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
+    sources, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender, EventSource,
+    EventSourceBase, EventSourceContext, EventType, JsonValue, RawEvent, Result, Timestamp,
 };
+use sinex_macros::with_context;
 
 // ============================================================================
 // Event Payloads
@@ -341,7 +342,7 @@ impl EventSource for DbusMonitor {
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!("Initializing D-Bus monitor");
-        Ok(Self { 
+        Ok(Self {
             config,
             event_factory: EventFactory::new(Self::SOURCE_NAME),
         })
@@ -381,6 +382,7 @@ impl EventSource for DbusMonitor {
     }
 }
 
+#[with_context]
 async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Result<()> {
     use dbus::channel::MatchingReceiver;
     use dbus::message::MatchRule;
@@ -389,19 +391,25 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
     info!("Connecting to {} bus", bus_type);
 
     let (resource, conn) = if bus_type == "session" {
-        connection::new_session_sync().map_err(|e| 
-            ErrorContext::new(CoreError::Io(format!("Failed to connect to session bus: {}", e)))
-                .with_operation("monitor_dbus")
-                .with_context("bus_type", "session")
-                .build()
-        )?
+        connection::new_session_sync().map_err(|e| {
+            ErrorContext::new(CoreError::Io(format!(
+                "Failed to connect to session bus: {}",
+                e
+            )))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", "session")
+            .build()
+        })?
     } else {
-        connection::new_system_sync().map_err(|e| 
-            ErrorContext::new(CoreError::Io(format!("Failed to connect to system bus: {}", e)))
-                .with_operation("monitor_dbus")
-                .with_context("bus_type", "system")
-                .build()
-        )?
+        connection::new_system_sync().map_err(|e| {
+            ErrorContext::new(CoreError::Io(format!(
+                "Failed to connect to system bus: {}",
+                e
+            )))
+            .with_operation("monitor_dbus")
+            .with_context("bus_type", "system")
+            .build()
+        })?
     };
 
     // Spawn the connection resource
@@ -413,22 +421,28 @@ async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Res
 
     // Add match rules for all message types we want to capture
     let signal_rule = MatchRule::new().with_type(dbus::message::MessageType::Signal);
-    conn.add_match(signal_rule).await.map_err(|e| 
-        ErrorContext::new(CoreError::Configuration(format!("Failed to add signal match rule: {}", e)))
-            .with_operation("monitor_dbus")
-            .with_context("bus_type", bus_type)
-            .with_context("rule_type", "signal")
-            .build()
-    )?;
+    conn.add_match(signal_rule).await.map_err(|e| {
+        ErrorContext::new(CoreError::Configuration(format!(
+            "Failed to add signal match rule: {}",
+            e
+        )))
+        .with_operation("monitor_dbus")
+        .with_context("bus_type", bus_type)
+        .with_context("rule_type", "signal")
+        .build()
+    })?;
 
     let method_rule = MatchRule::new().with_type(dbus::message::MessageType::MethodCall);
-    conn.add_match(method_rule).await.map_err(|e| 
-        ErrorContext::new(CoreError::Configuration(format!("Failed to add method call match rule: {}", e)))
-            .with_operation("monitor_dbus")
-            .with_context("bus_type", bus_type)
-            .with_context("rule_type", "method_call")
-            .build()
-    )?;
+    conn.add_match(method_rule).await.map_err(|e| {
+        ErrorContext::new(CoreError::Configuration(format!(
+            "Failed to add method call match rule: {}",
+            e
+        )))
+        .with_operation("monitor_dbus")
+        .with_context("bus_type", bus_type)
+        .with_context("rule_type", "method_call")
+        .build()
+    })?;
 
     // Clone values we need for the async context
     let bus_type = bus_type.to_string();
@@ -545,30 +559,31 @@ async fn process_extracted_message(
                     .and_then(|s| s.split('.').next_back())
                     .unwrap_or("unknown");
 
-                let mut payload = parse_mpris_properties(&args).unwrap_or_else(|| MediaPlaybackPayload {
-                    player: player.to_string(),
-                    player_instance: sender.clone().unwrap_or_default(),
-                    status: "Unknown".to_string(),
-                    track_id: None,
-                    title: None,
-                    artist: None,
-                    album: None,
-                    album_artist: None,
-                    track_number: None,
-                    length: None,
-                    position: None,
-                    volume: None,
-                    loop_status: None,
-                    shuffle: None,
-                    can_go_next: false,
-                    can_go_previous: false,
-                    can_play: false,
-                    can_pause: false,
-                    can_seek: false,
-                    art_url: None,
-                    timestamp: Utc::now(),
-                });
-                
+                let mut payload =
+                    parse_mpris_properties(&args).unwrap_or_else(|| MediaPlaybackPayload {
+                        player: player.to_string(),
+                        player_instance: sender.clone().unwrap_or_default(),
+                        status: "Unknown".to_string(),
+                        track_id: None,
+                        title: None,
+                        artist: None,
+                        album: None,
+                        album_artist: None,
+                        track_number: None,
+                        length: None,
+                        position: None,
+                        volume: None,
+                        loop_status: None,
+                        shuffle: None,
+                        can_go_next: false,
+                        can_go_previous: false,
+                        can_play: false,
+                        can_pause: false,
+                        can_seek: false,
+                        art_url: None,
+                        timestamp: Utc::now(),
+                    });
+
                 // Set player info that we can extract from the sender
                 payload.player = player.to_string();
                 payload.player_instance = sender.clone().unwrap_or_default();
@@ -767,114 +782,91 @@ async fn process_extracted_message(
     Ok(())
 }
 
-
 fn message_args_to_json(msg: &dbus::Message) -> JsonValue {
     let mut args = Vec::new();
     let mut iter = msg.iter_init();
-    
+
     while iter.next() {
         args.push(parse_dbus_argument(&mut iter));
     }
-    
+
     JsonValue::Array(args)
 }
 
 fn parse_dbus_argument(iter: &mut dbus::arg::Iter) -> JsonValue {
     use dbus::arg::ArgType;
-    
+
     match iter.arg_type() {
         // Basic types
-        ArgType::String => {
-            iter.get::<&str>()
-                .map(|s| JsonValue::String(s.to_string()))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Int32 => {
-            iter.get::<i32>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::UInt32 => {
-            iter.get::<u32>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Int64 => {
-            iter.get::<i64>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::UInt64 => {
-            iter.get::<u64>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Int16 => {
-            iter.get::<i16>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::UInt16 => {
-            iter.get::<u16>()
-                .map(|i| JsonValue::Number(serde_json::Number::from(i)))
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Boolean => {
-            iter.get::<bool>()
-                .map(JsonValue::Bool)
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Double => {
-            iter.get::<f64>()
-                .and_then(serde_json::Number::from_f64)
-                .map(JsonValue::Number)
-                .unwrap_or(JsonValue::Null)
-        }
-        ArgType::Byte => {
-            iter.get::<u8>()
-                .map(|b| JsonValue::Number(serde_json::Number::from(b)))
-                .unwrap_or(JsonValue::Null)
-        }
-        
+        ArgType::String => iter
+            .get::<&str>()
+            .map(|s| JsonValue::String(s.to_string()))
+            .unwrap_or(JsonValue::Null),
+        ArgType::Int32 => iter
+            .get::<i32>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::UInt32 => iter
+            .get::<u32>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::Int64 => iter
+            .get::<i64>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::UInt64 => iter
+            .get::<u64>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::Int16 => iter
+            .get::<i16>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::UInt16 => iter
+            .get::<u16>()
+            .map(|i| JsonValue::Number(serde_json::Number::from(i)))
+            .unwrap_or(JsonValue::Null),
+        ArgType::Boolean => iter
+            .get::<bool>()
+            .map(JsonValue::Bool)
+            .unwrap_or(JsonValue::Null),
+        ArgType::Double => iter
+            .get::<f64>()
+            .and_then(serde_json::Number::from_f64)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        ArgType::Byte => iter
+            .get::<u8>()
+            .map(|b| JsonValue::Number(serde_json::Number::from(b)))
+            .unwrap_or(JsonValue::Null),
+
         // Array type
-        ArgType::Array => {
-            parse_dbus_array(iter)
-        }
-        
+        ArgType::Array => parse_dbus_array(iter),
+
         // Dictionary (array of dict entries)
-        ArgType::DictEntry => {
-            parse_dbus_dict_entry(iter)
-        }
-        
+        ArgType::DictEntry => parse_dbus_dict_entry(iter),
+
         // Variant type
-        ArgType::Variant => {
-            parse_dbus_variant(iter)
-        }
-        
+        ArgType::Variant => parse_dbus_variant(iter),
+
         // Struct type
-        ArgType::Struct => {
-            parse_dbus_struct(iter)
-        }
-        
-        // ObjectPath 
-        ArgType::ObjectPath => {
-            iter.get::<dbus::Path>()
-                .map(|p| JsonValue::String(p.to_string()))
-                .unwrap_or(JsonValue::Null)
-        }
-        
+        ArgType::Struct => parse_dbus_struct(iter),
+
+        // ObjectPath
+        ArgType::ObjectPath => iter
+            .get::<dbus::Path>()
+            .map(|p| JsonValue::String(p.to_string()))
+            .unwrap_or(JsonValue::Null),
+
         // Signature
-        ArgType::Signature => {
-            iter.get::<dbus::Signature>()
-                .map(|s| JsonValue::String(s.to_string()))
-                .unwrap_or(JsonValue::Null)
-        }
-        
+        ArgType::Signature => iter
+            .get::<dbus::Signature>()
+            .map(|s| JsonValue::String(s.to_string()))
+            .unwrap_or(JsonValue::Null),
+
         // Unix FD - convert to number
-        ArgType::UnixFd => {
-            JsonValue::String("UnixFd".to_string())
-        }
-        
+        ArgType::UnixFd => JsonValue::String("UnixFd".to_string()),
+
         // Invalid or unsupported
         ArgType::Invalid => JsonValue::Null,
     }
@@ -882,38 +874,38 @@ fn parse_dbus_argument(iter: &mut dbus::arg::Iter) -> JsonValue {
 
 fn parse_dbus_array(iter: &mut dbus::arg::Iter) -> JsonValue {
     let mut array_values = Vec::new();
-    
+
     // Recursively iterate through array elements
     if let Some(mut array_iter) = iter.recurse(dbus::arg::ArgType::Array) {
         while array_iter.next() {
             array_values.push(parse_dbus_argument(&mut array_iter));
         }
     }
-    
+
     JsonValue::Array(array_values)
 }
 
 fn parse_dbus_dict_entry(iter: &mut dbus::arg::Iter) -> JsonValue {
     let mut dict_obj = serde_json::Map::new();
-    
+
     if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry) {
         // Dict entry has exactly 2 elements: key and value
         if dict_iter.next() {
             let key = parse_dbus_argument(&mut dict_iter);
             if dict_iter.next() {
                 let value = parse_dbus_argument(&mut dict_iter);
-                
+
                 // Use key as string key for JSON object
                 let key_str = match key {
                     JsonValue::String(s) => s,
                     _ => format!("{:?}", key),
                 };
-                
+
                 dict_obj.insert(key_str, value);
             }
         }
     }
-    
+
     JsonValue::Object(dict_obj)
 }
 
@@ -924,23 +916,21 @@ fn parse_dbus_variant(iter: &mut dbus::arg::Iter) -> JsonValue {
             return parse_dbus_argument(&mut variant_iter);
         }
     }
-    
+
     JsonValue::Null
 }
 
 fn parse_dbus_struct(iter: &mut dbus::arg::Iter) -> JsonValue {
     let mut struct_values = Vec::new();
-    
+
     if let Some(mut struct_iter) = iter.recurse(dbus::arg::ArgType::Struct) {
         while struct_iter.next() {
             struct_values.push(parse_dbus_argument(&mut struct_iter));
         }
     }
-    
+
     JsonValue::Array(struct_values)
 }
-
-
 
 fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
     // MPRIS PropertiesChanged args: interface_name, changed_properties, invalidated_properties
@@ -969,7 +959,7 @@ fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
                 art_url: None,
                 timestamp: Utc::now(),
             };
-            
+
             if let JsonValue::Array(props) = changed_props {
                 // Parse property changes - with improved D-Bus parsing, each entry is a dictionary object
                 for prop_entry in props {
@@ -977,18 +967,38 @@ fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
                         for (key, value) in obj {
                             match key.as_str() {
                                 "PlaybackStatus" => {
-                                    payload.status = value.as_str().unwrap_or("Unknown").to_string();
+                                    payload.status =
+                                        value.as_str().unwrap_or("Unknown").to_string();
                                 }
                                 "Metadata" => {
                                     if let Some(metadata) = parse_mpris_metadata(value) {
-                                        payload.title = metadata.get("xesam:title").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                        payload.artist = metadata.get("xesam:artist").and_then(|v| v.as_array()).map(|arr| 
-                                            arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()
-                                        );
-                                        payload.album = metadata.get("xesam:album").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                        payload.track_number = metadata.get("xesam:trackNumber").and_then(|v| v.as_i64()).map(|i| i as i32);
-                                        payload.length = metadata.get("mpris:length").and_then(|v| v.as_i64());
-                                        payload.art_url = metadata.get("mpris:artUrl").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        payload.title = metadata
+                                            .get("xesam:title")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        payload.artist = metadata
+                                            .get("xesam:artist")
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| {
+                                                arr.iter()
+                                                    .filter_map(|v| v.as_str())
+                                                    .map(|s| s.to_string())
+                                                    .collect()
+                                            });
+                                        payload.album = metadata
+                                            .get("xesam:album")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        payload.track_number = metadata
+                                            .get("xesam:trackNumber")
+                                            .and_then(|v| v.as_i64())
+                                            .map(|i| i as i32);
+                                        payload.length =
+                                            metadata.get("mpris:length").and_then(|v| v.as_i64());
+                                        payload.art_url = metadata
+                                            .get("mpris:artUrl")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
                                     }
                                 }
                                 "Volume" => {
@@ -1024,7 +1034,7 @@ fn parse_mpris_properties(args: &JsonValue) -> Option<MediaPlaybackPayload> {
                     }
                 }
             }
-            
+
             Some(payload)
         } else {
             None
@@ -1038,7 +1048,7 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
     // With improved D-Bus parsing, metadata is now a proper dictionary array
     if let JsonValue::Array(dict_entries) = metadata_value {
         let mut metadata = HashMap::new();
-        
+
         // Each entry is now a dictionary object with key-value pairs
         for entry in dict_entries {
             if let JsonValue::Object(obj) = entry {
@@ -1047,7 +1057,7 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
                 }
             }
         }
-        
+
         Some(metadata)
     } else {
         None
@@ -1057,41 +1067,44 @@ fn parse_mpris_metadata(metadata_value: &JsonValue) -> Option<HashMap<String, Js
 fn parse_notification_args(args: &JsonValue) -> NotificationPayload {
     // Notification arguments: app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout
     if let JsonValue::Array(arg_array) = args {
-        let app_name = arg_array.first()
+        let app_name = arg_array
+            .first()
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown")
             .to_string();
-        
-        let summary = arg_array.get(3)
+
+        let summary = arg_array
+            .get(3)
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
-        let body = arg_array.get(4)
+
+        let body = arg_array
+            .get(4)
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
-        let actions = arg_array.get(5)
+
+        let actions = arg_array
+            .get(5)
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
             .unwrap_or_default();
-        
-        let hints = arg_array.get(6)
+
+        let hints = arg_array
+            .get(6)
             .and_then(parse_notification_hints)
             .unwrap_or_default();
-        
-        let timeout = arg_array.get(7)
-            .and_then(|v| v.as_i64())
-            .unwrap_or(-1) as i32;
-        
-        let urgency = hints.get("urgency")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
-        
+
+        let timeout = arg_array.get(7).and_then(|v| v.as_i64()).unwrap_or(-1) as i32;
+
+        let urgency = hints.get("urgency").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+
         NotificationPayload {
             app_name,
             summary,
@@ -1120,7 +1133,7 @@ fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, J
     // With improved D-Bus parsing, hints are now a proper dictionary array
     if let JsonValue::Array(dict_entries) = hints_value {
         let mut hints = HashMap::new();
-        
+
         // Each entry is now a dictionary object with key-value pairs
         for entry in dict_entries {
             if let JsonValue::Object(obj) = entry {
@@ -1129,7 +1142,7 @@ fn parse_notification_hints(hints_value: &JsonValue) -> Option<HashMap<String, J
                 }
             }
         }
-        
+
         Some(hints)
     } else {
         None

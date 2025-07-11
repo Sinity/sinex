@@ -7,12 +7,11 @@ use sqlx::PgPool;
 use std::collections::VecDeque;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 
 // =============================================================================
@@ -31,7 +30,8 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event = RawEventBuilder::new("fast_producer", "test.event", json!({"test": true})).build();
+            let event =
+                RawEventBuilder::new("fast_producer", "test.event", json!({"test": true})).build();
 
             gen_count.fetch_add(1, Ordering::Relaxed);
 
@@ -84,12 +84,19 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     println!("  Generated: {}", generated);
     println!("  Dropped: {}", dropped);
     println!("  Consumed: {}", consumed_count);
-    println!("  Drop rate: {:.1}%", dropped as f64 / generated as f64 * 100.0);
+    println!(
+        "  Drop rate: {:.1}%",
+        dropped as f64 / generated as f64 * 100.0
+    );
 
     assert!(dropped > 0, "Expected backpressure to cause drops with 100-item buffer and slow consumer, but got 0 drops");
 
     let drop_rate = dropped as f64 / generated as f64;
-    assert!(drop_rate > 0.5 && drop_rate < 0.95, "Drop rate {:.1}% outside expected range (50-95%)", drop_rate * 100.0);
+    assert!(
+        drop_rate > 0.5 && drop_rate < 0.95,
+        "Drop rate {:.1}% outside expected range (50-95%)",
+        drop_rate * 100.0
+    );
 
     assert!(consumed_count > 0, "Expected some events to be consumed");
     assert!(consumed_count + dropped <= generated, "Accounting error");
@@ -119,7 +126,9 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
 
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             for i in 0..100 {
-                let event = RawEventBuilder::new("crashing", "test", json!({"test": true, "seq": i})).build();
+                let event =
+                    RawEventBuilder::new("crashing", "test", json!({"test": true, "seq": i}))
+                        .build();
                 if tx.send(event).await.is_err() {
                     break;
                 }
@@ -171,7 +180,10 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
     source_handle.abort();
 
     println!("Source crash test results:");
-    println!("  Events sent: {}", sent_count_for_print.load(Ordering::Relaxed));
+    println!(
+        "  Events sent: {}",
+        sent_count_for_print.load(Ordering::Relaxed)
+    );
     println!("  Events received: {}", received.len());
     println!("  Last sequence: {:?}", received.last());
 
@@ -204,7 +216,11 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
         const SOURCE_NAME: &'static str = "configurable";
 
         async fn initialize(source_ctx: EventSourceContext) -> Result<Self, CoreError> {
-            let interval_ms = source_ctx.config.get("interval_ms").and_then(|v| v.as_u64()).unwrap_or(100);
+            let interval_ms = source_ctx
+                .config
+                .get("interval_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100);
 
             Ok(Self {
                 interval_ms,
@@ -216,7 +232,8 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
 
         async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
             loop {
-                let event = RawEventBuilder::new("test", "config.test", json!({"test": true})).build();
+                let event =
+                    RawEventBuilder::new("test", "config.test", json!({"test": true})).build();
                 if tx.send(event).await.is_err() {
                     return Ok(());
                 }
@@ -246,7 +263,8 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
             reload_flag: reload_flag.clone(),
         };
 
-        let _ = tokio::time::timeout(Duration::from_millis(500), source.stream_events(tx.clone())).await;
+        let _ = tokio::time::timeout(Duration::from_millis(500), source.stream_events(tx.clone()))
+            .await;
 
         reload_flag.store(true, Ordering::Relaxed);
         source.interval_ms = 10;
@@ -274,11 +292,23 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
     producer.abort();
 
     println!("Config reload test results:");
-    println!("  Events before reload: {} (100ms interval)", pre_reload_count);
-    println!("  Events after reload: {} (10ms interval)", post_reload_count);
-    println!("  Speed increase: {:.1}x", post_reload_count as f64 / pre_reload_count as f64);
+    println!(
+        "  Events before reload: {} (100ms interval)",
+        pre_reload_count
+    );
+    println!(
+        "  Events after reload: {} (10ms interval)",
+        post_reload_count
+    );
+    println!(
+        "  Speed increase: {:.1}x",
+        post_reload_count as f64 / pre_reload_count as f64
+    );
 
-    assert!(post_reload_count > pre_reload_count * 5, "Expected at least 5x more events after config reload");
+    assert!(
+        post_reload_count > pre_reload_count * 5,
+        "Expected at least 5x more events after config reload"
+    );
 
     Ok(())
 }
@@ -355,7 +385,10 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
     println!("  Rejected requests: {}", total_rejected);
     println!("  Average wait time: {:?}", avg_wait);
 
-    assert!(total_rejected > 0, "Expected some rejections under heavy load");
+    assert!(
+        total_rejected > 0,
+        "Expected some rejections under heavy load"
+    );
 
     Ok(())
 }
@@ -384,7 +417,10 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
     ) -> Option<Arc<TrackedConnection>> {
         let mut conns = connections.write().await;
 
-        let active_count = conns.iter().filter(|c| !c.released.load(Ordering::Relaxed)).count();
+        let active_count = conns
+            .iter()
+            .filter(|c| !c.released.load(Ordering::Relaxed))
+            .count();
 
         if active_count >= pool_size {
             return None;
@@ -405,7 +441,9 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
     let good_next_id = next_id.clone();
     let good_actor = tokio::spawn(async move {
         for _i in 0..3 {
-            if let Some(conn) = acquire_connection("good_actor", &good_connections, &good_next_id, POOL_SIZE).await {
+            if let Some(conn) =
+                acquire_connection("good_actor", &good_connections, &good_next_id, POOL_SIZE).await
+            {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 conn.released.store(true, Ordering::Relaxed);
                 println!("Good actor released connection {}", conn.id);
@@ -419,7 +457,10 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
         let mut leaked = vec![];
 
         for i in 0..3 {
-            if let Some(conn) = acquire_connection("leaky_actor", &leaky_connections, &leaky_next_id, POOL_SIZE).await {
+            if let Some(conn) =
+                acquire_connection("leaky_actor", &leaky_connections, &leaky_next_id, POOL_SIZE)
+                    .await
+            {
                 if i == 1 {
                     println!("Leaky actor LEAKED connection {}", conn.id);
                     leaked.push(conn);
@@ -444,8 +485,15 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
 
             let conns = detector_connections.read().await;
             for conn in conns.iter() {
-                if !conn.released.load(Ordering::Relaxed) && conn.acquired_at.elapsed() > leak_timeout {
-                    println!("LEAK DETECTED: Connection {} held by {} for {:?}", conn.id, conn.acquired_by, conn.acquired_at.elapsed());
+                if !conn.released.load(Ordering::Relaxed)
+                    && conn.acquired_at.elapsed() > leak_timeout
+                {
+                    println!(
+                        "LEAK DETECTED: Connection {} held by {} for {:?}",
+                        conn.id,
+                        conn.acquired_by,
+                        conn.acquired_at.elapsed()
+                    );
                     detected_leaks.push((conn.id, conn.acquired_by.clone()));
                 }
             }
@@ -461,14 +509,23 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
     let detected = leak_detector.await.unwrap();
 
     let conns = connections.read().await;
-    let still_held = conns.iter().filter(|c| !c.released.load(Ordering::Relaxed)).count();
+    let still_held = conns
+        .iter()
+        .filter(|c| !c.released.load(Ordering::Relaxed))
+        .count();
 
     println!("\nConnection leak detection results:");
     println!("  Still held (leaked): {}", still_held);
     println!("  Detected leaks: {:?}", detected);
 
-    assert!(!detected.is_empty(), "Should have detected at least one leak");
-    assert!(detected.iter().any(|(_, who)| who == "leaky_actor"), "Should have identified the leaky actor");
+    assert!(
+        !detected.is_empty(),
+        "Should have detected at least one leak"
+    );
+    assert!(
+        detected.iter().any(|(_, who)| who == "leaky_actor"),
+        "Should have identified the leaky actor"
+    );
 
     Ok(())
 }
@@ -521,7 +578,10 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyh
     pretty_assertions::assert_eq!(count, 0, "Transaction should have rolled back completely");
 
     println!("\nTransaction rollback test results:");
-    println!("  Successful commits: {}", successful_commits.load(Ordering::Relaxed));
+    println!(
+        "  Successful commits: {}",
+        successful_commits.load(Ordering::Relaxed)
+    );
     println!("  Rollbacks: {}", rollbacks.load(Ordering::Relaxed));
 
     Ok(())
@@ -534,8 +594,17 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     let queries_after = Arc::new(AtomicU64::new(0));
     let connection_errors = Arc::new(AtomicU64::new(0));
 
-    async fn try_query(pool: &DbPool, counter: &Arc<AtomicU64>, errors: &Arc<AtomicU64>) -> Result<(), sqlx::Error> {
-        match timeout(Duration::from_millis(500), sqlx::query("SELECT 1").fetch_one(pool)).await {
+    async fn try_query(
+        pool: &DbPool,
+        counter: &Arc<AtomicU64>,
+        errors: &Arc<AtomicU64>,
+    ) -> Result<(), sqlx::Error> {
+        match timeout(
+            Duration::from_millis(500),
+            sqlx::query("SELECT 1").fetch_one(pool),
+        )
+        .await
+        {
             Ok(Ok(_)) => {
                 counter.fetch_add(1, Ordering::Relaxed);
                 Ok(())
@@ -570,13 +639,31 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     }
 
     println!("\nDatabase restart resilience test results:");
-    println!("  Queries before outage: {}", queries_before.load(Ordering::Relaxed));
-    println!("  Queries after recovery: {}", queries_after.load(Ordering::Relaxed));
-    println!("  Total connection errors: {}", connection_errors.load(Ordering::Relaxed));
+    println!(
+        "  Queries before outage: {}",
+        queries_before.load(Ordering::Relaxed)
+    );
+    println!(
+        "  Queries after recovery: {}",
+        queries_after.load(Ordering::Relaxed)
+    );
+    println!(
+        "  Total connection errors: {}",
+        connection_errors.load(Ordering::Relaxed)
+    );
 
-    assert!(queries_before.load(Ordering::Relaxed) > 0, "Should succeed before outage");
-    assert!(connection_errors.load(Ordering::Relaxed) >= 5, "Should have errors during outage");
-    assert!(queries_after.load(Ordering::Relaxed) > 0, "Should recover after outage");
+    assert!(
+        queries_before.load(Ordering::Relaxed) > 0,
+        "Should succeed before outage"
+    );
+    assert!(
+        connection_errors.load(Ordering::Relaxed) >= 5,
+        "Should have errors during outage"
+    );
+    assert!(
+        queries_after.load(Ordering::Relaxed) > 0,
+        "Should recover after outage"
+    );
 
     Ok(())
 }
@@ -630,15 +717,22 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
 
     let large_data = vec![0u8; 1024 * 1024];
     for _ in 0..5 {
-        let result = try_write_event_data(&test_path, &large_data, &write_attempts, &write_failures).await;
+        let result =
+            try_write_event_data(&test_path, &large_data, &write_attempts, &write_failures).await;
         if result.is_err() {
             println!("Write failed as expected when disk full");
         }
     }
 
     println!("\nDisk full test results:");
-    println!("  Total write attempts: {}", write_attempts.load(Ordering::Relaxed));
-    println!("  Failed writes: {}", write_failures.load(Ordering::Relaxed));
+    println!(
+        "  Total write attempts: {}",
+        write_attempts.load(Ordering::Relaxed)
+    );
+    println!(
+        "  Failed writes: {}",
+        write_failures.load(Ordering::Relaxed)
+    );
 
     assert!(write_attempts.load(Ordering::Relaxed) > 0);
     Ok(())
@@ -698,8 +792,14 @@ async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
     assert!(result.is_ok());
 
     println!("\nPermission change test results:");
-    println!("  Access attempts: {}", access_attempts.load(Ordering::Relaxed));
-    println!("  Permission denials: {}", access_denials.load(Ordering::Relaxed));
+    println!(
+        "  Access attempts: {}",
+        access_attempts.load(Ordering::Relaxed)
+    );
+    println!(
+        "  Permission denials: {}",
+        access_denials.load(Ordering::Relaxed)
+    );
 
     pretty_assertions::assert_eq!(access_denials.load(Ordering::Relaxed), 1);
     Ok(())
@@ -747,7 +847,11 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
         }
     }
 
-    async fn simulate_db_operation(delay_ms: u64, timeout_ms: u64, stats: &TimeoutStats) -> Result<(), String> {
+    async fn simulate_db_operation(
+        delay_ms: u64,
+        timeout_ms: u64,
+        stats: &TimeoutStats,
+    ) -> Result<(), String> {
         stats.record_attempt();
 
         let operation = async {
@@ -796,10 +900,15 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
 
     println!("\nTimeout test verification:");
     println!("  Slow network timeouts: {} (expected > 5)", slow_timeouts);
-    println!("  Intermittent timeouts: {} (expected > 0)", intermittent_timeouts);
+    println!(
+        "  Intermittent timeouts: {} (expected > 0)",
+        intermittent_timeouts
+    );
 
     if slow_timeouts == 0 && intermittent_timeouts == 0 {
-        println!("WARNING: No timeouts detected - system may be too fast for these test parameters");
+        println!(
+            "WARNING: No timeouts detected - system may be too fast for these test parameters"
+        );
     }
 
     Ok(())
@@ -865,13 +974,19 @@ async fn test_memory_leak_detection(_ctx: TestContext) -> TestResult {
             let current_size = monitor_component.get_retained_bytes().await;
             let allocations = monitor_component.allocations.load(Ordering::Relaxed);
 
-            monitor_samples.write().await.push((i, current_size, allocations));
+            monitor_samples
+                .write()
+                .await
+                .push((i, current_size, allocations));
 
             if current_size > last_size {
                 consecutive_increases += 1;
                 if consecutive_increases >= 5 {
                     println!("WARNING: Potential memory leak detected!");
-                    println!("  Memory has increased {} times consecutively", consecutive_increases);
+                    println!(
+                        "  Memory has increased {} times consecutively",
+                        consecutive_increases
+                    );
                     println!("  Current retained: {} bytes", current_size);
                     return true;
                 }
@@ -900,7 +1015,10 @@ async fn test_memory_leak_detection(_ctx: TestContext) -> TestResult {
     println!("\nMemory leak detection results:");
     println!("  Leak detected: {}", leak_detected);
 
-    assert!(samples.len() >= 10, "Should have collected at least 10 memory samples");
+    assert!(
+        samples.len() >= 10,
+        "Should have collected at least 10 memory samples"
+    );
 
     Ok(())
 }
@@ -1009,7 +1127,8 @@ async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
                         Ok(Ok(())) => continue,
                         Ok(Err(_)) => break,
                         Err(_) => {
-                            let has_work = worker_clone.items_processing.load(Ordering::Relaxed) > 0;
+                            let has_work =
+                                worker_clone.items_processing.load(Ordering::Relaxed) > 0;
                             let is_alive = worker_clone.is_alive.load(Ordering::Relaxed);
 
                             if has_work {
@@ -1020,9 +1139,11 @@ async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
                             }
 
                             if !is_alive && has_work {
-                                println!("DEAD WORKER WITH WORK: {} (has {} items in progress)",
+                                println!(
+                                    "DEAD WORKER WITH WORK: {} (has {} items in progress)",
                                     worker_clone.id,
-                                    worker_clone.items_processing.load(Ordering::Relaxed));
+                                    worker_clone.items_processing.load(Ordering::Relaxed)
+                                );
                             }
                         }
                     }
@@ -1058,8 +1179,14 @@ async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
     println!("\nWorker orphan test results:");
     println!("  Orphans detected: {:?}", orphans);
 
-    assert!(!orphans.is_empty(), "At least one orphan should be detected");
-    assert!(orphans.contains(&"worker-2".to_string()), "Worker 2 should have been detected as orphaned");
+    assert!(
+        !orphans.is_empty(),
+        "At least one orphan should be detected"
+    );
+    assert!(
+        orphans.contains(&"worker-2".to_string()),
+        "Worker 2 should have been detected as orphaned"
+    );
 
     Ok(())
 }
@@ -1126,7 +1253,9 @@ async fn test_orphaned_work_recovery(_ctx: TestContext) -> TestResult {
             let mut queue = queue_clone.write().await;
             for item in queue.iter_mut() {
                 if let Some(last_attempt) = item.last_attempt {
-                    if item.status == QueueStatus::Processing && last_attempt.elapsed() > orphan_timeout {
+                    if item.status == QueueStatus::Processing
+                        && last_attempt.elapsed() > orphan_timeout
+                    {
                         println!("Recovering orphaned work item: {:?}", item.id);
                         item.status = QueueStatus::Pending;
                         item.assigned_to = None;
@@ -1165,8 +1294,14 @@ async fn test_orphaned_work_recovery(_ctx: TestContext) -> TestResult {
     let recovered_count = recovery_worker.await.unwrap();
 
     let queue = work_queue.read().await;
-    let completed = queue.iter().filter(|item| item.status == QueueStatus::Succeeded).count();
-    let orphaned = queue.iter().filter(|item| item.assigned_to == Some("orphan-worker".to_string())).count();
+    let completed = queue
+        .iter()
+        .filter(|item| item.status == QueueStatus::Succeeded)
+        .count();
+    let orphaned = queue
+        .iter()
+        .filter(|item| item.assigned_to == Some("orphan-worker".to_string()))
+        .count();
 
     println!("\nWork recovery test results:");
     println!("  Total items: {}", queue.len());

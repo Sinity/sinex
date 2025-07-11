@@ -1,15 +1,17 @@
 use crate::{CoreError, Result};
+use path_clean::PathClean;
+use sanitize_filename::sanitize;
 use serde_json::Value;
 use std::path::{Component, PathBuf};
 use unicode_normalization::UnicodeNormalization;
-use path_clean::PathClean;
-use sanitize_filename::sanitize;
+use sinex_macros::with_context;
 
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
 
 /// Validate a file path for security issues
+#[with_context(operation = "validate_path")]
 pub fn validate_path(path: &str) -> Result<PathBuf> {
     // Check for null bytes
     if path.contains('\0') {
@@ -45,6 +47,7 @@ pub fn validate_path(path: &str) -> Result<PathBuf> {
 }
 
 /// Sanitize a filename component for safe storage and display
+#[with_context(operation = "sanitize_filename_component")]
 pub fn sanitize_filename_component(filename: &str) -> Result<String> {
     if filename.is_empty() {
         return Err(CoreError::Validation("Filename cannot be empty".into()));
@@ -52,20 +55,23 @@ pub fn sanitize_filename_component(filename: &str) -> Result<String> {
 
     // Use sanitize-filename crate for cross-platform filename sanitization
     let sanitized = sanitize(filename);
-    
+
     // The sanitize function returns the same string if no changes needed
     if sanitized.is_empty() {
-        return Err(CoreError::Validation("Filename becomes empty after sanitization".into()));
+        return Err(CoreError::Validation(
+            "Filename becomes empty after sanitization".into(),
+        ));
     }
 
     Ok(sanitized)
 }
 
 /// Validate a file path stays within a watch root directory
+#[with_context(operation = "validate_path_within_root")]
 pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     // First do basic validation
     let path_buf = validate_path(path)?;
-    
+
     // Convert to absolute paths for comparison
     let abs_path = if path_buf.is_absolute() {
         path_buf.clone()
@@ -74,7 +80,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             .map_err(|e| CoreError::Io(format!("Failed to get current dir: {}", e)))?
             .join(&path_buf)
     };
-    
+
     // Clean the root path as well
     let root_path = PathBuf::from(root).clean();
     let abs_root = if root_path.is_absolute() {
@@ -84,23 +90,26 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             .map_err(|e| CoreError::Io(format!("Failed to get current dir: {}", e)))?
             .join(&root_path)
     };
-    
+
     // Canonicalize paths to resolve symlinks and normalize
     let canonical_path = abs_path
         .canonicalize()
         .or_else(|_| {
             // If file doesn't exist yet, canonicalize parent and append filename
-            abs_path.parent()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path"))
+            abs_path
+                .parent()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
+                })
                 .and_then(|parent| parent.canonicalize())
                 .map(|parent| parent.join(abs_path.file_name().unwrap_or_default()))
         })
         .map_err(|e| CoreError::Validation(format!("Path canonicalization failed: {}", e)))?;
-        
+
     let canonical_root = abs_root
         .canonicalize()
         .map_err(|e| CoreError::Validation(format!("Root canonicalization failed: {}", e)))?;
-    
+
     // Check if the canonical path starts with the canonical root
     if !canonical_path.starts_with(&canonical_root) {
         return Err(CoreError::Validation(format!(
@@ -108,11 +117,12 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             path, root
         )));
     }
-    
+
     Ok(canonical_path)
 }
 
 /// Validate JSON with size and depth limits
+#[with_context(operation = "validate_json")]
 pub fn validate_json(json_str: &str) -> Result<Value> {
     // Size check
     if json_str.len() > MAX_JSON_SIZE {
@@ -132,6 +142,7 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
     Ok(value)
 }
 
+#[with_context(operation = "validate_json_structure")]
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(CoreError::Validation(format!(
@@ -268,7 +279,7 @@ mod tests {
         assert!(validate_path("/etc/passwd\0.txt").is_err());
         assert!(validate_path("../../../etc/passwd").is_err());
         assert!(validate_path(&"a".repeat(5000)).is_err());
-        
+
         // Test path cleaning functionality
         let cleaned = validate_path("./some/../path/./file.txt").unwrap();
         assert_eq!(cleaned, PathBuf::from("path/file.txt"));
@@ -277,8 +288,11 @@ mod tests {
     #[test]
     fn test_filename_sanitization() {
         // Normal filename
-        assert_eq!(sanitize_filename_component("normal.txt").unwrap(), "normal.txt");
-        
+        assert_eq!(
+            sanitize_filename_component("normal.txt").unwrap(),
+            "normal.txt"
+        );
+
         // Filename with problematic characters
         let result = sanitize_filename_component("file<>:\"|?*.txt");
         assert!(result.is_ok());
@@ -286,10 +300,10 @@ mod tests {
         assert!(!sanitized.contains('<'));
         assert!(!sanitized.contains('>'));
         assert!(!sanitized.contains(':'));
-        
+
         // Empty filename
         assert!(sanitize_filename_component("").is_err());
-        
+
         // Filename that becomes empty after sanitization
         let result = sanitize_filename_component("...");
         // This might be ok or err depending on sanitize-filename behavior

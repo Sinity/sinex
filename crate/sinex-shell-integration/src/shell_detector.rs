@@ -25,7 +25,7 @@ impl ShellType {
     pub fn name(&self) -> &str {
         match self {
             ShellType::Bash => "bash",
-            ShellType::Zsh => "zsh", 
+            ShellType::Zsh => "zsh",
             ShellType::Fish => "fish",
             ShellType::Nushell => "nushell",
             ShellType::Elvish => "elvish",
@@ -33,16 +33,16 @@ impl ShellType {
             ShellType::Unknown(name) => name,
         }
     }
-    
+
     /// Check if this shell supports hooks
     pub fn supports_hooks(&self) -> bool {
         matches!(self, ShellType::Bash | ShellType::Zsh | ShellType::Fish)
     }
-    
+
     /// Get the default configuration file path for this shell
     pub fn default_config_path(&self) -> Option<PathBuf> {
         let home = dirs::home_dir()?;
-        
+
         match self {
             ShellType::Bash => Some(home.join(".bashrc")),
             ShellType::Zsh => Some(home.join(".zshrc")),
@@ -53,11 +53,11 @@ impl ShellType {
             ShellType::Unknown(_) => None,
         }
     }
-    
+
     /// Get the history file path for this shell
     pub fn default_history_path(&self) -> Option<PathBuf> {
         let home = dirs::home_dir()?;
-        
+
         match self {
             ShellType::Bash => Some(home.join(".bash_history")),
             ShellType::Zsh => Some(home.join(".zsh_history")),
@@ -113,14 +113,14 @@ impl ShellDetector {
         let parent_pid = Self::detect_parent_pid();
         let terminal = Self::detect_terminal();
         let capabilities = Self::detect_capabilities(&shell_type);
-        
+
         info!(
             shell_type = ?shell_type,
             executable_path = ?executable_path,
             version = ?version,
             "Detected shell environment"
         );
-        
+
         Ok(ShellInfo {
             shell_type,
             executable_path,
@@ -134,7 +134,7 @@ impl ShellDetector {
             capabilities,
         })
     }
-    
+
     fn detect_shell_type() -> ShellType {
         // Try SHELL environment variable first
         if let Ok(shell_env) = env::var("SHELL") {
@@ -144,12 +144,12 @@ impl ShellDetector {
                 }
             }
         }
-        
+
         // Try 0 argument (process name)
         if let Ok(arg0) = env::var("0") {
             return Self::parse_shell_type(&arg0);
         }
-        
+
         // Try parent process detection
         if let Some(parent_name) = Self::get_parent_process_name() {
             let shell_type = Self::parse_shell_type(&parent_name);
@@ -157,14 +157,14 @@ impl ShellDetector {
                 return shell_type;
             }
         }
-        
+
         debug!("Could not detect shell type, defaulting to bash");
         ShellType::Bash
     }
-    
+
     fn parse_shell_type(name: &str) -> ShellType {
         let name_lower = name.to_lowercase();
-        
+
         if name_lower.contains("bash") {
             ShellType::Bash
         } else if name_lower.contains("zsh") {
@@ -181,7 +181,7 @@ impl ShellDetector {
             ShellType::Unknown(name.to_string())
         }
     }
-    
+
     fn detect_executable_path(shell_type: &ShellType) -> Option<PathBuf> {
         // First try SHELL environment variable
         if let Ok(shell_path) = env::var("SHELL") {
@@ -190,7 +190,7 @@ impl ShellDetector {
                 return Some(path);
             }
         }
-        
+
         // Try to find in PATH
         if let Ok(path_env) = env::var("PATH") {
             for path_dir in path_env.split(':') {
@@ -200,19 +200,19 @@ impl ShellDetector {
                 }
             }
         }
-        
+
         None
     }
-    
+
     fn detect_version(executable_path: &Option<PathBuf>) -> Option<String> {
         let path = executable_path.as_ref()?;
-        
+
         // Try to get version using --version flag
         let output = std::process::Command::new(path)
             .arg("--version")
             .output()
             .ok()?;
-        
+
         if output.status.success() {
             let version_text = String::from_utf8_lossy(&output.stdout);
             // Extract first line which usually contains version info
@@ -221,69 +221,66 @@ impl ShellDetector {
             None
         }
     }
-    
+
     fn detect_config_path(shell_type: &ShellType) -> Option<PathBuf> {
         // Check environment variables first
         match shell_type {
-            ShellType::Bash => {
-                env::var("BASH_ENV").ok()
-                    .map(PathBuf::from)
-                    .or_else(|| shell_type.default_config_path())
-            }
-            ShellType::Zsh => {
-                env::var("ZDOTDIR").ok()
-                    .map(|dir| PathBuf::from(dir).join(".zshrc"))
-                    .or_else(|| shell_type.default_config_path())
-            }
+            ShellType::Bash => env::var("BASH_ENV")
+                .ok()
+                .map(PathBuf::from)
+                .or_else(|| shell_type.default_config_path()),
+            ShellType::Zsh => env::var("ZDOTDIR")
+                .ok()
+                .map(|dir| PathBuf::from(dir).join(".zshrc"))
+                .or_else(|| shell_type.default_config_path()),
             _ => shell_type.default_config_path(),
         }
     }
-    
+
     fn detect_history_path(shell_type: &ShellType) -> Option<PathBuf> {
         // Check environment variables first
         match shell_type {
-            ShellType::Bash => {
-                env::var("HISTFILE").ok()
-                    .map(PathBuf::from)
-                    .or_else(|| shell_type.default_history_path())
-            }
-            ShellType::Zsh => {
-                env::var("HISTFILE").ok()
-                    .map(PathBuf::from)
-                    .or_else(|| shell_type.default_history_path())
-            }
+            ShellType::Bash => env::var("HISTFILE")
+                .ok()
+                .map(PathBuf::from)
+                .or_else(|| shell_type.default_history_path()),
+            ShellType::Zsh => env::var("HISTFILE")
+                .ok()
+                .map(PathBuf::from)
+                .or_else(|| shell_type.default_history_path()),
             _ => shell_type.default_history_path(),
         }
     }
-    
+
     fn detect_session_id() -> Option<String> {
         // Try various session identifiers
-        env::var("SINEX_SESSION_ID").ok()
+        env::var("SINEX_SESSION_ID")
+            .ok()
             .or_else(|| env::var("TMUX_PANE").ok())
             .or_else(|| env::var("STY").ok()) // screen session
             .or_else(|| env::var("TERM_SESSION_ID").ok())
     }
-    
+
     fn detect_shell_pid() -> Option<u32> {
-        env::var("PPID").ok()
+        env::var("PPID")
+            .ok()
             .and_then(|pid_str| pid_str.parse().ok())
-            .or_else(|| {
-                std::process::id().into()
-            })
+            .or_else(|| std::process::id().into())
     }
-    
+
     fn detect_parent_pid() -> Option<u32> {
         // This would require platform-specific code
         // For now, return None
         None
     }
-    
+
     fn detect_terminal() -> Option<String> {
-        env::var("TERM_PROGRAM").ok()
+        env::var("TERM_PROGRAM")
+            .ok()
             .or_else(|| env::var("TERMINAL_EMULATOR").ok())
             .or_else(|| env::var("TERM").ok())
     }
-    
+
     fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
         ShellCapabilities {
             supports_hooks: shell_type.supports_hooks(),
@@ -295,7 +292,7 @@ impl ShellDetector {
             has_starship: Self::check_command_available("starship"),
         }
     }
-    
+
     fn check_command_available(command: &str) -> bool {
         std::process::Command::new("which")
             .arg(command)
@@ -303,7 +300,7 @@ impl ShellDetector {
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
-    
+
     fn get_parent_process_name() -> Option<String> {
         // This would require platform-specific process introspection
         // For now, return None

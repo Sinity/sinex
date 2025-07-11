@@ -1,26 +1,18 @@
 use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_core::{
+    buffers, sources,
     unified_collector::{EventRegistry, EventRegistryBuilder, EventSource},
-    ConfigValue, EventSender, EventSourceContext, JsonValue, buffers, sources,
+    ConfigValue, EventSender, EventSourceContext, JsonValue,
 };
 use sinex_db::validation::EventValidator;
 use sinex_db::DbPool;
-use sinex_events_desktop::{
-    clipboard::ClipboardMonitor,
-    window_manager::HyprlandIPCMonitor,
-};
+use sinex_events_desktop::{window_manager::HyprlandIPCMonitor, TypedClipboardAdapter};
 use sinex_events_fs::TypedFilesystemAdapter;
-use sinex_events_system::{
-    dbus::DbusMonitor,
-    journal::JournalMonitor,
-};
+use sinex_events_system::{dbus::DbusMonitor, journal::JournalMonitor};
 use sinex_events_terminal::{
-    asciinema::AsciinemaRecorder,
-    atuin::AtuinDbReader,
-    kitty::KittyEventSource,
-    scrollback::ScrollbackCapture,
-    shell_history::ShellHistoryReader,
+    asciinema::AsciinemaRecorder, atuin::AtuinDbReader, kitty::KittyEventSource,
+    scrollback::ScrollbackCapture, shell_history::ShellHistoryReader,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -36,35 +28,35 @@ use crate::OutputConfig;
 /// This demonstrates the pattern for eliminating manual registry maintenance
 ///
 /// # Auto-Registration Pattern
-/// 
+///
 /// Each event crate provides a `register_events(builder: &mut EventRegistryBuilder)` function
 /// that automatically registers all its event types with proper schemas. This eliminates:
-/// 
+///
 /// - Manual maintenance of event type lists
 /// - Risk of forgetting to register new event types
 /// - Schema/payload drift when types are updated
-/// 
+///
 /// # Usage
-/// 
+///
 /// ```rust
 /// let registry = create_registry_with_auto_registration();
 /// ```
-/// 
+///
 /// # Implementation Status
-/// 
+///
 /// - ✅ sinex-events-fs: Implemented auto-registration
 /// - ✅ sinex-events-desktop: Implemented auto-registration
 /// - ✅ sinex-events-terminal: Implemented auto-registration
 /// - ✅ sinex-events-system: Implemented auto-registration
 pub fn create_registry_with_auto_registration() -> EventRegistry {
     let mut builder = EventRegistryBuilder::new();
-    
+
     // Auto-register event types from each event crate
     sinex_events_fs::register_events(&mut builder);
     sinex_events_desktop::register_events(&mut builder);
     sinex_events_terminal::register_events(&mut builder);
     sinex_events_system::register_events(&mut builder);
-    
+
     builder.build()
 }
 
@@ -122,11 +114,13 @@ impl UnifiedCollector {
     }
 
     /// Main run loop - handles event collection and processing
+
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting unified collector");
 
         // Create channel for events
-        let (event_tx, mut event_rx) = mpsc::channel::<RawEvent>(buffers::DEFAULT_EVENT_CHANNEL_SIZE);
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<RawEvent>(buffers::DEFAULT_EVENT_CHANNEL_SIZE);
 
         // Start metrics collection
         self.metrics
@@ -169,7 +163,8 @@ impl UnifiedCollector {
             .await
             {
                 error!("Failed to output event: {}", e);
-                self.metrics.record_error_with_context(&event.source, None, Some("output_event"));
+                self.metrics
+                    .record_error_with_context(&event.source, None, Some("output_event"));
             }
         }
 
@@ -183,6 +178,7 @@ impl UnifiedCollector {
     }
 
     /// Start all enabled event sources
+
     async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
 
@@ -261,51 +257,84 @@ impl UnifiedCollector {
             .any(|event| self.is_event_enabled(event))
     }
 
+
     async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<TypedFilesystemAdapter>("files", "filesystem", event_tx).await
+        self.start_event_source::<TypedFilesystemAdapter>("files", "filesystem", event_tx)
+            .await
     }
+
 
     async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<KittyEventSource>("commands", "terminal", event_tx).await
+        self.start_event_source::<KittyEventSource>("commands", "terminal", event_tx)
+            .await
     }
+
 
     async fn start_window_manager_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<HyprlandIPCMonitor>("windows", "window manager", event_tx).await
+        self.start_event_source::<HyprlandIPCMonitor>("windows", "window manager", event_tx)
+            .await
     }
+
 
     async fn start_atuin_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<AtuinDbReader>("shell.command.executed_atuin", "atuin", event_tx).await
+        self.start_event_source::<AtuinDbReader>("shell.command.executed_atuin", "atuin", event_tx)
+            .await
     }
+
 
     async fn start_shell_history_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<ShellHistoryReader>("shell.history.command", "shell history", event_tx).await
+        self.start_event_source::<ShellHistoryReader>(
+            "shell.history.command",
+            "shell history",
+            event_tx,
+        )
+        .await
     }
+
 
     async fn start_asciinema_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<AsciinemaRecorder>("terminal.asciinema", "asciinema recorder", event_tx).await
+        self.start_event_source::<AsciinemaRecorder>(
+            "terminal.asciinema",
+            "asciinema recorder",
+            event_tx,
+        )
+        .await
     }
+
 
     async fn start_scrollback_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<ScrollbackCapture>("terminal.scrollback", "scrollback capture", event_tx).await
+        self.start_event_source::<ScrollbackCapture>(
+            "terminal.scrollback",
+            "scrollback capture",
+            event_tx,
+        )
+        .await
     }
+
 
     async fn start_dbus_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<DbusMonitor>("dbus", "D-Bus monitor", event_tx).await
+        self.start_event_source::<DbusMonitor>("dbus", "D-Bus monitor", event_tx)
+            .await
     }
+
 
     async fn start_clipboard_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<ClipboardMonitor>("clipboard", "clipboard", event_tx).await
+        self.start_event_source::<TypedClipboardAdapter>("clipboard", "clipboard", event_tx)
+            .await
     }
 
+
     async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<JournalMonitor>("journal", "journal", event_tx).await
+        self.start_event_source::<JournalMonitor>("journal", "journal", event_tx)
+            .await
     }
 
     /// Generic helper to start any event source with consistent context setup
-    async fn start_event_source<T>(&self, 
-        config_key: &str, 
+    async fn start_event_source<T>(
+        &self,
+        config_key: &str,
         source_name: &str,
-        event_tx: EventSender
+        event_tx: EventSender,
     ) -> Result<JoinHandle<()>>
     where
         T: EventSource + Send + 'static,
@@ -313,7 +342,11 @@ impl UnifiedCollector {
     {
         info!("Starting {} source", source_name);
 
-        let config_json = self.config.event.get(config_key).cloned()
+        let config_json = self
+            .config
+            .event
+            .get(config_key)
+            .cloned()
             .map(toml_to_json)
             .unwrap_or_else(|| serde_json::to_value(T::Config::default()).unwrap());
 

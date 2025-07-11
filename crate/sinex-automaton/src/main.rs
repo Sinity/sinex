@@ -1,20 +1,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
-use sinex_db::{
-    models::WorkQueueItem, agent::upsert_agent_manifest, DbPool, DbPoolRef, JsonValue,
-};
+use sinex_annex::BlobManager;
 use sinex_automaton::{
     create_work_entries, get_active_manifests, EventScanner, ScannerConfig, WorkRouter,
 };
+use sinex_db::{agent::upsert_agent_manifest, models::WorkQueueItem, DbPool, DbPoolRef, JsonValue};
+use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use sinex_worker::{start_metrics_server, worker::Worker, EventProcessor};
-use sinex_services::{
-    AnalyticsService, ContentService, PkmService, SearchService,
-};
-use sinex_annex::BlobManager;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::{signal, task, time::sleep};
 use tracing::{error, info, warn};
@@ -84,10 +80,8 @@ impl ServiceContainer {
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, pool.clone())?
-        );
-        
+        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone())?);
+
         // Initialize all services
         Ok(Self {
             analytics: Arc::new(AnalyticsService::new(pool.clone())),
@@ -128,24 +122,20 @@ impl EventProcessor for ServiceBasedProcessor {
             ("fs", "file.created") | ("fs", "file.modified") => {
                 info!("Filesystem event detected - service layer available for future analysis");
             }
-            
+
             // Shell events - future command analysis
             ("shell.kitty", "command.executed") => {
                 info!("Command execution detected - service layer available for future analysis");
             }
-            
+
             // Clipboard events - future entity extraction
             ("clipboard", "copied") => {
                 info!("Clipboard event detected - service layer available for future analysis");
             }
-            
+
             // Default: just log that we processed it
             _ => {
-                info!(
-                    "Event processed: {} :: {}",
-                    event.source,
-                    event.event_type
-                );
+                info!("Event processed: {} :: {}", event.source, event.event_type);
             }
         }
 
@@ -175,7 +165,9 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
     let manifest_params = sinex_db::AgentManifestParams {
         agent_name: agent_name.to_string(),
         version: version.to_string(),
-        description: Some("Event automation worker that routes events to service layer".to_string()),
+        description: Some(
+            "Event automation worker that routes events to service layer".to_string(),
+        ),
         agent_type: "automation".to_string(),
         config_template_json: serde_json::json!({
             "uses_services": true,
@@ -189,8 +181,7 @@ async fn register_agent(pool: DbPoolRef<'_>, agent_name: &str) -> Result<()> {
         }),
         required_capabilities: serde_json::json!({}),
     };
-    upsert_agent_manifest(pool, manifest_params)
-    .await?;
+    upsert_agent_manifest(pool, manifest_params).await?;
 
     info!(agent_name = %agent_name, version = %version, "Agent registered");
     Ok(())
@@ -417,10 +408,10 @@ impl sinex_core::MetricsProvider for WorkerMetrics {
 
 /// Run as a worker processing work queue entries
 async fn run_worker_mode(
-    pool: DbPool, 
-    agent_name: String, 
+    pool: DbPool,
+    agent_name: String,
     args: Args,
-    services: Arc<ServiceContainer>
+    services: Arc<ServiceContainer>,
 ) -> Result<()> {
     info!(agent = %agent_name, "Running in worker mode with service layer");
 

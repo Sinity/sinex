@@ -3,8 +3,8 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_core::{
-    EventType, EventSource, EventSourceBase, EventSourceContext, EventSender, 
-    Result, EventFactory, ErrorContext, CoreError, BackoffHelper, timeouts, ChannelSenderExt,
+    timeouts, BackoffHelper, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender,
+    EventSource, EventSourceBase, EventSourceContext, EventType, Result,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,7 +13,7 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 
 use super::config::KittyConfig;
-use super::state::{KittyProcessInfo, KittyWindowState, KittyProcess, KittyWindow};
+use super::state::{KittyProcess, KittyProcessInfo, KittyWindow, KittyWindowState};
 
 /// Kitty terminal command completion event (command + output)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,8 +39,6 @@ pub struct KittyCommandCompletedPayload {
     pub shell_integration_used: bool,
     pub completion_timestamp: String,
 }
-
-
 
 /// Kitty tab created event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,8 +80,6 @@ impl EventType for KittyProcessChanged {
     const EVENT_NAME: &'static str = "process.changed";
 }
 
-
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KittyTabCreatedPayload {
     pub kitty_tab_id: String,
@@ -124,8 +120,6 @@ pub struct KittyProcessChangedPayload {
     pub working_directory: Option<String>,
 }
 
-
-
 /// Kitty scrollback incremental capture event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KittyScrollbackIncremental;
@@ -145,7 +139,7 @@ pub struct KittyScrollbackIncrementalPayload {
 }
 
 /// Kitty event source for comprehensive terminal monitoring
-/// 
+///
 /// Architecture:
 /// - Real-time command completion via shell integration (last_cmd_output)
 /// - Incremental scrollback capture (new lines only) as safety net
@@ -156,17 +150,12 @@ pub struct KittyEventSource {
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
     prompt_patterns: Vec<Regex>,
-    last_scrollback_line_counts: HashMap<String, u32>,  // Track line count per window
+    last_scrollback_line_counts: HashMap<String, u32>, // Track line count per window
     last_focused_tab: Option<String>,
     process_states: HashMap<String, KittyProcessInfo>,
     event_factory: EventFactory,
     operation_backoff: BackoffHelper,
 }
-
-
-
-
-
 
 impl KittyEventSource {
     pub fn new() -> Self {
@@ -191,17 +180,13 @@ impl KittyEventSource {
             // Basic bash/zsh prompts
             Regex::new(r"^\$ (.+)$").unwrap(),
             Regex::new(r"^# (.+)$").unwrap(),
-            
             // Starship prompt
             Regex::new(r"^❯ (.+)$").unwrap(),
-            
             // Oh-my-zsh variations
             Regex::new(r"^➜\s+[^\s]+\s+(.+)$").unwrap(),
             Regex::new(r"^.*%\s+(.+)$").unwrap(),
-            
             // Fish shell
             Regex::new(r"^.*>\s+(.+)$").unwrap(),
-            
             // Custom prompts with timestamps
             Regex::new(r"^\[\d{2}:\d{2}:\d{2}\].*\$\s+(.+)$").unwrap(),
         ]
@@ -228,31 +213,35 @@ impl KittyEventSource {
             }
         }
 
-        Err(ErrorContext::new(CoreError::Io("No accessible Kitty socket found".to_string()))
-            .with_operation("discover_kitty_socket")
-            .with_context("attempted_paths", format!("{:?}", socket_candidates))
-            .build())
+        Err(ErrorContext::new(CoreError::Io(
+            "No accessible Kitty socket found".to_string(),
+        ))
+        .with_operation("discover_kitty_socket")
+        .with_context("attempted_paths", format!("{:?}", socket_candidates))
+        .build())
     }
 
     async fn send_kitty_command(&self, command: serde_json::Value) -> Result<serde_json::Value> {
-        let socket_path = self.socket_path
-            .as_ref()
-            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("No Kitty socket configured".to_string()))
-                .with_operation("send_kitty_command")
-                .build())?;
+        let socket_path = self.socket_path.as_ref().ok_or_else(|| {
+            ErrorContext::new(CoreError::Configuration(
+                "No Kitty socket configured".to_string(),
+            ))
+            .with_operation("send_kitty_command")
+            .build()
+        })?;
 
-        let mut stream = UnixStream::connect(socket_path)
-            .await
-            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to connect to socket: {}", e)))
+        let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
+            ErrorContext::new(CoreError::Io(format!("Failed to connect to socket: {}", e)))
                 .with_operation("send_kitty_command")
                 .with_context("socket_path", socket_path)
-                .build())?;
+                .build()
+        })?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        
+
         stream.write_all(framed_cmd.as_bytes()).await?;
         stream.flush().await?;
 
@@ -260,61 +249,78 @@ impl KittyEventSource {
         stream.read_to_end(&mut response_buffer).await?;
 
         let response_buffer_len = response_buffer.len();
-        let response_str = String::from_utf8(response_buffer)
-            .map_err(|e| ErrorContext::new(CoreError::Serialization(format!("Invalid UTF-8 in response: {}", e)))
-                .with_operation("send_kitty_command")
-                .with_context("response_length", response_buffer_len.to_string())
-                .build())?;
+        let response_str = String::from_utf8(response_buffer).map_err(|e| {
+            ErrorContext::new(CoreError::Serialization(format!(
+                "Invalid UTF-8 in response: {}",
+                e
+            )))
+            .with_operation("send_kitty_command")
+            .with_context("response_length", response_buffer_len.to_string())
+            .build()
+        })?;
 
         // Extract JSON from framed response
         if let Some(start) = response_str.find('{') {
             if let Some(end) = response_str.rfind('}') {
                 let json_str = &response_str[start..=end];
-                return sinex_core::parse_json_value(json_str, "Kitty response", "send_kitty_command");
+                return sinex_core::parse_json_value(
+                    json_str,
+                    "Kitty response",
+                    "send_kitty_command",
+                );
             }
         }
 
-        Err(ErrorContext::new(CoreError::Serialization("Could not parse Kitty response as JSON".to_string()))
-            .with_operation("send_kitty_command")
-            .with_context("response_preview", response_str.chars().take(100).collect::<String>())
-            .build())
+        Err(ErrorContext::new(CoreError::Serialization(
+            "Could not parse Kitty response as JSON".to_string(),
+        ))
+        .with_operation("send_kitty_command")
+        .with_context(
+            "response_preview",
+            response_str.chars().take(100).collect::<String>(),
+        )
+        .build())
     }
 
-
-    async fn get_kitty_tabs_and_windows(&self) -> Result<(Vec<(String, String, u32, bool)>, Vec<KittyWindow>)> {
+    async fn get_kitty_tabs_and_windows(
+        &self,
+    ) -> Result<(Vec<(String, String, u32, bool)>, Vec<KittyWindow>)> {
         let ls_command = serde_json::json!({"cmd": "ls"});
         let response = self.send_kitty_command(ls_command).await?;
-        
+
         let mut tabs = Vec::new();
         let mut windows = Vec::new();
-        
+
         if let Some(tabs_array) = response.as_array() {
             for (tab_index, tab) in tabs_array.iter().enumerate() {
                 // Extract tab information
                 if let (Some(tab_id), Some(tab_title), Some(is_focused)) = (
                     tab.get("id").and_then(|i| i.as_i64()),
                     tab.get("title").and_then(|t| t.as_str()),
-                    tab.get("is_focused").and_then(|f| f.as_bool())
+                    tab.get("is_focused").and_then(|f| f.as_bool()),
                 ) {
                     let tab_id_str = tab_id.to_string();
                     tabs.push((
                         tab_id_str.clone(),
                         tab_title.to_string(),
                         tab_index as u32,
-                        is_focused
+                        is_focused,
                     ));
-                
+
                     // Extract windows from this tab
                     if let Some(tab_windows) = tab.get("windows").and_then(|w| w.as_array()) {
                         for window in tab_windows {
                             if let Some(id) = window.get("id").and_then(|i| i.as_i64()) {
                                 // Extract foreground processes if available
                                 let mut foreground_processes = Vec::new();
-                                if let Some(processes) = window.get("foreground_processes").and_then(|p| p.as_array()) {
+                                if let Some(processes) = window
+                                    .get("foreground_processes")
+                                    .and_then(|p| p.as_array())
+                                {
                                     for process in processes {
                                         if let (Some(pid), Some(name)) = (
                                             process.get("pid").and_then(|p| p.as_u64()),
-                                            process.get("name").and_then(|n| n.as_str())
+                                            process.get("name").and_then(|n| n.as_str()),
                                         ) {
                                             foreground_processes.push(KittyProcess {
                                                 pid: pid as u32,
@@ -323,12 +329,18 @@ impl KittyEventSource {
                                         }
                                     }
                                 }
-                                
+
                                 windows.push(KittyWindow {
                                     id,
-                                    cwd: window.get("cwd").and_then(|c| c.as_str()).map(String::from),
+                                    cwd: window
+                                        .get("cwd")
+                                        .and_then(|c| c.as_str())
+                                        .map(String::from),
                                     foreground_processes,
-                                    last_cmd_exit_status: window.get("last_cmd_exit_status").and_then(|s| s.as_i64()).map(|s| s as i32),
+                                    last_cmd_exit_status: window
+                                        .get("last_cmd_exit_status")
+                                        .and_then(|s| s.as_i64())
+                                        .map(|s| s as i32),
                                     parent_tab_id: tab_id_str.clone(),
                                 });
                             }
@@ -337,10 +349,9 @@ impl KittyEventSource {
                 }
             }
         }
-        
+
         Ok((tabs, windows))
     }
-
 
     async fn get_last_command_output(&self, window_id: &str) -> Result<String> {
         self.get_kitty_text(window_id, "last_cmd_output").await
@@ -354,17 +365,24 @@ impl KittyEventSource {
         });
 
         let response = self.send_kitty_command(get_text_command).await?;
-        
+
         if let Some(text) = response.get("text").and_then(|t| t.as_str()) {
             Ok(text.to_string())
         } else {
-            Err(sinex_core::CoreError::Other(format!("No text content in Kitty response for extent: {}", extent)))
+            Err(sinex_core::CoreError::Other(format!(
+                "No text content in Kitty response for extent: {}",
+                extent
+            )))
         }
     }
 
-    async fn process_window_commands(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
+    async fn process_window_commands(
+        &mut self,
+        window: &KittyWindow,
+        tx: &EventSender,
+    ) -> Result<()> {
         let window_id = window.id.to_string();
-        
+
         // Process changed if foreground processes changed
         if let Some(current_process) = window.foreground_processes.first() {
             let current_process_info = KittyProcessInfo {
@@ -373,15 +391,18 @@ impl KittyEventSource {
                 cmdline: None, // Would need additional call to get cmdline
                 parent_pid: None,
             };
-            
-            let process_changed = self.process_states
+
+            let process_changed = self
+                .process_states
                 .get(&window_id)
-                .map(|prev| prev.pid != current_process_info.pid || prev.name != current_process_info.name)
+                .map(|prev| {
+                    prev.pid != current_process_info.pid || prev.name != current_process_info.name
+                })
                 .unwrap_or(true);
-            
+
             if process_changed {
                 let previous_process = self.process_states.get(&window_id).cloned();
-                
+
                 let process_payload = KittyProcessChangedPayload {
                     kitty_window_id: window_id.clone(),
                     kitty_tab_id: window.parent_tab_id.clone(),
@@ -390,35 +411,40 @@ impl KittyEventSource {
                     change_timestamp: chrono::Utc::now().to_rfc3339(),
                     working_directory: window.cwd.clone(),
                 };
-                
-                let process_event = self.event_factory.create_event(
-                    "process.changed",
-                    serde_json::to_value(process_payload)?,
-                );
-                
-                tx.send_or_log(process_event, "kitty_process_changed").await?;
-                
+
+                let process_event = self
+                    .event_factory
+                    .create_event("process.changed", serde_json::to_value(process_payload)?);
+
+                tx.send_or_log(process_event, "kitty_process_changed")
+                    .await?;
+
                 // Update stored process state
-                self.process_states.insert(window_id.clone(), current_process_info);
+                self.process_states
+                    .insert(window_id.clone(), current_process_info);
             }
         }
-        
+
         // Try to get last command output using shell integration
         if let Ok(last_output) = self.get_last_command_output(&window_id).await {
             if !last_output.trim().is_empty() {
-                let window_state = self.window_states
-                    .entry(window_id.clone())
-                    .or_insert_with(|| KittyWindowState {
-                        tab_id: window.parent_tab_id.clone(),
-                        last_command: None,
-                        last_prompt_time: None,
-                    });
-                
+                let window_state =
+                    self.window_states
+                        .entry(window_id.clone())
+                        .or_insert_with(|| KittyWindowState {
+                            tab_id: window.parent_tab_id.clone(),
+                            last_command: None,
+                            last_prompt_time: None,
+                        });
+
                 // Always capture command output - no deduplication
                 if !last_output.trim().is_empty() {
                     // Try to extract command from the output (look for prompt patterns)
-                    let extracted_command = KittyEventSource::extract_command_from_output(&self.prompt_patterns, &last_output);
-                    
+                    let extracted_command = KittyEventSource::extract_command_from_output(
+                        &self.prompt_patterns,
+                        &last_output,
+                    );
+
                     if let Some(command_text) = extracted_command {
                         // Create command completion event with both command and output
                         let completion_payload = KittyCommandCompletedPayload {
@@ -434,14 +460,15 @@ impl KittyEventSource {
                             shell_integration_used: true,
                             completion_timestamp: chrono::Utc::now().to_rfc3339(),
                         };
-                        
+
                         let completion_event = self.event_factory.create_event(
                             "command.completed",
                             serde_json::to_value(completion_payload)?,
                         );
-                        
-                        tx.send_or_log(completion_event, "kitty_command_completed").await?;
-                        
+
+                        tx.send_or_log(completion_event, "kitty_command_completed")
+                            .await?;
+
                         // Update state
                         window_state.last_command = Some(command_text);
                         window_state.last_prompt_time = Some(SystemTime::now());
@@ -449,14 +476,14 @@ impl KittyEventSource {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn extract_command_from_output(prompt_patterns: &[Regex], output: &str) -> Option<String> {
         // Look for the last prompt line in the output to extract command
         let lines: Vec<&str> = output.lines().collect();
-        
+
         // Search from the end for a prompt pattern
         for line in lines.iter().rev() {
             for pattern in prompt_patterns {
@@ -470,20 +497,23 @@ impl KittyEventSource {
                 }
             }
         }
-        
+
         None
     }
 
-
-    async fn process_tab_focus_changes(&mut self, tabs: Vec<(String, String, u32, bool)>, tx: &EventSender) -> Result<()> {
+    async fn process_tab_focus_changes(
+        &mut self,
+        tabs: Vec<(String, String, u32, bool)>,
+        tx: &EventSender,
+    ) -> Result<()> {
         let timestamp = chrono::Utc::now().to_rfc3339();
-        
+
         // Check for focus changes - just emit events when focus changes
         let current_focused = tabs.iter().find(|(_, _, _, is_focused)| *is_focused);
         if let Some((focused_tab_id, title, index, _)) = current_focused {
             if self.last_focused_tab.as_ref() != Some(focused_tab_id) {
                 let previous_tab_id = self.last_focused_tab.clone();
-                
+
                 // Emit tab focused event
                 let tab_focused_payload = KittyTabFocusedPayload {
                     kitty_tab_id: focused_tab_id.clone(),
@@ -493,36 +523,41 @@ impl KittyEventSource {
                     previous_tab_id,
                     focus_timestamp: timestamp,
                 };
-                
-                let tab_focused_event = self.event_factory.create_event(
-                    "tab.focused",
-                    serde_json::to_value(tab_focused_payload)?,
-                );
-                
-                tx.send_or_log(tab_focused_event, "kitty_tab_focused").await?;
-                
+
+                let tab_focused_event = self
+                    .event_factory
+                    .create_event("tab.focused", serde_json::to_value(tab_focused_payload)?);
+
+                tx.send_or_log(tab_focused_event, "kitty_tab_focused")
+                    .await?;
+
                 // Update last focused tab
                 self.last_focused_tab = Some(focused_tab_id.clone());
             }
         }
-        
+
         Ok(())
     }
 
-    async fn capture_incremental_scrollback(&mut self, window: &KittyWindow, tx: &EventSender) -> Result<()> {
+    async fn capture_incremental_scrollback(
+        &mut self,
+        window: &KittyWindow,
+        tx: &EventSender,
+    ) -> Result<()> {
         let window_id = window.id.to_string();
-        
+
         // Get current scrollback content
         let scrollback = self.get_kitty_text(&window_id, "all").await?;
         let current_lines: Vec<&str> = scrollback.lines().collect();
         let current_line_count = current_lines.len() as u32;
-        
+
         // Get previous line count for this window
-        let previous_line_count = self.last_scrollback_line_counts
+        let previous_line_count = self
+            .last_scrollback_line_counts
             .get(&window_id)
             .copied()
             .unwrap_or(0);
-        
+
         // Only capture if we have new lines
         if current_line_count > previous_line_count {
             let new_line_start = previous_line_count as usize;
@@ -530,7 +565,7 @@ impl KittyEventSource {
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            
+
             let incremental_payload = KittyScrollbackIncrementalPayload {
                 kitty_window_id: window_id.clone(),
                 new_lines,
@@ -543,14 +578,20 @@ impl KittyEventSource {
                 serde_json::to_value(incremental_payload)?,
             );
 
-            tx.send_or_log(scrollback_event, "kitty_scrollback_incremental").await?;
-            
-            tracing::debug!("Captured {} new lines for window {}", current_line_count - previous_line_count, window_id);
+            tx.send_or_log(scrollback_event, "kitty_scrollback_incremental")
+                .await?;
+
+            tracing::debug!(
+                "Captured {} new lines for window {}",
+                current_line_count - previous_line_count,
+                window_id
+            );
         }
-        
+
         // Update stored line count for this window
-        self.last_scrollback_line_counts.insert(window_id, current_line_count);
-        
+        self.last_scrollback_line_counts
+            .insert(window_id, current_line_count);
+
         Ok(())
     }
 }
@@ -568,10 +609,13 @@ impl EventSource for KittyEventSource {
         Self: Sized,
     {
         let mut source = Self::new();
-        
+
         // Try to discover Kitty socket
         if let Err(e) = source.discover_kitty_socket().await {
-            tracing::warn!("Failed to discover Kitty socket: {}. Kitty monitoring will be limited.", e);
+            tracing::warn!(
+                "Failed to discover Kitty socket: {}. Kitty monitoring will be limited.",
+                e
+            );
         } else {
             tracing::info!("Kitty socket discovered at: {:?}", source.socket_path);
         }
@@ -585,7 +629,6 @@ impl EventSource for KittyEventSource {
             return Ok(());
         }
 
-
         let mut last_scrollback_capture = SystemTime::now();
         let scrollback_interval = timeouts::KITTY_SCROLLBACK_INTERVAL; // 3 minute intervals for incremental scrollback
 
@@ -596,36 +639,48 @@ impl EventSource for KittyEventSource {
                     if let Err(e) = self.process_tab_focus_changes(tabs, &tx).await {
                         tracing::error!("Failed to process tab focus changes: {}", e);
                     }
-                    
+
                     // Process windows
                     for window in windows {
                         // Process command completions (real-time with shell integration)
                         if let Err(e) = self.process_window_commands(&window, &tx).await {
                             tracing::error!("Failed to process window {}: {}", window.id, e);
                         }
-                        
+
                         // Capture incremental scrollback every 3 minutes (safety net)
-                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
-                            if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await {
-                                tracing::error!("Failed to capture incremental scrollback for window {}: {}", window.id, e);
+                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
+                            >= scrollback_interval
+                        {
+                            if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await
+                            {
+                                tracing::error!(
+                                    "Failed to capture incremental scrollback for window {}: {}",
+                                    window.id,
+                                    e
+                                );
                             }
                         }
                     }
-                    
+
                     // Update scrollback capture timestamp
-                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
+                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
+                        >= scrollback_interval
+                    {
                         last_scrollback_capture = SystemTime::now();
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to get Kitty windows (current backoff: {:?}): {}", 
-                                   self.operation_backoff.current_delay(), e);
-                    
+                    tracing::error!(
+                        "Failed to get Kitty windows (current backoff: {:?}): {}",
+                        self.operation_backoff.current_delay(),
+                        e
+                    );
+
                     // Try to rediscover socket
                     if let Err(rediscover_err) = self.discover_kitty_socket().await {
                         tracing::warn!("Failed to rediscover Kitty socket: {}", rediscover_err);
                     }
-                    
+
                     // Use exponential backoff for failures
                     self.operation_backoff.wait().await;
                     continue; // Skip the normal sleep

@@ -1,10 +1,10 @@
+use crate::config_utils::resolve_system_safe_path;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 use tracing::{info, warn};
-use crate::config_utils::resolve_system_safe_path;
 
 /// Direct configuration structure that matches NixOS module options
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,27 +122,43 @@ fn default_compression() -> String {
 
 impl NixosConfig {
     /// Load configuration from file (TOML format)
+
     pub fn load_from_file(path: &PathBuf) -> Result<Self> {
         // Security: Validate path is not a symlink attack
         let metadata = std::fs::symlink_metadata(path)
             .with_context(|| format!("Cannot read metadata for config file: {}", path.display()))?;
-        
+
         if metadata.file_type().is_symlink() {
             // Resolve symlink and validate target is within allowed directories
-            let canonical_path = path.canonicalize()
-                .with_context(|| format!("Cannot resolve symlink target for config file: {}", path.display()))?;
-            
+            let canonical_path = path.canonicalize().with_context(|| {
+                format!(
+                    "Cannot resolve symlink target for config file: {}",
+                    path.display()
+                )
+            })?;
+
             // Validate canonical path is a regular file
-            let canonical_metadata = std::fs::metadata(&canonical_path)
-                .with_context(|| format!("Cannot read canonical path metadata: {}", canonical_path.display()))?;
-            
+            let canonical_metadata = std::fs::metadata(&canonical_path).with_context(|| {
+                format!(
+                    "Cannot read canonical path metadata: {}",
+                    canonical_path.display()
+                )
+            })?;
+
             if !canonical_metadata.is_file() {
-                return Err(anyhow!("Config symlink target is not a regular file: {}", canonical_path.display()));
+                return Err(anyhow!(
+                    "Config symlink target is not a regular file: {}",
+                    canonical_path.display()
+                ));
             }
-            
-            warn!("Loading config from symlink: {} -> {}", path.display(), canonical_path.display());
+
+            warn!(
+                "Loading config from symlink: {} -> {}",
+                path.display(),
+                canonical_path.display()
+            );
         }
-        
+
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
@@ -156,6 +172,7 @@ impl NixosConfig {
     }
 
     /// Validate configuration
+
     pub fn validate(&self) -> Result<()> {
         // Require git-annex repository path
         if self.collector.annex_repo_path.is_empty() {
@@ -208,6 +225,7 @@ impl NixosConfig {
     }
 
     /// Convert to CollectorConfig format
+
     pub fn to_collector_config(&self) -> Result<super::CollectorConfig> {
         let mut enabled_events = Vec::new();
         let event_config = HashMap::new();
@@ -249,11 +267,7 @@ impl NixosConfig {
         }
 
         if self.event_sources.clipboard {
-            enabled_events.extend(
-                ["copied", "selected"]
-                .iter()
-                .map(|s| s.to_string()),
-            );
+            enabled_events.extend(["copied", "selected"].iter().map(|s| s.to_string()));
         }
 
         if self.event_sources.system_events {
@@ -377,10 +391,7 @@ impl NixosConfig {
     ) -> Result<()> {
         // Auto-discover Atuin database
         if let Ok(atuin_config) = self.auto_discover_atuin_config() {
-            flat_config.insert(
-                "event.command_imported".to_string(),
-                atuin_config,
-            );
+            flat_config.insert("event.command_imported".to_string(), atuin_config);
         }
 
         // Auto-discover Kitty socket
@@ -394,8 +405,16 @@ impl NixosConfig {
         shell_config.insert(
             "history_files".to_string(),
             sinex_core::ConfigValue::Array(vec![
-                sinex_core::ConfigValue::String(resolve_system_safe_path("~/.zsh_history", Some("ZSH_HISTORY_FILE"), "/var/lib/sinex/shell")),
-                sinex_core::ConfigValue::String(resolve_system_safe_path("~/.bash_history", Some("BASH_HISTORY_FILE"), "/var/lib/sinex/shell")),
+                sinex_core::ConfigValue::String(resolve_system_safe_path(
+                    "~/.zsh_history",
+                    Some("ZSH_HISTORY_FILE"),
+                    "/var/lib/sinex/shell",
+                )),
+                sinex_core::ConfigValue::String(resolve_system_safe_path(
+                    "~/.bash_history",
+                    Some("BASH_HISTORY_FILE"),
+                    "/var/lib/sinex/shell",
+                )),
             ]),
         );
         shell_config.insert(
@@ -570,6 +589,7 @@ impl NixosConfig {
         ]
     }
 
+
     fn auto_discover_atuin_config(&self) -> Result<sinex_core::ConfigValue> {
         let home = std::env::var("HOME").context("HOME environment variable not set")?;
         let possible_paths = [
@@ -604,6 +624,7 @@ impl NixosConfig {
 
         Ok(sinex_core::ConfigValue::Table(config))
     }
+
 
     fn auto_discover_kitty_config(&self) -> Result<sinex_core::ConfigValue> {
         let default_tmp_dir = env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -645,6 +666,7 @@ impl NixosConfig {
         Ok(sinex_core::ConfigValue::Table(config))
     }
 
+
     fn parse_blob_threshold(&self) -> Result<u64> {
         let threshold = &self.collector.blob_threshold;
         if let Some(size_str) = threshold.strip_suffix("MB") {
@@ -668,6 +690,7 @@ impl NixosConfig {
                 .context("Invalid blob threshold format (expected number with MB/KB/GB suffix)")
         }
     }
+
 
     fn parse_retention_period(&self, retention: &str) -> Result<chrono::Duration> {
         if let Some(days_str) = retention.strip_suffix("d") {

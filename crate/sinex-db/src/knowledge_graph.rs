@@ -1,4 +1,4 @@
-use crate::models::{Entity, EntityRelation, CreateEntityInput, CreateRelationInput};
+use crate::models::{CreateEntityInput, CreateRelationInput, Entity, EntityRelation};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
 use anyhow::Result;
@@ -11,7 +11,7 @@ pub async fn create_entity(pool: DbPoolRef<'_>, input: CreateEntityInput) -> Res
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let canonical_name = input.canonical_name.unwrap_or_else(|| input.name.clone());
     let aliases = input.aliases.unwrap_or_default();
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO core.entities (
@@ -54,13 +54,16 @@ pub async fn create_entity(pool: DbPoolRef<'_>, input: CreateEntityInput) -> Res
 }
 
 /// Create a new entity relation
-pub async fn create_relation(pool: DbPoolRef<'_>, input: CreateRelationInput) -> Result<EntityRelation> {
+pub async fn create_relation(
+    pool: DbPoolRef<'_>,
+    input: CreateRelationInput,
+) -> Result<EntityRelation> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let from_uuid: Uuid = ulid_to_uuid(input.from_entity_id);
     let to_uuid: Uuid = ulid_to_uuid(input.to_entity_id);
     let valid_from = input.valid_from.unwrap_or_else(Utc::now);
     let created_from_event_uuid: Option<Uuid> = input.created_from_event_id.map(ulid_to_uuid);
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO core.entity_relations (
@@ -108,7 +111,7 @@ pub async fn create_relation(pool: DbPoolRef<'_>, input: CreateRelationInput) ->
 /// Get entity by ID
 pub async fn get_entity_by_id(pool: DbPoolRef<'_>, entity_id: Ulid) -> Result<Option<Entity>> {
     let entity_uuid: Uuid = ulid_to_uuid(entity_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -145,7 +148,11 @@ pub async fn get_entity_by_id(pool: DbPoolRef<'_>, entity_id: Ulid) -> Result<Op
 }
 
 /// Get entities by type
-pub async fn get_entities_by_type(pool: DbPoolRef<'_>, entity_type: &str, limit: i64) -> Result<Vec<Entity>> {
+pub async fn get_entities_by_type(
+    pool: DbPoolRef<'_>,
+    entity_type: &str,
+    limit: i64,
+) -> Result<Vec<Entity>> {
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -190,9 +197,12 @@ pub async fn get_entities_by_type(pool: DbPoolRef<'_>, entity_type: &str, limit:
 }
 
 /// Get relations for an entity
-pub async fn get_entity_relations(pool: DbPoolRef<'_>, entity_id: Ulid) -> Result<Vec<EntityRelation>> {
+pub async fn get_entity_relations(
+    pool: DbPoolRef<'_>,
+    entity_id: Ulid,
+) -> Result<Vec<EntityRelation>> {
     let entity_uuid: Uuid = ulid_to_uuid(entity_id);
-    
+
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -236,9 +246,12 @@ pub async fn get_entity_relations(pool: DbPoolRef<'_>, entity_id: Ulid) -> Resul
 }
 
 /// Get relation by ID
-pub async fn get_relation_by_id(pool: DbPoolRef<'_>, relation_id: Ulid) -> Result<Option<EntityRelation>> {
+pub async fn get_relation_by_id(
+    pool: DbPoolRef<'_>,
+    relation_id: Ulid,
+) -> Result<Option<EntityRelation>> {
     let relation_uuid: Uuid = ulid_to_uuid(relation_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -275,9 +288,13 @@ pub async fn get_relation_by_id(pool: DbPoolRef<'_>, relation_id: Ulid) -> Resul
 }
 
 /// Search entities by name or canonical name
-pub async fn search_entities(pool: DbPoolRef<'_>, search_term: &str, limit: i64) -> Result<Vec<Entity>> {
+pub async fn search_entities(
+    pool: DbPoolRef<'_>,
+    search_term: &str,
+    limit: i64,
+) -> Result<Vec<Entity>> {
     let search_pattern = format!("%{}%", search_term);
-    
+
     let records = sqlx::query!(
         r#"
         SELECT 

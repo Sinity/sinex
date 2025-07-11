@@ -1,5 +1,5 @@
-pub mod channel_helpers;
 pub mod channel_enhancements;
+pub mod channel_helpers;
 pub mod chunking;
 pub mod config_extractors;
 pub mod config_helpers;
@@ -11,11 +11,11 @@ pub mod event;
 pub mod event_pipeline;
 pub mod event_registry_macro;
 pub mod event_source_base;
-pub mod pipeline_integration;
 pub mod event_source_context;
 pub mod file_watcher;
 pub mod heartbeat;
 pub mod json_helpers;
+pub mod pipeline_integration;
 pub mod retry_helpers;
 pub mod sqlite_helpers;
 pub mod timestamp_helpers;
@@ -26,6 +26,10 @@ pub mod validation;
 pub mod validation_chains;
 pub mod wait_helpers;
 
+pub use channel_enhancements::{
+    create_enhanced_event_sender, BatchSendResult, ChannelDiagnostics, ChannelHealthReport,
+    DiagnosticsReport, EnhancedEventSender, PerformanceMetrics, PerformanceTracker,
+};
 pub use channel_helpers::{
     BackpressureManager, // MonitoredEventSender, monitored_channel temporarily removed due to RawEvent move
     ChannelMonitor,
@@ -33,77 +37,72 @@ pub use channel_helpers::{
     ChannelSenderExt,
     ChannelStats,
 };
-pub use channel_enhancements::{
-    EnhancedEventSender, PerformanceTracker, PerformanceMetrics, 
-    BatchSendResult, ChannelHealthReport, ChannelDiagnostics, 
-    DiagnosticsReport, create_enhanced_event_sender
-};
-pub use chunking::{
-    ChunkingConfig, ChunkingService, ContentChunk, ChunkInfo,
-};
+pub use chunking::{ChunkInfo, ChunkingConfig, ChunkingService, ContentChunk};
 pub use config_extractors::{parse_duration, ConfigExtractor, ConfigValidator};
 pub use config_helpers::{
-    ConfigFactory, ConfigExtraction, ConfigMerger, 
-    DatabaseConfig, CollectorConfig, ObservabilityConfig, SourcesConfig
+    CollectorConfig, ConfigExtraction, ConfigFactory, ConfigMerger, DatabaseConfig,
+    ObservabilityConfig, SourcesConfig,
 };
-pub use constants::{timeouts, limits, buffers, retry, filesystem};
-pub use directory_manager::{DirectoryManager, DirectoryConfig};
+pub use constants::{buffers, filesystem, limits, retry, timeouts};
+pub use directory_manager::{DirectoryConfig, DirectoryManager};
 pub use error_context::{ErrorContext, ErrorInfo, ResultExt};
+pub use sinex_events::{
+    ClipboardEventBuilder, EventFactory, FilesystemEventBuilder, SystemEventBuilder,
+    TerminalEventBuilder, WindowManagerEventBuilder,
+};
 pub use sinex_macros::with_context;
-pub use sinex_events::{EventFactory, FilesystemEventBuilder, TerminalEventBuilder, ClipboardEventBuilder, WindowManagerEventBuilder, SystemEventBuilder};
 // Re-export strongly typed events from sinex-events crate
 pub use sinex_events::{
-    EnforcedTypedEventSource, TypedEventPipelineAdapter, TypedEventError, TypedEventResult,
-    EventEnvelope, TypedRawEvent, TypedEventBuilder, TypedEventSender, TypedEventReceiver, typed_event_channel,
-    FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload, DirCreatedPayload, DirDeletedPayload,
-    CommandExecutedPayload, CommandCompletedPayload, SessionStartedPayload, SessionEndedPayload,
-    ClipboardCopiedPayload, ClipboardSelectedPayload, WindowOpenedPayload, WindowClosedPayload,
-    WindowFocusedPayload, WorkspaceSwitchedPayload, JournalEntryPayload, SystemStatePayload,
-    TypedToJsonAdapter,
+    typed_event_channel, ClipboardCopiedPayload, ClipboardSelectedPayload, CommandCompletedPayload,
+    CommandExecutedPayload, DirCreatedPayload, DirDeletedPayload, EnforcedTypedEventSource,
+    EventEnvelope, FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
+    JournalEntryPayload, SessionEndedPayload, SessionStartedPayload, SystemStatePayload,
+    TypedEventBuilder, TypedEventError, TypedEventPipelineAdapter, TypedEventReceiver,
+    TypedEventResult, TypedEventSender, TypedRawEvent, TypedToJsonAdapter, WindowClosedPayload,
+    WindowFocusedPayload, WindowOpenedPayload, WorkspaceSwitchedPayload,
 };
 // Note: TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder from strongly_typed_events
 // have different signatures than the ones in unified_event_source.rs - they are separate builders for different purposes
 // Note: TypedSourceAdapter was removed from strongly_typed_events to avoid circular dependency
 pub use event_pipeline::{
-    EventPipeline, PipelineConfig, PipelineStage, StagedEvent, StageResult, StageMetrics, 
-    EventTiming, PipelineMetrics, ValidationStage, EnrichmentStage, StorageStage, DistributionStage,
-    StageTimeouts
+    DistributionStage, EnrichmentStage, EventPipeline, EventTiming, PipelineConfig,
+    PipelineMetrics, PipelineStage, StageMetrics, StageResult, StageTimeouts, StagedEvent,
+    StorageStage, ValidationStage,
 };
-pub use pipeline_integration::{PipelineAwareCollector, PipelineCollectorBuilder};
 pub use event_source_base::EventSourceBase;
 pub use event_source_context::EventSourceContext;
 pub use file_watcher::{
-    FileWatcher, FileWatcherBuilder, FileWatcherConfig, FileChangeEvent, FileChangeKind,
+    FileChangeEvent, FileChangeKind, FileWatcher, FileWatcherBuilder, FileWatcherConfig,
 };
 pub use heartbeat::{
     ComponentHeartbeat, HealthStatus, HeartbeatEmitter, MetricsProvider, SystemHealth,
 };
 pub use json_helpers::{
-    parse_json, parse_json_file, parse_json_value, extract_field, to_json_value,
+    extract_field, parse_json, parse_json_file, parse_json_value, to_json_value,
 };
+pub use pipeline_integration::{PipelineAwareCollector, PipelineCollectorBuilder};
 pub use retry_helpers::{
-    retry_async, retry_simple, retry_with_predicate, RetryConfig, RetryBuilder,
+    retry_async, retry_simple, retry_with_predicate, RetryBuilder, RetryConfig,
 };
 pub use sqlite_helpers::{
-    SqliteConnection, SqliteStatementExt, SqliteQueryBuilder, QueryResultExt,
+    QueryResultExt, SqliteConnection, SqliteQueryBuilder, SqliteStatementExt,
 };
 pub use timestamp_helpers::{
-    timestamp_to_datetime, timestamp_with_nanos_to_datetime, timestamp_millis_to_datetime,
-    timestamp_micros_to_datetime, timestamp_nanos_to_datetime, parse_flexible_timestamp,
+    parse_flexible_timestamp, timestamp_micros_to_datetime, timestamp_millis_to_datetime,
+    timestamp_nanos_to_datetime, timestamp_to_datetime, timestamp_with_nanos_to_datetime,
 };
 pub use unified_collector::{EventOutput, EventSource, EventType};
 pub use unified_event_source::{
-    UnifiedEventSource, 
-    TypedFilesystemEventBuilder, TypedTerminalEventBuilder, TypedClipboardEventBuilder,
-    TypedWindowManagerEventBuilder, TypedSystemEventBuilder
+    TypedClipboardEventBuilder, TypedFilesystemEventBuilder, TypedSystemEventBuilder,
+    TypedTerminalEventBuilder, TypedWindowManagerEventBuilder, UnifiedEventSource,
 };
+pub use validation::{contains_shell_metacharacters, validate_path_within_root};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
-pub use validation::{validate_path_within_root, contains_shell_metacharacters};
 pub use wait_helpers::{
+    wait_for_agent_status, wait_for_condition, wait_for_condition_or_timeout,
     wait_for_database_ready, wait_for_database_ready_with_timeout, wait_for_event_count,
-    wait_for_worker_status, wait_for_work_queue_count, wait_for_work_queue_status_count,
-    wait_for_work_queue_empty, wait_for_agent_status, wait_for_condition, 
-    wait_for_condition_or_timeout, BackoffHelper
+    wait_for_work_queue_count, wait_for_work_queue_empty, wait_for_work_queue_status_count,
+    wait_for_worker_status, BackoffHelper,
 };
 
 // Re-export constants modules - note: modules are defined later in this file
@@ -226,7 +225,6 @@ pub mod sources {
     pub const CLIPBOARD: &str = "clipboard";
     pub const DBUS: &str = "dbus";
     pub const JOURNALD: &str = "journald";
-    
 }
 
 /// Common event type constants
@@ -279,7 +277,6 @@ pub mod event_type_constants {
         pub const DISPLAY_DISCONNECTED: &str = "display.disconnected";
         pub const MONITOR_FOCUSED: &str = "monitor.focused";
         pub const STATE_CAPTURED: &str = "state.captured";
-        
     }
 
     pub mod clipboard {

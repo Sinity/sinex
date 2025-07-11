@@ -1,12 +1,12 @@
 //! # RPC Server Request/Response Handler Tests
-//! 
+//!
 //! Comprehensive tests for the sinex-host JSON-RPC server that verify end-to-end
 //! request/response handling including serialization, method routing, error handling,
 //! and JSON-RPC 2.0 specification compliance.
 
 use crate::common::prelude::*;
-use sinex_host::service_container::ServiceContainer;
 use serde_json::{json, Value};
+use sinex_host::service_container::ServiceContainer;
 
 /// JSON-RPC 2.0 request structure for test requests
 #[derive(Debug, Clone, serde::Serialize)]
@@ -62,9 +62,21 @@ async fn create_test_events_for_analytics(pool: &DbPool) -> TestResult {
     let test_events = vec![
         ("fs", "file.created", json!({"path": "/test1.txt"})),
         ("fs", "file.modified", json!({"path": "/test2.txt"})),
-        ("shell.kitty", "command.executed", json!({"command": "ls -la"})),
-        ("shell.kitty", "command.executed", json!({"command": "git status"})),
-        ("wm.hyprland", "window.opened", json!({"window_title": "Browser"})),
+        (
+            "shell.kitty",
+            "command.executed",
+            json!({"command": "ls -la"}),
+        ),
+        (
+            "shell.kitty",
+            "command.executed",
+            json!({"command": "git status"}),
+        ),
+        (
+            "wm.hyprland",
+            "window.opened",
+            json!({"window_title": "Browser"}),
+        ),
         ("clipboard", "copied", json!({"content": "test content"})),
     ];
 
@@ -81,17 +93,29 @@ async fn create_test_events_for_analytics(pool: &DbPool) -> TestResult {
 /// Create test events for search testing
 async fn create_test_events_for_search(pool: &DbPool) -> TestResult {
     let test_events = vec![
-        ("fs", "file.created", json!({
-            "path": "/home/user/important.txt",
-            "content": "This contains secret information"
-        })),
-        ("shell.kitty", "command.executed", json!({
-            "command": "grep -r secret .",
-            "output": "Found secret files"
-        })),
-        ("clipboard", "copied", json!({
-            "content": "password123"
-        })),
+        (
+            "fs",
+            "file.created",
+            json!({
+                "path": "/home/user/important.txt",
+                "content": "This contains secret information"
+            }),
+        ),
+        (
+            "shell.kitty",
+            "command.executed",
+            json!({
+                "command": "grep -r secret .",
+                "output": "Found secret files"
+            }),
+        ),
+        (
+            "clipboard",
+            "copied",
+            json!({
+                "content": "password123"
+            }),
+        ),
     ];
 
     for (source, event_type, payload) in test_events {
@@ -112,46 +136,64 @@ async fn invoke_rpc_method(
     params: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use sinex_host::handlers::*;
-    
+
     match method {
         "analytics.event_count_by_source" => {
-            handle_event_count_by_source(services.analytics.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
+            handle_event_count_by_source(services.analytics.as_ref(), params)
+                .await
+                .map_err(|e| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                        as Box<dyn std::error::Error>
+                })
         }
         "analytics.activity_heatmap" => {
-            handle_activity_heatmap(services.analytics.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
+            handle_activity_heatmap(services.analytics.as_ref(), params)
+                .await
+                .map_err(|e| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                        as Box<dyn std::error::Error>
+                })
         }
-        "search.search_events" => {
-            handle_search_events(services.search.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        "pkm.create_note" => {
-            handle_create_note(services.pkm.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        "pkm.create_entities_from_list" => {
-            handle_create_entities(services.pkm.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        "pkm.link_entities" => {
-            handle_link_entities(services.pkm.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        "content.store_blob" => {
-            handle_store_blob(services.content.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        "content.retrieve_blob" => {
-            handle_retrieve_blob(services.content.as_ref(), params).await
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
-        }
-        _ => {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Method not found: {}", method)
-            )))
-        }
+        "search.search_events" => handle_search_events(services.search.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        "pkm.create_note" => handle_create_note(services.pkm.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        "pkm.create_entities_from_list" => handle_create_entities(services.pkm.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        "pkm.link_entities" => handle_link_entities(services.pkm.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        "content.store_blob" => handle_store_blob(services.content.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            }),
+        _ => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Method not found: {}", method),
+        ))),
     }
 }
 
@@ -159,10 +201,13 @@ async fn invoke_rpc_method(
 async fn create_test_services() -> Result<ServiceContainer, Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-    
+
     ServiceContainer::new(Some(database_url))
         .await
-        .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)
+        .map_err(|e| {
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                as Box<dyn std::error::Error>
+        })
 }
 
 /// Simulate a JSON-RPC request/response cycle
@@ -199,10 +244,7 @@ async fn test_analytics_event_count_by_source_success(ctx: TestContext) -> TestR
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
-    let request = JsonRpcRequest::new(
-        "analytics.event_count_by_source",
-        json!({ "days_back": 1 })
-    );
+    let request = JsonRpcRequest::new("analytics.event_count_by_source", json!({ "days_back": 1 }));
 
     let response = simulate_rpc_request(&services, request).await;
 
@@ -215,7 +257,7 @@ async fn test_analytics_event_count_by_source_success(ctx: TestContext) -> TestR
     // Verify response structure
     let result = response.result.unwrap();
     assert!(result.is_object());
-    
+
     let counts = result.as_object().unwrap();
     assert!(counts.contains_key("fs"));
     assert!(counts.contains_key("shell.kitty"));
@@ -241,7 +283,7 @@ async fn test_analytics_event_count_by_source_defaults(ctx: TestContext) -> Test
 
     assert!(response.error.is_none());
     assert!(response.result.is_some());
-    
+
     let result = response.result.unwrap();
     assert!(result.is_object());
 
@@ -258,7 +300,7 @@ async fn test_analytics_activity_heatmap_success(ctx: TestContext) -> TestResult
         json!({
             "bucket_size_minutes": 60,
             "limit": 10
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -294,7 +336,7 @@ async fn test_search_events_success(ctx: TestContext) -> TestResult {
             "end_time": null,
             "limit": 10,
             "offset": 0
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -307,7 +349,7 @@ async fn test_search_events_success(ctx: TestContext) -> TestResult {
     // Verify search results structure
     let result = response.result.unwrap();
     assert!(result.is_array());
-    
+
     let results = result.as_array().unwrap();
     assert!(!results.is_empty());
 
@@ -339,7 +381,7 @@ async fn test_search_events_with_filters(ctx: TestContext) -> TestResult {
             "end_time": null,
             "limit": 5,
             "offset": 0
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -349,7 +391,7 @@ async fn test_search_events_with_filters(ctx: TestContext) -> TestResult {
 
     let result = response.result.unwrap();
     let results = result.as_array().unwrap();
-    
+
     // Verify all results match the filters
     for result_item in results {
         assert_eq!(result_item["source"].as_str().unwrap(), "fs");
@@ -369,7 +411,7 @@ async fn test_search_events_invalid_params(ctx: TestContext) -> TestResult {
         json!({
             "invalid_field": "value",
             "limit": "not_a_number"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -393,7 +435,7 @@ async fn test_search_events_invalid_params(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_pkm_create_note_success(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
-    
+
     // Create a test event to annotate
     let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
         .with_host("test-host")
@@ -408,7 +450,7 @@ async fn test_pkm_create_note_success(ctx: TestContext) -> TestResult {
             "content": "This is a test note",
             "tags": ["test", "important"],
             "created_by": "test-user"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -421,7 +463,7 @@ async fn test_pkm_create_note_success(ctx: TestContext) -> TestResult {
     // Verify annotation ID returned
     let result = response.result.unwrap();
     assert!(result["annotation_id"].is_string());
-    
+
     let annotation_id_str = result["annotation_id"].as_str().unwrap();
     assert!(Ulid::from_str(annotation_id_str).is_ok());
 
@@ -437,7 +479,7 @@ async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> TestResult {
         json!({
             "content": "This is a test note",
             "tags": ["test"]
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -454,7 +496,7 @@ async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
-    
+
     let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
         .with_host("test-host")
         .build();
@@ -470,7 +512,7 @@ async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> TestRes
                 {"name": "OpenAI", "type": "organization"},
                 {"name": "Machine Learning", "type": "concept"}
             ]
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -481,10 +523,10 @@ async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> TestRes
 
     let result = response.result.unwrap();
     assert!(result["entity_ids"].is_array());
-    
+
     let entity_ids = result["entity_ids"].as_array().unwrap();
     assert_eq!(entity_ids.len(), 3);
-    
+
     // Verify all returned IDs are valid ULIDs
     for id in entity_ids {
         let id_str = id.as_str().unwrap();
@@ -509,7 +551,7 @@ async fn test_content_store_blob_success(ctx: TestContext) -> TestResult {
             "filename": "test.txt",
             "content_type": "text/plain",
             "source": "test-client"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -520,7 +562,7 @@ async fn test_content_store_blob_success(ctx: TestContext) -> TestResult {
 
     let result = response.result.unwrap();
     assert!(result["annex_key"].is_string());
-    
+
     let annex_key = result["annex_key"].as_str().unwrap();
     assert!(!annex_key.is_empty());
 
@@ -535,7 +577,7 @@ async fn test_content_store_blob_missing_content(ctx: TestContext) -> TestResult
         "content.store_blob",
         json!({
             "filename": "test.txt"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -556,10 +598,7 @@ async fn test_content_store_blob_missing_content(ctx: TestContext) -> TestResult
 async fn test_rpc_method_not_found(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
 
-    let request = JsonRpcRequest::new(
-        "non.existent.method",
-        json!({})
-    );
+    let request = JsonRpcRequest::new("non.existent.method", json!({}));
 
     let response = simulate_rpc_request(&services, request).await;
 
@@ -580,10 +619,7 @@ async fn test_rpc_request_without_id(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
-    let request = JsonRpcRequest::new(
-        "analytics.event_count_by_source",
-        json!({})
-    ).without_id();
+    let request = JsonRpcRequest::new("analytics.event_count_by_source", json!({})).without_id();
 
     let response = simulate_rpc_request(&services, request).await;
 
@@ -599,10 +635,8 @@ async fn test_rpc_request_with_string_id(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
-    let request = JsonRpcRequest::new(
-        "analytics.event_count_by_source",
-        json!({})
-    ).with_id(json!("string-id-123"));
+    let request = JsonRpcRequest::new("analytics.event_count_by_source", json!({}))
+        .with_id(json!("string-id-123"));
 
     let response = simulate_rpc_request(&services, request).await;
 
@@ -619,7 +653,7 @@ async fn test_rpc_request_with_string_id(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_parameter_serialization_all_types(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
-    
+
     let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
         .with_host("test-host")
         .build();
@@ -634,7 +668,7 @@ async fn test_parameter_serialization_all_types(ctx: TestContext) -> TestResult 
             "content": "Test with various types",
             "tags": ["string", "array", "values"],
             "created_by": "test-user"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -655,7 +689,7 @@ async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> TestResult 
         json!({
             "event_id": "not-a-valid-ulid",
             "content": "Test note"
-        })
+        }),
     );
 
     let response = simulate_rpc_request(&services, request).await;
@@ -675,15 +709,18 @@ async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> TestResult 
 #[sinex_test]
 async fn test_full_workflow_integration(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
-    
+
     // 1. Create test data
-    let event = RawEventBuilder::new("fs", "file.created", 
+    let event = RawEventBuilder::new(
+        "fs",
+        "file.created",
         json!({
             "path": "/important/document.txt",
             "content": "This document contains sensitive information"
-        }))
-        .with_host("test-host")
-        .build();
+        }),
+    )
+    .with_host("test-host")
+    .build();
     let event_id = event.id;
     insert_event(ctx.pool(), &event).await?;
 
@@ -698,7 +735,7 @@ async fn test_full_workflow_integration(ctx: TestContext) -> TestResult {
             "end_time": null,
             "limit": 10,
             "offset": 0
-        })
+        }),
     );
 
     let search_response = simulate_rpc_request(&services, search_request).await;
@@ -715,7 +752,7 @@ async fn test_full_workflow_integration(ctx: TestContext) -> TestResult {
             "content": "Marked as sensitive document",
             "tags": ["sensitive", "document"],
             "created_by": "automated-scan"
-        })
+        }),
     );
 
     let note_response = simulate_rpc_request(&services, note_request).await;
@@ -729,20 +766,23 @@ async fn test_full_workflow_integration(ctx: TestContext) -> TestResult {
             "filename": "document_full.txt",
             "content_type": "text/plain",
             "source": "file-scanner"
-        })
+        }),
     );
 
     let content_response = simulate_rpc_request(&services, content_request).await;
     assert!(content_response.error.is_none());
-    
-    let annex_key = content_response.result.unwrap()["annex_key"].as_str().unwrap().to_string();
+
+    let annex_key = content_response.result.unwrap()["annex_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // 5. Retrieve stored content
     let retrieve_request = JsonRpcRequest::new(
         "content.retrieve_blob",
         json!({
             "annex_key": annex_key
-        })
+        }),
     );
 
     let retrieve_response = simulate_rpc_request(&services, retrieve_request).await;

@@ -9,13 +9,16 @@
 //! - Complex query operations
 
 use crate::common::prelude::*;
-use sinex_db::work_queue::claim_work_queue_items;
-use sinex_core::{sources, event_type_constants}; 
-use sinex_db::validation::EventValidator;
-use sinex_db::query_helpers::ulid_to_uuid;
-use sinex_db::AgentManifestParams;
-use std::sync::{Arc, atomic::{AtomicU32, AtomicBool}};
 use serde_json::json;
+use sinex_core::{event_type_constants, sources};
+use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_db::validation::EventValidator;
+use sinex_db::work_queue::claim_work_queue_items;
+use sinex_db::AgentManifestParams;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32},
+    Arc,
+};
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -159,7 +162,7 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
 async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
     let initial_count = ctx.event_count().await?;
     let events_to_insert = 3;
-    
+
     // Create some test events
     for i in 0..events_to_insert {
         let event = ctx
@@ -197,10 +200,11 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     .build();
 
     let wm_event = RawEventBuilder::new(
-        sources::WM_HYPRLAND, 
+        sources::WM_HYPRLAND,
         event_type_constants::window_manager::WINDOW_FOCUSED,
-        json!({"window_id": 123})
-    ).build();
+        json!({"window_id": 123}),
+    )
+    .build();
 
     sinex_db::insert_event(ctx.pool(), &fs_event).await?;
     sinex_db::insert_event(ctx.pool(), &terminal_event).await?;
@@ -209,10 +213,10 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Verify events were inserted by checking each one by ID
     let retrieved_fs = sinex_db::get_event_by_id(ctx.pool(), fs_event.id).await?;
     assert_eq!(retrieved_fs.source, sources::FS);
-    
+
     let retrieved_terminal = sinex_db::get_event_by_id(ctx.pool(), terminal_event.id).await?;
     assert_eq!(retrieved_terminal.source, sources::SHELL_KITTY);
-    
+
     let retrieved_wm = sinex_db::get_event_by_id(ctx.pool(), wm_event.id).await?;
     assert_eq!(retrieved_wm.source, sources::WM_HYPRLAND);
 
@@ -259,7 +263,9 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
 
     let command_events = get_events_by_type(ctx.pool(), "command.executed", 10).await?;
     assert!(!command_events.is_empty());
-    assert!(command_events.iter().all(|e| e.event_type == "command.executed"));
+    assert!(command_events
+        .iter()
+        .all(|e| e.event_type == "command.executed"));
 
     Ok(())
 }
@@ -320,41 +326,50 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
     // Test various invalid event scenarios
     let test_cases = vec![
         // Empty source
-        (RawEvent {
-            id: Ulid::new(),
-            source: "".to_string(),
-            event_type: "test.valid".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test_host".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({}),
-        }, "empty_source"),
+        (
+            RawEvent {
+                id: Ulid::new(),
+                source: "".to_string(),
+                event_type: "test.valid".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: "test_host".to_string(),
+                ingestor_version: None,
+                payload_schema_id: None,
+                payload: json!({}),
+            },
+            "empty_source",
+        ),
         // Invalid event type format
-        (RawEvent {
-            id: Ulid::new(),
-            source: "valid_source".to_string(),
-            event_type: "invalid-format".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "test_host".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({}),
-        }, "invalid_event_type"),
+        (
+            RawEvent {
+                id: Ulid::new(),
+                source: "valid_source".to_string(),
+                event_type: "invalid-format".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: "test_host".to_string(),
+                ingestor_version: None,
+                payload_schema_id: None,
+                payload: json!({}),
+            },
+            "invalid_event_type",
+        ),
         // Empty host
-        (RawEvent {
-            id: Ulid::new(),
-            source: "valid_source".to_string(),
-            event_type: "test.valid".to_string(),
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: None,
-            host: "".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({}),
-        }, "empty_host"),
+        (
+            RawEvent {
+                id: Ulid::new(),
+                source: "valid_source".to_string(),
+                event_type: "test.valid".to_string(),
+                ts_ingest: chrono::Utc::now(),
+                ts_orig: None,
+                host: "".to_string(),
+                ingestor_version: None,
+                payload_schema_id: None,
+                payload: json!({}),
+            },
+            "empty_host",
+        ),
     ];
 
     for (event, case_name) in test_cases {
@@ -371,7 +386,7 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
         .path("/test/valid_file.txt")
         .created()
         .build();
-    
+
     let result = validator.validate(&valid_event);
     assert_with_context(
         result.is_ok(),
@@ -397,9 +412,9 @@ async fn test_model_serialization(_ctx: TestContext) -> TestResult {
         .build();
 
     // Serialize to JSON
-    let json_str = serde_json::to_string(&event)
-        .map_err(|e| format!("Failed to serialize event: {}", e))?;
-    
+    let json_str =
+        serde_json::to_string(&event).map_err(|e| format!("Failed to serialize event: {}", e))?;
+
     // Deserialize back
     let deserialized: RawEvent = serde_json::from_str(&json_str)
         .map_err(|e| format!("Failed to deserialize event: {}", e))?;
@@ -441,12 +456,7 @@ async fn test_complex_payload_serialization(_ctx: TestContext) -> TestResult {
         }
     });
 
-    let event = RawEventBuilder::new(
-        "fs",
-        "file.created",
-        complex_payload.clone(),
-    )
-    .build();
+    let event = RawEventBuilder::new("fs", "file.created", complex_payload.clone()).build();
 
     // Serialize and deserialize
     let json_str = serde_json::to_string(&event)?;
@@ -456,7 +466,10 @@ async fn test_complex_payload_serialization(_ctx: TestContext) -> TestResult {
     pretty_assertions::assert_eq!(event.payload, deserialized.payload);
     pretty_assertions::assert_eq!(event.payload["file_info"]["path"], "/test/complex.txt");
     pretty_assertions::assert_eq!(event.payload["operation"]["process"]["pid"], 1234);
-    pretty_assertions::assert_eq!(event.payload["file_info"]["metadata"]["tags"][0], "important");
+    pretty_assertions::assert_eq!(
+        event.payload["file_info"]["metadata"]["tags"][0],
+        "important"
+    );
 
     Ok(())
 }
@@ -484,7 +497,7 @@ async fn test_schema_validation_success(_ctx: TestContext) -> TestResult {
     ];
 
     let validator = EventValidator::new();
-    
+
     for event in test_events {
         let result = validator.validate(&event);
         assert_with_context(
@@ -501,7 +514,7 @@ async fn test_schema_validation_success(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
     let validator = EventValidator::new();
-    
+
     // Test event with invalid payload structure
     let invalid_event = RawEvent {
         id: Ulid::new(),
@@ -638,21 +651,30 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     let first_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(first_item.is_some(), "Should get item on first attempt");
     let item = first_item.unwrap();
-    assert_eq!(item.attempts, 0, "First attempt should have 0 prior attempts");
-    
+    assert_eq!(
+        item.attempts, 0,
+        "First attempt should have 0 prior attempts"
+    );
+
     // Fail the first attempt
     sinex_db::fail_work_item(ctx.pool(), item.queue_id, "Test failure 1").await?;
-    
+
     // Second attempt - should succeed (retry)
     let second_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
-    assert!(second_item.is_some(), "Should get item on second attempt (retry)");
+    assert!(
+        second_item.is_some(),
+        "Should get item on second attempt (retry)"
+    );
     let item = second_item.unwrap();
-    assert_eq!(item.attempts, 1, "Second attempt should have 1 prior attempt");
+    assert_eq!(
+        item.attempts, 1,
+        "Second attempt should have 1 prior attempt"
+    );
     assert_eq!(item.queue_id, queue_item, "Should be the same work item");
-    
+
     // Fail the second attempt (this will exhaust max_attempts=2)
     sinex_db::fail_work_item(ctx.pool(), item.queue_id, "Test failure 2").await?;
-    
+
     // Third attempt - should not get item (max retries exceeded)
     let third_item = sinex_db::get_next_work_item(ctx.pool(), "test_agent").await?;
     assert!(
@@ -727,8 +749,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
 
     // Insert events with small delays to ensure ULID ordering
     for i in 0..5 {
-        let event =
-            RawEventBuilder::new("fs", "file.created", json!({"sequence": i})).build();
+        let event = RawEventBuilder::new("fs", "file.created", json!({"sequence": i})).build();
 
         let inserted = sinex_db::insert_event(ctx.pool(), &event).await?;
         events.push(inserted);
@@ -794,11 +815,14 @@ async fn test_event_validation(ctx: TestContext) -> TestResult {
 /// Test database connectivity verification
 #[sinex_test]
 async fn test_database_connectivity_verification(ctx: TestContext) -> TestResult {
-    let (status, details, messages) = sinex_preflight::database::verify_database_connectivity().await?;
+    let (status, details, messages) =
+        sinex_preflight::database::verify_database_connectivity().await?;
 
     assert_eq!(status, sinex_preflight::VerificationStatus::Pass);
     assert!(!messages.is_empty());
-    assert!(messages.iter().any(|m| m.contains("Database connection established")));
+    assert!(messages
+        .iter()
+        .any(|m| m.contains("Database connection established")));
 
     // Check details structure
     assert!(details.get("database_url").is_some());
@@ -811,10 +835,14 @@ async fn test_database_connectivity_verification(ctx: TestContext) -> TestResult
 /// Test PostgreSQL extensions verification
 #[sinex_test]
 async fn test_postgresql_extensions_verification(ctx: TestContext) -> TestResult {
-    let (status, details, _messages) = sinex_preflight::database::verify_postgresql_extensions().await?;
+    let (status, details, _messages) =
+        sinex_preflight::database::verify_postgresql_extensions().await?;
 
     // Should pass or warn, depending on which extensions are available
-    assert!(matches!(status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));
+    assert!(matches!(
+        status,
+        sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning
+    ));
 
     // Should have checked for required extensions
     let extensions = details.get("extensions").unwrap().as_object().unwrap();
@@ -828,7 +856,8 @@ async fn test_postgresql_extensions_verification(ctx: TestContext) -> TestResult
 /// Test migration readiness verification
 #[sinex_test]
 async fn test_migration_readiness_verification(ctx: TestContext) -> TestResult {
-    let (status, details, _messages) = sinex_preflight::database::verify_migration_readiness().await?;
+    let (status, details, _messages) =
+        sinex_preflight::database::verify_migration_readiness().await?;
 
     assert_eq!(status, sinex_preflight::VerificationStatus::Pass);
     assert!(details.get("current_migrations").is_some());
@@ -849,10 +878,10 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
 
     let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
     let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event.id).await?;
-    
+
     assert_eq!(retrieved_event.source, "unit-test-crud");
     assert_eq!(retrieved_event.event_type, "test.crud_operations");
-    
+
     Ok(())
 }
 
@@ -912,9 +941,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     drop(connections);
 
     // Verify pool is still functional
-    let final_test = sqlx::query!("SELECT 1 as test")
-        .fetch_one(pool)
-        .await?;
+    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(pool).await?;
 
     assert_eq!(final_test.test, Some(1));
 
@@ -942,7 +969,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
     .build();
 
     let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
-    
+
     // Try to insert with same ID (should fail with constraint violation)
     let duplicate_event = RawEvent {
         id: inserted_event.id, // Same ID
@@ -957,7 +984,10 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
     };
 
     let constraint_error = sinex_db::insert_event(ctx.pool(), &duplicate_event).await;
-    assert!(constraint_error.is_err(), "Should fail with constraint violation");
+    assert!(
+        constraint_error.is_err(),
+        "Should fail with constraint violation"
+    );
 
     Ok(())
 }
@@ -1006,7 +1036,10 @@ impl EventSource for TestEventSource {
         })
     }
 
-    async fn stream_events(&mut self, tx: tokio::sync::mpsc::Sender<RawEvent>) -> sinex_core::Result<()> {
+    async fn stream_events(
+        &mut self,
+        tx: tokio::sync::mpsc::Sender<RawEvent>,
+    ) -> sinex_core::Result<()> {
         if self.config.should_fail {
             return Err(sinex_core::CoreError::Other("Test failure".to_string()));
         }
@@ -1022,15 +1055,20 @@ impl EventSource for TestEventSource {
                 Self::SOURCE_NAME,
                 "test_event",
                 json!({"test": true, "sequence": i}),
-            ).build();
+            )
+            .build();
 
             if tx.send(event).await.is_err() {
                 break; // Receiver dropped
             }
 
-            self.events_sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.events_sent
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(self.config.generation_delay_ms)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                self.config.generation_delay_ms,
+            ))
+            .await;
         }
 
         // Keep running until shutdown
@@ -1148,7 +1186,7 @@ async fn test_event_source_database_integration(ctx: TestContext) -> TestResult 
     // Generate a unique event type for this test to avoid contamination
     let test_id = Ulid::new().to_string();
     let unique_event_type = format!("test_event_{}", &test_id[..8]);
-    
+
     let config = TestSourceConfig {
         events_to_generate: 2,
         generation_delay_ms: 10,
@@ -1168,7 +1206,7 @@ async fn test_event_source_database_integration(ctx: TestContext) -> TestResult 
         if let Some(mut event) = rx.recv().await {
             // Modify the event type to be unique for this test
             event.event_type = unique_event_type.clone();
-            
+
             // Store in database using proper queries that handle ts_ingest correctly
             let event_uuid = ulid_to_uuid(event.id);
             sqlx::query!(
@@ -1189,19 +1227,22 @@ async fn test_event_source_database_integration(ctx: TestContext) -> TestResult 
     }
 
     stream_handle.abort();
-    
+
     // Ensure we actually inserted 2 events
     assert_eq!(inserted_count, 2, "Should have inserted 2 events");
 
     // Verify events were stored - count only our unique event type
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE event_type = $1")
-            .bind(&unique_event_type)
-            .fetch_one(ctx.pool())
-            .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE event_type = $1")
+        .bind(&unique_event_type)
+        .fetch_one(ctx.pool())
+        .await?;
 
     // We inserted exactly 2 events with our unique type
-    assert_eq!(count, 2, "Should have exactly 2 events with type {}, found {}", unique_event_type, count);
+    assert_eq!(
+        count, 2,
+        "Should have exactly 2 events with type {}, found {}",
+        unique_event_type, count
+    );
 
     Ok(())
 }
@@ -1264,11 +1305,19 @@ async fn test_disk_space_check(_ctx: TestContext) -> TestResult {
     // Should have checked some standard paths
     for (path, info) in paths {
         if let Some(total_gb) = info.get("total_gb").and_then(|v| v.as_f64()) {
-            assert!(total_gb > 0.0, "Total disk space should be positive for {}", path);
+            assert!(
+                total_gb > 0.0,
+                "Total disk space should be positive for {}",
+                path
+            );
         }
 
         if let Some(available_gb) = info.get("available_gb").and_then(|v| v.as_f64()) {
-            assert!(available_gb >= 0.0, "Available disk space should be non-negative for {}", path);
+            assert!(
+                available_gb >= 0.0,
+                "Available disk space should be non-negative for {}",
+                path
+            );
         }
     }
 
@@ -1304,14 +1353,25 @@ async fn test_filesystem_permissions_check(_ctx: TestContext) -> TestResult {
     let (_status, details, _) = sinex_preflight::resources::verify_system_resources().await?;
 
     let filesystem_info = details.get("fs").unwrap();
-    let directories = filesystem_info.get("directories").unwrap().as_object().unwrap();
+    let directories = filesystem_info
+        .get("directories")
+        .unwrap()
+        .as_object()
+        .unwrap();
 
     // Should have checked some directories
-    assert!(!directories.is_empty(), "Should have checked some directories");
+    assert!(
+        !directories.is_empty(),
+        "Should have checked some directories"
+    );
 
     for (dir_path, info) in directories {
         // Each directory should have permission info
-        assert!(info.get("writable").is_some(), "Should check writability for {}", dir_path);
+        assert!(
+            info.get("writable").is_some(),
+            "Should check writability for {}",
+            dir_path
+        );
 
         if let Some(error) = info.get("error") {
             println!("Permission check warning for {}: {}", dir_path, error);
@@ -1385,11 +1445,13 @@ async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
     use sinex_db::models::QueueStatus;
 
     // Verify we can create each status
-    let statuses = [QueueStatus::Pending,
+    let statuses = [
+        QueueStatus::Pending,
         QueueStatus::Processing,
         QueueStatus::Succeeded,
         QueueStatus::Failed,
-        QueueStatus::FailedRetryable];
+        QueueStatus::FailedRetryable,
+    ];
 
     pretty_assertions::assert_eq!(statuses.len(), 5, "Should have all queue status variants");
 
@@ -1446,7 +1508,7 @@ async fn test_json_payload_constraints(_ctx: TestContext) -> TestResult {
 async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
     // Demonstrate streamlined validation patterns
     let validator = EventValidator::new();
-    
+
     // Create a well-formed event
     let event = EventBuilder::filesystem()
         .path("/test/streamlined.txt")

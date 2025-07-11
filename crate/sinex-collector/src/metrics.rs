@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::{EventSender, OptionalTimestamp, RawEvent, Timestamp, ErrorContext, CoreError};
+use sinex_core::{CoreError, ErrorContext, EventSender, OptionalTimestamp, RawEvent, Timestamp};
 use sinex_db::{DbPool, DbPoolRef};
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, VecDeque};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Single second of metric data
 #[derive(Debug, Clone, Serialize)]
@@ -187,7 +187,7 @@ impl CollectorMetrics {
 
                     // Check adaptive sampling
                     emitter.update_adaptive_sampling().await;
-                    
+
                     // Check for silent event sources (every 5 minutes)
                     let silent_sources = emitter.check_silent_sources(5).await;
                     if !silent_sources.is_empty() {
@@ -207,12 +207,12 @@ impl CollectorMetrics {
                                 "timestamp": Utc::now()
                             }),
                         };
-                        
+
                         if let Err(e) = event_tx.send(silent_event).await {
                             warn!("Failed to send silent sources event: {}", e);
                         }
                     }
-                    
+
                     // Check resource exhaustion
                     let resource_status = emitter.check_resource_exhaustion().await;
                     if resource_status["status"] != "ok" {
@@ -228,7 +228,7 @@ impl CollectorMetrics {
                             payload_schema_id: None,
                             payload: resource_status,
                         };
-                        
+
                         if let Err(e) = event_tx.send(resource_event).await {
                             warn!("Failed to send resource exhaustion event: {}", e);
                         }
@@ -239,6 +239,7 @@ impl CollectorMetrics {
     }
 
     /// Sample current metrics (called every second)
+
     async fn sample_metrics(&self, db_pool: Option<DbPoolRef<'_>>) -> Result<()> {
         // Update system info
         {
@@ -265,9 +266,15 @@ impl CollectorMetrics {
 
         // Get database pool stats and queue depth
         let (db_pool_size, db_pool_idle, queue_depth) = if let Some(pool) = db_pool {
-            let queue_metrics = sinex_db::metrics_queries::calculate_queue_depth_metrics(pool).await.unwrap_or_default();
+            let queue_metrics = sinex_db::metrics_queries::calculate_queue_depth_metrics(pool)
+                .await
+                .unwrap_or_default();
             let total_queue_depth: i64 = queue_metrics.iter().map(|m| m.queue_depth).sum();
-            (pool.size(), pool.num_idle() as u32, total_queue_depth as u32)
+            (
+                pool.size(),
+                pool.num_idle() as u32,
+                total_queue_depth as u32,
+            )
         } else {
             (0, 0, 0)
         };
@@ -301,6 +308,7 @@ impl CollectorMetrics {
     }
 
     /// Create a metrics event from collected data
+
     async fn create_metrics_event(&self) -> Result<RawEvent> {
         let timeseries = {
             let mut buffer = self.ring_buffer.write().await;
@@ -462,12 +470,12 @@ impl CollectorMetrics {
     pub fn record_event_with_metrics(&self, source: &str, bytes_processed: Option<u64>) {
         // Increment atomic counter
         self.events_processed.fetch_add(1, Ordering::Relaxed);
-        
+
         // Update source-specific metrics asynchronously
         let source_name = source.to_string();
         let source_metrics = self.source_metrics.clone();
         let timestamp = Utc::now();
-        
+
         tokio::spawn(async move {
             if let Ok(mut sources) = source_metrics.try_write() {
                 let metrics = sources
@@ -479,10 +487,10 @@ impl CollectorMetrics {
                         last_event_time: None,
                         custom: HashMap::new(),
                     });
-                
+
                 metrics.events_total += 1;
                 metrics.last_event_time = Some(timestamp);
-                
+
                 if let Some(bytes) = bytes_processed {
                     metrics.bytes_processed += bytes;
                 }
@@ -508,7 +516,7 @@ impl CollectorMetrics {
     ) {
         // Increment atomic counter
         self.errors_total.fetch_add(1, Ordering::Relaxed);
-        
+
         // Extract rich context information for structured logging
         let error_details = if let Some(ctx) = error_context {
             let error_info = ctx.to_error_info();
@@ -545,15 +553,13 @@ impl CollectorMetrics {
         let source_metrics = self.source_metrics.clone();
         tokio::spawn(async move {
             if let Ok(mut sources) = source_metrics.try_write() {
-                let metrics = sources
-                    .entry(source_name)
-                    .or_insert_with(|| SourceMetrics {
-                        events_total: 0,
-                        errors_total: 0,
-                        bytes_processed: 0,
-                        last_event_time: None,
-                        custom: HashMap::new(),
-                    });
+                let metrics = sources.entry(source_name).or_insert_with(|| SourceMetrics {
+                    events_total: 0,
+                    errors_total: 0,
+                    bytes_processed: 0,
+                    last_event_time: None,
+                    custom: HashMap::new(),
+                });
                 metrics.errors_total += 1;
             }
         });
@@ -610,10 +616,10 @@ impl CollectorMetrics {
                     last_event_time: None,
                     custom: HashMap::new(),
                 });
-            
+
             // Apply the update function
             update(metrics);
-            
+
             // Log metrics update for observability
             tracing::debug!(
                 source = source,
@@ -629,7 +635,7 @@ impl CollectorMetrics {
     pub async fn check_silent_sources(&self, silence_threshold_minutes: u64) -> Vec<String> {
         let threshold = Utc::now() - chrono::Duration::minutes(silence_threshold_minutes as i64);
         let sources = self.source_metrics.read().await;
-        
+
         let mut silent_sources = Vec::new();
         for (source, metrics) in sources.iter() {
             if let Some(last_event) = metrics.last_event_time {
@@ -641,7 +647,7 @@ impl CollectorMetrics {
                 silent_sources.push(source.clone());
             }
         }
-        
+
         if !silent_sources.is_empty() {
             warn!(
                 silent_sources = ?silent_sources,
@@ -649,7 +655,7 @@ impl CollectorMetrics {
                 "Silent event sources detected"
             );
         }
-        
+
         silent_sources
     }
 
@@ -657,20 +663,40 @@ impl CollectorMetrics {
     pub async fn check_resource_exhaustion(&self) -> JsonValue {
         let recent_metrics = {
             let buffer = self.ring_buffer.read().await;
-            buffer.buffer.iter().rev().take(10).cloned().collect::<Vec<_>>()
+            buffer
+                .buffer
+                .iter()
+                .rev()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
         };
-        
+
         if recent_metrics.is_empty() {
             return json!({"status": "no_data"});
         }
-        
-        let avg_memory = recent_metrics.iter().map(|m| m.memory_mb).sum::<u64>() / recent_metrics.len() as u64;
-        let max_memory = recent_metrics.iter().map(|m| m.memory_mb).max().unwrap_or(0);
-        let avg_cpu = recent_metrics.iter().map(|m| m.cpu_percent).sum::<f32>() / recent_metrics.len() as f32;
-        let max_cpu = recent_metrics.iter().map(|m| m.cpu_percent).fold(0.0f32, |acc, x| acc.max(x));
-        let avg_queue_depth = recent_metrics.iter().map(|m| m.queue_depth).sum::<usize>() / recent_metrics.len();
-        let max_queue_depth = recent_metrics.iter().map(|m| m.queue_depth).max().unwrap_or(0);
-        
+
+        let avg_memory =
+            recent_metrics.iter().map(|m| m.memory_mb).sum::<u64>() / recent_metrics.len() as u64;
+        let max_memory = recent_metrics
+            .iter()
+            .map(|m| m.memory_mb)
+            .max()
+            .unwrap_or(0);
+        let avg_cpu =
+            recent_metrics.iter().map(|m| m.cpu_percent).sum::<f32>() / recent_metrics.len() as f32;
+        let max_cpu = recent_metrics
+            .iter()
+            .map(|m| m.cpu_percent)
+            .fold(0.0f32, |acc, x| acc.max(x));
+        let avg_queue_depth =
+            recent_metrics.iter().map(|m| m.queue_depth).sum::<usize>() / recent_metrics.len();
+        let max_queue_depth = recent_metrics
+            .iter()
+            .map(|m| m.queue_depth)
+            .max()
+            .unwrap_or(0);
+
         // Define warning thresholds
         let memory_warning_mb = 1024; // 1GB
         let memory_critical_mb = 2048; // 2GB
@@ -678,31 +704,31 @@ impl CollectorMetrics {
         let cpu_critical_percent = 90.0;
         let queue_warning_depth = 1000;
         let queue_critical_depth = 5000;
-        
+
         let mut warnings = Vec::new();
         let mut criticals = Vec::new();
-        
+
         // Memory checks
         if avg_memory > memory_critical_mb {
             criticals.push(format!("Memory usage critical: {}MB average", avg_memory));
         } else if avg_memory > memory_warning_mb {
             warnings.push(format!("Memory usage high: {}MB average", avg_memory));
         }
-        
+
         // CPU checks
         if avg_cpu > cpu_critical_percent {
             criticals.push(format!("CPU usage critical: {:.1}% average", avg_cpu));
         } else if avg_cpu > cpu_warning_percent {
             warnings.push(format!("CPU usage high: {:.1}% average", avg_cpu));
         }
-        
+
         // Queue depth checks
         if avg_queue_depth > queue_critical_depth {
             criticals.push(format!("Queue depth critical: {} average", avg_queue_depth));
         } else if avg_queue_depth > queue_warning_depth {
             warnings.push(format!("Queue depth high: {} average", avg_queue_depth));
         }
-        
+
         let status = if !criticals.is_empty() {
             "critical"
         } else if !warnings.is_empty() {
@@ -710,7 +736,7 @@ impl CollectorMetrics {
         } else {
             "ok"
         };
-        
+
         if !warnings.is_empty() || !criticals.is_empty() {
             if !criticals.is_empty() {
                 error!(criticals = ?criticals, "Critical resource exhaustion conditions detected");
@@ -719,7 +745,7 @@ impl CollectorMetrics {
                 warn!(warnings = ?warnings, "Resource exhaustion warnings detected");
             }
         }
-        
+
         json!({
             "status": status,
             "timestamp": Utc::now(),
@@ -753,7 +779,7 @@ impl CollectorMetrics {
         let sources = self.source_metrics.read().await;
         let total_errors = self.errors_total.load(Ordering::Relaxed);
         let total_events = self.events_processed.load(Ordering::Relaxed);
-        
+
         let error_rate = if total_events > 0 {
             (total_errors as f64 / total_events as f64) * 100.0
         } else {
@@ -767,13 +793,16 @@ impl CollectorMetrics {
             } else {
                 0.0
             };
-            
-            source_error_breakdown.insert(source.clone(), json!({
-                "errors_total": metrics.errors_total,
-                "events_total": metrics.events_total,
-                "error_rate_percent": source_error_rate,
-                "last_event_time": metrics.last_event_time
-            }));
+
+            source_error_breakdown.insert(
+                source.clone(),
+                json!({
+                    "errors_total": metrics.errors_total,
+                    "events_total": metrics.events_total,
+                    "error_rate_percent": source_error_rate,
+                    "last_event_time": metrics.last_event_time
+                }),
+            );
         }
 
         json!({

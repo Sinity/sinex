@@ -18,7 +18,7 @@ use crate::common::prelude::*;
 use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
-use sinex_core::{RawEventBuilder};
+use sinex_core::RawEventBuilder;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
@@ -38,13 +38,18 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let events = generators::test_events(10);
 
     // Insert events concurrently for better performance
-    let insert_tasks: Vec<_> = events.iter().map(|event| {
-        let pool = ctx.pool().clone();
-        let event = event.clone();
-        tokio::spawn(async move {
-            sinex_db::events::insert_event_with_validator(&pool, &event, None).await.map(|e| e.id)
+    let insert_tasks: Vec<_> = events
+        .iter()
+        .map(|event| {
+            let pool = ctx.pool().clone();
+            let event = event.clone();
+            tokio::spawn(async move {
+                sinex_db::events::insert_event_with_validator(&pool, &event, None)
+                    .await
+                    .map(|e| e.id)
+            })
         })
-    }).collect();
+        .collect();
 
     // Wait for all insertions to complete
     let mut inserted_ids = Vec::new();
@@ -54,12 +59,18 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Verify all events exist (also done concurrently)
-    let verify_tasks: Vec<_> = inserted_ids.iter().map(|&id| {
-        let pool = ctx.pool().clone();
-        tokio::spawn(async move {
-            get_event_by_id(&pool, id).await.map(|_| true).unwrap_or(false)
+    let verify_tasks: Vec<_> = inserted_ids
+        .iter()
+        .map(|&id| {
+            let pool = ctx.pool().clone();
+            tokio::spawn(async move {
+                get_event_by_id(&pool, id)
+                    .await
+                    .map(|_| true)
+                    .unwrap_or(false)
+            })
         })
-    }).collect();
+        .collect();
 
     for task in verify_tasks {
         assert!(task.await?);
@@ -84,13 +95,14 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 
     // Insert all events concurrently
     let events_to_insert = [&fs_event1, &fs_event2, &term_event];
-    let insert_tasks: Vec<_> = events_to_insert.iter().map(|&event| {
-        let pool = ctx.pool().clone();
-        let event = event.clone();
-        tokio::spawn(async move {
-            assertions::assert_event_inserted(&pool, &event).await
+    let insert_tasks: Vec<_> = events_to_insert
+        .iter()
+        .map(|&event| {
+            let pool = ctx.pool().clone();
+            let event = event.clone();
+            tokio::spawn(async move { assertions::assert_event_inserted(&pool, &event).await })
         })
-    }).collect();
+        .collect();
 
     // Wait for all insertions
     for task in insert_tasks {
@@ -158,7 +170,10 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
 
     // Verify ULIDs are in chronological order
     for i in 1..ulids.len() {
-        assert!(ulids[i] > ulids[i-1], "ULIDs should be in chronological order");
+        assert!(
+            ulids[i] > ulids[i - 1],
+            "ULIDs should be in chronological order"
+        );
     }
 
     Ok(())
@@ -250,10 +265,12 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     .await?;
 
     // Insert events across different time periods to trigger chunk creation
-    let time_periods = [Utc::now(),
+    let time_periods = [
+        Utc::now(),
         Utc::now() - Duration::days(10),
         Utc::now() - Duration::days(20),
-        Utc::now() + Duration::days(5)];
+        Utc::now() + Duration::days(5),
+    ];
 
     for (i, ts) in time_periods.iter().enumerate() {
         let event = RawEventBuilder::new(
@@ -693,7 +710,10 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
     .build();
 
     let result = insert_event(ctx.pool(), &invalid_event).await;
-    assert!(result.is_err(), "Should fail validation without required path");
+    assert!(
+        result.is_err(),
+        "Should fail validation without required path"
+    );
 
     Ok(())
 }
@@ -708,7 +728,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> TestResult {
     // Test that the status column supports 'succeeded' and 'failed' values
-    
+
     // First insert a test event
     let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "data"})).build();
     let event_id = insert_event(ctx.pool(), &event).await?;
@@ -814,7 +834,10 @@ async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestRes
     .fetch_all(ctx.pool())
     .await?;
 
-    assert!(cleaned_up.len() > 0, "Should have cleaned up old succeeded items");
+    assert!(
+        cleaned_up.len() > 0,
+        "Should have cleaned up old succeeded items"
+    );
 
     // Verify recent item still exists
     let recent_exists = sqlx::query_scalar!(
@@ -861,8 +884,16 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
     let agent1_metric = metrics.iter().find(|m| m.target_agent_name == agent1);
     let agent2_metric = metrics.iter().find(|m| m.target_agent_name == agent2);
 
-    assert_eq!(agent1_metric.map(|m| m.queue_depth).unwrap_or(0), 2, "Agent 1 should have 2 items");
-    assert_eq!(agent2_metric.map(|m| m.queue_depth).unwrap_or(0), 1, "Agent 2 should have 1 item");
+    assert_eq!(
+        agent1_metric.map(|m| m.queue_depth).unwrap_or(0),
+        2,
+        "Agent 1 should have 2 items"
+    );
+    assert_eq!(
+        agent2_metric.map(|m| m.queue_depth).unwrap_or(0),
+        1,
+        "Agent 2 should have 1 item"
+    );
 
     Ok(())
 }
@@ -874,7 +905,7 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_routing_cache_view_exists(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test that the routing_cache materialized view exists
     let view_exists = sqlx::query!(
         r#"
@@ -888,8 +919,11 @@ async fn test_routing_cache_view_exists(ctx: TestContext) -> TestResult {
     .await?;
 
     // Note: This might be 0 if the view doesn't exist yet
-    println!("Routing cache view exists: {}", view_exists.count.unwrap_or(0) > 0);
-    
+    println!(
+        "Routing cache view exists: {}",
+        view_exists.count.unwrap_or(0) > 0
+    );
+
     Ok(())
 }
 
@@ -1065,6 +1099,3 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
-
-
-

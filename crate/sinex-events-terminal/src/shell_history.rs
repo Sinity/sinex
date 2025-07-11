@@ -11,8 +11,8 @@ use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
 
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType,
-    OptionalTimestamp, Result, EventFactory, ErrorContext, CoreError, RawEvent,
+    sources, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender, EventSource,
+    EventSourceBase, EventSourceContext, EventType, OptionalTimestamp, RawEvent, Result,
 };
 
 // ============================================================================
@@ -150,7 +150,8 @@ impl EventSource for ShellHistoryReader {
 
 impl ShellHistoryReader {
     async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
-        let (notify_tx, mut notify_rx) = mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
+        let (notify_tx, mut notify_rx) =
+            mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
         let watched_files = self.config.history_files.clone();
 
         // Set up file watchers
@@ -169,10 +170,13 @@ impl ShellHistoryReader {
             }
         })
         .map_err(|e| {
-            ErrorContext::new(CoreError::Configuration(format!("Failed to create file watcher: {}", e)))
-                .with_operation("initialize_file_watcher")
-                .with_context("tool", "notify")
-                .build()
+            ErrorContext::new(CoreError::Configuration(format!(
+                "Failed to create file watcher: {}",
+                e
+            )))
+            .with_operation("initialize_file_watcher")
+            .with_context("tool", "notify")
+            .build()
         })?;
 
         // Watch parent directories to catch file creation
@@ -184,11 +188,12 @@ impl ShellHistoryReader {
                         .watch(parent, RecursiveMode::NonRecursive)
                         .map_err(|e| {
                             ErrorContext::new(CoreError::Configuration(format!(
-                                "Failed to watch directory: {}", e
+                                "Failed to watch directory: {}",
+                                e
                             )))
-                                .with_operation("setup_directory_watcher")
-                                .with_context("directory", parent.display().to_string())
-                                .build()
+                            .with_operation("setup_directory_watcher")
+                            .with_context("directory", parent.display().to_string())
+                            .build()
                         })?;
                 }
             }

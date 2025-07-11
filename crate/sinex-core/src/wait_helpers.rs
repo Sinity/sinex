@@ -4,7 +4,7 @@
 //! arbitrary sleeps and provide reliable synchronization patterns. All functions
 //! use exponential backoff and proper timeout handling.
 
-use crate::{DbPool, Result, CoreError, timeouts};
+use crate::{timeouts, CoreError, DbPool, Result};
 use std::time::{Duration, Instant};
 
 /// Wait for database to be ready with a health check query
@@ -13,10 +13,7 @@ pub async fn wait_for_database_ready(pool: &DbPool) -> Result<()> {
 }
 
 /// Wait for database with custom timeout
-pub async fn wait_for_database_ready_with_timeout(
-    pool: &DbPool,
-    timeout_secs: u64,
-) -> Result<()> {
+pub async fn wait_for_database_ready_with_timeout(pool: &DbPool, timeout_secs: u64) -> Result<()> {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
 
@@ -29,13 +26,17 @@ pub async fn wait_for_database_ready_with_timeout(
             Err(_) => {
                 // Use exponential backoff
                 let elapsed = start.elapsed();
-                let backoff = timeouts::RETRY_INITIAL_DELAY.min(Duration::from_millis(elapsed.as_millis() as u64));
+                let backoff = timeouts::RETRY_INITIAL_DELAY
+                    .min(Duration::from_millis(elapsed.as_millis() as u64));
                 tokio::time::sleep(backoff).await;
             }
         }
     }
 
-    Err(CoreError::Database(format!("Database readiness timeout after {} seconds", timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Database readiness timeout after {} seconds",
+        timeout_secs
+    )))
 }
 
 /// Wait for events table to reach expected count
@@ -64,7 +65,10 @@ pub async fn wait_for_event_count(
         tokio::time::sleep(backoff).await;
     }
 
-    Err(CoreError::Database(format!("Event count timeout: expected {}, timeout {}s", expected_count, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Event count timeout: expected {}, timeout {}s",
+        expected_count, timeout_secs
+    )))
 }
 
 /// Wait for worker to reach expected status
@@ -95,7 +99,10 @@ pub async fn wait_for_worker_status(
         tokio::time::sleep(timeouts::DEFAULT_TERMINAL_POLL_INTERVAL).await;
     }
 
-    Err(CoreError::Database(format!("Worker {} status timeout: expected {}, timeout {}s", worker_name, expected_status, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Worker {} status timeout: expected {}, timeout {}s",
+        worker_name, expected_status, timeout_secs
+    )))
 }
 
 /// Wait for work queue to reach expected count
@@ -124,7 +131,10 @@ pub async fn wait_for_work_queue_count(
         tokio::time::sleep(backoff).await;
     }
 
-    Err(CoreError::Database(format!("Work queue count timeout: expected {}, timeout {}s", expected_count, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Work queue count timeout: expected {}, timeout {}s",
+        expected_count, timeout_secs
+    )))
 }
 
 /// Wait for work queue items with specific status
@@ -157,7 +167,10 @@ pub async fn wait_for_work_queue_status_count(
         tokio::time::sleep(backoff).await;
     }
 
-    Err(CoreError::Database(format!("Work queue status '{}' count timeout: expected {}, timeout {}s", status, expected_count, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Work queue status '{}' count timeout: expected {}, timeout {}s",
+        status, expected_count, timeout_secs
+    )))
 }
 
 /// Wait for work queue to be empty for specific agent
@@ -189,7 +202,10 @@ pub async fn wait_for_work_queue_empty(
         tokio::time::sleep(backoff).await;
     }
 
-    Err(CoreError::Database(format!("Work queue empty timeout for agent '{}': timeout {}s", agent_name, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Work queue empty timeout for agent '{}': timeout {}s",
+        agent_name, timeout_secs
+    )))
 }
 
 /// Wait for agent to reach specific status
@@ -220,7 +236,10 @@ pub async fn wait_for_agent_status(
         tokio::time::sleep(timeouts::DEFAULT_TERMINAL_POLL_INTERVAL).await;
     }
 
-    Err(CoreError::Database(format!("Agent '{}' status timeout: expected {}, timeout {}s", agent_name, expected_status, timeout_secs)))
+    Err(CoreError::Database(format!(
+        "Agent '{}' status timeout: expected {}, timeout {}s",
+        agent_name, expected_status, timeout_secs
+    )))
 }
 
 /// Wait for a generic condition to be met with exponential backoff
@@ -244,7 +263,10 @@ where
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 
-    Err(CoreError::Other(format!("Condition timeout after {} seconds", timeout_secs)))
+    Err(CoreError::Other(format!(
+        "Condition timeout after {} seconds",
+        timeout_secs
+    )))
 }
 
 /// Wait for a condition, returning whether it was met within timeout
@@ -330,7 +352,10 @@ impl Default for BackoffHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     #[tokio::test]
     async fn test_wait_for_condition() {
@@ -344,10 +369,7 @@ mod tests {
         });
 
         // Wait for condition
-        let result = wait_for_condition(
-            || async { Ok(flag.load(Ordering::Relaxed)) },
-            2
-        ).await;
+        let result = wait_for_condition(|| async { Ok(flag.load(Ordering::Relaxed)) }, 2).await;
 
         assert!(result.is_ok());
     }
@@ -356,8 +378,9 @@ mod tests {
     async fn test_wait_for_condition_timeout() {
         let result = wait_for_condition(
             || async { Ok(false) }, // Never true
-            1 // 1 second timeout
-        ).await;
+            1,                      // 1 second timeout
+        )
+        .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("timeout"));
@@ -374,19 +397,14 @@ mod tests {
             flag_clone.store(true, Ordering::Relaxed);
         });
 
-        let result = wait_for_condition_or_timeout(
-            || async { Ok(flag.load(Ordering::Relaxed)) },
-            2
-        ).await;
+        let result =
+            wait_for_condition_or_timeout(|| async { Ok(flag.load(Ordering::Relaxed)) }, 2).await;
 
         assert!(result.is_ok());
         assert!(result.unwrap());
 
         // Test timeout case
-        let result = wait_for_condition_or_timeout(
-            || async { Ok(false) },
-            1
-        ).await;
+        let result = wait_for_condition_or_timeout(|| async { Ok(false) }, 1).await;
 
         assert!(result.is_ok());
         assert!(!result.unwrap());

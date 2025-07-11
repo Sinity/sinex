@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Property tests for ULID functionality
-/// 
+///
 /// This module consolidates property tests from:
 /// - ulid_properties.rs (basic ULID generation and ordering)
 /// - ulid_concurrent_property_tests.rs (concurrent ULID generation)
@@ -26,7 +26,7 @@ fn test_ulid_chronological_ordering() {
         delay_micros in 100u64..1000
     )| {
         let mut ulids = Vec::new();
-        
+
         // Generate ULIDs with micro-delays to ensure monotonic ordering
         for i in 0..count {
             if i > 0 {
@@ -381,8 +381,8 @@ fn test_ulid_ordering_with_timing_patterns() {
 fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = Vec<Ulid>> {
     (min_size..=max_size).prop_flat_map(|size| {
         // Start with a base time and create ULIDs with small incremental delays
-        prop::collection::vec(any::<u64>().prop_map(|delay_ms| delay_ms % 1000), size)
-            .prop_map(move |delays| {
+        prop::collection::vec(any::<u64>().prop_map(|delay_ms| delay_ms % 1000), size).prop_map(
+            move |delays| {
                 let mut ulids = Vec::new();
                 let base_time = Utc::now() - ChronoDuration::hours(1); // Start an hour ago
                 let mut current_time = base_time;
@@ -392,14 +392,15 @@ fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = 
                     ulids.push(Ulid::from_datetime(current_time));
                 }
                 ulids
-            })
+            },
+        )
     })
 }
 
 /// Generate ULIDs from specific time ranges
 fn arb_ulid_from_time_range(
     start: DateTime<Utc>,
-    end: DateTime<Utc>
+    end: DateTime<Utc>,
 ) -> impl Strategy<Value = Ulid> {
     let start_ms = start.timestamp_millis();
     let end_ms = end.timestamp_millis();
@@ -990,7 +991,7 @@ mod unit_tests {
 
         // Should be in increasing order
         for i in 1..sequence.len() {
-            assert!(sequence[i] > sequence[i-1]);
+            assert!(sequence[i] > sequence[i - 1]);
         }
     }
 

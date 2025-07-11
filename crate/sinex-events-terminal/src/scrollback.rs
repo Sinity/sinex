@@ -9,11 +9,12 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, error, info};
 
+use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType, JsonValue,
-    Result, Timestamp, chunking::ChunkingService, EventFactory, ErrorContext, CoreError, RawEvent, timeouts,
+    chunking::ChunkingService, sources, timeouts, ChannelSenderExt, CoreError, ErrorContext,
+    EventFactory, EventSender, EventSource, EventSourceBase, EventSourceContext, EventType,
+    JsonValue, RawEvent, Result, Timestamp,
 };
-use sinex_annex::{BlobManager, AnnexConfig};
 
 // ============================================================================
 // Event Payloads
@@ -187,11 +188,11 @@ impl EventSource for ScrollbackCapture {
         info!("Initializing scrollback capture");
 
         // Initialize BlobManager if configured with both annex path and database
-        let annex_repo_path = ctx
-            .annex_repo_path
-            .clone()
-            .or(config.git_annex_repo.as_ref().map(|p| p.to_string_lossy().to_string()));
-            
+        let annex_repo_path = ctx.annex_repo_path.clone().or(config
+            .git_annex_repo
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()));
+
         let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
             (Some(repo_path), Some(db_pool)) => {
                 let path = std::path::PathBuf::from(repo_path);
@@ -201,11 +202,16 @@ impl EventSource for ScrollbackCapture {
                     use sinex_annex::GitAnnex;
                     GitAnnex::init(&path, Some("sinex-scrollback-annex"))
                         .await
-                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                        .map_err(|e| {
+                            ErrorContext::new(CoreError::Configuration(format!(
+                                "Failed to initialize git-annex: {}",
+                                e
+                            )))
                             .with_operation("initialize_scrollback_capture")
                             .with_context("repo_path", path.display().to_string())
                             .with_context("repo_name", "sinex-scrollback-annex")
-                            .build())?;
+                            .build()
+                        })?;
                 }
 
                 let annex_config = AnnexConfig {
@@ -325,12 +331,19 @@ impl ScrollbackCapture {
             // Capture full scrollback
             if let Ok(scrollback) = self.get_window_scrollback(window.id, true).await {
                 let scrollback_size_bytes = scrollback.text.len() as u64;
-                let should_chunk = self.config.enable_chunking && 
-                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
-                let should_annex = self.config.auto_annex && 
-                    scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
-                
-                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count, git_annex_path, git_annex_key) = if should_annex {
+                let should_chunk = self.config.enable_chunking
+                    && scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                let should_annex = self.config.auto_annex
+                    && scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
+
+                let (
+                    scrollback_text,
+                    scrollback_chunks,
+                    is_chunked,
+                    chunk_count,
+                    git_annex_path,
+                    git_annex_key,
+                ) = if should_annex {
                     // Store in git-annex for large content
                     match self.store_in_git_annex(window, &scrollback).await {
                         Ok((annex_path, annex_key)) => {
@@ -340,9 +353,17 @@ impl ScrollbackCapture {
                             error!("Failed to store scrollback in git-annex: {}, falling back to database", e);
                             // Fallback to chunking or inline storage
                             if should_chunk {
-                                self.chunk_scrollback_content(&scrollback.text).unwrap_or_else(|_| {
-                                    (Some(scrollback.text.clone()), None, false, None, None, None)
-                                })
+                                self.chunk_scrollback_content(&scrollback.text)
+                                    .unwrap_or_else(|_| {
+                                        (
+                                            Some(scrollback.text.clone()),
+                                            None,
+                                            false,
+                                            None,
+                                            None,
+                                            None,
+                                        )
+                                    })
                             } else {
                                 (Some(scrollback.text.clone()), None, false, None, None, None)
                             }
@@ -351,9 +372,15 @@ impl ScrollbackCapture {
                 } else if should_chunk {
                     // Chunk content for database storage
                     match self.chunk_scrollback_content(&scrollback.text) {
-                        Ok((text, chunks, chunked, count, _, _)) => (text, chunks, chunked, count, None, None),
+                        Ok((text, chunks, chunked, count, _, _)) => {
+                            (text, chunks, chunked, count, None, None)
+                        }
                         Err(e) => {
-                            tracing::warn!("Failed to chunk scrollback for window {}: {}", window.id, e);
+                            tracing::warn!(
+                                "Failed to chunk scrollback for window {}: {}",
+                                window.id,
+                                e
+                            );
                             (Some(scrollback.text.clone()), None, false, None, None, None)
                         }
                     }
@@ -439,11 +466,13 @@ impl ScrollbackCapture {
             })?;
 
         if !output.status.success() {
-            return Err(ErrorContext::new(CoreError::Io("kitty @ ls failed".to_string()))
-                .with_operation("get_kitty_windows")
-                .with_context("exit_status", output.status.to_string())
-                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
-                .build());
+            return Err(
+                ErrorContext::new(CoreError::Io("kitty @ ls failed".to_string()))
+                    .with_operation("get_kitty_windows")
+                    .with_context("exit_status", output.status.to_string())
+                    .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                    .build(),
+            );
         }
 
         let data: JsonValue = serde_json::from_slice(&output.stdout)?;
@@ -508,12 +537,14 @@ impl ScrollbackCapture {
         })?;
 
         if !output.status.success() {
-            return Err(ErrorContext::new(CoreError::Io("Failed to get scrollback".to_string()))
-                .with_operation("capture_scrollback_for_window")
-                .with_context("window_id", window_id.to_string())
-                .with_context("exit_status", output.status.to_string())
-                .with_context("stderr", String::from_utf8_lossy(&output.stderr))
-                .build());
+            return Err(
+                ErrorContext::new(CoreError::Io("Failed to get scrollback".to_string()))
+                    .with_operation("capture_scrollback_for_window")
+                    .with_context("window_id", window_id.to_string())
+                    .with_context("exit_status", output.status.to_string())
+                    .with_context("stderr", String::from_utf8_lossy(&output.stderr))
+                    .build(),
+            );
         }
 
         let text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -578,10 +609,13 @@ impl ScrollbackCapture {
         window: &KittyWindow,
         scrollback: &ScrollbackText,
     ) -> Result<(String, String)> {
-        let blob_manager = self.blob_manager.as_ref()
-            .ok_or_else(|| ErrorContext::new(CoreError::Configuration("BlobManager not configured".to_string()))
-                .with_operation("store_in_git_annex")
-                .build())?;
+        let blob_manager = self.blob_manager.as_ref().ok_or_else(|| {
+            ErrorContext::new(CoreError::Configuration(
+                "BlobManager not configured".to_string(),
+            ))
+            .with_operation("store_in_git_annex")
+            .build()
+        })?;
 
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let filename = format!(
@@ -590,26 +624,43 @@ impl ScrollbackCapture {
         );
 
         // Use BlobManager to ingest content directly
-        let metadata = blob_manager.ingest_from_bytes(
-            scrollback.text.as_bytes(),
-            &filename,
-            "text/plain"
-        ).await
-            .map_err(|e| ErrorContext::new(CoreError::Io(format!("Failed to ingest scrollback content: {}", e)))
+        let metadata = blob_manager
+            .ingest_from_bytes(scrollback.text.as_bytes(), &filename, "text/plain")
+            .await
+            .map_err(|e| {
+                ErrorContext::new(CoreError::Io(format!(
+                    "Failed to ingest scrollback content: {}",
+                    e
+                )))
                 .with_operation("store_in_git_annex")
                 .with_context("filename", &filename)
                 .with_context("window_id", window.id.to_string())
-                .build())?;
+                .build()
+            })?;
 
-        debug!("Stored scrollback via BlobManager: {} -> {} (blob_id: {})", 
-                filename, metadata.annex_key, metadata.blob_id);
+        debug!(
+            "Stored scrollback via BlobManager: {} -> {} (blob_id: {})",
+            filename, metadata.annex_key, metadata.blob_id
+        );
         Ok((filename, metadata.annex_key))
     }
 
     #[allow(clippy::type_complexity)]
-    fn chunk_scrollback_content(&self, content: &str) -> Result<(Option<String>, Option<Vec<serde_json::Value>>, bool, Option<u32>, Option<String>, Option<String>)> {
+    fn chunk_scrollback_content(
+        &self,
+        content: &str,
+    ) -> Result<(
+        Option<String>,
+        Option<Vec<serde_json::Value>>,
+        bool,
+        Option<u32>,
+        Option<String>,
+        Option<String>,
+    )> {
         if let Some(ref chunking_service) = self.chunking_service {
-            let chunks = chunking_service.chunk_string(content).map_err(|e| CoreError::Other(format!("Chunking failed: {}", e)))?;
+            let chunks = chunking_service
+                .chunk_string(content)
+                .map_err(|e| CoreError::Other(format!("Chunking failed: {}", e)))?;
             let chunk_count = chunks.len() as u32;
             let chunk_jsons: Vec<serde_json::Value> = chunks
                 .into_iter()
@@ -654,12 +705,19 @@ impl ScrollbackCapture {
                 self.last_scrollback_hashes.insert(window_id, hash);
 
                 let scrollback_size_bytes = scrollback.text.len() as u64;
-                let should_chunk = self.config.enable_chunking && 
-                    scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
-                let should_annex = self.config.auto_annex && 
-                    scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
-                
-                let (scrollback_text, scrollback_chunks, is_chunked, chunk_count, git_annex_path, git_annex_key) = if should_annex {
+                let should_chunk = self.config.enable_chunking
+                    && scrollback_size_bytes > self.config.chunking_threshold_bytes as u64;
+                let should_annex = self.config.auto_annex
+                    && scrollback_size_bytes > self.config.annex_threshold_bytes as u64;
+
+                let (
+                    scrollback_text,
+                    scrollback_chunks,
+                    is_chunked,
+                    chunk_count,
+                    git_annex_path,
+                    git_annex_key,
+                ) = if should_annex {
                     // Store in git-annex for large content
                     match self.store_in_git_annex(window, &scrollback).await {
                         Ok((annex_path, annex_key)) => {
@@ -669,9 +727,17 @@ impl ScrollbackCapture {
                             error!("Failed to store scrollback in git-annex: {}, falling back to database", e);
                             // Fallback to chunking or inline storage
                             if should_chunk {
-                                self.chunk_scrollback_content(&scrollback.text).unwrap_or_else(|_| {
-                                    (Some(scrollback.text.clone()), None, false, None, None, None)
-                                })
+                                self.chunk_scrollback_content(&scrollback.text)
+                                    .unwrap_or_else(|_| {
+                                        (
+                                            Some(scrollback.text.clone()),
+                                            None,
+                                            false,
+                                            None,
+                                            None,
+                                            None,
+                                        )
+                                    })
                             } else {
                                 (Some(scrollback.text.clone()), None, false, None, None, None)
                             }
@@ -680,9 +746,15 @@ impl ScrollbackCapture {
                 } else if should_chunk {
                     // Chunk content for database storage
                     match self.chunk_scrollback_content(&scrollback.text) {
-                        Ok((text, chunks, chunked, count, _, _)) => (text, chunks, chunked, count, None, None),
+                        Ok((text, chunks, chunked, count, _, _)) => {
+                            (text, chunks, chunked, count, None, None)
+                        }
                         Err(e) => {
-                            tracing::warn!("Failed to chunk scrollback for window {}: {}", window_id, e);
+                            tracing::warn!(
+                                "Failed to chunk scrollback for window {}: {}",
+                                window_id,
+                                e
+                            );
                             (Some(scrollback.text.clone()), None, false, None, None, None)
                         }
                     }
@@ -756,14 +828,12 @@ async fn monitor_command_events(
                 .build()
         })?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| 
-            ErrorContext::new(CoreError::Io("Failed to capture stdout".to_string()))
-                .with_operation("capture_command_output")
-                .with_context("process", "journalctl")
-                .build())?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ErrorContext::new(CoreError::Io("Failed to capture stdout".to_string()))
+            .with_operation("capture_command_output")
+            .with_context("process", "journalctl")
+            .build()
+    })?;
 
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();

@@ -142,6 +142,7 @@ impl ManifestManager {
     }
 
     /// Register or update an agent manifest
+
     pub async fn register_agent(&self, manifest: &AgentManifest) -> Result<()> {
         let produces_json = serde_json::to_value(&manifest.produces_event_types)?;
 
@@ -178,6 +179,7 @@ impl ManifestManager {
     }
 
     /// Update agent heartbeat timestamp
+
     pub async fn update_heartbeat(&self, agent_name: &str) -> Result<()> {
         sqlx::query!(
             r#"
@@ -195,6 +197,7 @@ impl ManifestManager {
     }
 
     /// Get agent manifest by name
+
     pub async fn get_agent(&self, agent_name: &str) -> Result<Option<AgentManifest>> {
         let row = sqlx::query!(
             r#"
@@ -243,6 +246,7 @@ impl ManifestManager {
     }
 
     /// List all registered agents
+
     pub async fn list_agents(&self) -> Result<Vec<AgentManifest>> {
         let rows = sqlx::query!(
             r#"
@@ -318,6 +322,7 @@ impl AgentLifecycle {
     }
 
     /// Register agent manifest and start heartbeat loop
+
     pub async fn start(&mut self, manifest: AgentManifest, event_tx: EventSender) -> Result<()> {
         // Register manifest if we have a database connection
         if let Some(manager) = &self.manifest_manager {
@@ -362,6 +367,7 @@ impl AgentLifecycle {
     }
 
     /// Record DLQ event and send notification
+
     pub async fn record_dlq_event(&mut self, dlq_event: DlqEventWritten) -> Result<()> {
         self.metrics.increment_dlq();
 
@@ -374,6 +380,7 @@ impl AgentLifecycle {
     }
 
     /// Send agent error event
+
     pub async fn report_error(&self, error: AgentError) -> Result<()> {
         if let Some(tx) = &self.event_tx {
             let event = create_error_event(error);

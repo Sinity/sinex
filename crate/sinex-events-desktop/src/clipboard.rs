@@ -7,9 +7,10 @@ use tracing::{debug, error, info};
 
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core::{
-    sources, ChannelSenderExt, EventSender, EventSource, EventSourceBase, EventSourceContext,
-    EventType, JsonValue, Result, Timestamp, ErrorContext, CoreError,
+    sources, ChannelSenderExt, CoreError, ErrorContext, EventSender, EventSource, EventSourceBase,
+    EventSourceContext, EventType, JsonValue, Timestamp,
 };
+use sinex_macros::with_context;
 
 // ============================================================================
 // Event Payloads
@@ -147,14 +148,14 @@ pub struct ClipboardMonitor {
 }
 
 #[derive(Clone)]
-struct ClipboardHistoryEntry {
-    content_hash: String,
+pub struct ClipboardHistoryEntry {
+    pub content_hash: String,
     #[allow(dead_code)]
-    first_seen: Timestamp,
-    last_seen: Timestamp,
+    pub first_seen: Timestamp,
+    pub last_seen: Timestamp,
     #[allow(dead_code)]
-    content_type: String,
-    copy_count: u32,
+    pub content_type: String,
+    pub copy_count: u32,
 }
 
 // Implement EventSourceBase to get common functionality
@@ -166,7 +167,7 @@ impl EventSource for ClipboardMonitor {
 
     const SOURCE_NAME: &'static str = sources::CLIPBOARD;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
         // Use base trait for config parsing
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
@@ -189,12 +190,14 @@ impl EventSource for ClipboardMonitor {
 
         if !wl_paste_available && !xclip_available {
             error!("Neither wl-clipboard nor xclip found. Install one for clipboard monitoring");
-            return Err(ErrorContext::new(CoreError::Configuration("Neither wl-clipboard nor xclip found".to_string()))
-                .with_operation("initialize_clipboard_monitor")
-                .with_context("wl_paste_available", wl_paste_available.to_string())
-                .with_context("xclip_available", xclip_available.to_string())
-                .with_context("required_tools", "wl-paste OR xclip")
-                .build());
+            return Err(ErrorContext::new(CoreError::Configuration(
+                "Neither wl-clipboard nor xclip found".to_string(),
+            ))
+            .with_operation("initialize_clipboard_monitor")
+            .with_context("wl_paste_available", wl_paste_available.to_string())
+            .with_context("xclip_available", xclip_available.to_string())
+            .with_context("required_tools", "wl-paste OR xclip")
+            .build());
         }
 
         info!(
@@ -207,7 +210,7 @@ impl EventSource for ClipboardMonitor {
             .annex_repo_path
             .clone()
             .or(config.annex_repo_path.clone());
-        
+
         let blob_manager = match (annex_repo_path.as_ref(), &ctx.db_pool) {
             (Some(repo_path), Some(db_pool)) => {
                 let path = std::path::PathBuf::from(repo_path);
@@ -215,12 +218,15 @@ impl EventSource for ClipboardMonitor {
                 // Initialize git-annex repository if it doesn't exist
                 if !path.join(".git").exists() {
                     info!("Initializing git-annex repository at {:?}", path);
-                    tokio::fs::create_dir_all(&path)
-                        .await
-                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to create directory: {}", e)))
-                            .with_operation("initialize_clipboard_monitor")
-                            .with_context("repo_path", path.display().to_string())
-                            .build())?;
+                    tokio::fs::create_dir_all(&path).await.map_err(|e| {
+                        ErrorContext::new(CoreError::Configuration(format!(
+                            "Failed to create directory: {}",
+                            e
+                        )))
+                        .with_operation("initialize_clipboard_monitor")
+                        .with_context("repo_path", path.display().to_string())
+                        .build()
+                    })?;
 
                     // Initialize git repository
                     let output = Command::new("git")
@@ -228,16 +234,24 @@ impl EventSource for ClipboardMonitor {
                         .current_dir(&path)
                         .output()
                         .await
-                        .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to run git init: {}", e)))
+                        .map_err(|e| {
+                            ErrorContext::new(CoreError::Configuration(format!(
+                                "Failed to run git init: {}",
+                                e
+                            )))
                             .with_operation("initialize_clipboard_monitor")
                             .with_context("repo_path", path.display().to_string())
-                            .build())?;
+                            .build()
+                        })?;
 
                     if !output.status.success() {
-                        return Err(ErrorContext::new(CoreError::Configuration(format!("git init failed: {}", String::from_utf8_lossy(&output.stderr))))
-                            .with_operation("initialize_clipboard_monitor")
-                            .with_context("repo_path", path.display().to_string())
-                            .build());
+                        return Err(ErrorContext::new(CoreError::Configuration(format!(
+                            "git init failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        )))
+                        .with_operation("initialize_clipboard_monitor")
+                        .with_context("repo_path", path.display().to_string())
+                        .build());
                     }
 
                     // Initialize git-annex repository if it doesn't exist
@@ -245,11 +259,16 @@ impl EventSource for ClipboardMonitor {
                         use sinex_annex::GitAnnex;
                         GitAnnex::init(&path, Some("sinex-clipboard-annex"))
                             .await
-                            .map_err(|e| ErrorContext::new(CoreError::Configuration(format!("Failed to initialize git-annex: {}", e)))
+                            .map_err(|e| {
+                                ErrorContext::new(CoreError::Configuration(format!(
+                                    "Failed to initialize git-annex: {}",
+                                    e
+                                )))
                                 .with_operation("initialize_clipboard_monitor")
                                 .with_context("repo_path", path.display().to_string())
                                 .with_context("repo_name", "sinex-clipboard-annex")
-                                .build())?;
+                                .build()
+                            })?;
                     }
                 }
 
@@ -281,7 +300,7 @@ impl EventSource for ClipboardMonitor {
         Ok(instance)
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
         info!("Starting clipboard monitoring");
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
@@ -309,7 +328,8 @@ impl EventSource for ClipboardMonitor {
 }
 
 impl ClipboardMonitor {
-    async fn new(config: ClipboardConfig) -> Result<Self> {
+    #[with_context]
+    async fn new(config: ClipboardConfig) -> sinex_core::Result<Self> {
         Ok(Self {
             config,
             last_clipboard: None,
@@ -319,7 +339,7 @@ impl ClipboardMonitor {
         })
     }
 
-    async fn check_clipboard(&mut self, tx: &EventSender, selection: &str) -> Result<()> {
+    async fn check_clipboard(&mut self, tx: &EventSender, selection: &str) -> sinex_core::Result<()> {
         let content = self.get_clipboard_content(selection).await?;
 
         // Check which last content to compare against
@@ -396,8 +416,11 @@ impl ClipboardMonitor {
                     timestamp: Utc::now(),
                 };
 
-                let event =
-                    EventSource::create_event(self, ClipboardChanged::EVENT_NAME, serde_json::to_value(payload)?);
+                let event = EventSource::create_event(
+                    self,
+                    ClipboardChanged::EVENT_NAME,
+                    serde_json::to_value(payload)?,
+                );
                 tx.send_or_log(event, "clipboard_changed").await?;
             } else {
                 let payload = ClipboardSelectionPayload {
@@ -437,7 +460,8 @@ impl ClipboardMonitor {
         Ok(())
     }
 
-    async fn get_clipboard_content(&self, selection: &str) -> Result<String> {
+    #[with_context]
+    async fn get_clipboard_content(&self, selection: &str) -> sinex_core::Result<String> {
         // Try Wayland first
         let wl_selection = match selection {
             "clipboard" => "",
@@ -644,33 +668,36 @@ impl ClipboardMonitor {
         &mut self,
         content: &str,
         content_hash: &str,
-    ) -> Result<(String, Option<String>)> {
+    ) -> sinex_core::Result<(String, Option<String>)> {
         // Check if we have BlobManager configured
-        let blob_manager = self.blob_manager.as_ref().ok_or_else(|| 
-            ErrorContext::new(CoreError::Configuration("BlobManager not configured for large content storage".to_string()))
-                .with_operation("store_large_content")
-                .with_context("content_size", content.len().to_string())
-                .with_context("content_hash", content_hash)
-                .build()
-        )?;
+        let blob_manager = self.blob_manager.as_ref().ok_or_else(|| {
+            ErrorContext::new(CoreError::Configuration(
+                "BlobManager not configured for large content storage".to_string(),
+            ))
+            .with_operation("store_large_content")
+            .with_context("content_size", content.len().to_string())
+            .with_context("content_hash", content_hash)
+            .build()
+        })?;
 
         // Use BlobManager to ingest content directly from bytes
-        let metadata = blob_manager.ingest_from_bytes(
-            content.as_bytes(),
-            "clipboard_content",
-            "text/plain"
-        ).await.map_err(|e| 
-            ErrorContext::new(CoreError::Io(format!("Failed to ingest clipboard content: {}", e)))
+        let metadata = blob_manager
+            .ingest_from_bytes(content.as_bytes(), "clipboard_content", "text/plain")
+            .await
+            .map_err(|e| {
+                ErrorContext::new(CoreError::Io(format!(
+                    "Failed to ingest clipboard content: {}",
+                    e
+                )))
                 .with_operation("store_large_content")
                 .with_context("content_size", content.len().to_string())
                 .with_context("content_hash", content_hash)
                 .build()
-        )?;
+            })?;
 
         debug!(
             "Stored clipboard content via BlobManager: {} ({})",
-            metadata.blob_id,
-            metadata.annex_key
+            metadata.blob_id, metadata.annex_key
         );
 
         Ok((metadata.annex_key, Some(metadata.blob_id.to_string())))

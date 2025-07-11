@@ -9,8 +9,7 @@ use std::fs;
 /// Basic usage - adds function name and module path automatically
 #[with_context]
 fn read_config_file() -> Result<String> {
-    fs::read_to_string("nonexistent.toml")
-        .map_err(|e| CoreError::Io(e.to_string()))
+    fs::read_to_string("nonexistent.toml").map_err(|e| CoreError::Io(e.to_string()))
 }
 
 /// Custom operation name
@@ -36,8 +35,7 @@ fn successful_function() -> Result<i32> {
 /// Function with std::io::Error that gets converted to CoreError
 #[with_context]
 fn io_error_function() -> Result<String> {
-    std::fs::read_to_string("/dev/null/impossible")
-        .map_err(|e| CoreError::Io(e.to_string()))
+    std::fs::read_to_string("/dev/null/impossible").map_err(|e| CoreError::Io(e.to_string()))
 }
 
 #[tokio::main]

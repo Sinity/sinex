@@ -221,10 +221,12 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
                             "task": i,
                             "event": j,
                             "data": "performance test payload"
-                        })
-                    ).build(),
-                    None
-                ).await?;
+                        }),
+                    )
+                    .build(),
+                    None,
+                )
+                .await?;
             }
             Ok::<_, anyhow::Error>(())
         });
@@ -264,10 +266,12 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
             &RawEventBuilder::new(
                 "concurrent_test",
                 "process_me",
-                serde_json::json!({ "id": i })
-            ).build(),
-            None
-        ).await?;
+                serde_json::json!({ "id": i }),
+            )
+            .build(),
+            None,
+        )
+        .await?;
     }
 
     let start = Instant::now();
@@ -314,10 +318,12 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                             serde_json::json!({
                                 "worker_id": worker_id,
                                 "original_id": event_id.to_string()
-                            })
-                        ).build(),
-                        None
-                    ).await?;
+                            }),
+                        )
+                        .build(),
+                        None,
+                    )
+                    .await?;
 
                     processed += 1;
                 } else {
@@ -365,10 +371,12 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
                 serde_json::json!({
                     "value": i,
                     "category": if i % 10 == 0 { "special" } else { "normal" }
-                })
-            ).build(),
-            None
-        ).await?;
+                }),
+            )
+            .build(),
+            None,
+        )
+        .await?;
     }
 
     // Test various query patterns
@@ -423,7 +431,10 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     }
 
     let mid_memory = get_memory_usage();
-    println!("Memory after creating {} events: {} KB", num_events, mid_memory);
+    println!(
+        "Memory after creating {} events: {} KB",
+        num_events, mid_memory
+    );
 
     // Insert events in batches to avoid overwhelming the system
     let batch_size = 100;
@@ -435,7 +446,10 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     }
 
     let final_memory = get_memory_usage();
-    println!("Memory after inserting {} events: {} KB", num_events, final_memory);
+    println!(
+        "Memory after inserting {} events: {} KB",
+        num_events, final_memory
+    );
 
     // Verify memory usage is reasonable
     let memory_growth = final_memory - initial_memory;
@@ -545,10 +559,12 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                                 serde_json::json!({
                                     "worker_id": worker_id,
                                     "original_id": event_id.to_string()
-                                })
-                            ).build(),
-                            None
-                        ).await?;
+                                }),
+                            )
+                            .build(),
+                            None,
+                        )
+                        .await?;
 
                         processed += 1;
                     } else {
@@ -713,7 +729,10 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
     let burst_size = 1000;
     let burst_duration = Duration::from_millis(100);
 
-    println!("Testing burst load: {} events in {:?}", burst_size, burst_duration);
+    println!(
+        "Testing burst load: {} events in {:?}",
+        burst_size, burst_duration
+    );
 
     let start = Instant::now();
     let mut handles = Vec::new();

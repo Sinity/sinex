@@ -7,16 +7,16 @@ use thiserror::Error;
 pub enum ValidationError {
     #[error("Validation error: {0}")]
     General(String),
-    
+
     #[error("Path validation failed: {0}")]
     Path(String),
-    
+
     #[error("JSON validation failed: {0}")]
     Json(String),
-    
+
     #[error("Unicode validation failed: {0}")]
     Unicode(String),
-    
+
     #[error("IO error: {0}")]
     Io(String),
 }
@@ -71,7 +71,7 @@ pub fn validate_path(path: &str) -> Result<PathBuf> {
 /// Simple path cleaning without external dependencies
 fn clean_path(path: &Path) -> PathBuf {
     let mut components = Vec::new();
-    
+
     for component in path.components() {
         match component {
             Component::CurDir => {
@@ -93,7 +93,7 @@ fn clean_path(path: &Path) -> PathBuf {
             }
         }
     }
-    
+
     components.iter().collect()
 }
 
@@ -114,12 +114,14 @@ pub fn sanitize_filename_component(filename: &str) -> Result<String> {
             _ => sanitized.push(ch),
         }
     }
-    
+
     // Remove leading/trailing dots and spaces
     let sanitized = sanitized.trim_matches(|c| c == '.' || c == ' ').to_string();
-    
+
     if sanitized.is_empty() {
-        return Err(ValidationError::General("Filename becomes empty after sanitization".into()));
+        return Err(ValidationError::General(
+            "Filename becomes empty after sanitization".into(),
+        ));
     }
 
     Ok(sanitized)
@@ -129,7 +131,7 @@ pub fn sanitize_filename_component(filename: &str) -> Result<String> {
 pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     // First do basic validation
     let path_buf = validate_path(path)?;
-    
+
     // Convert to absolute paths for comparison
     let abs_path = if path_buf.is_absolute() {
         path_buf.clone()
@@ -138,7 +140,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?
             .join(&path_buf)
     };
-    
+
     // Clean the root path as well
     let root_path = clean_path(&PathBuf::from(root));
     let abs_root = if root_path.is_absolute() {
@@ -148,23 +150,26 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?
             .join(&root_path)
     };
-    
+
     // Canonicalize paths to resolve symlinks and normalize
     let canonical_path = abs_path
         .canonicalize()
         .or_else(|_| {
             // If file doesn't exist yet, canonicalize parent and append filename
-            abs_path.parent()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path"))
+            abs_path
+                .parent()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
+                })
                 .and_then(|parent| parent.canonicalize())
                 .map(|parent| parent.join(abs_path.file_name().unwrap_or_default()))
         })
         .map_err(|e| ValidationError::Path(format!("Path canonicalization failed: {}", e)))?;
-        
+
     let canonical_root = abs_root
         .canonicalize()
         .map_err(|e| ValidationError::Path(format!("Root canonicalization failed: {}", e)))?;
-    
+
     // Check if the canonical path starts with the canonical root
     if !canonical_path.starts_with(&canonical_root) {
         return Err(ValidationError::Path(format!(
@@ -172,7 +177,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
             path, root
         )));
     }
-    
+
     Ok(canonical_path)
 }
 
@@ -332,7 +337,7 @@ mod tests {
         assert!(validate_path("/etc/passwd\0.txt").is_err());
         assert!(validate_path("../../../etc/passwd").is_err());
         assert!(validate_path(&"a".repeat(5000)).is_err());
-        
+
         // Test path cleaning functionality
         let cleaned = validate_path("./some/../path/./file.txt").unwrap();
         assert_eq!(cleaned, PathBuf::from("path/file.txt"));
@@ -341,8 +346,11 @@ mod tests {
     #[test]
     fn test_filename_sanitization() {
         // Normal filename
-        assert_eq!(sanitize_filename_component("normal.txt").unwrap(), "normal.txt");
-        
+        assert_eq!(
+            sanitize_filename_component("normal.txt").unwrap(),
+            "normal.txt"
+        );
+
         // Filename with problematic characters
         let result = sanitize_filename_component("file<>:\"|?*.txt");
         assert!(result.is_ok());
@@ -350,7 +358,7 @@ mod tests {
         assert!(!sanitized.contains('<'));
         assert!(!sanitized.contains('>'));
         assert!(!sanitized.contains(':'));
-        
+
         // Empty filename
         assert!(sanitize_filename_component("").is_err());
     }

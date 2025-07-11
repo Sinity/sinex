@@ -11,6 +11,7 @@ repository.workspace = true
 sinex-core = { path = "../sinex-core" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-db = { path = "../sinex-db" }
+sinex-macros = { path = "../sinex-macros" }
 
 # Async runtime
 tokio = { workspace = true }

@@ -6,7 +6,7 @@
 // Re-export everything from sinex-events event builders
 pub use sinex_events::event_builders::*;
 
-// Additional type aliases for test compatibility  
+// Additional type aliases for test compatibility
 pub type HyprlandEventType = WindowManagerEventType;
 
 /// Generic event builder that can create any type of event
@@ -46,26 +46,38 @@ impl GenericEventBuilder {
     pub fn command(self, cmd: impl Into<String>) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["command"] = serde_json::json!(cmd.into());
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     pub fn success(self) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["exit_status"] = serde_json::json!(0);
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     pub fn duration_ms(self, ms: u64) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["execution_time_ms"] = serde_json::json!(ms);
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     // Agent-specific methods
     pub fn name(self, name: impl Into<String>) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["agent_name"] = serde_json::json!(name.into());
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     pub fn heartbeat(self) -> Self {
@@ -105,19 +117,28 @@ impl GenericEventBuilder {
     pub fn uptime_seconds(self, seconds: u64) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["uptime_seconds"] = serde_json::json!(seconds);
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     pub fn version(self, version: impl Into<String>) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["version"] = serde_json::json!(version.into());
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 
     pub fn events_processed(self, count: u64) -> Self {
         let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         payload["events_processed_session"] = serde_json::json!(count);
-        Self { payload: Some(payload), ..self }
+        Self {
+            payload: Some(payload),
+            ..self
+        }
     }
 }
 
@@ -158,4 +179,3 @@ impl EventBuilder {
         GenericEventBuilder::new("sinex", "agent.heartbeat")
     }
 }
-

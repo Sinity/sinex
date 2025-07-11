@@ -14,6 +14,7 @@ sinex-events-desktop = { path = "../sinex-events-desktop" }
 sinex-events-system = { path = "../sinex-events-system" }
 sinex-events-fs = { path = "../sinex-events-fs" }
 sinex-ulid = { path = "../sinex-ulid" }
+sinex-macros = { path = "../sinex-macros" }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

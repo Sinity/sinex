@@ -10,10 +10,11 @@ use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
 
 use sinex_core::{
-    sources, ChannelSenderExt, DbPoolRef, EventSender, EventSource, EventSourceBase,
-    EventSourceContext, EventType, Result, Timestamp, EventFactory, ErrorContext, CoreError, RawEvent,
-    SqliteConnection, SqliteStatementExt, SqliteQueryBuilder, QueryResultExt,
+    sources, ChannelSenderExt, CoreError, DbPoolRef, ErrorContext, EventFactory, EventSender,
+    EventSource, EventSourceBase, EventSourceContext, EventType, QueryResultExt, RawEvent, Result,
+    SqliteConnection, SqliteQueryBuilder, SqliteStatementExt, Timestamp,
 };
+use sinex_macros::with_context;
 use sinex_db::DbPool;
 
 // ============================================================================
@@ -97,11 +98,13 @@ impl EventSource for AtuinDbReader {
 
         // Verify database exists
         if !config.db_path.exists() {
-            return Err(ErrorContext::new(CoreError::Configuration("Atuin database not found".to_string()))
-                .with_operation("initialize_atuin_reader")
-                .with_context("db_path", config.db_path.display().to_string())
-                .with_context("path_exists", "false")
-                .build());
+            return Err(ErrorContext::new(CoreError::Configuration(
+                "Atuin database not found".to_string(),
+            ))
+            .with_operation("initialize_atuin_reader")
+            .with_context("db_path", config.db_path.display().to_string())
+            .with_context("path_exists", "false")
+            .build());
         }
 
         Ok(Self {
@@ -161,6 +164,7 @@ impl EventSource for AtuinDbReader {
 }
 
 impl AtuinDbReader {
+    #[with_context]
     async fn get_atuin_total_count(&self) -> Result<i64> {
         let db_path = self.config.db_path.clone();
 
@@ -174,11 +178,12 @@ impl AtuinDbReader {
             Ok(count)
         })
         .await
-        .map_err(|e| 
+        .map_err(|e| {
             ErrorContext::new(CoreError::Io(format!("Failed to get Atuin count: {}", e)))
                 .with_operation("get_atuin_total_count")
                 .with_context("db_path", self.config.db_path.display().to_string())
-                .build())?
+                .build()
+        })?
     }
 
     async fn get_startup_info_from_pool(
@@ -199,15 +204,16 @@ impl AtuinDbReader {
             SELECT last_timestamp, total_count FROM stats
         "#;
 
-        let result = sqlx::query(query)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| 
-                ErrorContext::new(CoreError::Database(format!("Failed to query startup info: {}", e)))
-                    .with_operation("get_startup_info_from_pool")
-                    .with_context("query_table", "raw.events")
-                    .with_context("event_type", "command.imported")
-                    .build())?;
+        let result = sqlx::query(query).fetch_optional(pool).await.map_err(|e| {
+            ErrorContext::new(CoreError::Database(format!(
+                "Failed to query startup info: {}",
+                e
+            )))
+            .with_operation("get_startup_info_from_pool")
+            .with_context("query_table", "raw.events")
+            .with_context("event_type", "command.imported")
+            .build()
+        })?;
 
         match result {
             Some(row) => {
@@ -220,7 +226,8 @@ impl AtuinDbReader {
     }
 
     async fn watch_mode(&mut self, tx: EventSender) -> Result<()> {
-        let (notify_tx, mut notify_rx) = mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
+        let (notify_tx, mut notify_rx) =
+            mpsc::channel(sinex_core::buffers::NOTIFICATION_CHANNEL_SIZE);
         let db_path = self.config.db_path.clone();
 
         // Set up file watcher
@@ -234,20 +241,28 @@ impl AtuinDbReader {
                 }
             }
         })
-        .map_err(|e| 
-            ErrorContext::new(CoreError::Configuration(format!("Failed to create file watcher: {}", e)))
-                .with_operation("watch_mode")
-                .with_context("db_path", self.config.db_path.display().to_string())
-                .build())?;
+        .map_err(|e| {
+            ErrorContext::new(CoreError::Configuration(format!(
+                "Failed to create file watcher: {}",
+                e
+            )))
+            .with_operation("watch_mode")
+            .with_context("db_path", self.config.db_path.display().to_string())
+            .build()
+        })?;
 
         watcher
             .watch(&self.config.db_path, RecursiveMode::NonRecursive)
-            .map_err(|e| 
-                ErrorContext::new(CoreError::Configuration(format!("Failed to watch Atuin database: {}", e)))
-                    .with_operation("watch_mode")
-                    .with_context("db_path", self.config.db_path.display().to_string())
-                    .with_context("watch_mode", "NonRecursive")
-                    .build())?;
+            .map_err(|e| {
+                ErrorContext::new(CoreError::Configuration(format!(
+                    "Failed to watch Atuin database: {}",
+                    e
+                )))
+                .with_operation("watch_mode")
+                .with_context("db_path", self.config.db_path.display().to_string())
+                .with_context("watch_mode", "NonRecursive")
+                .build()
+            })?;
 
         info!("Started file watching on Atuin database: {:?}", db_path);
 
@@ -359,13 +374,13 @@ impl AtuinDbReader {
                     SqliteQueryBuilder::new("poll_atuin_history")
                         .query_type("incremental")
                         .context("last_timestamp", last_ts)
-                        .context("batch_size", batch_size)
+                        .context("batch_size", batch_size),
                 )?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .with_context(
                     SqliteQueryBuilder::new("poll_atuin_history")
                         .query_type("incremental")
-                        .context("last_timestamp", last_ts)
+                        .context("last_timestamp", last_ts),
                 )?
             } else {
                 stmt.query_map(rusqlite::params![batch_size], |row| {
@@ -383,23 +398,24 @@ impl AtuinDbReader {
                 .with_context(
                     SqliteQueryBuilder::new("poll_atuin_history")
                         .query_type("initial")
-                        .context("batch_size", batch_size)
+                        .context("batch_size", batch_size),
                 )?
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .with_context(
-                    SqliteQueryBuilder::new("poll_atuin_history")
-                        .query_type("initial")
-                )?
+                .with_context(SqliteQueryBuilder::new("poll_atuin_history").query_type("initial"))?
             };
 
             Ok(result)
         })
         .await
-        .map_err(|e| 
-            ErrorContext::new(CoreError::Io(format!("Failed to execute database query: {}", e)))
-                .with_operation("poll_atuin_history")
-                .with_context("db_path", self.config.db_path.display().to_string())
-                .build())??;
+        .map_err(|e| {
+            ErrorContext::new(CoreError::Io(format!(
+                "Failed to execute database query: {}",
+                e
+            )))
+            .with_operation("poll_atuin_history")
+            .with_context("db_path", self.config.db_path.display().to_string())
+            .build()
+        })??;
 
         let mut max_timestamp = self.last_processed_timestamp;
         let mut count = 0;
@@ -461,7 +477,7 @@ impl AtuinDbReader {
             CommandExecutedAtuin::EVENT_NAME,
             serde_json::to_value(payload)?,
         );
-        
+
         Ok(event)
     }
 }

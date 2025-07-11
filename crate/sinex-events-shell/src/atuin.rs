@@ -15,10 +15,11 @@ use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
 
 use sinex_core::{
-    sources, ChannelSenderExt, DbPoolRef, EventSender, EventSource, EventSourceBase,
-    EventSourceContext, Result, Timestamp, EventFactory, CoreError, RawEvent,
-    SqliteConnection, SqliteStatementExt,
+    sources, ChannelSenderExt, CoreError, DbPoolRef, EventFactory, EventSender, EventSource,
+    EventSourceBase, EventSourceContext, RawEvent, Result, SqliteConnection, SqliteStatementExt,
+    Timestamp,
 };
+use sinex_macros::with_context;
 use sinex_db::DbPool;
 
 use crate::ShellCommandInfo;
@@ -181,6 +182,7 @@ impl EventSource for AtuinHistoryImporter {
 }
 
 impl AtuinHistoryImporter {
+    #[with_context]
     async fn get_atuin_total_count(&self) -> Result<i64> {
         let db_path = self.config.db_path.clone();
 
@@ -249,7 +251,9 @@ impl AtuinHistoryImporter {
 
         watcher
             .watch(&self.config.db_path, RecursiveMode::NonRecursive)
-            .map_err(|e| CoreError::Configuration(format!("Failed to watch Atuin database: {}", e)))?;
+            .map_err(|e| {
+                CoreError::Configuration(format!("Failed to watch Atuin database: {}", e))
+            })?;
 
         info!("Started file watching on Atuin database: {:?}", db_path);
 
@@ -405,6 +409,7 @@ impl AtuinHistoryImporter {
         Ok(())
     }
 
+    #[with_context]
     fn convert_to_event(&self, entry: AtuinHistoryEntry) -> Result<RawEvent> {
         // Convert nanosecond timestamp to DateTime
         let ts_end = sinex_core::timestamp_nanos_to_datetime(entry.timestamp_ns);
@@ -444,11 +449,10 @@ impl AtuinHistoryImporter {
             shell_command_info,
         };
 
-        let event = self.event_factory.create_event(
-            "command.executed",
-            serde_json::to_value(payload)?,
-        );
-        
+        let event = self
+            .event_factory
+            .create_event("command.executed", serde_json::to_value(payload)?);
+
         Ok(event)
     }
 }

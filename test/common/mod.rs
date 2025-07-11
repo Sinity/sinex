@@ -20,7 +20,6 @@
 // Test prelude for standardized imports
 pub mod prelude;
 
-
 // Pre-initialized database pool with clean-before-use
 pub mod database_pool;
 
@@ -30,10 +29,9 @@ pub mod test_context;
 // Event builders for test compatibility
 pub mod event_builders;
 
-
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core::{sources, EventFactory, event_type_constants};
+use sinex_core::{event_type_constants, sources, EventFactory};
 use sinex_db::events as db_events;
 use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_db::AgentManifestParams;
@@ -356,7 +354,10 @@ pub mod assertions {
                 agent_type: manifest.agent_type.clone(),
                 config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
                 produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
-                subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+                subscribes_to_event_types: manifest
+                    .subscribes_to_event_types
+                    .clone()
+                    .unwrap_or_default(),
                 required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
             },
         )
@@ -408,16 +409,20 @@ pub mod generators {
 
     /// Generate realistic filesystem events with proper paths
     pub fn realistic_filesystem_events(count: usize) -> Vec<sinex_db::RawEvent> {
-        let realistic_paths = ["/home/user/Documents/report.pdf",
+        let realistic_paths = [
+            "/home/user/Documents/report.pdf",
             "/home/user/Code/project/src/main.rs",
             "/tmp/cache/session_data.json",
             "/var/log/system.log",
             "/home/user/.config/app/settings.toml",
-            "/home/user/Downloads/image.png"];
+            "/home/user/Downloads/image.png",
+        ];
 
-        let event_types = [event_type_constants::filesystem::FILE_CREATED,
+        let event_types = [
+            event_type_constants::filesystem::FILE_CREATED,
             event_type_constants::filesystem::FILE_MODIFIED,
-            event_type_constants::filesystem::FILE_DELETED];
+            event_type_constants::filesystem::FILE_DELETED,
+        ];
 
         (0..count)
             .map(|i| {
@@ -430,7 +435,8 @@ pub mod generators {
 
     /// Generate realistic terminal command events
     pub fn realistic_shell_events(count: usize) -> Vec<sinex_db::RawEvent> {
-        let realistic_commands = ["git status",
+        let realistic_commands = [
+            "git status",
             "cargo build --release",
             "ls -la /home/user",
             "cd ~/Projects/sinex",
@@ -439,7 +445,8 @@ pub mod generators {
             "find . -name '*.rs' -exec wc -l {} +",
             "docker ps -a",
             "systemctl status postgresql",
-            "nix develop"];
+            "nix develop",
+        ];
 
         (0..count)
             .map(|i| {
@@ -583,7 +590,11 @@ pub async fn get_recent_events(pool: &DbPool, limit: i64) -> Result<Vec<RawEvent
 }
 
 /// Helper for getting events by type
-pub async fn get_events_by_type(pool: &DbPool, event_type: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_type(
+    pool: &DbPool,
+    event_type: &str,
+    limit: i64,
+) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
@@ -642,7 +653,11 @@ pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> 
 }
 
 /// Helper for getting events by source
-pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Result<Vec<RawEvent>> {
+pub async fn get_events_by_source(
+    pool: &DbPool,
+    source: &str,
+    limit: i64,
+) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
         SELECT id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
@@ -676,9 +691,9 @@ pub async fn get_events_by_source(pool: &DbPool, source: &str, limit: i64) -> Re
 
 /// Get events within a specific time range
 pub async fn get_events_in_time_range(
-    pool: &DbPool, 
-    start_time: chrono::DateTime<chrono::Utc>, 
-    end_time: chrono::DateTime<chrono::Utc>
+    pool: &DbPool,
+    start_time: chrono::DateTime<chrono::Utc>,
+    end_time: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<RawEvent>> {
     let records = sqlx::query!(
         r#"
@@ -779,7 +794,6 @@ pub fn create_test_event_with_payload(
     test_event_with_payload(source, event_type, payload)
 }
 
-
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
@@ -792,7 +806,10 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
             agent_type: manifest.agent_type.clone(),
             config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
             produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
-            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest
+                .subscribes_to_event_types
+                .clone()
+                .unwrap_or_default(),
             required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
         },
     )
@@ -830,7 +847,7 @@ pub async fn insert_event_with_validator(
     if let Some(schema_id) = payload_schema_id {
         event.payload_schema_id = Some(schema_id);
     }
-    
+
     db_events::insert_event_with_validator(pool, &event, None).await
 }
 
@@ -853,7 +870,10 @@ pub async fn create_agent_with_subscriptions(
             agent_type: manifest.agent_type.clone(),
             config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
             produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
-            subscribes_to_event_types: manifest.subscribes_to_event_types.clone().unwrap_or_default(),
+            subscribes_to_event_types: manifest
+                .subscribes_to_event_types
+                .clone()
+                .unwrap_or_default(),
             required_capabilities: manifest.required_capabilities.clone().unwrap_or_default(),
         },
     )

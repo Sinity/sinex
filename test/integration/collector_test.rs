@@ -9,6 +9,7 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant};
+use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, Barrier, Mutex};
 
 // =============================================================================
@@ -64,18 +65,39 @@ async fn test_collector_config_loading(_ctx: TestContext) -> TestResult {
 
     match result {
         Ok(config) => {
-            assert!(!config.enabled_events.is_empty(), "Default config should have enabled events");
-            assert!(config.enabled_events.contains(&"file.created".to_string()), "Should include file.created");
-            assert!(config.enabled_events.contains(&"command.executed".to_string()), "Should include command.executed");
+            assert!(
+                !config.enabled_events.is_empty(),
+                "Default config should have enabled events"
+            );
+            assert!(
+                config.enabled_events.contains(&"file.created".to_string()),
+                "Should include file.created"
+            );
+            assert!(
+                config
+                    .enabled_events
+                    .contains(&"command.executed".to_string()),
+                "Should include command.executed"
+            );
 
-            assert!(config.event.is_empty() || !config.event.is_empty(), "Event map should be defined");
-            assert!(config.flat_config.is_empty() || !config.flat_config.is_empty(), "Flat config should be defined");
+            assert!(
+                config.event.is_empty() || !config.event.is_empty(),
+                "Event map should be defined"
+            );
+            assert!(
+                config.flat_config.is_empty() || !config.flat_config.is_empty(),
+                "Flat config should be defined"
+            );
 
             let file_config = config.get_event_config("file.created");
             assert!(file_config.is_table(), "Event config should return a table");
         }
         Err(e) => {
-            assert!(!e.to_string().is_empty(), "Error should have a meaningful message: {}", e);
+            assert!(
+                !e.to_string().is_empty(),
+                "Error should have a meaningful message: {}",
+                e
+            );
         }
     }
     Ok(())
@@ -146,7 +168,12 @@ async fn test_collector_with_validator(ctx: TestContext) -> TestResult {
     };
 
     let validator = EventValidator::new();
-    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), Some(validator));
+    let _collector = UnifiedCollector::new(
+        config,
+        output_config,
+        Some(ctx.pool().clone()),
+        Some(validator),
+    );
     Ok(())
 }
 
@@ -280,7 +307,9 @@ impl SlowEventProcessor {
 }
 
 #[sinex_test]
-async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestContext) -> TestResult {
+async fn test_channel_backpressure_with_fast_producer_slow_consumer(
+    _ctx: TestContext,
+) -> TestResult {
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
 
     let fast_producer = HighFrequencyEventSource::new(5000).with_max_events(15_000);
@@ -323,7 +352,10 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestCo
     println!("Events processed: {}", events_processed);
 
     assert!(events_sent > 0, "Producer should have sent some events");
-    assert!(events_processed > 0, "Consumer should have processed some events");
+    assert!(
+        events_processed > 0,
+        "Consumer should have processed some events"
+    );
 
     let expected_max_sent = 5000 * 3;
     assert!(
@@ -333,10 +365,18 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer(_ctx: TestCo
         expected_max_sent
     );
 
-    assert!(events_processed >= 20, "Consumer should have processed at least 20 events, got {}", events_processed);
+    assert!(
+        events_processed >= 20,
+        "Consumer should have processed at least 20 events, got {}",
+        events_processed
+    );
 
     let process_rate = events_processed as f64 / elapsed.as_secs_f64();
-    assert!(process_rate <= 15.0, "Process rate {} events/sec should be limited by consumer delay", process_rate);
+    assert!(
+        process_rate <= 15.0,
+        "Process rate {} events/sec should be limited by consumer delay",
+        process_rate
+    );
 
     Ok(())
 }
@@ -371,7 +411,11 @@ async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> TestR
     println!("Events sent: {}", events_sent);
     println!("Events received: {}", events_received.len());
 
-    pretty_assertions::assert_eq!(events_sent, events_received.len(), "All sent events should be received, no events should be lost");
+    pretty_assertions::assert_eq!(
+        events_sent,
+        events_received.len(),
+        "All sent events should be received, no events should be lost"
+    );
 
     for (i, event) in events_received.iter().enumerate() {
         pretty_assertions::assert_eq!(event.source, "test.high_frequency_source");
@@ -381,7 +425,10 @@ async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> TestR
         pretty_assertions::assert_eq!(event_number, i, "Events should be received in order");
     }
 
-    assert!(producer_result.is_ok(), "Producer should complete without errors");
+    assert!(
+        producer_result.is_ok(),
+        "Producer should complete without errors"
+    );
 
     Ok(())
 }
@@ -500,8 +547,14 @@ async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> TestResul
 
     let events = received_events.lock().await;
 
-    let v1_events: Vec<_> = events.iter().filter(|e| e.payload["config_version"] == 1).collect();
-    let v2_events: Vec<_> = events.iter().filter(|e| e.payload["config_version"] == 2).collect();
+    let v1_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.payload["config_version"] == 1)
+        .collect();
+    let v2_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.payload["config_version"] == 2)
+        .collect();
 
     assert!(!v1_events.is_empty(), "Should have events from config v1");
     assert!(!v2_events.is_empty(), "Should have events from config v2");
@@ -538,7 +591,10 @@ impl EventSource for TestCoordinatedSource {
     const SOURCE_NAME: &'static str = "test_coordinated";
 
     async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
-        let source_id = ctx.config["source_id"].as_str().unwrap_or("unknown").to_string();
+        let source_id = ctx.config["source_id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         let startup_delay_ms = ctx.config["startup_delay_ms"].as_u64().unwrap_or(0);
         let event_delay_ms = ctx.config["event_delay_ms"].as_u64().unwrap_or(100);
 

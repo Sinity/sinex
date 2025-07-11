@@ -1,18 +1,16 @@
+use crate::{FilesystemConfig, TypedFilesystemMonitor};
 /// Adapter to use TypedFilesystemMonitor with the current EventSource trait
 use async_trait::async_trait;
-use sinex_core::{
-    EventSource, EventSourceContext, EventSender, Result,
-    sources,
-};
-use sinex_events::{
-    typed_event_channel, TypedToJsonAdapter, EnforcedTypedEventSource,
-};
-use crate::{FilesystemConfig, TypedFilesystemMonitor};
+use sinex_core::{sources, EventSender, EventSource, EventSourceBase, EventSourceContext, Result};
+use sinex_events::{typed_event_channel, EnforcedTypedEventSource, TypedToJsonAdapter};
 
 /// Adapter that wraps TypedFilesystemMonitor for use with EventSource trait
 pub struct TypedFilesystemAdapter {
     inner: TypedFilesystemMonitor,
 }
+
+// Implement EventSourceBase to get common functionality
+impl EventSourceBase for TypedFilesystemAdapter {}
 
 #[async_trait]
 impl EventSource for TypedFilesystemAdapter {
@@ -20,7 +18,12 @@ impl EventSource for TypedFilesystemAdapter {
     const SOURCE_NAME: &'static str = sources::FS;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
-        let inner = <TypedFilesystemMonitor as EnforcedTypedEventSource>::initialize(ctx.config).await
+        // Use base trait for config parsing  
+        let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
+        let config_value = serde_json::to_value(config)?;
+        
+        let inner = <TypedFilesystemMonitor as EnforcedTypedEventSource>::initialize(config_value)
+            .await
             .map_err(|e| sinex_core::CoreError::Other(e.to_string()))?;
         Ok(Self { inner })
     }
@@ -28,18 +31,22 @@ impl EventSource for TypedFilesystemAdapter {
     async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
         // Create typed channel
         let (typed_tx, typed_rx) = typed_event_channel();
-        
+
         // Create and spawn adapter
         let adapter = TypedToJsonAdapter::new(typed_rx, tx);
         let adapter_handle = tokio::spawn(adapter.run());
-        
+
         // Run the typed source
-        let result = <TypedFilesystemMonitor as EnforcedTypedEventSource>::stream_typed_events(&mut self.inner, typed_tx).await
-            .map_err(|e| sinex_core::CoreError::Other(e.to_string()));
-        
+        let result = <TypedFilesystemMonitor as EnforcedTypedEventSource>::stream_typed_events(
+            &mut self.inner,
+            typed_tx,
+        )
+        .await
+        .map_err(|e| sinex_core::CoreError::Other(e.to_string()));
+
         // Wait for adapter to finish
         let _ = adapter_handle.await;
-        
+
         result
     }
 }

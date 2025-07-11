@@ -145,8 +145,7 @@ impl Worker {
                                         "worker_id": self.worker_id
                                     })),
                                 };
-                                if let Err(dlq_err) = insert_dlq_event(&self.pool, dlq_params)
-                                .await
+                                if let Err(dlq_err) = insert_dlq_event(&self.pool, dlq_params).await
                                 {
                                     error!(
                                         worker_id = %self.worker_id,
@@ -295,7 +294,10 @@ mod tests {
 
         async fn process_event(&self, _pool: &DbPool, item: &WorkQueueItem) -> Result<()> {
             // Record the call
-            self.processing_calls.lock().unwrap().push(item.raw_event_id);
+            self.processing_calls
+                .lock()
+                .unwrap()
+                .push(item.raw_event_id);
 
             // Simulate processing time
             tokio::time::sleep(self.processing_delay).await;
@@ -334,7 +336,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_mock_event_processor_creation() {
         let processor = MockEventProcessor::new("test_agent");
@@ -348,7 +349,7 @@ mod tests {
         let mut processor = MockEventProcessor::new("config_agent");
         processor.batch_size = 20;
         processor.poll_interval_secs = 5;
-        
+
         assert_eq!(processor.agent_name(), "config_agent");
         assert_eq!(processor.batch_size(), 20);
         assert_eq!(processor.poll_interval_secs(), 5);
@@ -362,7 +363,7 @@ mod tests {
         let item = create_test_work_item(queue_id, raw_event_id, "test_agent", 0, 3);
 
         // Create a dummy pool - we won't actually use it for this unit test
-        use sinex_db::{prelude::*, create_pool};
+        use sinex_db::{create_pool, prelude::*};
         let dummy_pool = match create_pool("postgresql://dummy_for_testing").await {
             Ok(pool) => pool,
             Err(_) => {
@@ -384,13 +385,13 @@ mod tests {
     async fn test_mock_processor_failure_behavior() {
         let processor = Arc::new(MockEventProcessor::new("test_agent"));
         processor.set_should_fail(true);
-        
+
         let queue_id = Ulid::new();
         let raw_event_id = Ulid::new();
         let item = create_test_work_item(queue_id, raw_event_id, "test_agent", 0, 3);
 
         // Create a dummy pool - we won't actually use it for this unit test
-        use sinex_db::{prelude::*, create_pool};
+        use sinex_db::{create_pool, prelude::*};
         let dummy_pool = match create_pool("postgresql://dummy_for_testing").await {
             Ok(pool) => pool,
             Err(_) => {
@@ -401,7 +402,10 @@ mod tests {
 
         let result = processor.process_event(&dummy_pool, &item).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock processing failure"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Mock processing failure"));
     }
 
     #[tokio::test]
@@ -413,12 +417,12 @@ mod tests {
         let backoff_0 = calculate_backoff_secs(0);
         let backoff_1 = calculate_backoff_secs(1);
         let backoff_2 = calculate_backoff_secs(2);
-        
+
         // Should be roughly: 60, 120, 240 seconds with jitter (0.8 to 1.2 factor)
         assert!((48.0..=72.0).contains(&backoff_0)); // 60 * (0.8 to 1.2)
         assert!((96.0..=144.0).contains(&backoff_1)); // 120 * (0.8 to 1.2)
         assert!((192.0..=288.0).contains(&backoff_2)); // 240 * (0.8 to 1.2)
-        
+
         // Test max backoff is capped at 24 hours
         assert!(calculate_backoff_secs(20) <= 24.0 * 3600.0);
         assert!(calculate_backoff_secs(100) <= 24.0 * 3600.0);
@@ -457,7 +461,7 @@ mod tests {
         let new_attempts = item_max_attempts.attempts + 1;
         assert_eq!(new_attempts, item_max_attempts.max_attempts);
         // This would trigger DLQ logic in the actual worker
-        
+
         // Test logic for determining DLQ trigger
         assert!(new_attempts >= item_max_attempts.max_attempts);
     }
@@ -468,7 +472,7 @@ mod tests {
         let test_error = "No rows returned by a query that expected to return at least one row";
         let error_contains_row_not_found = test_error.contains("No rows returned");
         assert!(error_contains_row_not_found);
-        
+
         // Test error contains detection logic that the worker uses
         let sqlx_error_msg = "RowNotFound";
         assert!(sqlx_error_msg.contains("RowNotFound"));
@@ -480,7 +484,7 @@ mod tests {
         let mut processor = MockEventProcessor::new("config_test_agent");
         processor.batch_size = 15;
         processor.poll_interval_secs = 3;
-        
+
         // Test that configuration is properly stored
         assert_eq!(processor.agent_name(), "config_test_agent");
         assert_eq!(processor.batch_size(), 15);
@@ -492,13 +496,13 @@ mod tests {
         // Test metrics creation without needing Worker instance
         use crate::WorkerMetrics;
         let metrics = WorkerMetrics::new("test_metrics_agent");
-        
+
         // Verify all metrics start at zero
         assert_eq!(metrics.items_claimed.get(), 0.0);
         assert_eq!(metrics.items_processed.get(), 0.0);
         assert_eq!(metrics.items_failed.get(), 0.0);
         assert_eq!(metrics.items_dlq.get(), 0.0);
-        
+
         // Processing duration should have no observations initially
         assert_eq!(metrics.processing_duration.get_sample_count(), 0);
     }
@@ -516,7 +520,7 @@ mod tests {
             "Max attempts exceeded after {} retries: {}",
             new_attempts, mock_error
         );
-        
+
         assert!(dlq_message.contains("Max attempts exceeded after 3 retries"));
         assert!(dlq_message.contains("Mock processing failure"));
     }
@@ -542,17 +546,17 @@ mod tests {
     #[tokio::test]
     async fn test_processing_timing() {
         let mut processor = MockEventProcessor::new("timing_agent");
-        
+
         // Set a known processing delay
         processor.set_processing_delay(std::time::Duration::from_millis(50));
         let processor_arc = Arc::new(processor);
-        
+
         let queue_id = Ulid::new();
         let raw_event_id = Ulid::new();
         let item = create_test_work_item(queue_id, raw_event_id, "timing_agent", 0, 3);
 
         // Create a dummy pool - we test timing behavior, not database interaction
-        use sinex_db::{prelude::*, create_pool};
+        use sinex_db::{create_pool, prelude::*};
         let dummy_pool = match create_pool("postgresql://dummy_for_testing").await {
             Ok(pool) => pool,
             Err(_) => {
@@ -573,20 +577,22 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_processing_simulation() {
         let processor = Arc::new(MockEventProcessor::new("concurrent_agent"));
-        
+
         // Create multiple work items
-        let items = (0..5).map(|i| {
-            create_test_work_item(
-                Ulid::new(),
-                Ulid::new(),
-                "concurrent_agent",
-                i % 3, // Different attempt counts
-                3,
-            )
-        }).collect::<Vec<_>>();
+        let items = (0..5)
+            .map(|i| {
+                create_test_work_item(
+                    Ulid::new(),
+                    Ulid::new(),
+                    "concurrent_agent",
+                    i % 3, // Different attempt counts
+                    3,
+                )
+            })
+            .collect::<Vec<_>>();
 
         // Create a dummy pool - we test concurrency behavior, not database interaction
-        use sinex_db::{prelude::*, create_pool};
+        use sinex_db::{create_pool, prelude::*};
         let dummy_pool = match create_pool("postgresql://dummy_for_testing").await {
             Ok(pool) => pool,
             Err(_) => {
@@ -599,13 +605,11 @@ mod tests {
         let futures = items.into_iter().map(|item| {
             let processor = processor.clone();
             let pool = dummy_pool.clone();
-            async move {
-                processor.process_event(&pool, &item).await
-            }
+            async move { processor.process_event(&pool, &item).await }
         });
 
         let results = futures::future::join_all(futures).await;
-        
+
         // All should succeed
         for result in results {
             assert!(result.is_ok());

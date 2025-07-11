@@ -1,13 +1,11 @@
 //! Service container that holds all service instances
 
-use anyhow::{Result, Context};
-use sinex_db::create_pool;
-use sinex_services::{
-    AnalyticsService, ContentService, PkmService, SearchService,
-};
+use anyhow::{Context, Result};
 use sinex_annex::BlobManager;
-use std::sync::Arc;
+use sinex_db::create_pool;
+use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Container holding all service instances
 #[derive(Clone)]
@@ -25,21 +23,21 @@ impl ServiceContainer {
         let db_url = database_url
             .or_else(|| std::env::var("DATABASE_URL").ok())
             .context("Database URL not provided and DATABASE_URL not set")?;
-        
+
         // Create database pool
-        let pool = create_pool(&db_url).await
+        let pool = create_pool(&db_url)
+            .await
             .context("Failed to create database pool")?;
-        
+
         // Create blob manager for content service
         let annex_path = PathBuf::from(
-            std::env::var("SINEX_ANNEX_PATH")
-                .unwrap_or_else(|_| "/tmp/sinex-annex".to_string())
+            std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string()),
         );
-        
+
         // Ensure the annex directory exists
         std::fs::create_dir_all(&annex_path)
             .with_context(|| format!("Failed to create annex directory: {:?}", annex_path))?;
-        
+
         let annex_config = sinex_annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
@@ -47,9 +45,9 @@ impl ServiceContainer {
         };
         let blob_manager = Arc::new(
             BlobManager::new(annex_config, pool.clone())
-                .context("Failed to create blob manager")?
+                .context("Failed to create blob manager")?,
         );
-        
+
         // Initialize all services
         Ok(Self {
             analytics: Arc::new(AnalyticsService::new(pool.clone())),

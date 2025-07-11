@@ -1,4 +1,4 @@
-use crate::models::{EventAnnotation, CreateAnnotationInput};
+use crate::models::{CreateAnnotationInput, EventAnnotation};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
 use anyhow::Result;
@@ -6,10 +6,13 @@ use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
 /// Create a new event annotation following the exact same pattern as add_to_work_queue
-pub async fn create_annotation(pool: DbPoolRef<'_>, input: CreateAnnotationInput) -> Result<EventAnnotation> {
+pub async fn create_annotation(
+    pool: DbPoolRef<'_>,
+    input: CreateAnnotationInput,
+) -> Result<EventAnnotation> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let event_uuid: Uuid = ulid_to_uuid(input.event_id);
-    
+
     let record = sqlx::query!(
         r#"
         INSERT INTO core.event_annotations (
@@ -47,9 +50,12 @@ pub async fn create_annotation(pool: DbPoolRef<'_>, input: CreateAnnotationInput
 }
 
 /// Get annotations for a specific event
-pub async fn get_annotations_for_event(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<Vec<EventAnnotation>> {
+pub async fn get_annotations_for_event(
+    pool: DbPoolRef<'_>,
+    event_id: Ulid,
+) -> Result<Vec<EventAnnotation>> {
     let event_uuid: Uuid = ulid_to_uuid(event_id);
-    
+
     let records = sqlx::query!(
         r#"
         SELECT 
@@ -88,9 +94,12 @@ pub async fn get_annotations_for_event(pool: DbPoolRef<'_>, event_id: Ulid) -> R
 }
 
 /// Get annotation by ID
-pub async fn get_annotation_by_id(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Result<Option<EventAnnotation>> {
+pub async fn get_annotation_by_id(
+    pool: DbPoolRef<'_>,
+    annotation_id: Ulid,
+) -> Result<Option<EventAnnotation>> {
     let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-    
+
     let record = sqlx::query!(
         r#"
         SELECT 
@@ -124,12 +133,12 @@ pub async fn get_annotation_by_id(pool: DbPoolRef<'_>, annotation_id: Ulid) -> R
 
 /// Update annotation content
 pub async fn update_annotation_content(
-    pool: DbPoolRef<'_>, 
-    annotation_id: Ulid, 
-    new_content: &str
+    pool: DbPoolRef<'_>,
+    annotation_id: Ulid,
+    new_content: &str,
 ) -> Result<EventAnnotation> {
     let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-    
+
     let record = sqlx::query!(
         r#"
         UPDATE core.event_annotations 
@@ -166,7 +175,7 @@ pub async fn update_annotation_content(
 /// Delete annotation
 pub async fn delete_annotation(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Result<bool> {
     let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-    
+
     let result = sqlx::query!(
         "DELETE FROM core.event_annotations WHERE id::uuid = $1",
         annotation_uuid
@@ -178,7 +187,10 @@ pub async fn delete_annotation(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Resu
 }
 
 /// Get recent annotations
-pub async fn get_recent_annotations(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<EventAnnotation>> {
+pub async fn get_recent_annotations(
+    pool: DbPoolRef<'_>,
+    limit: i64,
+) -> Result<Vec<EventAnnotation>> {
     let records = sqlx::query!(
         r#"
         SELECT 

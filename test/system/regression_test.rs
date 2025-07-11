@@ -166,18 +166,15 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
         let handle = tokio::spawn(async move {
             // Hold connection for a while
             let mut tx = pool_clone.begin().await?;
-            
+
             // Insert a test event within transaction
-            let event = RawEventBuilder::new(
-                "connection_test",
-                "test_event",
-                json!({"connection_id": i}),
-            )
-            .build();
-            
+            let event =
+                RawEventBuilder::new("connection_test", "test_event", json!({"connection_id": i}))
+                    .build();
+
             sqlx::query(
                 "INSERT INTO raw.events (id, source, event_type, payload, host, ts_ingest)
-                 VALUES ($1, $2, $3, $4, $5, $6)"
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(event.id.to_uuid())
             .bind(&event.source)
@@ -190,9 +187,9 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
 
             // Hold the connection briefly
             tokio::time::sleep(Duration::from_millis(100)).await;
-            
+
             tx.commit().await?;
-            
+
             Ok::<_, anyhow::Error>(i)
         });
         handles.push(handle);
@@ -328,7 +325,7 @@ watch_paths = ["/tmp"]
 
     // This should fail gracefully
     let config_result = CollectorConfig::load_from_file(&config_path);
-    
+
     match config_result {
         Ok(config) => {
             // If it loads, it should have sensible defaults
@@ -359,15 +356,18 @@ async fn test_config_file_permissions(ctx: TestContext) -> TestResult {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        
+
         // Make file readable only by owner
         let mut perms = std::fs::metadata(&config_path)?.permissions();
         perms.set_mode(0o600);
         std::fs::set_permissions(&config_path, perms)?;
-        
+
         // Should still be readable by same user
         let config = CollectorConfig::load_from_file(&config_path);
-        assert!(config.is_ok(), "Should be able to read config with restricted permissions");
+        assert!(
+            config.is_ok(),
+            "Should be able to read config with restricted permissions"
+        );
     }
 
     Ok(())
@@ -514,12 +514,16 @@ async fn test_json_string_escaping(ctx: TestContext) -> TestResult {
         match serde_json::to_string(&event) {
             Ok(json_str) => {
                 println!("Escape test {} serialized successfully", i);
-                
+
                 // Try to deserialize back
                 match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(deserialized) => {
-                        let recovered_str = deserialized["payload"]["test_string"].as_str().unwrap();
-                        assert_eq!(recovered_str, *test_str, "String should roundtrip correctly");
+                        let recovered_str =
+                            deserialized["payload"]["test_string"].as_str().unwrap();
+                        assert_eq!(
+                            recovered_str, *test_str,
+                            "String should roundtrip correctly"
+                        );
                     }
                     Err(e) => println!("Deserialization failed: {}", e),
                 }
@@ -586,31 +590,34 @@ async fn test_monotonic_ulid_rapid_generation(ctx: TestContext) -> TestResult {
 async fn test_ulid_timestamp_boundaries(ctx: TestContext) -> TestResult {
     // Test ULIDs at timestamp boundaries
     let test_timestamps = [
-        0u64,                           // Unix epoch
-        1_000_000_000_000,             // Year 2001
+        0u64,                                         // Unix epoch
+        1_000_000_000_000,                            // Year 2001
         chrono::Utc::now().timestamp_millis() as u64, // Current time
-        281_474_976_710_655,           // Max ULID timestamp (year 10889)
+        281_474_976_710_655,                          // Max ULID timestamp (year 10889)
     ];
 
     for &timestamp in &test_timestamps {
         // Create ULID with specific timestamp
         let datetime = chrono::DateTime::from_timestamp_millis(timestamp as i64).unwrap();
         let ulid = Ulid::from_datetime(datetime);
-        
+
         // Verify timestamp extraction
         let extracted_timestamp = ulid.inner().timestamp_ms();
-        assert_eq!(extracted_timestamp, timestamp, "Timestamp should roundtrip correctly");
-        
+        assert_eq!(
+            extracted_timestamp, timestamp,
+            "Timestamp should roundtrip correctly"
+        );
+
         // Verify it can be converted to/from various formats
         let uuid = ulid.to_uuid();
         let ulid_from_uuid = Ulid::from_uuid(uuid);
         assert_eq!(ulid, ulid_from_uuid, "UUID conversion should roundtrip");
-        
+
         let string = ulid.to_string();
         let ulid_from_string = string.parse::<Ulid>().unwrap();
         assert_eq!(ulid, ulid_from_string, "String conversion should roundtrip");
     }
-    
+
     Ok(())
 }
 
@@ -619,53 +626,52 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
     // Test that ULIDs are correctly stored and retrieved from database
     let pool = ctx.pool();
     let test_ulid = Ulid::new();
-    
+
     // Insert event with specific ULID
-    let event = RawEventBuilder::new(
-        "ulid_test",
-        "storage_test",
-        json!({"test": "ulid storage"}),
-    )
-    .with_id(test_ulid)
-    .build();
-    
+    let event = RawEventBuilder::new("ulid_test", "storage_test", json!({"test": "ulid storage"}))
+        .with_id(test_ulid)
+        .build();
+
     insert_event(pool, &event).await?;
-    
+
     // Retrieve and verify
     let retrieved = sqlx::query!(
         "SELECT id::uuid as id FROM raw.events WHERE source = 'ulid_test' AND event_type = 'storage_test'"
     )
     .fetch_one(pool)
     .await?;
-    
+
     let retrieved_ulid = Ulid::from_uuid(retrieved.id.expect("Event should have an ID"));
-    assert_eq!(retrieved_ulid, test_ulid, "ULID should roundtrip through database");
-    
+    assert_eq!(
+        retrieved_ulid, test_ulid,
+        "ULID should roundtrip through database"
+    );
+
     // Test sorting by ULID
     let newer_ulid = Ulid::new();
-    let newer_event = RawEventBuilder::new(
-        "ulid_test",
-        "storage_test",
-        json!({"test": "newer event"}),
-    )
-    .with_id(newer_ulid)
-    .build();
-    
+    let newer_event =
+        RawEventBuilder::new("ulid_test", "storage_test", json!({"test": "newer event"}))
+            .with_id(newer_ulid)
+            .build();
+
     insert_event(pool, &newer_event).await?;
-    
+
     // Query in chronological order
     let ordered_events = sqlx::query!(
         "SELECT id::uuid as id FROM raw.events WHERE source = 'ulid_test' ORDER BY id"
     )
     .fetch_all(pool)
     .await?;
-    
+
     assert_eq!(ordered_events.len(), 2);
     let first_ulid = Ulid::from_uuid(ordered_events[0].id.expect("Event should have an ID"));
     let second_ulid = Ulid::from_uuid(ordered_events[1].id.expect("Event should have an ID"));
-    
-    assert!(first_ulid < second_ulid, "ULIDs should be ordered chronologically");
-    
+
+    assert!(
+        first_ulid < second_ulid,
+        "ULIDs should be ordered chronologically"
+    );
+
     Ok(())
 }
 
@@ -757,35 +763,51 @@ async fn test_field_type_validation_edge_cases(ctx: TestContext) -> TestResult {
     // Test type validation edge cases
     let type_test_cases = vec![
         // Size as string instead of number
-        (json!({
-            "path": "/test.txt",
-            "size": "1024"  // String instead of number
-        }), false, "size as string"),
-        
+        (
+            json!({
+                "path": "/test.txt",
+                "size": "1024"  // String instead of number
+            }),
+            false,
+            "size as string",
+        ),
         // Negative size
-        (json!({
-            "path": "/test.txt",
-            "size": -1024
-        }), false, "negative size"),
-        
+        (
+            json!({
+                "path": "/test.txt",
+                "size": -1024
+            }),
+            false,
+            "negative size",
+        ),
         // Extremely large size
-        (json!({
-            "path": "/test.txt",
-            "size": u64::MAX
-        }), true, "max size"),
-        
+        (
+            json!({
+                "path": "/test.txt",
+                "size": u64::MAX
+            }),
+            true,
+            "max size",
+        ),
         // Missing required field
-        (json!({
-            "size": 1024
-            // Missing path
-        }), false, "missing path"),
-        
+        (
+            json!({
+                "size": 1024
+                // Missing path
+            }),
+            false,
+            "missing path",
+        ),
         // Additional unexpected fields
-        (json!({
-            "path": "/test.txt",
-            "size": 1024,
-            "unexpected_field": "should this be allowed?"
-        }), true, "unexpected field"),
+        (
+            json!({
+                "path": "/test.txt",
+                "size": 1024,
+                "unexpected_field": "should this be allowed?"
+            }),
+            true,
+            "unexpected field",
+        ),
     ];
 
     for (event, should_be_valid, desc) in type_test_cases {
@@ -807,40 +829,59 @@ async fn test_command_validation_edge_cases(ctx: TestContext) -> TestResult {
     // Test command validation edge cases
     let command_test_cases = vec![
         // Very long command
-        (json!({
-            "command": "a".repeat(100_000),
-            "exit_code": 0
-        }), true, "very long command"),
-        
+        (
+            json!({
+                "command": "a".repeat(100_000),
+                "exit_code": 0
+            }),
+            true,
+            "very long command",
+        ),
         // Command with null bytes
-        (json!({
-            "command": "ls\0-la",
-            "exit_code": 0
-        }), true, "command with null bytes"),
-        
+        (
+            json!({
+                "command": "ls\0-la",
+                "exit_code": 0
+            }),
+            true,
+            "command with null bytes",
+        ),
         // Empty command
-        (json!({
-            "command": "",
-            "exit_code": 0
-        }), false, "empty command"),
-        
+        (
+            json!({
+                "command": "",
+                "exit_code": 0
+            }),
+            false,
+            "empty command",
+        ),
         // Command with control characters
-        (json!({
-            "command": "echo\x01\x02\x03",
-            "exit_code": 0
-        }), true, "command with control chars"),
-        
+        (
+            json!({
+                "command": "echo\x01\x02\x03",
+                "exit_code": 0
+            }),
+            true,
+            "command with control chars",
+        ),
         // Invalid exit code
-        (json!({
-            "command": "test",
-            "exit_code": 999
-        }), true, "high exit code"),
-        
+        (
+            json!({
+                "command": "test",
+                "exit_code": 999
+            }),
+            true,
+            "high exit code",
+        ),
         // Negative exit code
-        (json!({
-            "command": "test",
-            "exit_code": -1
-        }), false, "negative exit code"),
+        (
+            json!({
+                "command": "test",
+                "exit_code": -1
+            }),
+            false,
+            "negative exit code",
+        ),
     ];
 
     for (event, should_be_valid, desc) in command_test_cases {
@@ -862,29 +903,45 @@ async fn test_timestamp_validation_edge_cases(ctx: TestContext) -> TestResult {
     // Test timestamp validation edge cases
     let timestamp_test_cases = vec![
         // Invalid RFC3339 format
-        (json!({
-            "timestamp": "2023-01-01 12:00:00"  // Missing timezone
-        }), false, "invalid RFC3339"),
-        
+        (
+            json!({
+                "timestamp": "2023-01-01 12:00:00"  // Missing timezone
+            }),
+            false,
+            "invalid RFC3339",
+        ),
         // Valid RFC3339
-        (json!({
-            "timestamp": "2023-01-01T12:00:00Z"
-        }), true, "valid RFC3339"),
-        
+        (
+            json!({
+                "timestamp": "2023-01-01T12:00:00Z"
+            }),
+            true,
+            "valid RFC3339",
+        ),
         // Future timestamp
-        (json!({
-            "timestamp": "2050-01-01T12:00:00Z"
-        }), true, "future timestamp"),
-        
+        (
+            json!({
+                "timestamp": "2050-01-01T12:00:00Z"
+            }),
+            true,
+            "future timestamp",
+        ),
         // Very old timestamp
-        (json!({
-            "timestamp": "1970-01-01T00:00:00Z"
-        }), true, "epoch timestamp"),
-        
+        (
+            json!({
+                "timestamp": "1970-01-01T00:00:00Z"
+            }),
+            true,
+            "epoch timestamp",
+        ),
         // Timestamp with nanoseconds
-        (json!({
-            "timestamp": "2023-01-01T12:00:00.123456789Z"
-        }), true, "nanosecond precision"),
+        (
+            json!({
+                "timestamp": "2023-01-01T12:00:00.123456789Z"
+            }),
+            true,
+            "nanosecond precision",
+        ),
     ];
 
     for (event, should_be_valid, desc) in timestamp_test_cases {

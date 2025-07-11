@@ -1,4 +1,4 @@
-use crate::validation::{ValidationError, Result};
+use crate::validation::{Result, ValidationError};
 use regex::Regex;
 use serde_json::Value;
 use url::Url;
@@ -53,7 +53,8 @@ impl ValidationChain<String> {
     pub fn not_empty(mut self) -> Self {
         if self.value.is_empty() {
             self.errors.push(ValidationError::General(format!(
-                "{} cannot be empty", self.field_name
+                "{} cannot be empty",
+                self.field_name
             )));
         }
         self
@@ -63,7 +64,8 @@ impl ValidationChain<String> {
     pub fn min_length(mut self, min: usize) -> Self {
         if self.value.len() < min {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at least {} characters long", self.field_name, min
+                "{} must be at least {} characters long",
+                self.field_name, min
             )));
         }
         self
@@ -73,7 +75,8 @@ impl ValidationChain<String> {
     pub fn max_length(mut self, max: usize) -> Self {
         if self.value.len() > max {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at most {} characters long", self.field_name, max
+                "{} must be at most {} characters long",
+                self.field_name, max
             )));
         }
         self
@@ -83,7 +86,9 @@ impl ValidationChain<String> {
     pub fn matches_regex(mut self, pattern: &Regex) -> Self {
         if !pattern.is_match(&self.value) {
             self.errors.push(ValidationError::General(format!(
-                "{} does not match pattern: {}", self.field_name, pattern.as_str()
+                "{} does not match pattern: {}",
+                self.field_name,
+                pattern.as_str()
             )));
         }
         self
@@ -95,7 +100,8 @@ impl ValidationChain<String> {
             Ok(_) => {}
             Err(_) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} contains unsafe path characters or patterns", self.field_name
+                    "{} contains unsafe path characters or patterns",
+                    self.field_name
                 )));
             }
         }
@@ -108,7 +114,8 @@ impl ValidationChain<String> {
             Ok(_) => {}
             Err(e) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} invalid URL: {}", self.field_name, e
+                    "{} invalid URL: {}",
+                    self.field_name, e
                 )));
             }
         }
@@ -119,7 +126,8 @@ impl ValidationChain<String> {
     pub fn no_shell_metacharacters(mut self) -> Self {
         if crate::validation::contains_shell_metacharacters(&self.value) {
             self.errors.push(ValidationError::General(format!(
-                "{} contains shell metacharacters", self.field_name
+                "{} contains shell metacharacters",
+                self.field_name
             )));
         }
         self
@@ -135,7 +143,8 @@ impl<T> ValidationChain<T> {
     {
         if !predicate(&self.value) {
             self.errors.push(ValidationError::General(format!(
-                "{} {}", self.field_name, error_message
+                "{} {}",
+                self.field_name, error_message
             )));
         }
         self
@@ -148,7 +157,8 @@ impl ValidationChain<&str> {
     pub fn not_empty(mut self) -> Self {
         if self.value.is_empty() {
             self.errors.push(ValidationError::General(format!(
-                "{} cannot be empty", self.field_name
+                "{} cannot be empty",
+                self.field_name
             )));
         }
         self
@@ -158,7 +168,8 @@ impl ValidationChain<&str> {
     pub fn min_length(mut self, min: usize) -> Self {
         if self.value.len() < min {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at least {} characters long", self.field_name, min
+                "{} must be at least {} characters long",
+                self.field_name, min
             )));
         }
         self
@@ -168,7 +179,8 @@ impl ValidationChain<&str> {
     pub fn max_length(mut self, max: usize) -> Self {
         if self.value.len() > max {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at most {} characters long", self.field_name, max
+                "{} must be at most {} characters long",
+                self.field_name, max
             )));
         }
         self
@@ -178,7 +190,9 @@ impl ValidationChain<&str> {
     pub fn matches_regex(mut self, pattern: &Regex) -> Self {
         if !pattern.is_match(self.value) {
             self.errors.push(ValidationError::General(format!(
-                "{} does not match pattern: {}", self.field_name, pattern.as_str()
+                "{} does not match pattern: {}",
+                self.field_name,
+                pattern.as_str()
             )));
         }
         self
@@ -190,7 +204,8 @@ impl ValidationChain<&str> {
             Ok(_) => {}
             Err(e) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} path validation failed: {}", self.field_name, e
+                    "{} path validation failed: {}",
+                    self.field_name, e
                 )));
             }
         }
@@ -203,7 +218,8 @@ impl ValidationChain<&str> {
             Ok(_) => {}
             Err(e) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} invalid URL: {}", self.field_name, e
+                    "{} invalid URL: {}",
+                    self.field_name, e
                 )));
             }
         }
@@ -220,7 +236,8 @@ where
     pub fn min(mut self, min: T) -> Self {
         if self.value < min {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at least {}", self.field_name, min
+                "{} must be at least {}",
+                self.field_name, min
             )));
         }
         self
@@ -230,7 +247,8 @@ where
     pub fn max(mut self, max: T) -> Self {
         if self.value > max {
             self.errors.push(ValidationError::General(format!(
-                "{} must be at most {}", self.field_name, max
+                "{} must be at most {}",
+                self.field_name, max
             )));
         }
         self
@@ -240,7 +258,8 @@ where
     pub fn range(mut self, range: std::ops::Range<T>) -> Self {
         if self.value < range.start || self.value >= range.end {
             self.errors.push(ValidationError::General(format!(
-                "{} must be between {} and {} (exclusive)", self.field_name, range.start, range.end
+                "{} must be between {} and {} (exclusive)",
+                self.field_name, range.start, range.end
             )));
         }
         self
@@ -260,13 +279,16 @@ impl ValidationChain<Value> {
             Value::Object(map) => {
                 if !map.contains_key(field) {
                     self.errors.push(ValidationError::General(format!(
-                        "Missing required field: {}", field
+                        "Missing required field: {}",
+                        field
                     )));
                 }
             }
             _ => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} expected object, got {}", self.field_name, json_type_name(&self.value)
+                    "{} expected object, got {}",
+                    self.field_name,
+                    json_type_name(&self.value)
                 )));
             }
         }
@@ -280,19 +302,25 @@ impl ValidationChain<Value> {
                 Some(value) => {
                     if !expected.matches(value) {
                         self.errors.push(ValidationError::General(format!(
-                            "{} field expected {}, got {}", field, expected, json_type_name(value)
+                            "{} field expected {}, got {}",
+                            field,
+                            expected,
+                            json_type_name(value)
                         )));
                     }
                 }
                 None => {
                     self.errors.push(ValidationError::General(format!(
-                        "Missing required field: {}", field
+                        "Missing required field: {}",
+                        field
                     )));
                 }
             },
             _ => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} expected object, got {}", self.field_name, json_type_name(&self.value)
+                    "{} expected object, got {}",
+                    self.field_name,
+                    json_type_name(&self.value)
                 )));
             }
         }
@@ -303,7 +331,8 @@ impl ValidationChain<Value> {
     pub fn max_depth(mut self, depth: usize) -> Self {
         if calculate_json_depth(&self.value) > depth {
             self.errors.push(ValidationError::General(format!(
-                "{} JSON nesting exceeds maximum depth of {}", self.field_name, depth
+                "{} JSON nesting exceeds maximum depth of {}",
+                self.field_name, depth
             )));
         }
         self
@@ -316,13 +345,16 @@ impl ValidationChain<Value> {
                 if json_str.len() > bytes {
                     self.errors.push(ValidationError::General(format!(
                         "{} JSON size ({} bytes) exceeds maximum of {} bytes",
-                        self.field_name, json_str.len(), bytes
+                        self.field_name,
+                        json_str.len(),
+                        bytes
                     )));
                 }
             }
             Err(_) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} failed to serialize JSON for size check", self.field_name
+                    "{} failed to serialize JSON for size check",
+                    self.field_name
                 )));
             }
         }
@@ -335,7 +367,8 @@ impl ValidationChain<Value> {
             Ok(_) => {}
             Err(_) => {
                 self.errors.push(ValidationError::General(format!(
-                    "{} JSON structure has excessive expansion ratio", self.field_name
+                    "{} JSON structure has excessive expansion ratio",
+                    self.field_name
                 )));
             }
         }
@@ -346,7 +379,10 @@ impl ValidationChain<Value> {
     pub fn json_type(mut self, expected: JsonType) -> Self {
         if !expected.matches(&self.value) {
             self.errors.push(ValidationError::General(format!(
-                "{} expected {}, got {}", self.field_name, expected, json_type_name(&self.value)
+                "{} expected {}, got {}",
+                self.field_name,
+                expected,
+                json_type_name(&self.value)
             )));
         }
         self

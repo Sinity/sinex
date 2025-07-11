@@ -183,7 +183,6 @@ pub struct StressTestUtils;
 
 #[allow(dead_code)]
 impl StressTestUtils {
-
     /// Clean up test data after a stress test
     pub async fn cleanup_test_data(
         pool: &DbPool,

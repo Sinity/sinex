@@ -39,17 +39,18 @@ pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 pub use serde::{Deserialize, Serialize};
 pub use serde_json::{json, Value};
 // ===== Sinex Core Types =====
-pub use sinex_core::{
-    event_type_constants, parse_duration,
-    unified_collector::{EventRegistry},
-    BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor,
-    ConfigValidator, ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator,
-    ResultExt, ValidationChain,
-};
 pub use sinex_collector::create_registry_with_auto_registration as create_registry;
+pub use sinex_core::{
+    event_type_constants, parse_duration, unified_collector::EventRegistry, BackpressureManager,
+    ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor, ConfigValidator,
+    ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator, ResultExt,
+    ValidationChain,
+};
 pub use sinex_db::{
-    prelude::{WorkQueueItem}, // AgentManifest, QueueStatus currently unused
-    run_migrations, DbPool, RawEvent,
+    prelude::WorkQueueItem, // AgentManifest, QueueStatus currently unused
+    run_migrations,
+    DbPool,
+    RawEvent,
 };
 pub use sinex_ulid::Ulid;
 // ===== Async Runtime =====
@@ -64,8 +65,8 @@ pub use tempfile::TempDir;
 // Common modules
 // Test context - THE way to write tests
 // Event factory and builders - THE way to create events
-pub use sinex_core::{EventFactory, RawEventBuilder};
 pub use crate::common::event_builders::EventBuilder;
+pub use sinex_core::{EventFactory, RawEventBuilder};
 // Database helpers available in crate::common::database_helpers
 // Test macro - THE way to define tests
 pub use sinex_test_macros::sinex_test;
@@ -74,24 +75,23 @@ pub use sinex_test_macros::sinex_test;
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
 pub use crate::common::timing_optimization::wait_helpers::{
-    wait_for_filtered_event_count, wait_for_work_queue_count,
-    wait_for_work_queue_status_count,
+    wait_for_filtered_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count,
 };
 // ===== Common Functions =====
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
 pub use sinex_db::{
-    work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item},
     events::get_event_by_id,
     metrics_queries::calculate_queue_depth_metrics,
+    work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item},
 };
 // Test helper functions from common/mod.rs
-pub use crate::common::{get_events_by_type, get_recent_events, get_events_in_time_range};
+pub use crate::common::{get_events_by_type, get_events_in_time_range, get_recent_events};
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
-    assert_channel_send_success, assert_eq_with_context,
-    assert_event_inserted_with_context, assert_events_equivalent, assert_validation_passes,
-    assert_with_context, assert_with_validation, TestAssertionBatch,
+    assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,
+    assert_events_equivalent, assert_validation_passes, assert_with_context,
+    assert_with_validation, TestAssertionBatch,
 };
 // ===== Constants =====

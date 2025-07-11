@@ -221,6 +221,7 @@ pub struct DlqManager {
 }
 
 impl DlqManager {
+
     pub fn new(agent_name: impl Into<String>) -> Result<Self> {
         let agent_name = agent_name.into();
 
@@ -249,6 +250,7 @@ impl DlqManager {
     }
 
     /// Ensure directories exist
+
     pub async fn initialize(&self) -> Result<()> {
         fs::create_dir_all(&self.base_path)
             .await
@@ -321,6 +323,7 @@ impl DlqManager {
     }
 
     /// Log a critical meta-failure (when we can't even write DLQ notifications)
+
     pub async fn log_critical_failure(&self, error: &str) -> Result<()> {
         let timestamp = Utc::now().to_rfc3339();
         let log_entry = format!("{} CRITICAL: {}\n", timestamp, error);
@@ -347,6 +350,7 @@ impl DlqManager {
     }
 
     /// Get count of files in DLQ
+
     pub async fn get_dlq_size(&self) -> Result<u64> {
         let mut entries = fs::read_dir(&self.base_path)
             .await
@@ -363,6 +367,7 @@ impl DlqManager {
     }
 
     /// Read all DLQ entries (for potential replay)
+
     pub async fn read_all_entries(&self) -> Result<Vec<(PathBuf, DlqEntry)>> {
         let mut results = Vec::new();
         let mut entries = fs::read_dir(&self.base_path).await?;
@@ -385,6 +390,7 @@ impl DlqManager {
     }
 
     /// Remove a DLQ entry (after successful replay)
+
     pub async fn remove_entry(&self, path: &Path) -> Result<()> {
         fs::remove_file(path)
             .await
@@ -409,6 +415,7 @@ impl RetryExecutor {
     }
 
     /// Execute operation with retry logic
+
     pub async fn execute<F, Fut, T>(&self, mut operation: F) -> Result<T, CollectorError>
     where
         F: FnMut() -> Fut,
@@ -468,6 +475,7 @@ pub struct RecoveryManager {
 }
 
 impl RecoveryManager {
+
     pub fn new(agent_name: impl Into<String>) -> Result<Self> {
         let agent_name = agent_name.into();
         let dlq = DlqManager::new(&agent_name)?;
@@ -492,6 +500,7 @@ impl RecoveryManager {
         self.dlq = self.dlq.with_event_sender(event_tx);
         self
     }
+
 
     pub async fn initialize(&self) -> Result<()> {
         self.dlq.initialize().await
@@ -528,6 +537,7 @@ impl RecoveryManager {
             }
         }
     }
+
 
     pub async fn get_dlq_size(&self) -> Result<u64> {
         self.dlq.get_dlq_size().await

@@ -354,9 +354,7 @@ async fn test_external_command_working_directory(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_external_command_error_handling(ctx: TestContext) -> TestResult {
     // Test handling of command that returns error
-    let output = tokio::process::Command::new("false")
-        .output()
-        .await?;
+    let output = tokio::process::Command::new("false").output().await?;
 
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
@@ -372,7 +370,8 @@ async fn test_external_command_timeout(ctx: TestContext) -> TestResult {
             .arg("1")
             .output()
             .await
-    }).await;
+    })
+    .await;
 
     assert!(result.is_err(), "Command should have timed out");
 
@@ -389,7 +388,7 @@ async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult
 
     let stdin = child.stdin.take().unwrap();
     let input = "Hello from stdin!";
-    
+
     // Write to stdin
     let write_task = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
@@ -415,7 +414,7 @@ async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult
 async fn test_external_database_connection(ctx: TestContext) -> TestResult {
     // Test that we can connect to external PostgreSQL database
     let pool = ctx.pool();
-    
+
     // Test basic connection
     let result = sqlx::query("SELECT 1 as test_value")
         .fetch_one(pool)
@@ -430,7 +429,7 @@ async fn test_external_database_connection(ctx: TestContext) -> TestResult {
 async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult {
     // Test TimescaleDB specific functions
     let pool = ctx.pool();
-    
+
     // Test time_bucket function (TimescaleDB specific)
     let result = sqlx::query("SELECT time_bucket('1 minute', NOW()) as bucket")
         .fetch_one(pool)
@@ -453,22 +452,20 @@ async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestR
 async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
     // Test that required database extensions are available
     let pool = ctx.pool();
-    
+
     // Check for uuid-ossp extension
-    let uuid_result = sqlx::query(
-        "SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp'"
-    )
-    .fetch_optional(pool)
-    .await?;
+    let uuid_result = sqlx::query("SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp'")
+        .fetch_optional(pool)
+        .await?;
 
     if uuid_result.is_some() {
         println!("uuid-ossp extension is available");
-        
+
         // Test UUID generation
         let uuid_test = sqlx::query("SELECT uuid_generate_v4() as test_uuid")
             .fetch_one(pool)
             .await?;
-        
+
         let uuid_str = uuid_test.get::<String, _>("test_uuid");
         assert!(uuid_str.len() == 36); // Standard UUID length
     } else {
@@ -491,7 +488,7 @@ async fn test_external_database_concurrent_connections(ctx: TestContext) -> Test
                 .bind(i)
                 .fetch_one(&pool_clone)
                 .await?;
-            
+
             Ok::<i32, anyhow::Error>(result.get("connection_id"))
         });
         handles.push(handle);
@@ -510,35 +507,38 @@ async fn test_external_database_concurrent_connections(ctx: TestContext) -> Test
 async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestResult {
     // Test database transaction isolation
     let pool = ctx.pool();
-    
+
     // Start a transaction
     let mut tx = pool.begin().await?;
-    
+
     // Insert test data in transaction
     sqlx::query("CREATE TEMPORARY TABLE test_isolation (id INT, value TEXT)")
         .execute(&mut *tx)
         .await?;
-    
+
     sqlx::query("INSERT INTO test_isolation (id, value) VALUES (1, 'transaction_data')")
         .execute(&mut *tx)
         .await?;
-    
+
     // Verify data exists within transaction
     let result = sqlx::query("SELECT value FROM test_isolation WHERE id = 1")
         .fetch_one(&mut *tx)
         .await?;
-    
+
     assert_eq!(result.get::<String, _>("value"), "transaction_data");
-    
+
     // Commit transaction
     tx.commit().await?;
-    
+
     // Test that temporary table is gone after transaction
     let table_check = sqlx::query("SELECT 1 FROM test_isolation LIMIT 1")
         .fetch_optional(pool)
         .await;
-    
-    assert!(table_check.is_err(), "Temporary table should not exist after transaction");
+
+    assert!(
+        table_check.is_err(),
+        "Temporary table should not exist after transaction"
+    );
 
     Ok(())
 }
@@ -550,22 +550,22 @@ async fn test_external_filesystem_operations(ctx: TestContext) -> TestResult {
     // Test basic filesystem operations
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("external_test.txt");
-    
+
     // Write file
     fs::write(&test_file, "external test content").await?;
-    
+
     // Verify file exists
     assert!(test_file.exists());
-    
+
     // Read file back
     let content = fs::read_to_string(&test_file).await?;
     assert_eq!(content, "external test content");
-    
+
     // Test file metadata
     let metadata = fs::metadata(&test_file).await?;
     assert!(metadata.is_file());
     assert_eq!(metadata.len(), "external test content".len() as u64);
-    
+
     Ok(())
 }
 
@@ -574,32 +574,32 @@ async fn test_external_filesystem_permissions(ctx: TestContext) -> TestResult {
     // Test filesystem permissions (Unix-specific)
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("permission_test.txt");
-    
+
     // Create file
     fs::write(&test_file, "permission test").await?;
-    
+
     // Test on Unix systems
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        
+
         // Get current permissions
         let metadata = fs::metadata(&test_file).await?;
         let perms = metadata.permissions();
-        
+
         // Verify it's a regular file permission
         assert!(perms.mode() & 0o100000 != 0); // S_IFREG
-        
+
         // Test permission modification
         let mut new_perms = perms.clone();
         new_perms.set_mode(0o644);
         fs::set_permissions(&test_file, new_perms).await?;
-        
+
         // Verify permission change
         let updated_metadata = fs::metadata(&test_file).await?;
         assert_eq!(updated_metadata.permissions().mode() & 0o777, 0o644);
     }
-    
+
     Ok(())
 }
 
@@ -609,30 +609,30 @@ async fn test_external_filesystem_symlinks(ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let original_file = temp_dir.path().join("original.txt");
     let symlink_file = temp_dir.path().join("symlink.txt");
-    
+
     // Create original file
     fs::write(&original_file, "original content").await?;
-    
+
     // Create symlink (Unix-specific)
     #[cfg(unix)]
     {
         tokio::fs::symlink(&original_file, &symlink_file).await?;
-        
+
         // Verify symlink exists
         assert!(symlink_file.exists());
-        
+
         // Test reading through symlink
         let content = fs::read_to_string(&symlink_file).await?;
         assert_eq!(content, "original content");
-        
+
         // Test symlink metadata
         let symlink_metadata = fs::symlink_metadata(&symlink_file).await?;
         assert!(symlink_metadata.is_symlink());
-        
+
         // Test reading symlink target
         let target = fs::read_link(&symlink_file).await?;
         assert_eq!(target, original_file);
     }
-    
+
     Ok(())
 }
