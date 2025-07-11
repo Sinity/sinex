@@ -122,6 +122,7 @@ fn default_compression() -> String {
 
 impl NixosConfig {
     /// Load configuration from file (TOML format)
+
     pub fn load_from_file(path: &PathBuf) -> Result<Self> {
         // Security: Validate path is not a symlink attack
         let metadata = std::fs::symlink_metadata(path)
@@ -171,6 +172,7 @@ impl NixosConfig {
     }
 
     /// Validate configuration
+
     pub fn validate(&self) -> Result<()> {
         // Require git-annex repository path
         if self.collector.annex_repo_path.is_empty() {
@@ -223,6 +225,7 @@ impl NixosConfig {
     }
 
     /// Convert to CollectorConfig format
+
     pub fn to_collector_config(&self) -> Result<super::CollectorConfig> {
         let mut enabled_events = Vec::new();
         let event_config = HashMap::new();
@@ -586,6 +589,7 @@ impl NixosConfig {
         ]
     }
 
+
     fn auto_discover_atuin_config(&self) -> Result<sinex_core::ConfigValue> {
         let home = std::env::var("HOME").context("HOME environment variable not set")?;
         let possible_paths = [
@@ -620,6 +624,7 @@ impl NixosConfig {
 
         Ok(sinex_core::ConfigValue::Table(config))
     }
+
 
     fn auto_discover_kitty_config(&self) -> Result<sinex_core::ConfigValue> {
         let default_tmp_dir = env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -661,6 +666,7 @@ impl NixosConfig {
         Ok(sinex_core::ConfigValue::Table(config))
     }
 
+
     fn parse_blob_threshold(&self) -> Result<u64> {
         let threshold = &self.collector.blob_threshold;
         if let Some(size_str) = threshold.strip_suffix("MB") {
@@ -684,6 +690,7 @@ impl NixosConfig {
                 .context("Invalid blob threshold format (expected number with MB/KB/GB suffix)")
         }
     }
+
 
     fn parse_retention_period(&self, retention: &str) -> Result<chrono::Duration> {
         if let Some(days_str) = retention.strip_suffix("d") {

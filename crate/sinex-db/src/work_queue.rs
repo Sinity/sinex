@@ -10,11 +10,9 @@ use crate::DbPoolRef;
 use crate::JsonValue;
 use anyhow::Result;
 use sinex_core::Timestamp;
-use sinex_core::{with_context, CoreError};
 use sinex_ulid::Ulid;
 
 /// Claim work queue items following the exact same pattern as existing correct functions
-#[with_context]
 pub async fn claim_work_queue_items(
     pool: DbPoolRef<'_>,
     agent_name: &str,
@@ -81,7 +79,6 @@ pub async fn claim_work_queue_items(
 }
 
 /// Complete a work queue item following the exact same pattern as existing correct functions
-#[with_context]
 pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<()> {
     let queue_uuid = ulid_to_uuid(queue_id);
 
@@ -102,7 +99,6 @@ pub async fn complete_work_queue_item(pool: DbPoolRef<'_>, queue_id: Ulid) -> Re
 }
 
 /// Mark a work queue item as failed following the exact same pattern as existing correct functions
-#[with_context]
 pub async fn fail_work_queue_item(
     pool: DbPoolRef<'_>,
     queue_id: Ulid,
@@ -161,7 +157,6 @@ pub struct DlqEventParams {
 }
 
 /// Insert a DLQ event following the exact same pattern as existing correct functions
-#[with_context]
 pub async fn insert_dlq_event(pool: DbPoolRef<'_>, params: DlqEventParams) -> Result<DlqEvent> {
     let failed_event_uuid = ulid_to_uuid(params.failed_event_id);
 
@@ -220,7 +215,6 @@ pub async fn insert_dlq_event(pool: DbPoolRef<'_>, params: DlqEventParams) -> Re
 }
 
 /// Add an event to the work queue
-#[with_context]
 pub async fn add_to_work_queue(
     pool: DbPoolRef<'_>,
     event_id: Ulid,
@@ -258,7 +252,6 @@ pub async fn get_next_work_item(
 }
 
 /// Get a work item by its ID
-#[with_context]
 pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<WorkQueueItem> {
     let queue_uuid = ulid_to_uuid(queue_id);
 
@@ -304,7 +297,6 @@ pub async fn get_work_item_by_id(pool: DbPoolRef<'_>, queue_id: Ulid) -> Result<
 }
 
 /// Get DLQ items for an agent
-#[with_context]
 pub async fn get_dlq_items(
     pool: DbPoolRef<'_>,
     agent_name: &str,
@@ -362,7 +354,6 @@ pub async fn get_dlq_items(
 }
 
 /// Add a work item to the work queue with proper types (used by old queries API)
-#[with_context]
 pub async fn add_to_work_queue_detailed(
     pool: DbPoolRef<'_>,
     event_id: Ulid,

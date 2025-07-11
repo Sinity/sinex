@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use sinex_core::with_context;
 use notify::Watcher;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -158,6 +159,7 @@ pub struct FilesystemMonitor {
 pub type FilesystemWatcher = FilesystemMonitor;
 
 impl FilesystemMonitor {
+    #[with_context]
     async fn new(config: FilesystemConfig) -> Result<Self> {
         Ok(Self {
             config,
@@ -479,7 +481,7 @@ impl EventSource for FilesystemMonitor {
 
     const SOURCE_NAME: &'static str = sources::FS;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
         // Use base trait for config parsing
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
@@ -490,7 +492,7 @@ impl EventSource for FilesystemMonitor {
         Self::new(config).await
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
         info!(
             patterns = ?self.config.watch_patterns,
             ignore = ?self.config.ignore_patterns,

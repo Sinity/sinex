@@ -641,8 +641,26 @@ impl TypedClipboardEventBuilder {
             source_app,
         };
 
-        let event = TypedEventBuilder::new(self.source, "copied", payload).build();
+        let event = TypedEventBuilder::new(self.source, "clipboard.copied", payload).build();
         EventEnvelope::ContentCopied(event)
+    }
+
+    pub fn content_selected(
+        self,
+        content_type: impl Into<String>,
+        content_size: u64,
+        text_preview: Option<String>,
+        selection_type: impl Into<String>,
+    ) -> EventEnvelope {
+        let payload = ClipboardSelectedPayload {
+            content_type: content_type.into(),
+            content_size,
+            text_preview,
+            selection_type: selection_type.into(),
+        };
+
+        let event = TypedEventBuilder::new(self.source, "clipboard.selected", payload).build();
+        EventEnvelope::ContentSelected(event)
     }
 }
 

@@ -1,19 +1,16 @@
 use crate::{DbPool, PoolConfig};
 use anyhow::Result;
 use once_cell::sync::OnceCell;
-use sinex_core::{with_context, CoreError};
 use tracing::info;
 
 static POOL: OnceCell<DbPool> = OnceCell::new();
 
 /// Get or create the global database pool with default configuration
-#[with_context]
 pub async fn get_pool() -> Result<&'static DbPool> {
     get_pool_with_config(None).await
 }
 
 /// Get or create the global database pool with custom configuration
-#[with_context]
 pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static DbPool> {
     if let Some(pool) = POOL.get() {
         return Ok(pool);

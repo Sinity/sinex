@@ -26,6 +26,9 @@ pub use terminal::{CommandExecuted, CommandExecutedPayload};
 
 use sinex_core::register_events;
 
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
+
 // Register all terminal event types using the macro
 register_events! {
     // Terminal recording sessions

@@ -101,4 +101,7 @@ pub mod terminal_test;
 /// ULID comprehensive tests
 pub mod ulid_comprehensive_test;
 
+/// Tests for typed clipboard events
+pub mod typed_clipboard_test;
+
 // Infrastructure tests are in test/common/ directory

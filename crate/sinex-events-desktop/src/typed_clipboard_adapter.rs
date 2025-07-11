@@ -1,28 +1,28 @@
-use crate::{FilesystemConfig, TypedFilesystemMonitor};
-/// Adapter to use TypedFilesystemMonitor with the current EventSource trait
+use crate::{ClipboardConfig, typed_clipboard::TypedClipboardMonitor};
+/// Adapter to use TypedClipboardMonitor with the current EventSource trait
 use async_trait::async_trait;
 use sinex_core::{sources, EventSender, EventSource, EventSourceBase, EventSourceContext, Result};
 use sinex_events::{typed_event_channel, EnforcedTypedEventSource, TypedToJsonAdapter};
 
-/// Adapter that wraps TypedFilesystemMonitor for use with EventSource trait
-pub struct TypedFilesystemAdapter {
-    inner: TypedFilesystemMonitor,
+/// Adapter that wraps TypedClipboardMonitor for use with EventSource trait
+pub struct TypedClipboardAdapter {
+    inner: TypedClipboardMonitor,
 }
 
 // Implement EventSourceBase to get common functionality
-impl EventSourceBase for TypedFilesystemAdapter {}
+impl EventSourceBase for TypedClipboardAdapter {}
 
 #[async_trait]
-impl EventSource for TypedFilesystemAdapter {
-    type Config = FilesystemConfig;
-    const SOURCE_NAME: &'static str = sources::FS;
+impl EventSource for TypedClipboardAdapter {
+    type Config = ClipboardConfig;
+    const SOURCE_NAME: &'static str = sources::CLIPBOARD;
 
     async fn initialize(ctx: EventSourceContext) -> Result<Self> {
         // Use base trait for config parsing  
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
         let config_value = serde_json::to_value(config)?;
         
-        let inner = <TypedFilesystemMonitor as EnforcedTypedEventSource>::initialize(config_value)
+        let inner = <TypedClipboardMonitor as EnforcedTypedEventSource>::initialize(config_value)
             .await
             .map_err(|e| sinex_core::CoreError::Other(e.to_string()))?;
         Ok(Self { inner })
@@ -37,7 +37,7 @@ impl EventSource for TypedFilesystemAdapter {
         let adapter_handle = tokio::spawn(adapter.run());
 
         // Run the typed source
-        let result = <TypedFilesystemMonitor as EnforcedTypedEventSource>::stream_typed_events(
+        let result = <TypedClipboardMonitor as EnforcedTypedEventSource>::stream_typed_events(
             &mut self.inner,
             typed_tx,
         )

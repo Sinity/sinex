@@ -8,8 +8,9 @@ use tracing::{debug, error, info};
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core::{
     sources, ChannelSenderExt, CoreError, ErrorContext, EventSender, EventSource, EventSourceBase,
-    EventSourceContext, EventType, JsonValue, Result, Timestamp,
+    EventSourceContext, EventType, JsonValue, Timestamp,
 };
+use sinex_macros::with_context;
 
 // ============================================================================
 // Event Payloads
@@ -147,14 +148,14 @@ pub struct ClipboardMonitor {
 }
 
 #[derive(Clone)]
-struct ClipboardHistoryEntry {
-    content_hash: String,
+pub struct ClipboardHistoryEntry {
+    pub content_hash: String,
     #[allow(dead_code)]
-    first_seen: Timestamp,
-    last_seen: Timestamp,
+    pub first_seen: Timestamp,
+    pub last_seen: Timestamp,
     #[allow(dead_code)]
-    content_type: String,
-    copy_count: u32,
+    pub content_type: String,
+    pub copy_count: u32,
 }
 
 // Implement EventSourceBase to get common functionality
@@ -166,7 +167,7 @@ impl EventSource for ClipboardMonitor {
 
     const SOURCE_NAME: &'static str = sources::CLIPBOARD;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
         // Use base trait for config parsing
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
@@ -299,7 +300,7 @@ impl EventSource for ClipboardMonitor {
         Ok(instance)
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
         info!("Starting clipboard monitoring");
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
@@ -327,7 +328,8 @@ impl EventSource for ClipboardMonitor {
 }
 
 impl ClipboardMonitor {
-    async fn new(config: ClipboardConfig) -> Result<Self> {
+    #[with_context]
+    async fn new(config: ClipboardConfig) -> sinex_core::Result<Self> {
         Ok(Self {
             config,
             last_clipboard: None,
@@ -337,7 +339,7 @@ impl ClipboardMonitor {
         })
     }
 
-    async fn check_clipboard(&mut self, tx: &EventSender, selection: &str) -> Result<()> {
+    async fn check_clipboard(&mut self, tx: &EventSender, selection: &str) -> sinex_core::Result<()> {
         let content = self.get_clipboard_content(selection).await?;
 
         // Check which last content to compare against
@@ -458,7 +460,8 @@ impl ClipboardMonitor {
         Ok(())
     }
 
-    async fn get_clipboard_content(&self, selection: &str) -> Result<String> {
+    #[with_context]
+    async fn get_clipboard_content(&self, selection: &str) -> sinex_core::Result<String> {
         // Try Wayland first
         let wl_selection = match selection {
             "clipboard" => "",
@@ -665,7 +668,7 @@ impl ClipboardMonitor {
         &mut self,
         content: &str,
         content_hash: &str,
-    ) -> Result<(String, Option<String>)> {
+    ) -> sinex_core::Result<(String, Option<String>)> {
         // Check if we have BlobManager configured
         let blob_manager = self.blob_manager.as_ref().ok_or_else(|| {
             ErrorContext::new(CoreError::Configuration(

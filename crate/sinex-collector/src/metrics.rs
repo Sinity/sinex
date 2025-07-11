@@ -239,6 +239,7 @@ impl CollectorMetrics {
     }
 
     /// Sample current metrics (called every second)
+
     async fn sample_metrics(&self, db_pool: Option<DbPoolRef<'_>>) -> Result<()> {
         // Update system info
         {
@@ -307,6 +308,7 @@ impl CollectorMetrics {
     }
 
     /// Create a metrics event from collected data
+
     async fn create_metrics_event(&self) -> Result<RawEvent> {
         let timeseries = {
             let mut buffer = self.ring_buffer.write().await;

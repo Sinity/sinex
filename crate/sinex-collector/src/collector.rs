@@ -7,7 +7,7 @@ use sinex_core::{
 };
 use sinex_db::validation::EventValidator;
 use sinex_db::DbPool;
-use sinex_events_desktop::{clipboard::ClipboardMonitor, window_manager::HyprlandIPCMonitor};
+use sinex_events_desktop::{window_manager::HyprlandIPCMonitor, TypedClipboardAdapter};
 use sinex_events_fs::TypedFilesystemAdapter;
 use sinex_events_system::{dbus::DbusMonitor, journal::JournalMonitor};
 use sinex_events_terminal::{
@@ -114,6 +114,7 @@ impl UnifiedCollector {
     }
 
     /// Main run loop - handles event collection and processing
+
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting unified collector");
 
@@ -177,6 +178,7 @@ impl UnifiedCollector {
     }
 
     /// Start all enabled event sources
+
     async fn start_sources(&self, event_tx: EventSender) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
 
@@ -255,25 +257,30 @@ impl UnifiedCollector {
             .any(|event| self.is_event_enabled(event))
     }
 
+
     async fn start_filesystem_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<TypedFilesystemAdapter>("files", "filesystem", event_tx)
             .await
     }
+
 
     async fn start_terminal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<KittyEventSource>("commands", "terminal", event_tx)
             .await
     }
 
+
     async fn start_window_manager_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<HyprlandIPCMonitor>("windows", "window manager", event_tx)
             .await
     }
 
+
     async fn start_atuin_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<AtuinDbReader>("shell.command.executed_atuin", "atuin", event_tx)
             .await
     }
+
 
     async fn start_shell_history_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<ShellHistoryReader>(
@@ -284,6 +291,7 @@ impl UnifiedCollector {
         .await
     }
 
+
     async fn start_asciinema_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<AsciinemaRecorder>(
             "terminal.asciinema",
@@ -292,6 +300,7 @@ impl UnifiedCollector {
         )
         .await
     }
+
 
     async fn start_scrollback_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<ScrollbackCapture>(
@@ -302,15 +311,18 @@ impl UnifiedCollector {
         .await
     }
 
+
     async fn start_dbus_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<DbusMonitor>("dbus", "D-Bus monitor", event_tx)
             .await
     }
 
+
     async fn start_clipboard_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
-        self.start_event_source::<ClipboardMonitor>("clipboard", "clipboard", event_tx)
+        self.start_event_source::<TypedClipboardAdapter>("clipboard", "clipboard", event_tx)
             .await
     }
+
 
     async fn start_journal_source(&self, event_tx: EventSender) -> Result<JoinHandle<()>> {
         self.start_event_source::<JournalMonitor>("journal", "journal", event_tx)

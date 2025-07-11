@@ -19,6 +19,7 @@ use sinex_core::{
     EventSourceBase, EventSourceContext, RawEvent, Result, SqliteConnection, SqliteStatementExt,
     Timestamp,
 };
+use sinex_macros::with_context;
 use sinex_db::DbPool;
 
 use crate::ShellCommandInfo;
@@ -181,6 +182,7 @@ impl EventSource for AtuinHistoryImporter {
 }
 
 impl AtuinHistoryImporter {
+    #[with_context]
     async fn get_atuin_total_count(&self) -> Result<i64> {
         let db_path = self.config.db_path.clone();
 
@@ -407,6 +409,7 @@ impl AtuinHistoryImporter {
         Ok(())
     }
 
+    #[with_context]
     fn convert_to_event(&self, entry: AtuinHistoryEntry) -> Result<RawEvent> {
         // Convert nanosecond timestamp to DateTime
         let ts_end = sinex_core::timestamp_nanos_to_datetime(entry.timestamp_ns);

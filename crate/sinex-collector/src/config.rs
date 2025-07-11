@@ -30,9 +30,11 @@ pub struct CollectorConfig {
 }
 
 impl CollectorConfig {
+
     pub fn load() -> Result<Self> {
         Self::load_with_validation(true)
     }
+
 
     pub fn load_with_validation(validate: bool) -> Result<Self> {
         // Try environment variable first
@@ -81,6 +83,7 @@ impl CollectorConfig {
         }
         Ok(config)
     }
+
 
     pub fn load_from_file(path: &Path) -> Result<Self> {
         // Security: Validate path is not a symlink attack
@@ -162,6 +165,7 @@ impl CollectorConfig {
     }
 
     /// Validate the configuration
+
     pub fn validate(&self) -> Result<()> {
         let mut errors = Vec::new();
 
@@ -416,6 +420,7 @@ impl CollectorConfig {
     }
 
     /// Perform cross-validation checks
+
     pub fn cross_validate(&self) -> Result<()> {
         let mut errors = Vec::new();
 
@@ -695,6 +700,7 @@ impl ConfigManager {
     }
 
     /// Start watching for configuration changes
+
     pub async fn start_watching(&mut self) -> Result<mpsc::Receiver<CollectorConfig>> {
         let (update_tx, update_rx) = mpsc::channel(10);
 
@@ -762,6 +768,7 @@ impl ConfigManager {
     }
 
     /// Manually update the configuration
+
     pub async fn update_config(&self, new_config: CollectorConfig) -> Result<()> {
         {
             let mut config_guard = self.config.write().await;
@@ -778,6 +785,7 @@ impl ConfigManager {
     }
 
     /// Save current configuration to file
+
     pub async fn save_to_file(&self, path: &Path) -> Result<()> {
         let config = self.get_config().await;
         let content = toml::to_string_pretty(&config)?;

@@ -14,6 +14,9 @@ pub use journal::{JournalEntry, JournalEntryPayload, JournalSync, JournalSyncPay
 
 use sinex_core::register_events;
 
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
+
 // Register all system event types using the macro
 register_events! {
     "signal.received" => (dbus, DbusSignalPayload),

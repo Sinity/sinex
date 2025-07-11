@@ -13,6 +13,9 @@ pub use filesystem::{
 pub use typed_adapter::TypedFilesystemAdapter;
 pub use typed_monitor::TypedFilesystemMonitor;
 
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
+
 use sinex_core::register_events;
 
 // Register all filesystem event types using the macro

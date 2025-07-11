@@ -17,8 +17,9 @@ use tracing::{debug, error, info};
 
 use sinex_core::{
     event_type_constants, sources, BackoffHelper, CoreError, ErrorContext, EventFactory,
-    EventSource, EventSourceBase, EventSourceContext, EventType, Result,
+    EventSource, EventSourceBase, EventSourceContext, EventType,
 };
+use sinex_macros::with_context;
 
 // ============================================================================
 // Event Payloads
@@ -228,7 +229,7 @@ impl EventSource for HyprlandIPCMonitor {
 
     const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         // Get Hyprland instance signature
@@ -276,7 +277,7 @@ impl EventSource for HyprlandIPCMonitor {
         })
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
         info!(
             socket_path = ?self.socket_path,
             window_augmentation = ?self.config.window_augmentation,
@@ -299,7 +300,7 @@ impl EventSource for HyprlandIPCMonitor {
 
 impl HyprlandIPCMonitor {
     /// Listen to socket2 events
-    async fn listen_socket_events(&mut self, event_tx: EventSender) -> Result<()> {
+    async fn listen_socket_events(&mut self, event_tx: EventSender) -> sinex_core::Result<()> {
         loop {
             match UnixStream::connect(&self.socket_path).await {
                 Ok(stream) => {
@@ -325,7 +326,7 @@ impl HyprlandIPCMonitor {
     }
 
     /// Process the event stream from socket2
-    async fn process_event_stream(&self, stream: UnixStream, event_tx: &EventSender) -> Result<()> {
+    async fn process_event_stream(&self, stream: UnixStream, event_tx: &EventSender) -> sinex_core::Result<()> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
 
@@ -378,7 +379,8 @@ impl HyprlandIPCMonitor {
     }
 
     /// Create event payload with optional augmentation
-    async fn create_event_payload(&self, event_name: &str, event_data: &str) -> Result<Value> {
+    #[with_context]
+    async fn create_event_payload(&self, event_name: &str, event_data: &str) -> sinex_core::Result<Value> {
         let mut payload = self.parse_event_data(event_name, event_data);
 
         // Add augmentation based on event type
@@ -486,17 +488,20 @@ impl HyprlandIPCMonitor {
     }
 
     /// Get window data from hyprctl (cached)
-    async fn get_window_data(&self, address: &str) -> Result<Value> {
+    #[with_context]
+    async fn get_window_data(&self, address: &str) -> sinex_core::Result<Value> {
         self.get_hyprctl_data("clients", Some(address)).await
     }
 
     /// Get workspace data from hyprctl (cached)
-    async fn get_workspace_data(&self) -> Result<Value> {
+    #[with_context]
+    async fn get_workspace_data(&self) -> sinex_core::Result<Value> {
         self.get_hyprctl_data("workspaces", None).await
     }
 
     /// Get data from hyprctl with caching
-    async fn get_hyprctl_data(&self, command: &str, filter: Option<&str>) -> Result<Value> {
+    #[with_context]
+    async fn get_hyprctl_data(&self, command: &str, filter: Option<&str>) -> sinex_core::Result<Value> {
         let cache_key = format!("{}:{}", command, filter.unwrap_or(""));
 
         // Check cache
@@ -614,7 +619,7 @@ impl EventSource for HyprlandStateSnapshotter {
 
     const SOURCE_NAME: &'static str = sources::WM_HYPRLAND;
 
-    async fn initialize(ctx: EventSourceContext) -> Result<Self> {
+    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
         let config = <Self as EventSourceBase>::parse_config::<Self::Config>(&ctx).await?;
 
         info!(
@@ -627,7 +632,7 @@ impl EventSource for HyprlandStateSnapshotter {
         })
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
         if self.interval_secs == 0 {
             info!("State snapshots disabled (interval_secs = 0)");
             // Keep running but don't send events
@@ -667,7 +672,7 @@ impl EventSource for HyprlandStateSnapshotter {
 
 impl HyprlandStateSnapshotter {
     /// Create a state snapshot
-    async fn create_state_snapshot() -> Result<Value> {
+    async fn create_state_snapshot() -> sinex_core::Result<Value> {
         // Execute hyprctl commands to get full state
         let mut snapshot = json!({
             "timestamp": Utc::now(),

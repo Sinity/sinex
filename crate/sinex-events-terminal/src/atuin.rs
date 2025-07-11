@@ -14,6 +14,7 @@ use sinex_core::{
     EventSource, EventSourceBase, EventSourceContext, EventType, QueryResultExt, RawEvent, Result,
     SqliteConnection, SqliteQueryBuilder, SqliteStatementExt, Timestamp,
 };
+use sinex_macros::with_context;
 use sinex_db::DbPool;
 
 // ============================================================================
@@ -163,6 +164,7 @@ impl EventSource for AtuinDbReader {
 }
 
 impl AtuinDbReader {
+    #[with_context]
     async fn get_atuin_total_count(&self) -> Result<i64> {
         let db_path = self.config.db_path.clone();
 

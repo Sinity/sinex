@@ -16,6 +16,9 @@ pub use shell_history::{ShellHistoryCommand, ShellHistoryCommandPayload, ShellHi
 
 use sinex_core::register_events;
 
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
+
 // Register all shell event types using the macro
 register_events! {
     // Command execution (rich metadata from Atuin)

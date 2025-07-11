@@ -9,6 +9,7 @@ use sinex_core::{
     sources, ChannelSenderExt, CoreError, ErrorContext, EventFactory, EventSender, EventSource,
     EventSourceBase, EventSourceContext, EventType, JsonValue, RawEvent, Result, Timestamp,
 };
+use sinex_macros::with_context;
 
 // ============================================================================
 // Event Payloads
@@ -381,6 +382,7 @@ impl EventSource for DbusMonitor {
     }
 }
 
+#[with_context]
 async fn monitor_bus(bus_type: &str, tx: EventSender, config: DbusConfig) -> Result<()> {
     use dbus::channel::MatchingReceiver;
     use dbus::message::MatchRule;

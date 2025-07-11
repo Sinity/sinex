@@ -15,6 +15,9 @@ pub use metrics::CollectorMetrics as MetricsCollector;
 pub use observability::*;
 pub use recovery::*;
 
+// Re-export CoreError so the #[with_context] macro can find it
+pub use sinex_core::CoreError;
+
 use anyhow::Result;
 use sinex_core::RawEvent;
 use sinex_db::validation::EventValidator;
