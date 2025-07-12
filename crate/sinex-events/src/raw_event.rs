@@ -13,7 +13,12 @@ pub type JsonValue = serde_json::Value;
 
 /// Raw event structure
 ///
-/// This is the canonical event structure used throughout the system.
+/// This is the canonical event structure used throughout the system for both
+/// raw observations and synthesized events. The distinction is made via the
+/// source_event_ids field:
+/// - Raw Event: source_event_ids is None
+/// - Synthesis Event: source_event_ids is Some(Vec<Ulid>)
+/// 
 /// NOTE: This struct uses ULID directly. When using with SQLX queries,
 /// use type overrides like: `id::uuid as "id: _"` for proper type inference
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -27,12 +32,32 @@ pub struct RawEvent {
     pub ingestor_version: Option<String>,
     pub payload_schema_id: Option<Ulid>,
     pub payload: JsonValue,
+    
+    /// Provenance field for event synthesis
+    /// - None: This is a raw event from an ingestor
+    /// - Some(Vec<Ulid>): This is a synthesis event derived from the listed events
+    pub source_event_ids: Option<Vec<Ulid>>,
 }
 
 impl RawEvent {
     /// Extract ingestion timestamp from ULID (convenience method)
     pub fn ts_ingest_from_ulid(&self) -> Timestamp {
         self.id.timestamp()
+    }
+
+    /// Check if this is a raw event (no source events)
+    pub fn is_raw_event(&self) -> bool {
+        self.source_event_ids.is_none()
+    }
+
+    /// Check if this is a synthesis event (has source events)
+    pub fn is_synthesis_event(&self) -> bool {
+        self.source_event_ids.is_some()
+    }
+
+    /// Get the source event IDs if this is a synthesis event
+    pub fn get_source_event_ids(&self) -> Option<&[Ulid]> {
+        self.source_event_ids.as_deref()
     }
 }
 
@@ -46,6 +71,7 @@ pub struct RawEventBuilder {
     host: Option<String>,
     ingestor_version: Option<String>,
     payload_schema_id: Option<Ulid>,
+    source_event_ids: Option<Vec<Ulid>>,
 }
 
 impl RawEventBuilder {
@@ -63,6 +89,7 @@ impl RawEventBuilder {
             host: None,
             ingestor_version: None,
             payload_schema_id: None,
+            source_event_ids: None,
         }
     }
 
@@ -97,6 +124,17 @@ impl RawEventBuilder {
         self
     }
 
+    /// Mark this event as a synthesis event derived from the given events
+    pub fn with_source_events(mut self, source_event_ids: Vec<Ulid>) -> Self {
+        self.source_event_ids = Some(source_event_ids);
+        self
+    }
+
+    /// Convenience method for synthesis events - mark as derived from a single event
+    pub fn derived_from(self, source_event_id: Ulid) -> Self {
+        self.with_source_events(vec![source_event_id])
+    }
+
     pub fn build(self) -> RawEvent {
         let id = self.id.unwrap_or_default();
         let hostname = self
@@ -113,6 +151,7 @@ impl RawEventBuilder {
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id,
             payload: self.payload,
+            source_event_ids: self.source_event_ids,
         }
     }
 }

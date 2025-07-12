@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 /// This module implements the architectural improvement to use strongly-typed
 /// payloads throughout the system, deferring JSON serialization until the
 /// database boundary.
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ impl<P: Serialize> TypedRawEvent<P> {
             ts_ingest: self.ts_ingest,
             ts_orig: self.ts_orig,
             payload_schema_id: None,
+            source_event_ids: None, // TypedRawEvent always represents raw events
         }
     }
 }
@@ -99,6 +101,19 @@ pub enum EventEnvelope {
     JournalEntry(TypedRawEvent<JournalEntryPayload>),
     SystemStateChanged(TypedRawEvent<SystemStatePayload>),
 
+    // Scanner events
+    ScanStarted(TypedRawEvent<ScanStartedPayload>),
+    ScanCompleted(TypedRawEvent<ScanCompletedPayload>),
+    AtuinEntry(TypedRawEvent<AtuinEntryPayload>),
+    CommandImported(TypedRawEvent<CommandImportedPayload>),
+
+    // Process lifecycle events
+    ProcessStarted(TypedRawEvent<ProcessStartedPayload>),
+    ProcessHeartbeat(TypedRawEvent<ProcessHeartbeatPayload>),
+    ProcessShutdown(TypedRawEvent<ProcessShutdownPayload>),
+    SensorActivated(TypedRawEvent<SensorActivatedPayload>),
+    SensorDeactivated(TypedRawEvent<SensorDeactivatedPayload>),
+
     // Generic fallback for unknown events
     Unknown(RawEvent),
 }
@@ -125,6 +140,15 @@ impl EventEnvelope {
             EventEnvelope::WorkspaceSwitched(event) => event.to_json_event(),
             EventEnvelope::JournalEntry(event) => event.to_json_event(),
             EventEnvelope::SystemStateChanged(event) => event.to_json_event(),
+            EventEnvelope::ScanStarted(event) => event.to_json_event(),
+            EventEnvelope::ScanCompleted(event) => event.to_json_event(),
+            EventEnvelope::AtuinEntry(event) => event.to_json_event(),
+            EventEnvelope::CommandImported(event) => event.to_json_event(),
+            EventEnvelope::ProcessStarted(event) => event.to_json_event(),
+            EventEnvelope::ProcessHeartbeat(event) => event.to_json_event(),
+            EventEnvelope::ProcessShutdown(event) => event.to_json_event(),
+            EventEnvelope::SensorActivated(event) => event.to_json_event(),
+            EventEnvelope::SensorDeactivated(event) => event.to_json_event(),
             EventEnvelope::Unknown(event) => event,
         }
     }
@@ -150,6 +174,15 @@ impl EventEnvelope {
             EventEnvelope::WorkspaceSwitched(event) => event.id,
             EventEnvelope::JournalEntry(event) => event.id,
             EventEnvelope::SystemStateChanged(event) => event.id,
+            EventEnvelope::ScanStarted(event) => event.id,
+            EventEnvelope::ScanCompleted(event) => event.id,
+            EventEnvelope::AtuinEntry(event) => event.id,
+            EventEnvelope::CommandImported(event) => event.id,
+            EventEnvelope::ProcessStarted(event) => event.id,
+            EventEnvelope::ProcessHeartbeat(event) => event.id,
+            EventEnvelope::ProcessShutdown(event) => event.id,
+            EventEnvelope::SensorActivated(event) => event.id,
+            EventEnvelope::SensorDeactivated(event) => event.id,
             EventEnvelope::Unknown(event) => event.id,
         }
     }
@@ -175,6 +208,15 @@ impl EventEnvelope {
             EventEnvelope::WorkspaceSwitched(event) => &event.source,
             EventEnvelope::JournalEntry(event) => &event.source,
             EventEnvelope::SystemStateChanged(event) => &event.source,
+            EventEnvelope::ScanStarted(event) => &event.source,
+            EventEnvelope::ScanCompleted(event) => &event.source,
+            EventEnvelope::AtuinEntry(event) => &event.source,
+            EventEnvelope::CommandImported(event) => &event.source,
+            EventEnvelope::ProcessStarted(event) => &event.source,
+            EventEnvelope::ProcessHeartbeat(event) => &event.source,
+            EventEnvelope::ProcessShutdown(event) => &event.source,
+            EventEnvelope::SensorActivated(event) => &event.source,
+            EventEnvelope::SensorDeactivated(event) => &event.source,
             EventEnvelope::Unknown(event) => &event.source,
         }
     }
@@ -185,7 +227,7 @@ impl EventEnvelope {
 // ============================================================================
 
 // Filesystem payload types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileCreatedPayload {
     pub path: String,
     pub size: u64,
@@ -193,7 +235,7 @@ pub struct FileCreatedPayload {
     pub permissions: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileModifiedPayload {
     pub path: String,
     pub size: u64,
@@ -201,34 +243,34 @@ pub struct FileModifiedPayload {
     pub modification_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileDeletedPayload {
     pub path: String,
     pub deleted_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileMovedPayload {
     pub path: String,
     pub old_path: Option<String>,
     pub moved_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DirCreatedPayload {
     pub path: String,
     pub created_at: DateTime<Utc>,
     pub permissions: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DirDeletedPayload {
     pub path: String,
     pub deleted_at: DateTime<Utc>,
 }
 
 // Terminal payload types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CommandExecutedPayload {
     pub command: String,
     pub working_directory: Option<String>,
@@ -237,7 +279,7 @@ pub struct CommandExecutedPayload {
     pub shell_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CommandCompletedPayload {
     pub command: String,
     pub command_output: String,
@@ -249,7 +291,7 @@ pub struct CommandCompletedPayload {
     pub completion_timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionStartedPayload {
     pub session_id: String,
     pub terminal_type: String,
@@ -257,7 +299,7 @@ pub struct SessionStartedPayload {
     pub working_directory: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionEndedPayload {
     pub session_id: String,
     pub duration_ms: u64,
@@ -266,7 +308,7 @@ pub struct SessionEndedPayload {
 }
 
 // Clipboard payload types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClipboardCopiedPayload {
     pub content_type: String,
     pub content_size: u64,
@@ -275,7 +317,7 @@ pub struct ClipboardCopiedPayload {
     pub source_app: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClipboardSelectedPayload {
     pub content_type: String,
     pub content_size: u64,
@@ -284,7 +326,7 @@ pub struct ClipboardSelectedPayload {
 }
 
 // Window manager payload types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WindowOpenedPayload {
     pub window_address: String,
     pub window_class: String,
@@ -293,7 +335,7 @@ pub struct WindowOpenedPayload {
     pub opened_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WindowClosedPayload {
     pub window_address: String,
     pub window_class: String,
@@ -302,7 +344,7 @@ pub struct WindowClosedPayload {
     pub closed_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WindowFocusedPayload {
     pub window_address: String,
     pub window_class: String,
@@ -311,7 +353,7 @@ pub struct WindowFocusedPayload {
     pub focused_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSwitchedPayload {
     pub workspace_id: String,
     pub workspace_name: String,
@@ -320,7 +362,7 @@ pub struct WorkspaceSwitchedPayload {
 }
 
 // System payload types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JournalEntryPayload {
     pub message: String,
     pub priority: Option<u8>,
@@ -331,11 +373,110 @@ pub struct JournalEntryPayload {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SystemStatePayload {
     pub state_type: String,
     pub state_data: serde_json::Value,
     pub changed_at: DateTime<Utc>,
+}
+
+// ============================================================================
+// Scanner and Process Event Payloads
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScanStartedPayload {
+    pub scan_id: String,           // Shared identifier for tracking
+    pub scanner: String,
+    pub mode: String,
+    pub target_paths: Vec<String>,
+    pub git_revision: String,
+    pub binary_hash: String,
+    pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub interactive: bool,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScanCompletedPayload {
+    pub scan_id: String,           // Shared identifier for tracking
+    pub scanner: String,
+    pub events_generated: u64,
+    pub duration_ms: u64,
+    pub blob_id: Option<Ulid>,
+    pub content_hash: Option<String>,      // Git-annex hash for deduplication
+    pub git_annex_hash: Option<String>,    // Alias for content_hash
+    pub was_duplicate: bool,               // Whether this was a duplicate import
+    pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub source_stats: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AtuinEntryPayload {
+    pub id: String,
+    pub command: String,
+    pub timestamp: DateTime<Utc>,
+    pub duration_ms: u64,
+    pub exit_code: i32,
+    pub directory: String,
+    pub session: String,
+    pub hostname: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CommandImportedPayload {
+    pub command: String,
+    pub timestamp: DateTime<Utc>,
+    pub source_file: String,
+    pub line_number: Option<u64>,
+    pub shell_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProcessStartedPayload {
+    pub process_name: String,
+    pub version: String,
+    pub git_revision: String,
+    pub binary_hash: String,
+    pub build_time: DateTime<Utc>,
+    pub config_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProcessHeartbeatPayload {
+    pub process_name: String,
+    pub version: String,
+    pub uptime_seconds: u64,
+    pub memory_mb: u32,
+    pub cpu_percent: f32,
+    pub events_processed: u64,
+    pub errors_count: u64,
+    pub health_status: String,
+    pub custom_metrics: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProcessShutdownPayload {
+    pub process_name: String,
+    pub version: String,
+    pub uptime_seconds: u64,
+    pub graceful: bool,
+    pub shutdown_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SensorActivatedPayload {
+    pub sensor: String,
+    pub config_hash: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SensorDeactivatedPayload {
+    pub sensor: String,
+    pub uptime_seconds: u64,
+    pub events_generated: u64,
+    pub reason: String,
 }
 
 // ============================================================================

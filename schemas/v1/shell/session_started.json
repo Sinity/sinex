@@ -1,0 +1,26 @@
+{
+  "$id": "https://sinex.io/schemas/v1/shell/session_started.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "session_id": {
+      "type": "string"
+    },
+    "shell": {
+      "type": "string"
+    },
+    "terminal_type": {
+      "type": "string"
+    },
+    "working_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "shell",
+    "terminal_type",
+    "working_directory"
+  ],
+  "title": "SessionStartedPayload",
+  "type": "object"
+}

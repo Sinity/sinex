@@ -39,15 +39,13 @@ pub type TestResult = Result<(), Box<dyn std::error::Error>>;
 pub use serde::{Deserialize, Serialize};
 pub use serde_json::{json, Value};
 // ===== Sinex Core Types =====
-pub use sinex_collector::create_registry_with_auto_registration as create_registry;
 pub use sinex_core::{
-    event_type_constants, parse_duration, unified_collector::EventRegistry, BackpressureManager,
+    event_type_constants, parse_duration, BackpressureManager,
     ChannelMonitor, ChannelReceiverExt, ChannelSenderExt, ConfigExtractor, ConfigValidator,
-    ConfigValue, CoreError, EventSource, EventSourceContext, MultiValidator, ResultExt,
+    ConfigValue, CoreError, MultiValidator, ResultExt,
     ValidationChain,
 };
 pub use sinex_db::{
-    prelude::WorkQueueItem, // AgentManifest, QueueStatus currently unused
     run_migrations,
     DbPool,
     RawEvent,
@@ -75,7 +73,7 @@ pub use sinex_test_macros::sinex_test;
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
 pub use crate::common::timing_optimization::wait_helpers::{
-    wait_for_filtered_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count,
+    wait_for_filtered_event_count,
 };
 // ===== Common Functions =====
 // Event operations
@@ -83,11 +81,13 @@ pub use crate::common::insert_event;
 // Query shortcuts
 pub use sinex_db::{
     events::get_event_by_id,
-    metrics_queries::calculate_queue_depth_metrics,
-    work_queue::{add_to_work_queue, claim_work_queue_items, complete_work_queue_item},
 };
 // Test helper functions from common/mod.rs
 pub use crate::common::{get_events_by_type, get_events_in_time_range, get_recent_events};
+// Satellite architecture testing utilities
+pub use crate::common::{
+    start_test_ingestd, start_test_ingestd_at_path, count_events_from_source
+};
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,

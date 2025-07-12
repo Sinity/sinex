@@ -1,0 +1,34 @@
+{
+  "$id": "https://sinex.io/schemas/v1/process/process_shutdown.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "graceful": {
+      "type": "boolean"
+    },
+    "process_name": {
+      "type": "string"
+    },
+    "shutdown_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "uptime_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "graceful",
+    "process_name",
+    "uptime_seconds",
+    "version"
+  ],
+  "title": "ProcessShutdownPayload",
+  "type": "object"
+}

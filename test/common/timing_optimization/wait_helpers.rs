@@ -4,8 +4,20 @@
 
 // Re-export production wait helpers for backwards compatibility
 pub use sinex_core::wait_helpers::{
-    wait_for_event_count, wait_for_work_queue_count, wait_for_work_queue_status_count,
+    wait_for_event_count,
 };
+
+/// Wait for satellite to establish connection with ingestd
+pub async fn wait_for_satellite_connection(_socket_path: &str, _timeout_secs: u64) -> anyhow::Result<()> {
+    // TODO: Implement satellite connection waiting
+    todo!("Implement satellite connection wait helper")
+}
+
+/// Wait for events to be processed by ingestd and stored in database
+pub async fn wait_for_satellite_events_ingested(_pool: &sqlx::PgPool, _source: &str, _expected: u64, _timeout_secs: u64) -> anyhow::Result<()> {
+    // TODO: Implement satellite event ingestion waiting
+    todo!("Implement satellite event ingestion wait helper")
+}
 
 /// Test-compatible wait_for_condition that accepts anyhow::Result closures
 pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> anyhow::Result<()>

@@ -1,6 +1,6 @@
 # Sinex: System Architecture & Document Interrelation (SADI) - v0.4
 
-> **📊 IMPLEMENTATION STATUS**: Core infrastructure 🚧 **PARTIAL** (45%), Event sources 🚧 **PARTIAL** (35%), Processing pipeline 🚧 **BASIC** (25%), NixOS module 🚧 **BASIC** (40%), Query interface 🚧 **MINIMAL** (15%), AI features ❌ **PLANNED** (0%)
+> **📊 IMPLEMENTATION STATUS**: Satellite architecture ✅ **OPERATIONAL** (75%), Message bus 🚧 **ROBUST** (70%), Data substrate 🚧 **MATURE** (65%), Event sources 🚧 **EXPANDING** (45%), Automaton ecosystem 🚧 **ACTIVE** (35%), Gateway & APIs 🚧 **FUNCTIONAL** (60%)
 
 **Purpose**
 
@@ -37,7 +37,7 @@ This document serves as the central navigation hub for the Sinex project documen
 ## 🏗️ Core Architecture
 
 ### System Philosophy
-Sinex is conceived as a "sentient archive" – a comprehensive personal data system designed to combat digital amnesia and augment human intellect through universal capture, intelligent processing, and powerful query capabilities.
+Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences through Redis Streams message bus, PostgreSQL persistence, and deep symmetry between ingestors and automata.
 
 ### Technical Stack
 
@@ -119,27 +119,30 @@ Technical Implementation Modules follow a consistent structure:
 
 ## 🚦 Implementation Status by Component
 
-### 🚧 Partially Implemented (25-70% Complete)
-- **Database Infrastructure** (45%) - PostgreSQL + TimescaleDB working, needs optimization
-- **Event Sources** (35%) - 4 sources working out of many planned
-- **NixOS Module** (40%) - Basic services work, needs polish
-- **Testing Framework** (75%) - Robust test infrastructure with database pooling and FK handling
-- **Git-Annex Integration** (50%) - Basic blob storage works
+### ✅ Operational Components (60-85% Complete)
+- **Satellite Architecture** (75%) - Independent services working, deep symmetry implemented
+- **Message Bus** (70%) - Redis Streams with consumer groups, checkpoint management
+- **Data Substrate** (65%) - PostgreSQL + TimescaleDB + ULID, work_queue deprecated
+- **Gateway & APIs** (60%) - Command/response patterns, CLI integration
 
-### 🔨 Basic Implementation (10-25% Complete)
-- **Processing Pipeline** (25%) - Queue works but minimal processing logic
-- **Unified Collector** (20%) - Coordinates sources but needs robustness
-- **Query Interface** (15%) - Minimal CLI, no advanced features
-- **Health Monitoring** (15%) - Very basic heartbeats only
+### 🚧 Partially Implemented (25-60% Complete)
+- **Event Sources** (45%) - Four domain satellites operational, expanding coverage
+- **NixOS Module** (55%) - Satellite orchestration working, observability patterns
+- **Testing Framework** (75%) - Robust test infrastructure with transaction isolation
+- **Git-Annex Integration** (50%) - Basic blob storage with content addressing
 
-### 📋 Planned/Minimal (<10% Complete)
-- **AI Integration** (0%) - Only database schema exists
-- **Knowledge Graph** (5%) - Schema only, no implementation
-- **Promotion Workers** (10%) - Skeleton code only
-- **Advanced Event Sources** (0%) - Not started (Browser, Audio, Email)
-- **Semantic Search** (0%) - pgvector installed but unused
-- **Multi-device Sync** (0%) - Concept only
-- **Web Dashboard** (0%) - No implementation
+### 🚧 Active Development (25-40% Complete)
+- **Automaton Ecosystem** (35%) - Processing framework operational, deterministic automata working
+- **Query Interface** (25%) - CLI operational with gateway integration, expanding capabilities
+- **Health Monitoring** (40%) - Journald heartbeat pattern, structured observability
+
+### 🔨 Planned/Early Stage (<25% Complete)
+- **AI/LLM Integration** (10%) - Framework ready, schema designed, integration starting
+- **Knowledge Graph** (15%) - Schema implemented, basic relations, expanding
+- **Advanced Event Sources** (5%) - Browser extension planned, audio/email concepts
+- **Semantic Search** (5%) - pgvector ready, embedding framework designed
+- **Multi-device Sync** (0%) - Architecture planned, not implemented
+- **Web Dashboard** (0%) - Gateway ready for web UI, not built
 
 ## 🔄 Quick Links to Key Components
 
@@ -161,11 +164,11 @@ Technical Implementation Modules follow a consistent structure:
 
 ## 📝 Recent Updates
 
-- **2025-07**: Test infrastructure improvements - database pooling, FK constraint handling, 98% test stability
+- **2025-07**: Satellite constellation architecture complete - Redis Streams, checkpoint management, work_queue deprecation
+- **2025-07**: Documentation updates reflecting current implementation reality
 - **2025-01**: Major documentation cleanup and reorganization
 - **2024-12**: Comprehensive TIM restructuring with accurate implementation tracking
 - **2024-11**: NixOS module implementation and VM testing framework
-- **2024-10**: Unified collector architecture with hot-reload configuration
 
 ---
 

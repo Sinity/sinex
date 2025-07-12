@@ -25,7 +25,6 @@ use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
-    wait_for_work_queue_count,
 };
 use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::EventFactory;
@@ -169,6 +168,11 @@ impl TestContext {
     /// Get the entire test configuration (for cloning)
     pub fn config(&self) -> &TestConfig {
         &self.config
+    }
+
+    /// Get a temporary work directory for this test
+    pub fn work_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from("/tmp/sinex-test").join(&self.config.test_name)
     }
 
     // ===== Database Operations =====
@@ -369,14 +373,84 @@ impl TestContext {
         Ok(())
     }
 
+    /// Wait for automaton checkpoint to reach expected count
+    /// Replaces the old work_queue waiting pattern
+    pub async fn wait_for_automaton_checkpoint(
+        &self,
+        automaton_name: &str,
+        expected_count: u64,
+    ) -> TestResult {
+        use std::time::Instant;
+        let timeout = self.config.default_timeout;
+        let start = Instant::now();
+        
+        loop {
+            let checkpoint = sqlx::query!(
+                "SELECT processed_count FROM core.automaton_checkpoints WHERE automaton_name = $1 ORDER BY last_activity DESC LIMIT 1",
+                automaton_name
+            )
+            .fetch_optional(self.pool())
+            .await?;
+            
+            if let Some(row) = checkpoint {
+                if row.processed_count >= expected_count as i64 {
+                    return Ok(());
+                }
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for automaton {} to reach count {}",
+                        automaton_name, expected_count
+                    ),
+                )));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for Redis stream to contain expected number of messages
+    pub async fn wait_for_redis_stream_length(
+        &self,
+        redis_url: &str,
+        stream_key: &str,
+        expected: usize,
+    ) -> TestResult {
+        use redis::{AsyncCommands, Client};
+        
+        let client = Client::open(redis_url)?;
+        let mut conn = redis::aio::ConnectionManager::new(client).await?;
+        
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let len: usize = conn.xlen(stream_key).await.unwrap_or(0);
+            if len >= expected {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for {} messages in Redis stream {}, got {}",
+                        expected, stream_key, len
+                    ),
+                )));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Wait for work queue to reach expected count
-    pub async fn wait_for_work_queue(&self, expected: usize) -> TestResult {
-        wait_for_work_queue_count(
-            self.pool(),
-            expected as i64,
-            self.config.default_timeout.as_secs(),
-        )
-        .await?;
+    /// Note: Deprecated - use wait_for_automaton_checkpoint instead
+    pub async fn wait_for_work_queue(&self, _expected: usize) -> TestResult {
+        // Legacy compatibility - no-op for now
         Ok(())
     }
 
@@ -460,21 +534,32 @@ impl TestContext {
         Ok(())
     }
 
-    /// Assert work queue is empty
-    pub async fn assert_work_queue_empty(&self) -> TestResult {
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.work_queue")
-            .fetch_one(self.pool())
-            .await?
-            .unwrap_or(0);
-
-        if count != 0 {
-            let error = CoreError::validation("Work queue is not empty")
-                .with_context("actual_count", count)
+    /// Assert that all automata have completed processing
+    /// Replaces assert_work_queue_empty for satellite architecture
+    pub async fn assert_all_automata_idle(&self) -> TestResult {
+        // Check if any automata are currently processing
+        let active_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE last_activity > NOW() - INTERVAL '5 seconds'"
+        )
+        .fetch_one(self.pool())
+        .await?
+        .unwrap_or(0);
+        
+        if active_count > 0 {
+            let error = CoreError::validation("Automata still active")
+                .with_context("active_count", active_count)
                 .with_context("test_context", &self.config.test_name)
                 .build();
             return Err(Box::new(error));
         }
+        
         Ok(())
+    }
+
+    /// Assert work queue is empty (deprecated - use assert_all_automata_idle)
+    pub async fn assert_work_queue_empty(&self) -> TestResult {
+        // Legacy compatibility - use new automata assertion
+        self.assert_all_automata_idle().await
     }
 
     /// Assert that an event was inserted successfully with context

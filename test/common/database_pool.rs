@@ -193,8 +193,8 @@ impl TestDatabase {
             r#"
             SELECT
                 (SELECT COUNT(*) FROM raw.events) as event_count,
-                (SELECT COUNT(*) FROM sinex_schemas.agent_manifests) as agent_count,
-                (SELECT COUNT(*) FROM sinex_schemas.work_queue) as work_queue_count
+                (SELECT COUNT(*) FROM synthesis.events) as synthesis_count,
+                0 as checkpoint_count
             "#
         )
         .fetch_one(&self.pool)
@@ -202,8 +202,8 @@ impl TestDatabase {
 
         Ok(DatabaseStats {
             event_count: row.event_count.unwrap_or(0),
-            agent_count: row.agent_count.unwrap_or(0),
-            work_queue_count: row.work_queue_count.unwrap_or(0),
+            agent_count: row.synthesis_count.unwrap_or(0),
+            work_queue_count: row.checkpoint_count.unwrap_or(0),
         })
     }
 
@@ -561,7 +561,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             core.artifacts,
             core.event_clusters,
             sinex_schemas.work_queue,
-            sinex_schemas.agent_manifests
+            sinex_schemas.automaton_manifests
         CASCADE
     "#,
     )
@@ -589,7 +589,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             "DELETE FROM core.artifact_relations",
             // Delete from work queue
             "DELETE FROM sinex_schemas.work_queue",
-            "DELETE FROM sinex_schemas.agent_manifests",
+            "DELETE FROM sinex_schemas.automaton_manifests",
             // Finally, delete from primary tables
             "DELETE FROM core.entities",
             "DELETE FROM core.artifacts",

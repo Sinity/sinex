@@ -25,7 +25,7 @@ sqlx = { workspace = true }
 
 # IDs
 uuid = { workspace = true }
-sinex-ulid = { path = "../sinex-ulid" }
+sinex-ulid = { path = "../sinex-ulid", features = ["schema"] }
 
 # Note: Avoiding sinex-core dependency to prevent circular deps
 
@@ -33,10 +33,15 @@ sinex-ulid = { path = "../sinex-ulid" }
 gethostname = { workspace = true }
 
 # Validation and schema
-schemars = { workspace = true }
+schemars = { workspace = true, features = ["chrono", "uuid1"] }
 
 # Logging
 tracing = { workspace = true }
 
 [features]
 default = []
+
+[[bin]]
+name = "generate-schemas"
+path = "src/bin/generate-schemas.rs"
+required-features = []

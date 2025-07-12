@@ -898,6 +898,7 @@ mod tests {
             ingestor_version: Some("1.0.0".to_string()),
             payload_schema_id: None,
             payload: json!({"data": "test"}),
+            source_event_ids: None,
         };
 
         let result = ValidationChain::validate(valid_event, "event")
@@ -918,6 +919,7 @@ mod tests {
             ingestor_version: Some("1.0.0".to_string()),
             payload_schema_id: None,
             payload: json!({"data": "test"}),
+            source_event_ids: None,
         };
 
         let result = ValidationChain::validate(invalid_event, "event")
@@ -936,6 +938,7 @@ mod tests {
             ingestor_version: Some("1.0.0".to_string()),
             payload_schema_id: None,
             payload: json!("not an object"),
+            source_event_ids: None,
         };
 
         let result = ValidationChain::validate(invalid_payload_event, "event")

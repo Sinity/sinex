@@ -221,56 +221,6 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
     }
 }
 
-/*
-/// Specialized implementation for RawEvent channels with metrics
-/// Note: Temporarily disabled due to RawEvent being moved to sinex-db
-pub struct MonitoredEventSender {
-    inner: mpsc::Sender<RawEvent>,
-    monitor: ChannelMonitor,
-    source_name: String,
-}*/
-
-/*
-/// MonitoredEventSender implementation temporarily commented out due to RawEvent move
-impl MonitoredEventSender {
-    /// Create a new monitored event sender
-    pub fn new(sender: mpsc::Sender<RawEvent>, source_name: String) -> Self {
-        Self {
-            inner: sender,
-            monitor: ChannelMonitor::new(),
-            source_name,
-        }
-    }
-
-    /// Send an event with monitoring
-    pub async fn send(&self, event: RawEvent) -> Result<()> {
-        let event_type = event.event_type.clone();
-
-        match self.inner.send(event).await {
-            Ok(()) => {
-                self.monitor.record_send();
-                Ok(())
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to send {} event: {}", event_type, e);
-                self.monitor.record_error(error_msg.clone());
-                tracing::error!("[{}] {}", self.source_name, error_msg);
-                Err(CoreError::Other(error_msg))
-            }
-        }
-    }
-
-    /// Get current channel statistics
-    pub fn stats(&self) -> ChannelStats {
-        self.monitor.stats()
-    }
-
-    /// Get reference to the inner sender
-    pub fn inner(&self) -> &mpsc::Sender<RawEvent> {
-        &self.inner
-    }
-}
-*/
 
 /// Backpressure handling utilities
 pub struct BackpressureManager {
@@ -318,16 +268,6 @@ impl BackpressureManager {
     }
 }
 
-/* Helper function temporarily commented out due to RawEvent move
-/// Helper function to create a monitored channel pair
-pub fn monitored_channel(
-    buffer: usize,
-    source_name: String,
-) -> (MonitoredEventSender, mpsc::Receiver<RawEvent>) {
-    let (tx, rx) = mpsc::channel(buffer);
-    (MonitoredEventSender::new(tx, source_name), rx)
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -372,27 +312,6 @@ mod tests {
         assert_eq!(remaining, vec![3, 4]);
     }
 
-    /* Test temporarily commented out due to RawEvent move
-    #[tokio::test]
-    async fn test_monitored_event_sender() {
-        let (monitored_tx, mut rx) = monitored_channel(10, "test_source".to_string());
-
-        let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-            .build();
-
-        // Send event
-        assert!(monitored_tx.send(event.clone()).await.is_ok());
-
-        // Check stats
-        let stats = monitored_tx.stats();
-        assert_eq!(stats.sent, 1);
-        assert_eq!(stats.errors, 0);
-
-        // Receive event
-        let received = rx.recv().await.unwrap();
-        assert_eq!(received.source, "test");
-    }
-    */
 
     #[tokio::test]
     async fn test_backpressure_manager() {

@@ -399,8 +399,9 @@ in
             echo "$(date): Performing system health check..."
 
             # Check service status
-            systemctl is-active sinex-unified-collector || echo "WARNING: Unified collector not running"
-            ${optionalString cfg.promoWorker.enable "systemctl is-active sinex-promo-worker || echo \"WARNING: Promo worker not running\""}
+            systemctl is-active sinex-ingestd || echo "WARNING: Ingestion daemon not running"
+            systemctl is-active sinex-gateway || echo "WARNING: API gateway not running"
+            systemctl is-active sinex-fs-watcher || echo "WARNING: Filesystem watcher not running"
 
             # Check database connectivity
             ${pkgs.postgresql}/bin/psql "${cfg.database.name}" -c "SELECT 1;" > /dev/null || echo "ERROR: Database connectivity failed"
@@ -628,11 +629,11 @@ in
           read -p "Choice (1-5): " choice
 
           case $choice in
-            1) ${systemd}/bin/journalctl -u sinex-unified-collector -f ;;
-            2) ${systemd}/bin/journalctl -u sinex-promo-worker -f ;;
+            1) ${systemd}/bin/journalctl -u sinex-ingestd -f ;;
+            2) ${systemd}/bin/journalctl -u sinex-gateway -f ;;
             3) ${systemd}/bin/journalctl -u prometheus -f ;;
             4) ${systemd}/bin/journalctl -u grafana -f ;;
-            5) ${systemd}/bin/journalctl -u prometheus -u grafana -u sinex-unified-collector -u sinex-promo-worker -f ;;
+            5) ${systemd}/bin/journalctl -u prometheus -u grafana -u sinex-ingestd -u sinex-gateway -u sinex-fs-watcher -f ;;
             *) echo "Invalid choice" ;;
           esac
         '')

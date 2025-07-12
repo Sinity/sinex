@@ -1,11 +1,11 @@
 use crate::common::prelude::*;
 use crate::common::timing_optimization::wait_helpers::wait_for_condition_or_timeout;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
-use sinex_core::{CoreError, EventSource, EventSourceContext, RawEventBuilder};
+use sinex_core::{EventSource, EventSourceContext, RawEventBuilder};
 use sinex_db::validation::EventValidator;
 use std::io::Write;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};

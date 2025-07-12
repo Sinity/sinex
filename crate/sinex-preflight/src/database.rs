@@ -552,9 +552,7 @@ async fn verify_schema_compatibility(
     // Check for existence of critical tables
     let critical_tables = vec![
         "raw.events",
-        "sinex_schemas.work_queue",
-        "sinex_schemas.agent_manifests",
-        "component_heartbeats",
+        "core.automaton_checkpoints",
     ];
 
     let mut table_status = HashMap::new();

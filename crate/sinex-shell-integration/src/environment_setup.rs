@@ -372,7 +372,7 @@ impl EnvironmentSetup {
                 PathBuf::from(path_str)
             };
 
-            if path.join("sinex-host").exists() || path.join("sinex-shell-notify").exists() {
+            if path.join("sinex-gateway").exists() || path.join("sinex-shell-notify").exists() {
                 return Some(path.to_string_lossy().to_string());
             }
         }

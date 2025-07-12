@@ -2,16 +2,14 @@ use crate::common::prelude::*;
 use crate::common::resources;
 use crate::common::timing_optimization::{EventCounter, TestSynchronizer};
 use sinex_core::{CoreError, EventSource, EventSourceContext};
-use sinex_db::models::QueueStatus;
+// QueueStatus removed - work queue architecture replaced by hotlog streams
 use sqlx::PgPool;
-use std::collections::VecDeque;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::fs::OpenOptions;
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 
 // =============================================================================
@@ -1191,7 +1189,15 @@ async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test work item recovery from orphaned workers
+// Work queue orphan recovery tests removed - replaced by hotlog Redis streams architecture
+// 
+// The previous test_orphaned_work_recovery function tested work queue item recovery
+// from orphaned workers, which is no longer applicable in the hotlog architecture.
+// Instead, Redis Consumer Groups handle fault tolerance and message redelivery.
+//
+// TODO: Consider implementing equivalent Redis Consumer Group fault tolerance tests
+
+/*
 #[sinex_test]
 async fn test_orphaned_work_recovery(_ctx: TestContext) -> TestResult {
     #[derive(Debug, Clone)]
@@ -1315,3 +1321,4 @@ async fn test_orphaned_work_recovery(_ctx: TestContext) -> TestResult {
 
     Ok(())
 }
+*/

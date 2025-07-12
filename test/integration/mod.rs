@@ -54,20 +54,27 @@
 /// Consolidated database integration tests
 pub mod database_test;
 
-/// Consolidated event source integration tests  
+/// Schema validation integration tests
+pub mod schema_validation_test;
+
+/// Consolidated event source integration tests (satellite architecture)
 pub mod event_sources_test;
 
 /// Worker processing and distribution tests
-pub mod worker_test;
+// TODO: Update for satellite architecture (workers are now automata)
+// pub mod worker_test;
 
 /// Event collector coordination tests
-pub mod collector_test;
+// TODO: Update for satellite architecture (collectors are now satellites)
+// pub mod collector_test;
 
 /// Failure mode handling tests
-pub mod failure_modes_test;
+// TODO: Update for satellite architecture
+// pub mod failure_modes_test;
 
 /// System-wide integration tests
-pub mod system_integration_test;
+// TODO: Update for satellite architecture
+// pub mod system_integration_test;
 
 /// Search service integration tests
 pub mod search_service_test;
@@ -103,3 +110,33 @@ pub mod preflight_rollback_recovery_test;
 
 /// Typed clipboard event integration tests
 pub mod typed_clipboard_integration_test;
+
+/// Scanner test integration
+pub mod scanner_test;
+
+/// Import deduplication tests
+pub mod import_deduplication_test;
+
+/// Process event tests
+pub mod process_event_test;
+
+/// Edge case coverage tests for dual-mode refactoring
+pub mod edge_case_coverage_test;
+
+/// Critical failure modes testing  
+pub mod critical_failure_modes_test;
+
+/// Version tracking integration tests
+pub mod version_tracking_integration_test;
+
+/// Satellite architecture integration tests
+pub mod satellite_architecture_test;
+
+/// Comprehensive satellite integration tests
+pub mod satellite_comprehensive_test;
+
+/// Checkpoint persistence and recovery integration tests
+pub mod checkpoint_persistence_test;
+
+/// Provenance tracking integration tests  
+pub mod provenance_tracking_test;

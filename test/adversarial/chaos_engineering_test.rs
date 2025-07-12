@@ -4,7 +4,7 @@
 //! This module tests system resilience under various failure scenarios.
 //!
 //! ## Test Categories
-//! - **Agent Lifecycle Chaos**: Concurrent registration, heartbeat failures
+//! - **Automaton Lifecycle Chaos**: Concurrent registration, heartbeat failures
 //! - **Filesystem Edge Cases**: Permission changes, mount failures, file system chaos
 //! - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
 //! - **System Resource Chaos**: Memory exhaustion, disk full, network failures
@@ -12,7 +12,7 @@
 use crate::common::prelude::*;
 use crate::common::{events, resources};
 use chrono::Utc;
-use sinex_db::{models::AgentManifest, queries};
+use sinex_db::{models::AutomatonManifest, queries};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
@@ -28,7 +28,7 @@ use tokio::task::yield_now;
 async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
-    let agent_name = "chaos-agent";
+    let automaton_name = "chaos-agent";
     let successful_registrations = Arc::new(AtomicU64::new(0));
     let failed_registrations = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -41,7 +41,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 
         let handle = tokio::spawn(async move {
             let manifest = AgentManifest {
-                agent_name: agent_name.to_string(),
+                automaton_name: automaton_name.to_string(),
                 description: Some(format!("Chaos agent instance {}", instance_id)),
                 version: format!("1.0.{}", instance_id), // Slightly different versions
                 status: "running".to_string(),
@@ -64,9 +64,9 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 updated_at: Utc::now(),
             };
 
-            match sinex_db::agent::upsert_agent_manifest(
+            match sinex_db::upsert_automaton_manifest(
                 &pool_clone,
-                &manifest.agent_name,
+                &manifest.automaton_name,
                 &manifest.version,
                 manifest.description.as_deref(),
                 &manifest.agent_type,
@@ -80,14 +80,14 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 Ok(_) => {
                     println!(
                         "Instance {} successfully registered agent {}",
-                        instance_id, agent_name
+                        instance_id, automaton_name
                     );
                     success_count.fetch_add(1, Ordering::SeqCst);
                 }
                 Err(e) => {
                     println!(
                         "Instance {} failed to register agent {}: {}",
-                        instance_id, agent_name, e
+                        instance_id, automaton_name, e
                     );
                     fail_count.fetch_add(1, Ordering::SeqCst);
                 }
@@ -127,10 +127,10 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
             last_error_summary,
             registered_at,
             updated_at
-        FROM sinex_schemas.agent_manifests
-        WHERE agent_name = $1
+        FROM sinex_schemas.automaton_manifests
+        WHERE automaton_name = $1
         "#,
-        agent_name
+        automaton_name
     )
     .fetch_all(ctx.pool())
     .await?;
@@ -148,15 +148,15 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    let agent_name = "heartbeat-chaos-agent";
+    let automaton_name = "heartbeat-chaos-agent";
     
     // Register initial agent
     let manifest = AgentManifest {
-        agent_name: agent_name.to_string(),
+        automaton_name: automaton_name.to_string(),
         description: Some("Heartbeat chaos test agent".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "test".to_string(),
+        automaton_type: "test".to_string(),
         config_template_json: Some(json!({})),
         produces_event_types: Some(json!(["test.event"])),
         subscribes_to_event_types: None,
@@ -170,9 +170,9 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
         updated_at: Utc::now(),
     };
     
-    sinex_db::agent::upsert_agent_manifest(
+    sinex_db::upsert_automaton_manifest(
         pool,
-        &manifest.agent_name,
+        &manifest.automaton_name,
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
@@ -204,12 +204,12 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
             
             // Attempt heartbeat update
             match sqlx::query!(
-                "UPDATE sinex_schemas.agent_manifests 
+                "UPDATE sinex_schemas.automaton_manifests 
                  SET last_heartbeat_ts = $1, updated_at = $2 
-                 WHERE agent_name = $3",
+                 WHERE automaton_name = $3",
                 Utc::now(),
                 Utc::now(),
-                agent_name
+                automaton_name
             )
             .execute(&pool_clone)
             .await
@@ -251,7 +251,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
 #[sinex_test]
 async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    let base_agent_name = "lifecycle-chaos";
+    let base_automaton_name = "lifecycle-chaos";
     
     let registration_count = Arc::new(AtomicU64::new(0));
     let heartbeat_count = Arc::new(AtomicU64::new(0));
@@ -265,11 +265,11 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
         let reg_count = registration_count.clone();
         let hb_count = heartbeat_count.clone();
         let dereg_count = deregistration_count.clone();
-        let agent_name = format!("{}-{}", base_agent_name, agent_id);
+        let automaton_name = format!("{}-{}", base_automaton_name, agent_id);
         
         let handle = tokio::spawn(async move {
             // Register agent
-            match sinex_db::agent::upsert_agent_manifest(
+            match sinex_db::upsert_automaton_manifest(
                 &pool_clone,
                 &agent_name,
                 "1.0.0",
@@ -284,10 +284,10 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             {
                 Ok(_) => {
                     reg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} registered", agent_name);
+                    println!("Agent {} registered", automaton_name);
                 }
                 Err(e) => {
-                    println!("Agent {} registration failed: {}", agent_name, e);
+                    println!("Agent {} registration failed: {}", automaton_name, e);
                     return;
                 }
             }
@@ -295,12 +295,12 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             // Send some heartbeats
             for _ in 0..3 {
                 match sqlx::query!(
-                    "UPDATE sinex_schemas.agent_manifests 
+                    "UPDATE sinex_schemas.automaton_manifests 
                      SET last_heartbeat_ts = $1, updated_at = $2 
-                     WHERE agent_name = $3",
+                     WHERE automaton_name = $3",
                     Utc::now(),
                     Utc::now(),
-                    agent_name
+                    automaton_name
                 )
                 .execute(&pool_clone)
                 .await
@@ -309,7 +309,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                         hb_count.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(e) => {
-                        println!("Heartbeat failed for {}: {}", agent_name, e);
+                        println!("Heartbeat failed for {}: {}", automaton_name, e);
                     }
                 }
                 
@@ -318,18 +318,18 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             
             // Deregister agent
             match sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
-                agent_name
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
+                automaton_name
             )
             .execute(&pool_clone)
             .await
             {
                 Ok(_) => {
                     dereg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} deregistered", agent_name);
+                    println!("Agent {} deregistered", automaton_name);
                 }
                 Err(e) => {
-                    println!("Agent {} deregistration failed: {}", agent_name, e);
+                    println!("Agent {} deregistration failed: {}", automaton_name, e);
                 }
             }
         });
@@ -350,8 +350,8 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
     
     // Verify final database state
     let remaining_agents = sqlx::query!(
-        "SELECT COUNT(*) as count FROM sinex_schemas.agent_manifests WHERE agent_name LIKE $1",
-        format!("{}%", base_agent_name)
+        "SELECT COUNT(*) as count FROM sinex_schemas.automaton_manifests WHERE automaton_name LIKE $1",
+        format!("{}%", base_automaton_name)
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -815,7 +815,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 transitions.fetch_add(1, Ordering::SeqCst);
                 
                 // Simulate state transition by updating agent status
-                let agent_name = format!("state-test-{}", worker_id);
+                let automaton_name = format!("state-test-{}", worker_id);
                 let new_status = match transition_id % 4 {
                     0 => "initializing",
                     1 => "running",
@@ -826,10 +826,10 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 
                 // Try to update agent status
                 match sqlx::query!(
-                    "INSERT INTO sinex_schemas.agent_manifests 
-                     (agent_name, version, status, agent_type, registered_at, updated_at) 
+                    "INSERT INTO sinex_schemas.automaton_manifests 
+                     (automaton_name, version, status, agent_type, registered_at, updated_at) 
                      VALUES ($1, $2, $3, $4, $5, $6) 
-                     ON CONFLICT (agent_name) DO UPDATE SET 
+                     ON CONFLICT (automaton_name) DO UPDATE SET 
                      status = $3, updated_at = $6",
                     agent_name,
                     "1.0.0",
@@ -869,14 +869,14 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
     
     // Check final state consistency
     let final_agents = sqlx::query!(
-        "SELECT agent_name, status FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'state-test-%'"
+        "SELECT automaton_name, status FROM sinex_schemas.automaton_manifests WHERE automaton_name LIKE 'state-test-%'"
     )
     .fetch_all(ctx.pool())
     .await?;
     
     println!("Final agent states:");
     for agent in &final_agents {
-        println!("  {}: {}", agent.agent_name, agent.status);
+        println!("  {}: {}", agent.automaton_name, agent.status);
     }
     
     // Most transitions should succeed

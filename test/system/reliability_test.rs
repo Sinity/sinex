@@ -106,7 +106,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Add some existing data
         sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
+            "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description)
                  VALUES ($1, $2, $3)",
             "existing_agent",
             "1.0.0",
@@ -135,7 +135,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Verify data integrity after restart - use timing utilities for better reliability
         let agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.automaton_manifests")
                 .fetch_one(&*pool)
                 .await?
                 .unwrap_or(0);
@@ -268,7 +268,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
                 // Start transaction with some work
                 sqlx::query!(
                     "INSERT INTO raw.events (id, source, event_type, host, payload)
-                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                     VALUES ($1::uuid, $2, $3, $4, $5)",
                     Ulid::new().to_uuid(),
                     "shutdown.test",
                     "active_transaction",
@@ -926,7 +926,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Insert test data before migration
         sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
+            "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description)
                  VALUES ($1, $2, $3)",
             "migration_test_agent",
             "1.0.0",
@@ -953,7 +953,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Record initial state - use timing utilities for consistency
         let initial_agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.automaton_manifests")
                 .fetch_one(&*pool)
                 .await?
                 .unwrap_or(0);
@@ -979,7 +979,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Verify data preservation - use timing utilities for reliability
         let final_agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.automaton_manifests")
                 .fetch_one(&*pool)
                 .await?
                 .unwrap_or(0);
@@ -997,8 +997,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Verify data integrity
         let agent_data: Option<String> = sqlx::query_scalar!(
-            "SELECT description FROM sinex_schemas.agent_manifests
-                 WHERE agent_name = 'migration_test_agent'"
+            "SELECT description FROM sinex_schemas.automaton_manifests
+                 WHERE automaton_name = 'migration_test_agent'"
         )
         .fetch_optional(&*pool)
         .await?
@@ -1134,7 +1134,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     // Create test agent
     let agent_name = format!("degradation_test_{}", Ulid::new());
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
+        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description)
          VALUES ($1, $2, $3)",
         agent_name,
         "1.0.0",
@@ -1201,7 +1201,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
         let _agent_check =
-            sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
+            sqlx::query!("SELECT automaton_name FROM sinex_schemas.automaton_manifests LIMIT 1")
                 .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
@@ -1317,7 +1317,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         .await
         .ok();
     sqlx::query!(
-        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
         agent_name
     )
     .execute(pool)
@@ -1497,7 +1497,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 let mut conn = pool.acquire().await?;
 
                 // Perform a quick operation
-                sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+                sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.automaton_manifests")
                     .fetch_one(&mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
@@ -1606,7 +1606,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
         for i in 0..1000 {
             sqlx::query!(
                 "INSERT INTO raw.events (id, source, event_type, host, payload)
-                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                     VALUES ($1::uuid, $2, $3, $4, $5)",
                 Ulid::new().to_uuid(),
                 "exhaustion.test",
                 "large_transaction",
@@ -1662,7 +1662,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
                 for j in 0..10 {
                     sqlx::query!(
                         "INSERT INTO raw.events (id, source, event_type, host, payload)
-                             VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                             VALUES ($1::uuid, $2, $3, $4, $5)",
                         Ulid::new().to_uuid(),
                         format!("concurrent.tx.{}", i),
                         "concurrent_test",

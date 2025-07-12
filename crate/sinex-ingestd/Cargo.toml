@@ -1,0 +1,62 @@
+[package]
+name = "sinex-ingestd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-ingestd"
+path = "src/main.rs"
+
+[dependencies]
+# Core dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+futures = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Redis for message bus
+redis.workspace = true
+
+# gRPC
+tonic.workspace = true
+prost.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+toml.workspace = true
+dirs.workspace = true
+
+# Validation
+jsonschema.workspace = true
+
+# Networking
+tokio-stream = { workspace = true, features = ["net"] }
+
+# Time and IDs
+chrono.workspace = true
+uuid.workspace = true
+
+# System
+sd-notify.workspace = true
+gethostname.workspace = true
+
+# Local dependencies
+sinex-core = { path = "../sinex-core" }
+sinex-db = { path = "../sinex-db" }
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-events = { path = "../sinex-events" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+
+[build-dependencies]
+tonic-build.workspace = true

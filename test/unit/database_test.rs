@@ -14,7 +14,7 @@ use sinex_core::{event_type_constants, sources};
 use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::validation::EventValidator;
 use sinex_db::work_queue::claim_work_queue_items;
-use sinex_db::AgentManifestParams;
+use sinex_db::AutomatonManifestParams;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32},
     Arc,
@@ -549,13 +549,13 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::agent::upsert_agent_manifest(
+    let _agent = sinex_db::upsert_automaton_manifest(
         ctx.pool(),
-        AgentManifestParams {
-            agent_name: "test_agent".to_string(),
+        AutomatonManifestParams {
+            automaton_name: "test_agent".to_string(),
             version: "1.0.0".to_string(),
             description: Some("Test agent for work queue".to_string()),
-            agent_type: "test".to_string(),
+            automaton_type: "test".to_string(),
             config_template_json: serde_json::json!({}),
             produces_event_types: serde_json::json!([]),
             subscribes_to_event_types: serde_json::json!([]),
@@ -584,7 +584,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
     .await?;
 
     pretty_assertions::assert_eq!(queue_item.raw_event_id, inserted_event.id);
-    pretty_assertions::assert_eq!(queue_item.target_agent_name, "test_agent");
+    pretty_assertions::assert_eq!(queue_item.target_automaton_name, "test_agent");
     pretty_assertions::assert_eq!(queue_item.status, "pending");
     pretty_assertions::assert_eq!(queue_item.attempts, 0);
     pretty_assertions::assert_eq!(queue_item.max_attempts, 3);
@@ -596,7 +596,7 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 
     let item = next_item.unwrap();
     pretty_assertions::assert_eq!(item.raw_event_id, inserted_event.id);
-    pretty_assertions::assert_eq!(item.target_agent_name, "test_agent");
+    pretty_assertions::assert_eq!(item.target_automaton_name, "test_agent");
     pretty_assertions::assert_eq!(item.status, "processing");
 
     // Complete processing
@@ -613,13 +613,13 @@ async fn test_work_queue_operations(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 45)]
 async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
     // Create agent first (required for foreign key)
-    let _agent = sinex_db::agent::upsert_agent_manifest(
+    let _agent = sinex_db::upsert_automaton_manifest(
         ctx.pool(),
-        AgentManifestParams {
-            agent_name: "test_agent".to_string(),
+        AutomatonManifestParams {
+            automaton_name: "test_agent".to_string(),
             version: "1.0.0".to_string(),
             description: Some("Test agent for retry logic".to_string()),
-            agent_type: "test".to_string(),
+            automaton_type: "test".to_string(),
             config_template_json: serde_json::json!({}),
             produces_event_types: serde_json::json!([]),
             subscribes_to_event_types: serde_json::json!([]),
@@ -688,7 +688,7 @@ async fn test_work_queue_retry_logic(ctx: TestContext) -> TestResult {
 
     let dlq_item = &dlq_items[0];
     pretty_assertions::assert_eq!(dlq_item.failed_event_id, inserted_event.id);
-    pretty_assertions::assert_eq!(dlq_item.agent_name, "test_agent");
+    pretty_assertions::assert_eq!(dlq_item.automaton_name, "test_agent");
     assert!(!dlq_item.failure_reason.is_empty());
 
     Ok(())
@@ -1438,29 +1438,7 @@ async fn test_raw_event_validation(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test queue status transitions
-#[sinex_test]
-async fn test_queue_status_transitions(_ctx: TestContext) -> TestResult {
-    // Test that queue status enum has all expected variants
-    use sinex_db::models::QueueStatus;
-
-    // Verify we can create each status
-    let statuses = [
-        QueueStatus::Pending,
-        QueueStatus::Processing,
-        QueueStatus::Succeeded,
-        QueueStatus::Failed,
-        QueueStatus::FailedRetryable,
-    ];
-
-    pretty_assertions::assert_eq!(statuses.len(), 5, "Should have all queue status variants");
-
-    // Verify status transitions make logical sense
-    // (This is more documentation than validation)
-    pretty_assertions::assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
-    pretty_assertions::assert_ne!(QueueStatus::Processing, QueueStatus::Succeeded);
-    Ok(())
-}
+// Queue status tests removed - work queue architecture replaced by hotlog streams
 
 // ULID ordering property test moved to test/property/ulid_property_test.rs
 

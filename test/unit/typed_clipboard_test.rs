@@ -1,5 +1,4 @@
 /// Unit tests for typed clipboard implementation
-use serde_json::json;
 use sinex_events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 
 #[test]

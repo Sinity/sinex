@@ -29,10 +29,16 @@ default:
     @echo "  just psql        - Connect to database"
     @echo "  just sqlx-prepare - Update SQLX cache (commit .sqlx/)"
     @echo ""
+    @echo "📋 Schema Management:"
+    @echo "  just schema-generate - Generate JSON schemas from Rust code"
+    @echo "  just schema-validate - Validate all schemas"
+    @echo "  just schema-deploy   - Deploy schemas to database"
+    @echo "  just schema-check    - Check backward compatibility"
+    @echo ""
     @echo "▶️  Services:"
     @echo "  just collector   - Run unified collector"
-    @echo "  just host        - Run sinex-host RPC server"
-    @echo "  just automaton   - Run sinex-automaton worker"
+    @echo "  just host        - Run sinex-gateway RPC server"
+    @echo "  just canonicalizer - Run terminal command canonicalizer"
     @echo "  just query       - Query recent events"
     @echo ""
     @echo "📊 Coverage:"
@@ -100,7 +106,7 @@ test-fast *ARGS:
 test-services *ARGS:
     @echo "🧪 Testing service layer functionality..."
     cargo test -p sinex-services -- {{ARGS}}
-    cargo test -p sinex-host -- {{ARGS}}
+    cargo test -p sinex-gateway -- {{ARGS}}
 
 # 🔧 Test core functionality (db, ulid, events)
 test-core *ARGS:
@@ -169,22 +175,89 @@ sqlx-check:
     @echo "✅ Checking SQLX cache consistency..."
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
+# === Schema Management ===
+
+# 🔨 Generate JSON schemas from Rust structs
+schema-generate:
+    @echo "🔨 Generating JSON schemas from Rust code..."
+    cargo run --package sinex-events --bin generate-schemas
+    @echo "✅ Schemas generated. Run 'just schema-diff' to see changes"
+
+# 🔍 Validate all JSON schemas
+schema-validate:
+    @echo "🔍 Validating JSON schemas..."
+    ./scripts/schema-dev.sh validate
+
+# 🚀 Deploy schemas to local database
+schema-deploy:
+    @echo "🚀 Deploying schemas to database..."
+    ./scripts/deploy-schemas.sh
+
+# 🔄 Check backward compatibility against master
+schema-check BRANCH="master":
+    @echo "🔄 Checking schema compatibility against {{BRANCH}}..."
+    ./scripts/check-schema-compatibility.sh {{BRANCH}}
+
+# 📊 Show uncommitted schema changes
+schema-diff:
+    @echo "📊 Schema changes:"
+    ./scripts/schema-dev.sh diff
+
+# 📈 Show schema statistics
+schema-stats:
+    @echo "📈 Schema statistics:"
+    ./scripts/schema-dev.sh stats
+
+# 🔄 Full schema workflow: generate, validate, check compatibility
+schema-workflow: schema-generate schema-validate schema-check
+    @echo "✅ Schema workflow complete"
+
 # === Running Services ===
 
-# 🚀 Run unified event collector
-collector *ARGS:
-    @echo "🚀 Starting unified event collector..."
-    cargo run --bin sinex-collector {{ARGS}}
-
-# 🖥️  Run sinex-host RPC server for CLI/browser integration
+# 🖥️  Run sinex-gateway RPC server for CLI/browser integration
 host *ARGS:
-    @echo "🖥️ Starting sinex-host RPC server..."
-    cargo run --bin sinex-host rpc-server {{ARGS}}
+    @echo "🖥️ Starting sinex-gateway RPC server..."
+    cargo run --bin sinex-gateway rpc-server {{ARGS}}
 
-# 🤖 Run sinex-automaton worker (service-layer event processing)
-automaton *ARGS:
-    @echo "🤖 Starting sinex-automaton worker..."
-    cargo run --bin sinex-automaton {{ARGS}}
+# 📥 Run sinex-ingestd gRPC server (satellite coordinator)
+ingestd *ARGS:
+    @echo "📥 Starting sinex-ingestd gRPC server..."
+    cargo run --bin sinex-ingestd {{ARGS}}
+
+# 🗂️  Run filesystem watcher satellite
+fs-watcher *ARGS:
+    @echo "🗂️ Starting filesystem watcher satellite..."
+    cargo run --bin sinex-fs-watcher {{ARGS}}
+
+# 🖥️  Run desktop events satellite
+desktop *ARGS:
+    @echo "🖥️ Starting desktop events satellite..."
+    cargo run --bin sinex-desktop-satellite {{ARGS}}
+
+# 💻 Run terminal events satellite
+terminal *ARGS:
+    @echo "💻 Starting terminal events satellite..."
+    cargo run --bin sinex-terminal-satellite {{ARGS}}
+
+# ⚙️  Run system events satellite  
+system *ARGS:
+    @echo "⚙️ Starting system events satellite..."
+    cargo run --bin sinex-system-satellite {{ARGS}}
+
+# 🔧 Run terminal command canonicalizer
+canonicalizer *ARGS:
+    @echo "🔧 Starting terminal command canonicalizer..."
+    cargo run --bin sinex-terminal-command-canonicalizer {{ARGS}}
+
+# 📊 Run health aggregator
+health *ARGS:
+    @echo "📊 Starting health aggregator..."
+    cargo run --bin sinex-health-aggregator {{ARGS}}
+
+# ✅ Run preflight verification
+preflight *ARGS:
+    @echo "✅ Running preflight verification..."
+    cargo run --bin sinex-preflight {{ARGS}}
 
 # 🔍 Query recent events from database
 query LIMIT="10" *ARGS:

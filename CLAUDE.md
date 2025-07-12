@@ -1,373 +1,271 @@
-# CLAUDE.md (My Deep Memory)
+# CLAUDE.md
 
-## What Sinex Is
+## OPERATING_PRINCIPLES (READ FIRST)
 
-Sinex captures EVERYTHING happening on a computer as immutable events, stores them in PostgreSQL+TimescaleDB with ULID keys for time-ordering, then processes them asynchronously via workers. It's a "sentient archive" - complete digital activity capture for later analysis.
+BEFORE_ANY_WORK:
+1. git status (check clean state)
+2. git pull (if on shared branch)
+3. nix develop (ALWAYS, sets up environment)
+4. If modifying DB: just migrate (ensure current)
+5. If big change: git checkout -b claude/feature-name
 
-**Flow**: EventSources → UnifiedCollector → raw.events → WorkQueue → Workers → Analysis
+TASK_USAGE:
+- Launch Tasks for work >30s or self-contained operations
+- Can run 5 parallel (call sequentially in ONE message or lose slots)
+- If >2 parallel, ask user first
+- Split large work into parallel Tasks when possible
+- Task for: research, large refactors, test fixes, doc updates
+- Task prompt: include file paths, specific goals, "expect other agents working"
 
-## Core Invariants (NEVER VIOLATE)
+WORKFLOW:
+1. Large request→Research(Grep/Read/Task)→Plan→Report plan→Execute
+2. Compile once→save output→analyze saved file (NOT recompile)
+3. Use TodoWrite immediately for multi-step work
+4. Atomic git commits with descriptive messages
+5. NEVER: rm -rf, git reset --hard, git clean without explicit intent
+6. Question vague requests→get specifics before starting
 
-1. **Events are IMMUTABLE** - Once in `raw.events`, they never change
-2. **All IDs are ULIDs** - Time-sortable, use `sinex_ulid::Ulid` type
-3. **Locking pattern**: `SELECT FOR UPDATE SKIP LOCKED` for work distribution
-4. **Schema validation**: All events validated via pg_jsonschema before storage
-5. **SQLX offline mode**: Must commit `.sqlx/` directory for Nix builds
+EFFICIENCY_PATTERNS:
+compile: cargo check --workspace>/tmp/out 2>&1 && {grep error /tmp/out|wc -l /tmp/out|head /tmp/out}
+error_analysis: grep -E "^error\[E[0-9]+\]:" /tmp/out | sort | uniq -c | sort -rn (frequency of error types)
+first_errors: grep -B2 -A2 "^error" /tmp/out | head -30 (context around first errors)
+search: rg -t rust "pattern" --stats (NOT multiple greps)
+git_workflow:
+  - git add -p (selective staging)
+  - git stash push -m "WIP: X" (named stashes)
+  - git worktree add ../sinex-experiment (parallel experiments)
+  - git diff --cached before commit (review staged)
+  - git commit --fixup HEAD~n (for later rebase -i --autosquash)
+memory: update CLAUDE.md when noticing patterns/issues
 
-## Critical Commands
+DECISION_HEURISTICS:
+- Notice repeated commands→extract to CLAUDE.md pattern
+- See compilation fail→save full output before re-running
+- Multiple similar changes→use ast-grep or sed, not manual
+- >50 similar items→ALWAYS automate (ast-grep for code, rg+sed for text)
+- Uncertain about impact→create git branch first
+- Long operation→launch Task agent instead of doing directly
 
-```bash
-# ALWAYS FIRST
-nix develop                     # Sets up DB, migrations, environment
+ARCH: Satellites(systemd)→ingestd(gRPC:/run/sinex/ingest.sock)→raw.events+Redis(sinex:events)→Automata→synthesis.events
 
-# Development
-cargo check --workspace         # Must pass before anything
-just test                      # Run tests
-just sqlx-prepare              # Update SQLX cache after queries
-git add .sqlx/                 # MUST commit cache
+CRITICAL_PATHS:
+- Ingestion: satellite→gRPC→ingestd→{PostgreSQL(batch),Redis(XADD)}
+- Processing: Redis(XREADGROUP)→automaton→checkpoint→synthesis
+- API: client→gateway→Redis(api.command.*)→service_automaton→Redis(api.response.*)→gateway
 
-# Running
-just unified                   # Start collector
-just worker                    # Start promotion worker
-RUST_LOG=debug just unified    # Debug mode
+QUICK_NAVIGATION:
+want_to_add_event_type→crate/sinex-events/src/lib.rs
+want_new_satellite→copy crate/sinex-fs-watcher, update Cargo.toml, add to flake.nix
+want_new_automaton→copy crate/sinex-terminal-command-canonicalizer
+config_loading→crate/sinex-satellite-sdk/src/config.rs
+event_validation→crate/sinex-ingestd/src/validation.rs
+checkpoint_logic→crate/sinex-satellite-sdk/src/checkpoint.rs:CheckpointManager
+redis_integration→crate/sinex-satellite-sdk/src/redis_client.rs
 
-# Database
-just psql                      # Direct access
-just migrate-create name       # New migration
-dropdb sinex_dev && createdb sinex_dev && just migrate  # Reset
+NEW_SATELLITE_CHECKLIST:
+1. Copy existing satellite (e.g., sinex-fs-watcher)
+2. Update Cargo.toml name, add to workspace
+3. Implement StatefulStreamProcessor trait
+4. Add to flake.nix outputs.packages
+5. Add systemd service to nixos/modules/default.nix
+6. Add event types to sinex-events/src/lib.rs
+7. Create migration for any new schemas
+8. Add to services.sinex.eventSources in NixOS config
+9. Test: nix build .#sinex-new-satellite
+10. Document in CLAUDE.md QUICK_NAVIGATION
 
-# Deployment
-sudo systemctl restart sinex-update        # Auto pre-flight + deploy
-sinex-preflight verify --timeout 120       # Manual verification
-```
 
-## Common Pitfalls
+INVARIANTS: events_immutable, ulid_ids(sinex_ulid::Ulid), pg_jsonschema_validation, sqlx_offline(.sqlx/→git), satellites_isolated(systemd)
 
-1. **Nix build fails but local works** → Check `git status`, commit everything
-2. **SQLX offline errors** → Run `just sqlx-prepare` and commit `.sqlx/`
-3. **Test failures** → Use `#[sinex_test]` not `#[tokio::test]`
-4. **Config not loading** → Priority: CLI args → env → file → defaults
-5. **Events not captured** → Start the UnifiedCollector (event sources are ready)
+CMDS:
+dev: nix develop && cargo check --workspace && just test
+sqlx: just sqlx-prepare && git add .sqlx/
+run: just {ingestd,gateway,fs-watcher}
+debug: RUST_LOG=debug just X
+db: just psql, just migrate-create X, dropdb sinex_dev && createdb sinex_dev && just migrate
+deploy: systemctl {restart,status} sinex-X, sinex-preflight verify --timeout 120
 
-## Project Structure
+MOST_USED_PATTERNS:
+find_impl: rg "impl.*StructName" -t rust
+find_usage: rg "function_name\(" -t rust -A 2
+find_type_def: rg "struct StructName|enum EnumName|trait TraitName" -t rust
+check_error: cargo check --workspace 2>&1 | tee /tmp/err && grep -n "error\[E" /tmp/err
+quick_fix: cargo fix --workspace --allow-dirty
+format_check: cargo fmt --all -- --check
+clippy_fix: cargo clippy --workspace --fix --allow-dirty
+git_undo_last: git reset --soft HEAD~1
+git_fixup: git add -p && git commit --fixup HEAD && git rebase -i --autosquash HEAD~2
 
-```
-crate/
-├── sinex-core/             # Core types: RawEvent, EventSource trait, errors
-├── sinex-db/               # Database: models, queries, pool management
-├── sinex-collector/        # Main binary: UnifiedCollector coordination
-├── sinex-events-fs/        # Filesystem events
-├── sinex-events-desktop/   # Desktop events (clipboard, window manager)
-├── sinex-events-terminal/  # Terminal events (commands, shell history)
-├── sinex-events-system/    # System events (dbus, journal)
-├── sinex-worker/           # Worker implementations
-├── sinex-preflight/        # Pre-flight verification (7 phases)
-test/                       # Tests organized by type (unit/integration/system)
-```
+PITFALLS:
+nix_fail→uncommitted_files, sqlx_offline→just sqlx-prepare&&git add .sqlx/, test→#[sinex_test], config_precedence(CLI>env>file>default), no_events→check_ingestd+satellite_conn, socket_fail→/run/sinex/ingest.sock(perms)
 
-## Key Patterns
+CRATES:
+core(RawEvent,errors), db(models,pool), events(EventType trait), satellite-sdk(StatefulStreamProcessor,CLI)
+hubs: ingestd(gRPC→batch), gateway(HTTP→commands)
+ingestors: fs-watcher, terminal-satellite, desktop-satellite, system-satellite
+automata: terminal-command-canonicalizer, health-aggregator, pkm-automaton
+ops: preflight(7phases)
+test/{unit,integration,system,common}
 
-```rust
-// Error handling with context
-use sinex_core::ErrorContext;
-CoreError::database("failed").with_context("table", "events").build()
+PATTERNS:
+err: CoreError::database("X").with_context("K","V").build()
+val: ValidationChain::validate(v,"f").not_empty().min_length(N).into_result()?
+event: RawEventBuilder::new(src,type,payload).with_host(h).build()
+test: #[sinex_test] async fn X(ctx:TestContext)->TestResult{ctx.pool()...}
 
-// Validation chains
-use sinex_core::ValidationChain;
-ValidationChain::validate(val, "field").not_empty().min_length(3).into_result()?
+DEEP_SYMMETRY:
+trait StatefulStreamProcessor{async fn scan(&mut self,from:Checkpoint,until:TimeHorizon,args:ScanArgs)->SatelliteResult<()>}
+TimeHorizon{Historical{end_time},Continuous,Snapshot}
+CLI: X service|scan --since T --until T|explore
+checkpoint: core.automaton_checkpoints(PostgreSQL)+Redis(consumer_groups) [BUG:HotlogAutomatonRunner not saving DB checkpoints]
 
-// Event creation
-let event = RawEventBuilder::new("source", "type", json!({"data": 1}))
-    .with_host("myhost")
-    .build();
+DB_ULID:
+sqlx::query!("INSERT...VALUES($1::uuid...)",ulid.to_uuid()) //NEVER raw ulid
+auto: INSERT...RETURNING id::uuid as "id!"
+checkpoint: automaton_checkpoints(automaton_name,last_processed_id[TEXT])
+rules: ulid.to_uuid(), $1::uuid cast, RETURNING for auto-gen
 
-// Testing with transaction isolation
-#[sinex_test]
-async fn test_x(ctx: TestContext) -> TestResult {
-    // Use ctx.pool() not PgPool directly
-    insert_event(ctx.pool(), &event).await?;
-}
-```
+ARCH_DETAILS:
+satellites: systemd{ingestors(external→ingestd), automata(redis→processing)}
+hubs: ingestd(/run/sinex/ingest.sock), gateway(HTTP/JSON-RPC), redis(sinex:events)
+DB: raw.events(ULID,hypertable), core.automaton_checkpoints, sinex_schemas.*, conn:postgresql:///sinex_dev?host=/run/postgresql
+redis: XADD→sinex:events→XREADGROUP(consumer_groups)→XACK
+heartbeat: stdout(JSON)→journald→events→health_automaton
+consts: sinex_core::{timeouts,limits,buffers,retry,filesystem}
 
-## Database Insert Patterns
+EVENTS:
+trait EventType{type Payload;type SourceImpl;const EVENT_NAME:&'static str}
+EventRegistryBuilder auto-gen
+sources: fs,shell.{kitty,atuin,history,recording,scrollback},wm.hyprland,clipboard,dbus,journald
+naming: source.type(no redundancy)
 
-### CRITICAL: ULID/UUID Handling in SQLx
+EVENT_TYPES:
+fs: file.{created,modified,deleted,moved}, dir.{created,deleted}
+shell: command.{executed,failed,imported}, session.{started,ended}, recording.{started,ended}, output.captured
+wm: window.{opened,closed,focused,moved,resized}, workspace.{switched,created,destroyed}, display.{connected,disconnected}, monitor.focused, state.captured
+clip: copied,selected
+dbus: {signal,method,notification,device,media,power,network,bluetooth,mount}.*
+journal: entry.written, satellite.heartbeat
+sinex: satellite.{started,stopped,error,healthy}
 
-**For raw.events table (ULID columns):**
-```rust
-// CORRECT - Generate ULID and insert with explicit cast
-let event_id = Ulid::new();
-sqlx::query!(
-    "INSERT INTO raw.events (id, source, event_type, host, payload)
-     VALUES ($1::uuid, $2, $3, $4, $5)",
-    event_id.to_uuid(),
-    source, event_type, host, payload
-)
+TEST:
+structure: test/{unit,integration,system,common}
+macro: #[sinex_test] async fn X(ctx:TestContext)->TestResult
+ctx: pool(2000conns), start_test_{ingestd,satellite}(), wait_for_{event_type,redis_stream_length}(), verify_automaton_checkpoint()
+builder: EventBuilder::filesystem().path(p).created().build()
+run: just test{,-unit,-integration,-database}, just coverage
 
-// ALTERNATIVE - Let database generate ULID automatically (for preflight tests)
-sqlx::query!(
-    "INSERT INTO raw.events (source, event_type, host, payload)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id::uuid as \"id!\"",
-    source, event_type, host, payload
-)
+DEPLOY:
+preflight: db_conn→extensions(pgx_ulid,pg_jsonschema,timescaledb)→migration_dryrun→resources→config→binaries→tests
+nix: services.sinex{targetUser(REQ),database.url,eventSources.*,update.{gracePeriod,rollbackOnFailure}}
+systemd: hubs(ingestd,gateway), ingestors(fs,terminal,desktop,system), automata(command-canonicalizer,health,pkm)
+flow: systemctl restart sinex-update→preflight(7)→deploy|rollback
 
-// INCORRECT - Don't pass ULID directly to sqlx::query!
-// This fails: "unsupported type ulid for param"
-sqlx::query!("... VALUES ($1, ...)", event_id) // ❌ FAILS
-```
+FEATURES:
+core: ValidationChain,ErrorContext,ChannelSenderExt,ConfigExtractor,TestContext,EventRegistry(GitOps)
+sdk: StatefulStreamProcessor,ProcessorCliRunner(processor_main!),CheckpointManager,HeartbeatManager,ExplorationProvider
+bus: Redis(durable,ordered),ConsumerGroups(auto-track),gRPC(high-perf)
+proc: HotlogAutomatonRunner,source_event_ids(provenance),pg_jsonschema
 
-**For work_queue table (ULID foreign keys):**
-```rust
-// CORRECT - Convert ULID to UUID for foreign key reference
-sqlx::query!(
-    "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-     VALUES ($1::uuid, $2)",
-    event_id.to_uuid(),  // Convert ULID to UUID
-    agent_name
-)
+STATUS_2025-07-15:
+done: satellite_constellation,deep_symmetry,redis_streams,journald_heartbeat,checkpoint_hybrid,gRPC,GitOps_schema
+bugs: HotlogAutomatonRunner_no_checkpoint_save
+missing: raw_event_provenance, CLI(replay,explore), source_event_ids_impl
+reality>vision: redis_streams_mature, sdk_abstractions_solid, checkpoint_hybrid>redis_only, journald>direct_db
 
-// CORRECT - Alternative: Use ULID with explicit cast
-sqlx::query!(
-    "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-     VALUES ($1::uuid::ulid, $2)",
-    event_id.to_uuid(),
-    agent_name
-)
-```
+CRITICAL: system captures entire digital life→reliability non-negotiable
+STATE: sophisticated but needs checkpoint_fix+CLI_features
 
-**Key Rules:**
-1. **Never pass raw ULID to sqlx::query!** - SQLx macro doesn't support ULID type
-2. **Always use `.to_uuid()` on ULID before passing to SQLx**
-3. **Let database auto-generate ULIDs when inserting events** - Use RETURNING clause
-4. **For foreign keys: ULID fields require UUID conversion**
-5. **For TEXT fields (like processing_worker_id): Pass as String, not ULID**
+RECOVERY_PROCEDURES:
+corrupted_db: pg_dump sinex_dev>/tmp/backup.sql before any destructive ops
+redis_inconsistent: redis-cli FLUSHDB (nuclear option) OR redis-cli --scan --pattern "sinex:*" | xargs redis-cli DEL
+checkpoint_mismatch: UPDATE core.automaton_checkpoints SET last_processed_id=NULL WHERE automaton_name='X'
+event_replay: DELETE FROM synthesis.events WHERE source='X' AND ts_orig BETWEEN Y AND Z; restart automaton
+service_wedged: systemctl stop sinex-X && pkill -f sinex-X && systemctl start sinex-X
 
-## Architecture Details
+KEY_PATHS:
+/run/sinex/ingest.sock (gRPC), postgresql:///sinex_dev?host=/run/postgresql
+redis: sinex:events (main stream), consumer_group_pattern: automaton_name
+checkpoint_bug: crate/sinex-satellite-sdk/src/automaton.rs:HotlogAutomatonRunner::run_batch() missing save
 
-### EventSource trait
-```rust
-async fn initialize(ctx: EventSourceContext) -> Result<Self>
-async fn stream_events(&mut self, tx: EventSender) -> Result<()>
-```
+TYPE_SIGS:
+RawEvent{id:Ulid,source:String,event_type:String,ts_orig:DateTime,payload:JsonValue}
+CheckpointState{last_processed_id:Option<String>,processed_count:u64,data:Option<JsonValue>}
+trait ExplorationProvider{async fn get_source_state()->SourceState; async fn get_coverage_analysis()->CoverageReport}
 
-### UnifiedCollector
-- Single process coordinating all sources
-- Loads config (NixOS module system)
-- Spawns EventSource tasks
-- Validates events via JSON schemas
-- Writes to `raw.events` or logs (dry-run)
+COMMON_ERRORS:
+"unsupported type ulid"→use .to_uuid()
+"socket connection refused"→check ingestd running+/run/sinex/ingest.sock
+"SQLX offline"→just sqlx-prepare && git add .sqlx/
+"duplicate key value"→ULID collision(extremely rare) or replay without delete
+"no such file or directory"→likely in nix build, check git status (nix only sees committed files)
+"ConnectionRefused"→Redis not running: redis-server or systemctl start redis
+"consumer group already exists"→normal on restart, ignore or XGROUP DESTROY first
 
-### Database Tables
-- `raw.events` - Hypertable, ULID primary key, ts_ingest from ULID
-- `work_queue` - Processing queue with worker claiming
-- `sinex_schemas.*` - Schema registry, agent manifests
-- Connection: `postgresql:///sinex_dev?host=/run/postgresql`
+DEBUG_FLOWS:
+satellite_not_sending_events:
+1. systemctl status sinex-X
+2. journalctl -u sinex-X -f
+3. Check /run/sinex/ingest.sock exists
+4. RUST_LOG=debug systemctl restart sinex-X
+5. Check satellite can connect to ingestd
 
-### Workers
-- Claim work via `SELECT FOR UPDATE SKIP LOCKED`
-- Process events asynchronously
-- Currently: promotion worker, health monitor
+events_not_processing:
+1. redis-cli XINFO STREAM sinex:events
+2. redis-cli XINFO GROUPS sinex:events  
+3. Check consumer group has pending messages
+4. psql→SELECT * FROM core.automaton_checkpoints WHERE automaton_name='X'
+5. Check automaton service running
 
-### Code Quality
-- **Constants**: Use `sinex_core::{timeouts, limits, buffers, retry, filesystem}` instead of magic numbers
-- **Generic helpers**: Prefer extraction patterns over duplication (see collector.rs)
+DB_SCHEMA:
+raw.events(id ULID PK, source TEXT, event_type TEXT, ts_orig TIMESTAMPTZ, ts_ingest TIMESTAMPTZ, host TEXT, payload JSONB)
+core.automaton_checkpoints(id UUID, automaton_name TEXT, consumer_group TEXT, last_processed_id TEXT, state_data JSONB)
+synthesis.events(like raw.events + source_event_ids ULID[]) [NOT YET IMPLEMENTED]
 
-## Event Sources & Types
+USEFUL_QUERIES:
+-- Recent events by type
+SELECT ts_orig,source,event_type,payload FROM raw.events WHERE event_type='X' ORDER BY ts_orig DESC LIMIT 20;
+-- Event throughput
+SELECT source,COUNT(*) as cnt FROM raw.events WHERE ts_ingest > NOW()-'1 hour'::interval GROUP BY source ORDER BY cnt DESC;
+-- Checkpoint status
+SELECT automaton_name,last_processed_id,processed_count,last_activity FROM core.automaton_checkpoints;
+-- Find events with specific payload content
+SELECT * FROM raw.events WHERE payload @> '{"path":"/some/file"}'::jsonb;
 
-### Event Type System
-Events are defined as Rust types implementing `EventType` trait:
-```rust
-pub struct FileCreated;
-impl EventType for FileCreated {
-    type Payload = FileCreatedPayload;
-    type SourceImpl = FilesystemWatcher;
-    const EVENT_NAME: &'static str = "file.created";
-}
-```
+TEST_PATTERNS:
+quick_test_one: cargo test -p sinex-core test_name -- --nocapture
+test_with_db: #[sinex_test] (auto transaction rollback)
+integration_test: start actual services→test interaction→verify in DB
+property_test: use proptest for edge cases (see test/property/)
+benchmark: cargo bench -p sinex-X (see benches/)
 
-**NOTE**: EventRegistry autogeneration has been implemented via EventRegistryBuilder pattern, eliminating manual maintenance.
+KEY_DOCS:
+/realm/project/sinex/design_discussion.md - VISION & architectural philosophy
+/realm/project/sinex/spec/SADI.md - Architecture overview
+/realm/project/sinex/spec/STAD.md - Technical details
+/realm/project/sinex/CLAUDE.md - THIS FILE (my memory)
 
-### Naming Convention 
-- Sources use dots for hierarchy: `fs`, `shell.kitty`, `wm.hyprland`
-- Event types are concise: `file.created`, `command.executed`, `copied`
-- No redundancy between source and event type
+AVOID_THESE_PITFALLS:
+- Starting coding without understanding goal (ask clarifying questions)
+- Modifying without reading existing code first
+- Making changes without running tests
+- Assuming file exists without checking
+- Using blocking I/O in async contexts
+- Forgetting to handle Redis connection failures
+- Not checking if service is already running before start
+- Committing debug print statements
 
-### Registered Sources
-- `fs` - File system events
-- `shell.kitty` - Kitty terminal commands  
-- `wm.hyprland` - Hyprland window manager
-- `clipboard` - Clipboard content changes
-- `shell.atuin` - Atuin shell history
-- `shell.history` - Shell history files
-- `shell.recording` - Terminal recordings
-- `shell.scrollback` - Terminal scrollback
-- `dbus` - D-Bus system events
-- `journald` - Systemd journal events
+PERF_INVESTIGATION:
+slow_ingestion: RUST_LOG=sinex_ingestd=trace→check batch sizes
+high_memory: heaptrack or valgrind→find leaks
+slow_queries: EXPLAIN ANALYZE→add indexes
+redis_bottleneck: redis-cli --latency→check network
 
-### Event Types by Category
-```
-# Filesystem (6)
-file.created, file.modified, file.deleted, file.moved
-dir.created, dir.deleted
-
-# Shell (8)
-command.executed, command.failed
-session.started, session.ended
-command.imported (for shell.atuin, shell.history)
-recording.started, recording.ended (for shell.recording)
-output.captured (for shell.scrollback)
-
-# Window Manager (12)
-window.opened, window.closed, window.focused
-window.moved, window.resized
-workspace.switched, workspace.created, workspace.destroyed
-display.connected, display.disconnected
-monitor.focused
-state.captured
-
-# Clipboard (2)
-copied, selected
-
-# D-Bus (10)
-signal.received, method.called
-notification.sent
-device.connected, device.disconnected
-media.state_changed, power.state_changed
-network.state_changed, bluetooth.device_changed
-mount.changed
-
-# Journal (1)
-entry.written
-```
-
-## Testing
-
-### Test Structure
-```
-test/
-├── unit/           # Component isolation tests
-├── integration/    # Component interaction tests  
-├── system/         # Full pipeline tests
-├── common/         # Shared utilities (CRITICAL!)
-```
-
-### Test Patterns
-```rust
-// ALWAYS use #[sinex_test] for DB tests
-#[sinex_test]
-async fn test_event_insertion(ctx: TestContext) -> TestResult {
-    let event = EventBuilder::filesystem()
-        .path("/test.txt")
-        .created()
-        .build();
-    
-    assert_event_inserted_with_context(ctx.pool(), &event, "test_context").await?;
-    ctx.wait_for_work_queue(0).await?;
-    Ok(())
-}
-```
-
-### Test Infrastructure
-- **TestContext** - Shared DB pool (2000 connections!), transaction isolation
-- **EventBuilder** - Fluent API for test events
-- **Timing helpers** - `wait_for_*` functions for deterministic async tests
-- **#[sinex_test]** - Wraps test in transaction for auto-rollback
-
-### Running Tests
-```bash
-just test                     # All tests
-just test-unit               # Unit only
-just test-integration        # Integration only
-just test-database           # DB-specific
-just coverage                # With coverage report
-cargo test -- --nocapture    # See output
-```
-
-## Deployment
-
-### Pre-Flight Verification (7 phases)
-1. Database connectivity
-2. PostgreSQL extensions (pgx_ulid, pg_jsonschema, timescaledb)
-3. Migration dry-run
-4. Resource checks (disk, memory, CPU)
-5. Config validation
-6. Service binary checks
-7. Integration tests
-
-### NixOS Module
-```nix
-services.sinex = {
-  enable = true;
-  targetUser = "myuser";  # Required!
-  
-  database = {
-    url = "postgresql:///sinex?host=/run/postgresql";
-    poolSize = 25;
-  };
-  
-  eventSources = {
-    filesystem = true;
-    terminal = true;
-    windowManager = true;
-    clipboard = true;
-  };
-  
-  unifiedCollector = {
-    enable = true;
-    logLevel = "info";
-    dryRun = false;
-  };
-  
-  update = {
-    enable = true;
-    gracePeriod = 30;
-    rollbackOnFailure = true;
-  };
-};
-```
-
-### Systemd Services
-- `sinex-unified-collector.service` - Main collector
-- `sinex-promo-worker.service` - Event processor
-- `sinex-update.service` - Deployment with pre-flight
-- `sinex-preflight.service` - Verification runner
-
-### Deployment Flow
-1. `systemctl restart sinex-update` triggers deployment
-2. Pre-flight verification runs (7 phases)
-3. If passes: graceful service restart
-4. If fails: automatic rollback
-5. Health monitoring throughout
-
-## Advanced Features
-
-- **ValidationChain** - Fluent validation with error accumulation
-- **ErrorContext** - Rich errors with chaining
-- **ChannelSenderExt** - Enhanced channels with monitoring
-- **ConfigExtractor** - Type-safe config access
-- **TestContext** - Shared DB pool, transaction isolation
-- Schema registry with `EventRegistry`
-- Schema validation via pg_jsonschema
-
-See `spec/docs/claude/abstraction_usage_guide.md` for examples.
-
-## Remember
-
-This is a system capturing someone's entire digital life. Reliability is non-negotiable.
-
-### Compilation Efficiency Rule
-**ALWAYS save full compilation output to temp file first, then process that file with different tools rather than recompiling multiple times.**
-
-```bash
-# CORRECT: Compile once, analyze multiple ways
-nix develop --command cargo check --workspace --all-targets > /tmp/compile_output.txt 2>&1
-grep "error:" /tmp/compile_output.txt | head -10
-wc -l /tmp/compile_output.txt  
-grep -c "warning:" /tmp/compile_output.txt
-
-# WRONG: Multiple compilations (wasteful)
-nix develop --command cargo check ... 2>&1 | head -10
-nix develop --command cargo check ... 2>&1 | wc -l
-nix develop --command cargo check ... 2>&1 | grep error
-```
+MEMORY_MAINTENANCE:
+- Notice inefficiency→add to EFFICIENCY_PATTERNS
+- Find new error→add to COMMON_ERRORS with fix
+- Discover key path/config→add to KEY_PATHS
+- See repeated task pattern→add to WORKFLOW
+- Remove outdated info immediately (don't accumulate cruft)
+- If something NOT in CLAUDE.md causes confusion→add it
+- Review & compress periodically (token efficiency)

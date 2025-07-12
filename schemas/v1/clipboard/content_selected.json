@@ -1,0 +1,30 @@
+{
+  "$id": "https://sinex.io/schemas/v1/clipboard/content_selected.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "content_size": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "selection_type": {
+      "type": "string"
+    },
+    "text_preview": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "content_size",
+    "content_type",
+    "selection_type"
+  ],
+  "title": "ClipboardSelectedPayload",
+  "type": "object"
+}

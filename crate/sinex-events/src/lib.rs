@@ -19,14 +19,16 @@ pub use event_builders::{
 
 // Re-export strongly typed events
 pub use strongly_typed_events::{
-    typed_event_channel, ClipboardCopiedPayload, ClipboardSelectedPayload, CommandCompletedPayload,
-    CommandExecutedPayload, DirCreatedPayload, DirDeletedPayload, EnforcedTypedEventSource,
-    EventEnvelope, FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
-    JournalEntryPayload, SessionEndedPayload, SessionStartedPayload, SystemStatePayload,
-    TypedClipboardEventBuilder, TypedEventBuilder, TypedEventError, TypedEventPipelineAdapter,
-    TypedEventReceiver, TypedEventResult, TypedEventSender, TypedFilesystemEventBuilder,
-    TypedRawEvent, TypedTerminalEventBuilder, TypedToJsonAdapter, WindowClosedPayload,
-    WindowFocusedPayload, WindowOpenedPayload, WorkspaceSwitchedPayload,
+    typed_event_channel, AtuinEntryPayload, ClipboardCopiedPayload, ClipboardSelectedPayload,
+    CommandCompletedPayload, CommandExecutedPayload, CommandImportedPayload, DirCreatedPayload,
+    DirDeletedPayload, EnforcedTypedEventSource, EventEnvelope, FileCreatedPayload,
+    FileDeletedPayload, FileModifiedPayload, FileMovedPayload, JournalEntryPayload,
+    ProcessHeartbeatPayload, ProcessShutdownPayload, ProcessStartedPayload, ScanCompletedPayload, ScanStartedPayload,
+    SensorActivatedPayload, SensorDeactivatedPayload, SessionEndedPayload, SessionStartedPayload,
+    SystemStatePayload, TypedClipboardEventBuilder, TypedEventBuilder, TypedEventError,
+    TypedEventPipelineAdapter, TypedEventReceiver, TypedEventResult, TypedEventSender,
+    TypedFilesystemEventBuilder, TypedRawEvent, TypedTerminalEventBuilder, TypedToJsonAdapter,
+    WindowClosedPayload, WindowFocusedPayload, WindowOpenedPayload, WorkspaceSwitchedPayload,
 };
 
 // Common type aliases
@@ -50,11 +52,25 @@ pub mod sources {
 
 pub mod event_types {
     pub mod sinex {
-        pub const AGENT_STARTUP: &str = "agent.startup";
-        pub const AGENT_SHUTDOWN: &str = "agent.shutdown";
-        pub const AGENT_HEARTBEAT: &str = "agent.heartbeat";
-        pub const AGENT_ERROR: &str = "agent.error";
-        pub const AGENT_DLQ_EVENT_WRITTEN: &str = "agent.dlq_event_written";
+        // Automaton events
+        pub const AUTOMATON_STARTUP: &str = "automaton.startup";
+        pub const AUTOMATON_SHUTDOWN: &str = "automaton.shutdown";
+        pub const AUTOMATON_HEARTBEAT: &str = "automaton.heartbeat";
+        pub const AUTOMATON_ERROR: &str = "automaton.error";
+        pub const AUTOMATON_DLQ_EVENT_WRITTEN: &str = "automaton.dlq_event_written";
+        
+        // Scanner events
+        pub const SCAN_STARTED: &str = "scan.started";
+        pub const SCAN_COMPLETED: &str = "scan.completed";
+        
+        // Process events
+        pub const PROCESS_STARTED: &str = "process.started";
+        pub const PROCESS_HEARTBEAT: &str = "process.heartbeat";
+        pub const PROCESS_SHUTDOWN: &str = "process.shutdown";
+        
+        // Sensor events
+        pub const SENSOR_ACTIVATED: &str = "sensor.activated";
+        pub const SENSOR_DEACTIVATED: &str = "sensor.deactivated";
     }
 
     pub mod filesystem {
@@ -73,6 +89,7 @@ pub mod event_types {
         pub const SESSION_STARTED: &str = "session.started";
         pub const SESSION_ENDED: &str = "session.ended";
         pub const COMMAND_IMPORTED: &str = "command.imported";
+        pub const ENTRY_IMPORTED: &str = "entry.imported";
         pub const RECORDING_STARTED: &str = "recording.started";
         pub const RECORDING_ENDED: &str = "recording.ended";
         pub const COMMAND_OUTPUT: &str = "command.output";
@@ -131,12 +148,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum AgentStatus {
+pub enum AutomatonStatus {
     Starting,
     Running,
     Stopping,
     Error,
 }
+
+// Legacy alias for compatibility
+pub type AgentStatus = AutomatonStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]

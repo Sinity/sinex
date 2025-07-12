@@ -11,9 +11,9 @@
 use crate::common::prelude::*;
 use chrono::Utc;
 use sinex_core::{
-    event_type_constants, sources, unified_collector::EventRegistryBuilder, CoreError, EventSource,
-    EventSourceContext, RawEventBuilder, Result as CoreResult,
+    event_type_constants, sources, CoreError, RawEventBuilder, Result as CoreResult,
 };
+use sinex_satellite_sdk::{EventSource, EventSourceContext};
 use std::io;
 
 // =============================================================================
@@ -46,7 +46,7 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
         .build(),
         RawEventBuilder::new(
             sources::SINEX,
-            event_type_constants::sinex::AGENT_HEARTBEAT,
+            event_type_constants::sinex::AUTOMATON_HEARTBEAT,
             json!({"status": "running"}),
         )
         .build(),

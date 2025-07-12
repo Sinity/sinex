@@ -432,30 +432,20 @@ impl PipelineStage for StorageStage {
 
 /// Distribution stage - sends events to work queue for processing
 pub struct DistributionStage {
-    db_pool: crate::DbPool,
     metrics: Arc<RwLock<StageMetrics>>,
 }
 
 impl DistributionStage {
-    pub fn new(db_pool: crate::DbPool) -> Self {
+    pub fn new() -> Self {
         Self {
-            db_pool,
             metrics: Arc::new(RwLock::new(StageMetrics::default())),
         }
     }
 
-    async fn distribute_event(&self, event: &RawEvent) -> Result<()> {
-        // Add to work queue for downstream processing
-        sqlx::query!(
-            r#"
-            INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-            VALUES ($1::uuid, $2)
-            "#,
-            event.id.to_uuid(),
-            "promotion-worker"
-        )
-        .execute(&self.db_pool)
-        .await?;
+    async fn distribute_event(&self, _event: &RawEvent) -> Result<()> {
+        // TODO: Replace with Redis Streams distribution in satellite architecture
+        // For now, events are distributed directly via Redis rather than work_queue
+        // This function will be removed as part of satellite migration
 
         Ok(())
     }
@@ -529,7 +519,7 @@ impl EventPipeline {
             validation_stage: ValidationStage::new(),
             enrichment_stage: EnrichmentStage::new(),
             storage_stage: StorageStage::new(db_pool.clone()),
-            distribution_stage: DistributionStage::new(db_pool),
+            distribution_stage: DistributionStage::new(),
         }
     }
 

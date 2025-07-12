@@ -687,8 +687,8 @@ impl SystemEventBuilder {
         self
     }
 
-    pub fn agent_name(self, name: impl Into<String>) -> Self {
-        self.message(format!("Agent: {}", name.into()))
+    pub fn automaton_name(self, name: impl Into<String>) -> Self {
+        self.message(format!("Automaton: {}", name.into()))
     }
 
     pub fn heartbeat(self) -> Self {

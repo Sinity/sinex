@@ -191,7 +191,7 @@ impl StressTestUtils {
     ) -> Result<(), anyhow::Error> {
         // Clean up in reverse dependency order
         sqlx::query!(
-            "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+            "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
             agent_name
         )
         .execute(pool)
@@ -203,7 +203,7 @@ impl StressTestUtils {
         .execute(pool)
         .await?;
         sqlx::query!(
-            "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+            "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
             agent_name
         )
         .execute(pool)
@@ -278,7 +278,7 @@ struct DeadlockStressWorker {
     pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
-    agent_name: String,
+    automaton_name: String,
     deadlock_timeout: Duration,
     aggressive_claiming: bool,
 }
@@ -304,7 +304,7 @@ impl DeadlockStressWorker {
         worker_id: String,
         pool: DbPool,
         metrics: Arc<ConcurrencyStressMetrics>,
-        agent_name: String,
+        automaton_name: String,
         deadlock_timeout: Duration,
         aggressive_claiming: bool,
     ) -> Self {
@@ -313,7 +313,7 @@ impl DeadlockStressWorker {
             pool,
             metrics,
             should_stop: Arc::new(AtomicBool::new(false)),
-            agent_name,
+            automaton_name,
             deadlock_timeout,
             aggressive_claiming,
         }
@@ -402,14 +402,14 @@ impl DeadlockStressWorker {
                  SELECT queue_id
                  FROM sinex_schemas.work_queue
                  WHERE status = 'pending'
-                   AND target_agent_name = $1
+                   AND target_automaton_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
              RETURNING queue_id::text, raw_event_id::text",
-            self.agent_name,
+            self.automaton_name,
             self.worker_id
         )
         .fetch_optional(&self.pool)
@@ -428,7 +428,7 @@ impl DeadlockStressWorker {
                     event_id: item
                         .raw_event_id
                         .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
-                    target_agent: self.agent_name.clone(),
+                    target_agent: self.automaton_name.clone(),
                     created_at: chrono::Utc::now(),
                 }))
             }
@@ -481,7 +481,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
+        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -512,7 +512,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         let queue_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue
-             (queue_id, raw_event_id, target_agent_name, max_attempts, status)
+             (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
              VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
@@ -557,7 +557,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
 
             let stuck_processing: Vec<(String, String)> = sqlx::query!(
                 "SELECT queue_id::text, processing_worker_id FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1
+                 WHERE target_automaton_name = $1
                    AND status = 'processing'
                    AND last_attempt_ts < NOW() - INTERVAL '3 seconds'",
                 detection_agent
@@ -574,7 +574,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
 
             let active_workers: HashSet<String> = sqlx::query_scalar!(
                 "SELECT DISTINCT processing_worker_id FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1
+                 WHERE target_automaton_name = $1
                    AND status = 'processing'
                    AND processing_worker_id IS NOT NULL",
                 detection_agent
@@ -623,7 +623,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
                      SET status = 'failed_retryable',
                          processing_worker_id = NULL,
                          next_retry_ts = NOW() + INTERVAL '100 milliseconds'
-                     WHERE target_agent_name = $1
+                     WHERE target_automaton_name = $1
                        AND status = 'processing'
                        AND last_attempt_ts < NOW() - INTERVAL '3 seconds'
                      RETURNING queue_id::text",
@@ -676,7 +676,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status = 'succeeded'",
+         WHERE target_automaton_name = $1 AND status = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -685,7 +685,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
 
     let final_abandoned: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
+         WHERE target_automaton_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)
@@ -741,7 +741,7 @@ struct RaceConditionWorker {
     pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
-    agent_name: String,
+    automaton_name: String,
     timeout: Duration,
 }
 
@@ -766,7 +766,7 @@ impl RaceConditionWorker {
         worker_id: String,
         pool: DbPool,
         metrics: Arc<ConcurrencyStressMetrics>,
-        agent_name: String,
+        automaton_name: String,
         timeout: Duration,
     ) -> Self {
         Self {
@@ -774,7 +774,7 @@ impl RaceConditionWorker {
             pool,
             metrics,
             should_stop: Arc::new(AtomicBool::new(false)),
-            agent_name,
+            automaton_name,
             timeout,
         }
     }
@@ -860,14 +860,14 @@ impl RaceConditionWorker {
                  SELECT queue_id
                  FROM sinex_schemas.work_queue
                  WHERE status = 'pending'
-                   AND target_agent_name = $1
+                   AND target_automaton_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
              RETURNING queue_id::text, raw_event_id::text",
-            self.agent_name,
+            self.automaton_name,
             self.worker_id
         )
         .fetch_optional(&self.pool)
@@ -881,7 +881,7 @@ impl RaceConditionWorker {
                 event_id: item
                     .raw_event_id
                     .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
-                target_agent: self.agent_name.clone(),
+                target_agent: self.automaton_name.clone(),
                 created_at: chrono::Utc::now(),
             })),
             Ok(None) => Ok(None),
@@ -933,7 +933,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     let agent_name = format!("race_condition_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
+        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -965,7 +965,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         let queue_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO sinex_schemas.work_queue
-             (queue_id, raw_event_id, target_agent_name, max_attempts, status)
+             (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
              VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
             queue_id.to_uuid(),
             event_id.to_uuid(),
@@ -988,7 +988,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
             let current_succeeded: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1 AND status = 'succeeded'",
+                 WHERE target_automaton_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -998,7 +998,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
             let processing_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1 AND status = 'processing'",
+                 WHERE target_automaton_name = $1 AND status = 'processing'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1011,7 +1011,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             let duplicate_check: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) - COUNT(DISTINCT raw_event_id)
                  FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1 AND status = 'succeeded'",
+                 WHERE target_automaton_name = $1 AND status = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1023,7 +1023,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
                 "SELECT COUNT(*) FROM (
                    SELECT processing_worker_id, COUNT(*) as cnt
                    FROM sinex_schemas.work_queue
-                   WHERE target_agent_name = $1 AND status = 'processing'
+                   WHERE target_automaton_name = $1 AND status = 'processing'
                      AND processing_worker_id IS NOT NULL
                    GROUP BY processing_worker_id
                    HAVING COUNT(*) > 1
@@ -1121,7 +1121,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status = 'succeeded'",
+         WHERE target_automaton_name = $1 AND status = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1130,7 +1130,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
     let unique_completed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(DISTINCT raw_event_id) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status = 'succeeded'",
+         WHERE target_automaton_name = $1 AND status = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1183,7 +1183,7 @@ struct StressTestWorker {
     pool: DbPool,
     metrics: Arc<ConcurrencyStressMetrics>,
     should_stop: Arc<AtomicBool>,
-    agent_name: String,
+    automaton_name: String,
     deadlock_timeout: Duration,
     aggressive_claiming: bool,
 }
@@ -1216,7 +1216,7 @@ impl StressTestWorker {
         worker_id: String,
         pool: DbPool,
         metrics: Arc<ConcurrencyStressMetrics>,
-        agent_name: String,
+        automaton_name: String,
         deadlock_timeout: Duration,
         aggressive_claiming: bool,
     ) -> Self {
@@ -1225,7 +1225,7 @@ impl StressTestWorker {
             pool,
             metrics,
             should_stop: Arc::new(AtomicBool::new(false)),
-            agent_name,
+            automaton_name,
             deadlock_timeout,
             aggressive_claiming,
         }
@@ -1354,7 +1354,7 @@ impl StressTestWorker {
                  SELECT queue_id
                  FROM sinex_schemas.work_queue
                  WHERE status = 'pending'
-                   AND target_agent_name = $1
+                   AND target_automaton_name = $1
                    AND (max_attempts IS NULL OR attempts < max_attempts)
                    AND (processing_worker_id IS NULL OR processing_worker_id != $2)
                  ORDER BY created_at
@@ -1362,7 +1362,7 @@ impl StressTestWorker {
                  LIMIT 1
              )
              RETURNING queue_id::text, raw_event_id::text, attempts",
-            self.agent_name,
+            self.automaton_name,
             self.worker_id
         )
         .fetch_optional(&self.pool)
@@ -1381,7 +1381,7 @@ impl StressTestWorker {
                     event_id: item
                         .raw_event_id
                         .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
-                    target_agent: self.agent_name.clone(),
+                    target_agent: self.automaton_name.clone(),
                     created_at: chrono::Utc::now(),
                 }))
             }
@@ -1443,7 +1443,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     let test_duration = Duration::from_secs(5);
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description, agent_type, status)
+        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
          VALUES ($1, $2, $3, $4, $5)",
         agent_name,
         "1.0.0",
@@ -1476,7 +1476,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             let queue_id = Ulid::new();
             sqlx::query!(
                 "INSERT INTO sinex_schemas.work_queue
-                 (queue_id, raw_event_id, target_agent_name, max_attempts, status)
+                 (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
                  VALUES ($1::uuid, $2::uuid, $3, 5, 'pending')",
                 queue_id.to_uuid(),
                 event_id.to_uuid(),
@@ -1523,7 +1523,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
             let stuck_items: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_agent_name = $1
+                 WHERE target_automaton_name = $1
                    AND status = 'processing'
                    AND last_attempt_ts < NOW() - INTERVAL '10 seconds'",
                 monitor_agent
@@ -1542,7 +1542,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                      SET status = 'failed_retryable',
                          processing_worker_id = NULL,
                          next_retry_ts = NOW() + INTERVAL '1 second'
-                     WHERE target_agent_name = $1
+                     WHERE target_automaton_name = $1
                        AND status = 'processing'
                        AND last_attempt_ts < NOW() - INTERVAL '10 seconds'
                      RETURNING queue_id::text",
@@ -1570,7 +1570,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 Err(_) => {
                     // Fallback to direct query on timeout
                     sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
+                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'pending'",
                         monitor_agent
                     )
                     .fetch_one(&monitor_pool)
@@ -1592,7 +1592,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 Err(_) => {
                     // Fallback to direct query on timeout
                     sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'processing'",
+                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'processing'",
                         monitor_agent
                     )
                     .fetch_one(&monitor_pool)
@@ -1643,7 +1643,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status = 'succeeded'",
+         WHERE target_automaton_name = $1 AND status = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1652,7 +1652,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
     let final_pending: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status = 'pending'",
+         WHERE target_automaton_name = $1 AND status = 'pending'",
         agent_name
     )
     .fetch_one(pool)
@@ -1661,7 +1661,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
     let final_failed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_agent_name = $1 AND status IN ('failed', 'failed_retryable')",
+         WHERE target_automaton_name = $1 AND status IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)

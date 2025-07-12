@@ -82,7 +82,7 @@ impl GenericEventBuilder {
 
     pub fn heartbeat(self) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.heartbeat".to_string(),
+            event_type: "automaton.heartbeat".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -93,7 +93,7 @@ impl GenericEventBuilder {
 
     pub fn startup(self) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.startup".to_string(),
+            event_type: "automaton.startup".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -104,7 +104,7 @@ impl GenericEventBuilder {
 
     pub fn error(self, error_msg: impl Into<String>) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.error".to_string(),
+            event_type: "automaton.error".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -176,6 +176,6 @@ impl EventBuilder {
 
     /// Create an agent event builder
     pub fn agent() -> GenericEventBuilder {
-        GenericEventBuilder::new("sinex", "agent.heartbeat")
+        GenericEventBuilder::new("sinex", "automaton.heartbeat")
     }
 }

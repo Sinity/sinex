@@ -34,12 +34,69 @@ pub use crate::common::prelude::*;
 use sinex_core::{event_type_constants, sources, EventFactory};
 use sinex_db::events as db_events;
 use sinex_db::query_helpers::uuid_to_ulid;
-use sinex_db::AgentManifestParams;
+// Satellite architecture - no legacy types needed
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
     std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
+}
+
+// Satellite architecture testing utilities
+use sinex_satellite_sdk::{IngestClient, EventSourceRunner};
+use tokio::net::UnixListener;
+
+/// Start a test ingestd server for integration tests
+pub async fn start_test_ingestd(ctx: &crate::common::test_context::TestContext) -> TestResult<(tokio::task::JoinHandle<()>, String)> {
+    let socket_path = ctx.work_dir().join("test-ingestd.sock").to_string_lossy().to_string();
+    start_test_ingestd_at_path(ctx, &socket_path).await
+}
+
+/// Start ingestd at specific socket path
+pub async fn start_test_ingestd_at_path(ctx: &crate::common::test_context::TestContext, socket_path: &str) -> TestResult<(tokio::task::JoinHandle<()>, String)> {
+    use std::time::Duration;
+    
+    // Remove socket if it exists
+    let _ = std::fs::remove_file(socket_path);
+    
+    // Create a simple test ingestd that accepts events and stores them
+    let pool = ctx.pool().clone();
+    let socket_path_for_server = socket_path.to_string();
+    
+    let handle = tokio::spawn(async move {
+        // This is a simplified ingestd for testing
+        // In real implementation, this would use sinex_ingestd::IngestServer
+        let listener = UnixListener::bind(&socket_path_for_server).unwrap();
+        
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    // Handle gRPC connection
+                    // For now, just keep the connection alive
+                    let _ = stream;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    
+    // Wait for server to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    Ok((handle, socket_path.to_string()))
+}
+
+/// Count events from a specific satellite source
+pub async fn count_events_from_source(pool: &DbPool, source: &str) -> TestResult<u64> {
+    let count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM raw.events WHERE source = $1",
+        source
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(count.unwrap_or(0) as u64)
 }
 
 /// Create a test database pool with high concurrency settings
@@ -133,7 +190,7 @@ pub mod events {
 
     /// Create a test agent heartbeat event
     pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
+        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create a test event for race condition testing
@@ -173,7 +230,7 @@ pub mod events {
 
     /// Create a quick agent heartbeat with default payload
     pub fn quick_agent_heartbeat(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AGENT_HEARTBEAT, agent_name)
+        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create test events for timing and ordering tests
@@ -210,7 +267,7 @@ pub mod events {
         version: Option<&str>,
     ) -> sinex_db::RawEvent {
         let mut event = EventFactory::new("agent").create_event(
-            "agent.heartbeat",
+            "automaton.heartbeat",
             json!({
                 "agent_name": agent_name,
                 "status": "alive",
@@ -309,7 +366,7 @@ pub mod events {
 #[allow(dead_code)]
 pub mod assertions {
     use super::*;
-    // Using RawEvent, AgentManifest from prelude
+    // Using RawEvent, AutomatonManifest from prelude
 
     /// Assert that two events are equivalent (ignoring IDs and timestamps)
     pub fn assert_events_equivalent(actual: &RawEvent, expected: &RawEvent) {
@@ -343,15 +400,15 @@ pub mod assertions {
     /// Assert that manifest was registered successfully
     pub async fn assert_manifest_registered(
         pool: &DbPool,
-        manifest: &AgentManifest,
+        manifest: &AutomatonManifest,
     ) -> Result<(), anyhow::Error> {
-        let result = sinex_db::agent::upsert_agent_manifest(
+        let result = sinex_db::upsert_automaton_manifest(
             pool,
-            AgentManifestParams {
-                agent_name: manifest.agent_name.clone(),
+            AutomatonManifestParams {
+                automaton_name: manifest.automaton_name.clone(),
                 version: manifest.version.clone(),
                 description: manifest.description.clone(),
-                agent_type: manifest.agent_type.clone(),
+                automaton_type: manifest.automaton_type.clone(),
                 config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
                 produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
                 subscribes_to_event_types: manifest
@@ -363,7 +420,7 @@ pub mod assertions {
         )
         .await;
         assert!(result.is_ok(), "Expected manifest registration to succeed");
-        assert!(!manifest.agent_name.is_empty());
+        assert!(!manifest.automaton_name.is_empty());
         assert!(!manifest.version.is_empty());
         Ok(())
     }
@@ -508,15 +565,15 @@ pub mod generators {
     }
 
     /// Generate test agent manifest
-    pub fn test_agent_manifest(name: &str) -> AgentManifest {
+    pub fn test_agent_manifest(name: &str) -> AutomatonManifest {
         use chrono::Utc;
 
-        AgentManifest {
-            agent_name: name.to_string(),
+        AutomatonManifest {
+            automaton_name: name.to_string(),
             description: Some(format!("Test agent {}", name)),
             version: "1.0.0".to_string(),
             status: "development".to_string(),
-            agent_type: "test".to_string(),
+            automaton_type: "test".to_string(),
             config_template_json: Some(json!({"test": true})),
             produces_event_types: Some(json!(["test.event"])),
             subscribes_to_event_types: None,
@@ -797,13 +854,13 @@ pub fn create_test_event_with_payload(
 /// Helper for creating a test agent with default settings
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
-    sinex_db::agent::upsert_agent_manifest(
+    sinex_db::upsert_automaton_manifest(
         pool,
-        AgentManifestParams {
-            agent_name: manifest.agent_name.clone(),
+        AutomatonManifestParams {
+            automaton_name: manifest.automaton_name.clone(),
             version: manifest.version.clone(),
             description: manifest.description.clone(),
-            agent_type: manifest.agent_type.clone(),
+            automaton_type: manifest.automaton_type.clone(),
             config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
             produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
             subscribes_to_event_types: manifest
@@ -861,13 +918,13 @@ pub async fn create_agent_with_subscriptions(
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
-    sinex_db::agent::upsert_agent_manifest(
+    sinex_db::upsert_automaton_manifest(
         pool,
-        AgentManifestParams {
-            agent_name: manifest.agent_name.clone(),
+        AutomatonManifestParams {
+            automaton_name: manifest.automaton_name.clone(),
             version: manifest.version.clone(),
             description: manifest.description.clone(),
-            agent_type: manifest.agent_type.clone(),
+            automaton_type: manifest.automaton_type.clone(),
             config_template_json: manifest.config_template_json.clone().unwrap_or_default(),
             produces_event_types: manifest.produces_event_types.clone().unwrap_or_default(),
             subscribes_to_event_types: manifest
@@ -1003,12 +1060,14 @@ pub mod cleanup {
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &DbPool) -> Result<(), anyhow::Error> {
         // Clean up test data manually
-        sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name LIKE 'test_%'")
-            .execute(pool)
-            .await?;
-        sqlx::query!("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'test_%'")
-            .execute(pool)
-            .await?;
+        // work_queue table removed in Phase 2.3
+        // sqlx::query!("DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name LIKE 'test_%'")
+        //     .execute(pool)
+        //     .await?;
+        // automaton_manifests table may not exist in new architecture
+        // sqlx::query!("DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name LIKE 'test_%'")
+        //     .execute(pool)
+        //     .await?;
         sqlx::query!("DELETE FROM raw.events WHERE source LIKE 'test_%'")
             .execute(pool)
             .await?;
@@ -1068,7 +1127,7 @@ pub mod resources {
 }
 
 // Re-export commonly used items for convenience
-pub use sinex_db::models::AgentManifest;
+pub use sinex_db::models::AutomatonManifest;
 // Note: Some query functions may need to be migrated to domain modules
 pub mod channel_test_utils;
 pub mod config_test_utils;
@@ -1084,17 +1143,21 @@ pub mod validation_test_utils;
 /// Schema test utilities
 pub mod schema_test_utils;
 
-/// Worker test utilities
-pub mod worker_test_utils;
+// Worker test utilities - TODO: Re-add when worker tests are implemented
+// pub mod worker_test_utils;
 
 /// Coverage assurance utilities
 pub mod coverage_assurance;
+
+// Satellite architecture test utilities
+pub mod satellite_test_utils;
 
 /// Event source testing utilities
 #[allow(dead_code)]
 pub mod event_sources {
     use super::*;
-    use sinex_core::{EventSource, EventSourceContext, RawEvent};
+    use sinex_satellite_sdk::{EventSource, EventSourceContext};
+    use sinex_core::RawEvent;
     use tokio::time::{timeout, Duration};
 
     /// Create EventSourceContext with test configuration

@@ -707,7 +707,7 @@ async fn test_search_sql_injection_limit_offset_vulnerability(ctx: TestContext) 
 // Additional test to verify the SQL query construction issue
 #[cfg(test)]
 mod sql_construction_tests {
-    use super::*;
+    
 
     /// This test demonstrates the SQL construction vulnerability
     /// The params vector is built but never actually used in the query execution

@@ -1,6 +1,6 @@
 /// Integration tests for typed clipboard event conversion  
 use sinex_events::{
-    ClipboardCopiedPayload, ClipboardSelectedPayload, EventEnvelope, TypedClipboardEventBuilder,
+    ClipboardCopiedPayload, EventEnvelope, TypedClipboardEventBuilder,
     TypedRawEvent,
 };
 use sinex_ulid::Ulid;

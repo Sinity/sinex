@@ -1,12 +1,12 @@
 //! # RPC Server Request/Response Handler Tests
 //!
-//! Comprehensive tests for the sinex-host JSON-RPC server that verify end-to-end
+//! Comprehensive tests for the sinex-gateway JSON-RPC server that verify end-to-end
 //! request/response handling including serialization, method routing, error handling,
 //! and JSON-RPC 2.0 specification compliance.
 
 use crate::common::prelude::*;
 use serde_json::{json, Value};
-use sinex_host::service_container::ServiceContainer;
+use sinex_gateway::service_container::ServiceContainer;
 
 /// JSON-RPC 2.0 request structure for test requests
 #[derive(Debug, Clone, serde::Serialize)]

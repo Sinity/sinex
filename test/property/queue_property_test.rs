@@ -225,7 +225,7 @@ async fn test_no_duplicate_dequeue_with_crashes() -> Result<(), anyhow::Error> {
 
             // Additional verification: check database state
             let remaining_items = sqlx::query!(
-                "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'",
+                "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'pending'",
                 agent_name
             )
             .fetch_one(&pool)
@@ -233,7 +233,7 @@ async fn test_no_duplicate_dequeue_with_crashes() -> Result<(), anyhow::Error> {
             .expect("Operation failed");
 
             let completed_items = sqlx::query!(
-                "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'succeeded'",
+                "SELECT COUNT(*) as count FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'succeeded'",
                 agent_name
             )
             .fetch_one(&pool)
@@ -251,12 +251,12 @@ async fn test_no_duplicate_dequeue_with_crashes() -> Result<(), anyhow::Error> {
 
             // Cleanup
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+                "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
@@ -343,12 +343,12 @@ async fn test_work_queue_consistency_under_high_contention() -> Result<(), anyho
 
             // Cleanup
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+                "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
@@ -498,12 +498,12 @@ async fn test_work_queue_scalability_properties() -> Result<(), anyhow::Error> {
 
             // Cleanup
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+                "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
@@ -597,12 +597,12 @@ async fn test_work_queue_fifo_ordering_properties() -> Result<(), anyhow::Error>
 
             // Cleanup
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+                "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
@@ -702,7 +702,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
 
             // Check final state consistency
             let final_pending: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'pending'"
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'pending'"
             )
             .bind(&agent_name)
             .fetch_one(&pool)
@@ -710,7 +710,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
             .expect("Query failed");
 
             let final_in_progress: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'in_progress'"
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'in_progress'"
             )
             .bind(&agent_name)
             .fetch_one(&pool)
@@ -718,7 +718,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
             .expect("Query failed");
 
             let final_completed: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'succeeded'"
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'succeeded'"
             )
             .bind(&agent_name)
             .fetch_one(&pool)
@@ -726,7 +726,7 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
             .expect("Query failed");
 
             let final_failed: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1 AND status = 'failed'"
+                "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'failed'"
             )
             .bind(&agent_name)
             .fetch_one(&pool)
@@ -766,12 +766,12 @@ async fn test_work_queue_state_consistency_properties() -> Result<(), anyhow::Er
 
             // Cleanup
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+                "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 
             let _ = sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+                "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
                 agent_name
             ).execute(&pool).await;
 

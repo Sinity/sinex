@@ -326,3 +326,28 @@ mod arbitrary_impl {
         }
     }
 }
+
+#[cfg(feature = "schema")]
+mod schema_impl {
+    use super::*;
+    use schemars::{JsonSchema, schema::{Schema, SchemaObject, InstanceType, StringValidation}};
+    
+    impl JsonSchema for Ulid {
+        fn schema_name() -> String {
+            "Ulid".to_string()
+        }
+
+        fn json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+            let mut schema = SchemaObject::default();
+            schema.instance_type = Some(InstanceType::String.into());
+            schema.string = Some(Box::new(StringValidation {
+                pattern: Some("^[0-9A-HJKMNP-TV-Z]{26}$".to_string()),
+                min_length: Some(26),
+                max_length: Some(26),
+                ..Default::default()
+            }));
+            schema.metadata().description = Some("A Universally Unique Lexicographically Sortable Identifier (ULID)".to_string());
+            Schema::Object(schema)
+        }
+    }
+}

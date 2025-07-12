@@ -751,7 +751,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
 
             // Create test agent
             sqlx::query(
-                "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
+                "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description)
                  VALUES ($1, $2, $3)"
             )
             .bind(&agent_name)
@@ -784,11 +784,11 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 let queue_ulid = Ulid::new();
                 sqlx::query(
                     "INSERT INTO sinex_schemas.work_queue
-                     (queue_id, raw_event_id, target_agent_name, max_attempts)
-                     VALUES ($1::ulid, $2::ulid, $3, 3)"
+                     (queue_id, raw_event_id, target_automaton_name, max_attempts)
+                     VALUES ($1::uuid, $2::uuid, $3, 3)"
                 )
-                .bind(queue_ulid.to_string())
-                .bind(event.id.to_string())
+                .bind(queue_ulid.to_uuid())
+                .bind(event.id.to_uuid())
                 .bind(&agent_name)
                 .execute(pool)
                 .await
@@ -845,7 +845,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 "Join count should match number of created relationships");
 
             // Cleanup
-            sqlx::query("DELETE FROM sinex_schemas.work_queue WHERE target_agent_name = $1")
+            sqlx::query("DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1")
                 .bind(&agent_name)
                 .execute(pool)
                 .await
@@ -856,7 +856,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 .await
                 .expect("Event cleanup failed");
 
-            sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
+            sqlx::query("DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1")
                 .bind(&agent_name)
                 .execute(pool)
                 .await

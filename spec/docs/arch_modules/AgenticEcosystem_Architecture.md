@@ -1,60 +1,55 @@
-# Agentic Ecosystem Architecture: Automation, Intelligence, and Partnership in Exocortex
+# Automaton Ecosystem Architecture: Event Processing and Intelligence in the Satellite Constellation
 
-*   **Version:** 1.1
-*   **Date:** 2025-01-19
-*   **Implementation Status:** 🚧 **20% IMPLEMENTED** - Basic agent registry and worker processing framework, LLM integration and most agents not implemented
-*   **Purpose:** This document describes the architecture of the Sinex intelligent agent framework, including agent management, Large Language Model (LLM) integration, archetypal agent roles, and how these components collaborate to provide automation, generate insights, and partner with the user.
+*   **Version:** 1.2
+*   **Date:** 2025-07-15
+*   **Implementation Status:** 🚧 **30% IMPLEMENTED** - Satellite architecture operational, automaton framework working, Redis Streams active, LLM integration planned
+*   **Purpose:** This document describes the Sinex automaton ecosystem within the satellite constellation architecture. It covers the distinction between deterministic automata and AI-powered agentic systems, Redis Streams processing, checkpoint management, and the planned LLM integration framework.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Part VI (Agent Manifests); Vision Document Part IV.
 
 ## 1. Introduction & Philosophy of Agentic Design (Vision IV.1.1)
 
-### 1.1. Role of Agents in Exocortex
+### 1.1. Role of Automata in the Satellite Constellation
 
-The Agentic Ecosystem is the "active intelligence" layer of the Exocortex. It comprises a diverse array of specialized software components—agents—that operate on the data substrate (from `raw.events` and structured knowledge stores) to perform tasks ranging from routine data maintenance and enrichment to complex semantic analysis and proactive user assistance. Agents transform the Exocortex from a passive archive into a dynamic cognitive partner.
+The Automaton Ecosystem provides the "active processing" layer of Sinex through the satellite constellation architecture. It comprises specialized event processors—automata—that operate on Redis Streams and the data substrate to perform deterministic event processing, data enrichment, and pattern detection. This layer transforms raw events into structured knowledge while maintaining clear separation between deterministic processing (automata) and AI-powered intelligence (agentic systems).
 
 ### 1.2. Core Design Tenets for Exocortex Agents
 
-*   **Modularity and Specialization:** Agents are designed with clearly defined, relatively narrow responsibilities (e.g., "embed PKM notes," "extract TODOs from Living Document," "monitor system disk space"). This promotes maintainability, testability, and independent evolution.
-*   **Event-Driven and Asynchronous Operation:** Most agents react to new data (new `raw.events`, changes to artifacts) or operate on schedules. They typically run asynchronously in the background, polling for work (e.g., from `sinex_schemas.work_queue`) or being triggered by database notifications.
-*   **Transparency and Auditability:** All significant agent actions (creating tags, linking notes, generating summaries, failing to process events) are logged as `sinex.agent.action_taken` or similar events in `raw.events`. These logs include agent ID, trigger, parameters, and outcome, ensuring full provenance.
-*   **User Control and Override:** The user retains ultimate control. Agents can be enabled/disabled, their behavior configured (via NixOS options generating config files), and their critical actions often require user confirmation (e.g., via an "Inbox" workflow or `sinex.system.suggestion_created` events). Users can correct agent outputs, which generates feedback for potential agent improvement.
-*   **Resource Management:** Agents run as systemd services with defined resource quotas (CPU, memory) managed by NixOS.
-*   **Fail-Fast & Robust Error Handling:** Agents are designed to handle errors gracefully, utilize retry mechanisms (e.g., for `work_queue` items), and route unrecoverable failures to the Dead Letter Queue (`core.dead_letter_queue`).
+*   **Modularity and Specialization:** Automata are designed with clearly defined domain responsibilities (e.g., "canonical command synthesis," "PKM note linking," "health monitoring") following single-responsibility principles for maintainability and independent evolution.
+*   **Stream-Driven Processing:** Automata consume events from Redis Streams using consumer groups, enabling horizontal scaling and reliable processing with exactly-once semantics through checkpoint management.
+*   **Transparency and Auditability:** All automaton actions create events with full provenance tracking through `source_event_ids` fields, enabling complete replay and analysis of processing chains.
+*   **User Control and Oversight:** Users control automaton behavior through NixOS configuration and can replay/reset processing from any checkpoint position. Critical decisions can be flagged for user review through the gateway API.
+*   **Resource Management:** Automata run as independent systemd satellite services with resource quotas managed declaratively through NixOS.
+*   **Robust Error Handling:** Automata use Redis Streams acknowledgment patterns with automatic retry and dead letter queue routing for failed events, ensuring no data loss.
 
 ## 2. The Agent Framework Architecture
 
 This section details the core infrastructure supporting the agentic ecosystem.
 
-### 2.1. Agent Registry (`sinex_schemas.agent_manifests`) (Vision IV.1.2)
+### 2.1. Automaton Checkpoint System (`core.automaton_checkpoints`)
 
-> **✅ IMPLEMENTATION STATUS: WORKING** - Basic agent manifest table implemented and functional
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Checkpoint system working with Redis Streams integration
 
-The `sinex_schemas.agent_manifests` PostgreSQL table serves as the canonical runtime registry for all Sinex agents and ingestors.
-*   **Architectural Role:** Enables discovery, management, and orchestration of agents. Provides a central point for understanding agent capabilities, versions, configurations, and operational status.
+The checkpoint system provides state management for all satellite processors, replacing the previous agent manifest approach with a unified state tracking mechanism.
+*   **Architectural Role:** Provides unified state management for all satellite processors (ingestors and automata) enabling recovery, replay, and horizontal scaling through Redis Streams consumer groups.
 *   **Key Schema Fields Overview:**
-    *   `agent_name TEXT PRIMARY KEY`: Unique identifier (e.g., `"PkmNoteEmbedderAgent_Rust_v0.1.0"`).
-    *   `version TEXT`: Semantic version of the agent's code.
-    *   `description TEXT`: Human-readable purpose.
-    *   `status TEXT`: Operational status (e.g., `'running'`, `'stopped'`, `'error_state'`).
-    *   `agent_type TEXT`: Categorization (e.g., `'ingestor'`, `'promoter'`, `'enricher'`).
-    *   `config_template_json JSONB` / `config_schema_id ULID`: Describes or links to a schema for the agent's configuration file.
-    *   `produces_event_types JSONB`: Declares event types generated by the agent, with references to their payload schemas.
-    *   `subscribes_to_event_types JSONB`: Declares event types consumed by the agent, used for routing work (e.g., populating `work_queue`).
-    *   `required_capabilities JSONB`: Lists dependencies (filesystem paths, network access, DB tables).
-    *   `llm_dependencies JSONB`: Lists LLM models or families used.
-    *   `last_heartbeat_ts TIMESTAMPTZ`, `last_error_ts TIMESTAMPTZ`: For monitoring.
+    *   `automaton_id TEXT PRIMARY KEY`: Unique processor identifier (e.g., `"sinex-terminal-satellite"`)
+    *   `checkpoint_type TEXT`: Type of checkpoint (stream_position, file_offset, timestamp)
+    *   `checkpoint_data JSONB`: Type-specific state data (Redis consumer group position, file offsets, etc.)
+    *   `last_processed_event_id ULID`: For event stream processors, the last successfully processed event
+    *   `created_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ`: Checkpoint lifecycle tracking
+    *   `metadata JSONB`: Additional processor-specific metadata for recovery and monitoring
 *   **Referenced TIMs:**
     *   `[TIM-AgentManifestManagement.md](docs/tims/architecture_crosscutting/TIM-AgentManifestManagement.md)` (Section 2) for the full DDL and detailed field descriptions.
 
-### 2.2. Agent Self-Description and Registration/Status Updates
+### 2.2. Redis Streams Integration and Consumer Groups
 
-> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic registration working, heartbeats and advanced monitoring not implemented
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Redis Streams consumer groups working with automatic state management
 
-Agents are responsible for keeping their information in the registry up-to-date.
-*   **Static Manifest (`agent_manifest.json`):** ❌ **NOT IMPLEMENTED** - Agents would bundle a static JSON file describing their core capabilities, version, and configuration schema.
-*   **Self-Registration:** ✅ **BASIC WORKING** - Basic `INSERT ... ON CONFLICT DO UPDATE` into `sinex_schemas.agent_manifests` implemented.
-*   **Heartbeats:** ❌ **NOT IMPLEMENTED** - Agents would periodically emit `sinex.agent.heartbeat` events to `raw.events`. A central `AgentMonitor` service would consume these to update `agent_manifests.last_heartbeat_ts` and infer unresponsive agents.
-*   **Error Reporting & Status Changes:** ❌ **NOT IMPLEMENTED** - Advanced error logging as `sinex.agent.error` events and status management not implemented.
+Automata integrate with Redis Streams for scalable, reliable event processing with automatic state management.
+*   **Consumer Group Management:** ✅ **OPERATIONAL** - Automata automatically join Redis consumer groups enabling horizontal scaling and load balancing across multiple instances.
+*   **Checkpoint Persistence:** ✅ **OPERATIONAL** - Processing state automatically saved to PostgreSQL checkpoints with Redis consumer group positions for durability.
+*   **Automatic Recovery:** ✅ **OPERATIONAL** - Automata resume from last checkpoint after restart, with Redis handling unacknowledged message redelivery.
+*   **Journald Heartbeat Pattern:** ✅ **OPERATIONAL** - Satellite services emit structured logs captured by journald and ingested as Sinex events for health monitoring.
 *   **Referenced TIMs:**
     *   `[TIM-AgentManifestManagement.md](docs/tims/architecture_crosscutting/TIM-AgentManifestManagement.md)` (Sections 3 & 4) for JSON schema of static manifest and details on registration/heartbeat logic.
 
@@ -67,22 +62,23 @@ Most agents run as dedicated systemd user services or timer units, managed by Ni
 *   ✅ **BASIC WORKING** - Basic NixOS modules for core services implemented.
 *   ❌ **NOT IMPLEMENTED** - Advanced resource quota enforcement, comprehensive configuration generation, and full meta-observability integration.
 
-### 2.4. Communication & Data Flow Patterns (Vision IV.1.4)
+### 2.4. Satellite Communication Patterns
 
-> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic promotion queue working, advanced patterns not implemented
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Satellite constellation communication patterns working through Redis Streams and gRPC
 
-*   **Primary Interaction with Data Substrate:**
-    *   **Consumption:** ✅ **BASIC WORKING** - Basic promotion queue consumption implemented. Advanced polling patterns and watermarks not implemented.
-    *   **Production:** ✅ **BASIC WORKING** - Basic event insertion to `raw.events` working. Domain/core table integration limited.
-*   **Inter-Agent Communication (Event Chains):** ❌ **NOT IMPLEMENTED** - Complex workflows with agent chains not implemented. Event routing based on `subscribes_to_event_types` not functional.
-*   **Agent DLQs:** 🚧 **PARTIAL** - Basic dead letter queue exists but advanced retry and routing logic not fully implemented.
+*   **Primary Data Flow:**
+    *   **Event Ingestion:** ✅ **OPERATIONAL** - Satellites send events to `sinex-ingestd` via gRPC, which distributes to PostgreSQL and Redis Streams
+    *   **Stream Processing:** ✅ **OPERATIONAL** - Automata consume from Redis Streams with consumer groups, process events, and emit results back through ingestd
+    *   **Command/Response:** ✅ **OPERATIONAL** - API commands flow through Redis Streams with correlation IDs for request/response patterns
+*   **Inter-Automaton Communication:** ✅ **OPERATIONAL** - Automata communicate through event provenance chains and Redis Streams, enabling complex processing pipelines
+*   **Error Handling:** ✅ **OPERATIONAL** - Failed events routed to PostgreSQL dead letter queue with Redis consumer group acknowledgment patterns
     *   *Referenced TIMs:* `[TIM-DeadLetterQueueImplementation.md](docs/tims/data_substrate/TIM-DeadLetterQueueImplementation.md)`.
 
-## 3. LLMs in the Sinex: Architecture of Integration (Vision IV.2)
+## 3. Agentic Systems: AI-Powered Intelligence Layer
 
-> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - LLM integration framework not developed
+> **🔨 IMPLEMENTATION STATUS: FRAMEWORK READY** - Schema and satellite infrastructure ready for LLM integration
 
-Large Language Models are integral to many agent capabilities, acting as co-pilots for the user and engines for autonomous processes.
+Agentic systems represent the AI-powered intelligence layer that works alongside deterministic automata, providing semantic understanding, content generation, and complex reasoning capabilities through Large Language Models.
 
 ### 3.1. Diverse Roles of LLMs in Exocortex
 

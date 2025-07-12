@@ -1,0 +1,33 @@
+{
+  "$id": "https://sinex.io/schemas/v1/shell/session_ended.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "commands_executed": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "exit_code": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "commands_executed",
+    "duration_ms",
+    "session_id"
+  ],
+  "title": "SessionEndedPayload",
+  "type": "object"
+}

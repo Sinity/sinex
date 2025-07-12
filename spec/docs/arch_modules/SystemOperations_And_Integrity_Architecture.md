@@ -1,8 +1,8 @@
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
 
-*   **Version:** 1.1
-*   **Date:** 2025-01-19
-*   **Implementation Status:** 🚧 **15% IMPLEMENTED** - Basic database setup, minimal security, most operational features not implemented
+*   **Version:** 1.2
+*   **Date:** 2025-07-15
+*   **Implementation Status:** 🚧 **40% IMPLEMENTED** - Satellite orchestration operational, journald heartbeat pattern working, basic security in place
 *   **Purpose:** This document describes the architectural approaches for ensuring the Sinex system's operational health, security, data integrity, resilience, and long-term maintainability. It covers meta-observability, security measures, backup and disaster recovery, performance and scalability considerations, and release engineering.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Part V; Vision Document Part VI.
 
@@ -31,22 +31,27 @@ The Sinex treats its own operational data as a first-class data stream, ingested
 
 All system health metrics, agent performance data, errors, and logs are captured within Sinex itself. This allows the system's analytical and agentic capabilities to be applied to its own functioning, enabling self-diagnosis, adaptive optimization, and transparent reporting to the user.
 
-### 2.2. Key Metrics & Events Captured (Architectural Overview)
+### 2.2. Satellite Constellation Observability
 
-*   **Ingestion Pipeline Health:** Throughput, latency, error rates, DLQ sizes per ingestor/agent.
-*   **Agent Ecosystem Performance:** Agent uptime, processing errors, resource utilization (CPU, memory), LLM API call metrics (tokens, cost, latency via `sinex.agent.llm_api_call` events).
-*   **Database Performance:** Slow query logs, connection stats, index bloat, disk I/O, replication lag (if any).
-*   **Host System Resources:** CPU, memory, disk space, network I/O for the Exocortex host.
-*   **Backup & Integrity Status:** Outcomes of backup jobs (`pgBackRest`, `git-annex`), `git annex fsck` results, database integrity check results.
+*   **Satellite Service Health:** ✅ **OPERATIONAL** - systemd service status, restart counts, resource usage per satellite
+*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - Redis Streams lag, consumer group positions, checkpoint ages, DLQ sizes
+*   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, gRPC latency
+*   **Automaton Processing:** ✅ **OPERATIONAL** - Processing rates, error rates, checkpoint intervals per automaton
+*   **Database Performance:** 🚧 **BASIC** - Connection stats, query performance, TimescaleDB chunk management
+*   **Host System Resources:** 🚧 **BASIC** - CPU, memory, disk I/O captured through journald integration
 
-### 2.3. Architectural Mechanisms for Ingesting Meta-Observability Data
+### 2.3. Journald Heartbeat Pattern: Operational Elegance
 
-> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Observability ingestion not developed
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Unified observability through journald integration
 
-*   **Journald Ingestion:** ❌ **NOT IMPLEMENTED** - The `ingestor/journald_bridge` would capture logs from all systemd units (Sinex agents, PostgreSQL, etc.).
-*   **Agent Self-Reporting:** ❌ **NOT IMPLEMENTED** - Agents would directly emit `sinex.agent.heartbeat`, `sinex.agent.error`, and other operational events to `raw.events`.
-*   **Prometheus Integration:** ❌ **NOT IMPLEMENTED** - Services would expose `/metrics` endpoints, Prometheus would scrape these along with standard exporters.
-*   **Database Internal Monitoring:** ❌ **NOT IMPLEMENTED** - PostgreSQL logs and internal statistics integration not implemented.
+The satellite constellation implements an elegant observability pattern where systemd's journald serves as the universal collection point for all operational data.
+
+*   **Structured Logging:** ✅ **OPERATIONAL** - Satellites emit structured JSON logs to stdout/stderr, automatically captured by systemd
+*   **Journald Bridge:** ✅ **OPERATIONAL** - `sinex-system-satellite` monitors journald and ingests all Sinex-related logs as events
+*   **Automatic Service Discovery:** ✅ **OPERATIONAL** - systemd service metadata automatically tracked through journal entries
+*   **Health Inference:** ✅ **OPERATIONAL** - Regular log output creates implicit heartbeat pattern without explicit heartbeat events
+*   **Meta-Observability:** ✅ **OPERATIONAL** - System health becomes queryable Sinex data, enabling self-analysis and alerting
+*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, Redis, satellites) monitored through single journald channel
 
 ### 2.4. Utilization for Self-Management and User Awareness
 
@@ -69,7 +74,9 @@ Protecting the user's cognitive core is paramount.
 > **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic permissions working, granular access control not implemented
 
 *   **PostgreSQL Roles:** ❌ **NOT IMPLEMENTED** - Granular roles for different access patterns not implemented. Currently using basic database access.
-*   **Systemd User Services:** ✅ **BASIC WORKING** - Basic systemd services implemented but advanced filesystem restrictions not configured.
+*   **Satellite Service Orchestration:** ✅ **OPERATIONAL** - All satellites run as independent systemd services with NixOS-managed configuration
+*   **Resource Isolation:** ✅ **OPERATIONAL** - Per-service memory and CPU limits enforced through systemd cgroups
+*   **Service Dependencies:** ✅ **OPERATIONAL** - Proper startup ordering ensures ingestd and Redis available before satellites
 *   **API Endpoint Authentication:** ❌ **NOT IMPLEMENTED** - Network-facing APIs with authentication not implemented.
 
 ### 3.2. Encryption Architecture

@@ -10,6 +10,12 @@ use sinex_core::RawEvent;
 use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
+/// Simple insert event function for test compatibility
+pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<Ulid> {
+    let inserted = insert_event_with_validator(pool, event, None).await?;
+    Ok(inserted.id)
+}
+
 /// Get an event by ID following the exact same pattern as existing correct functions
 pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
     let event_uuid = ulid_to_uuid(event_id);
@@ -25,7 +31,8 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
             host as "host!", 
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
-            payload as "payload!"
+            payload as "payload!",
+            source_event_ids::uuid[] as "source_event_ids"
         FROM raw.events 
         WHERE id::uuid = $1
         "#,
@@ -44,6 +51,9 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
         ingestor_version: record.ingestor_version,
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
+        source_event_ids: record.source_event_ids.map(|ids| {
+            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+        }),
     })
 }
 
@@ -61,10 +71,15 @@ pub async fn insert_event_with_validator(
     // Convert ULID to UUID for SQLx compatibility
     let payload_schema_uuid: Option<Uuid> = event.payload_schema_id.map(ulid_to_uuid);
 
+    // Convert source_event_ids to array of UUIDs for database storage
+    let source_event_uuids: Option<Vec<Uuid>> = event.source_event_ids.as_ref().map(|ids| {
+        ids.iter().map(|id| id.to_uuid()).collect()
+    });
+
     let record = sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid)
+        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, source_event_ids)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid[])
         RETURNING 
             id::uuid as "id!", 
             source as "source!", 
@@ -74,7 +89,8 @@ pub async fn insert_event_with_validator(
             host as "host!", 
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
-            payload as "payload!"
+            payload as "payload!",
+            source_event_ids::uuid[] as "source_event_ids"
         "#,
         event.source,
         event.event_type,
@@ -82,7 +98,8 @@ pub async fn insert_event_with_validator(
         event.payload,
         event.ts_orig,
         event.ingestor_version,
-        payload_schema_uuid
+        payload_schema_uuid,
+        source_event_uuids.as_deref()
     )
     .fetch_one(pool)
     .await?;
@@ -97,6 +114,9 @@ pub async fn insert_event_with_validator(
         ingestor_version: record.ingestor_version,
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
+        source_event_ids: record.source_event_ids.map(|ids| {
+            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+        }),
     })
 }
 
@@ -107,4 +127,164 @@ pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
         .await?;
 
     Ok(record.count.unwrap_or(0))
+}
+
+/// Insert an event with an attached blob
+pub async fn insert_event_with_blob(
+    pool: DbPoolRef<'_>,
+    event: &RawEvent,
+    blob_id: Ulid,
+    validator: Option<&EventValidator>,
+) -> Result<RawEvent> {
+    // Validate if validator provided
+    if let Some(validator) = validator {
+        validator.validate(event)?;
+    }
+
+    // Convert ULID to UUID for SQLx compatibility
+    let payload_schema_uuid: Option<Uuid> = event.payload_schema_id.map(ulid_to_uuid);
+    let blob_uuid = ulid_to_uuid(blob_id);
+
+    // Convert source_event_ids to array of UUIDs for database storage
+    let source_event_uuids: Option<Vec<Uuid>> = event.source_event_ids.as_ref().map(|ids| {
+        ids.iter().map(|id| id.to_uuid()).collect()
+    });
+
+    let record = sqlx::query!(
+        r#"
+        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, blob_id, source_event_ids)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9::uuid[])
+        RETURNING 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig,
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!",
+            blob_id::uuid as "blob_id",
+            source_event_ids::uuid[] as "source_event_ids"
+        "#,
+        event.source,
+        event.event_type,
+        event.host,
+        event.payload,
+        event.ts_orig,
+        event.ingestor_version,
+        payload_schema_uuid,
+        blob_uuid,
+        source_event_uuids.as_deref()
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(RawEvent {
+        id: uuid_to_ulid(record.id),
+        source: record.source,
+        event_type: record.event_type,
+        ts_ingest: record.ts_ingest,
+        ts_orig: record.ts_orig,
+        host: record.host,
+        ingestor_version: record.ingestor_version,
+        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+        payload: record.payload,
+        source_event_ids: record.source_event_ids.map(|ids| {
+            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+        }),
+    })
+}
+
+/// Get events that have associated blobs
+pub async fn get_events_with_blobs(
+    pool: DbPoolRef<'_>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<(RawEvent, Ulid)>> {
+    let limit = limit.unwrap_or(100);
+    let offset = offset.unwrap_or(0);
+
+    let records = sqlx::query!(
+        r#"
+        SELECT 
+            id::uuid as "id!", 
+            source as "source!", 
+            event_type as "event_type!", 
+            ts_ingest as "ts_ingest!",
+            ts_orig,
+            host as "host!", 
+            ingestor_version, 
+            payload_schema_id::uuid as "payload_schema_id", 
+            payload as "payload!",
+            blob_id::uuid as "blob_id!",
+            source_event_ids::uuid[] as "source_event_ids"
+        FROM raw.events 
+        WHERE blob_id IS NOT NULL
+        ORDER BY ts_ingest DESC
+        LIMIT $1 OFFSET $2
+        "#,
+        limit,
+        offset
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let events_with_blobs = records
+        .into_iter()
+        .map(|record| {
+            let event = RawEvent {
+                id: uuid_to_ulid(record.id),
+                source: record.source,
+                event_type: record.event_type,
+                ts_ingest: record.ts_ingest,
+                ts_orig: record.ts_orig,
+                host: record.host,
+                ingestor_version: record.ingestor_version,
+                payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
+                payload: record.payload,
+                source_event_ids: record.source_event_ids.map(|ids| {
+            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+        }),
+            };
+            let blob_id = uuid_to_ulid(record.blob_id);
+            (event, blob_id)
+        })
+        .collect();
+
+    Ok(events_with_blobs)
+}
+
+/// Update an event to attach a blob
+pub async fn attach_blob_to_event(
+    pool: DbPoolRef<'_>,
+    event_id: Ulid,
+    blob_id: Ulid,
+) -> Result<()> {
+    let event_uuid = ulid_to_uuid(event_id);
+    let blob_uuid = ulid_to_uuid(blob_id);
+
+    sqlx::query!(
+        "UPDATE raw.events SET blob_id = $2::uuid WHERE id::uuid = $1",
+        event_uuid,
+        blob_uuid
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Remove blob attachment from an event
+pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<()> {
+    let event_uuid = ulid_to_uuid(event_id);
+
+    sqlx::query!(
+        "UPDATE raw.events SET blob_id = NULL WHERE id::uuid = $1",
+        event_uuid
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }

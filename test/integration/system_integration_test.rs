@@ -14,7 +14,7 @@ use crate::common::prelude::*;
 use crate::common::{assertions, events};
 use async_trait::async_trait;
 use sinex_collector::config::CollectorConfig;
-use sinex_core::{CoreError, EventSender, EventSource, EventSourceContext, RawEvent};
+use sinex_core::{CoreError, EventSender, EventSource, EventSourceContext};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -128,7 +128,7 @@ async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
     let tables = vec![
         "raw.events",
         "sinex_schemas.work_queue",
-        "sinex_schemas.agent_manifests",
+        "sinex_schemas.automaton_manifests",
     ];
 
     for table in tables {
@@ -2102,8 +2102,8 @@ use mock_types::*;
 async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
     // Create a complete agent manifest
     let result = sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests
-         (agent_name, description, version, status, agent_type,
+        "INSERT INTO sinex_schemas.automaton_manifests
+         (automaton_name, description, version, status, agent_type,
           config_template_json, produces_event_types, subscribes_to_event_types,
           required_capabilities, llm_dependencies, repo_url)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11)",
@@ -2158,11 +2158,11 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
         Option<String>,            // repo_url
     );
     let manifest: ManifestRow = sqlx::query_as(
-        "SELECT agent_name, description, version, status, agent_type,
+        "SELECT automaton_name, description, version, status, agent_type,
                 config_template_json, produces_event_types, subscribes_to_event_types,
                 required_capabilities, llm_dependencies, repo_url
-         FROM sinex_schemas.agent_manifests
-         WHERE agent_name = $1",
+         FROM sinex_schemas.automaton_manifests
+         WHERE automaton_name = $1",
     )
     .bind("test_agent_crud")
     .fetch_one(ctx.pool())
@@ -2190,7 +2190,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Create agent
-    sqlx::query("INSERT INTO sinex_schemas.agent_manifests (agent_name, version) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version) VALUES ($1, $2)")
         .bind("update_test_agent")
         .bind("1.0.0")
         .execute(ctx.pool())
@@ -2200,7 +2200,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Get initial timestamps
     let (registered, updated): (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
-            "SELECT registered_at, updated_at FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
+            "SELECT registered_at, updated_at FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1"
         )
         .bind("update_test_agent")
         .fetch_one(ctx.pool())
@@ -2211,12 +2211,12 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
 
     // Update various fields
     sqlx::query(
-        "UPDATE sinex_schemas.agent_manifests
+        "UPDATE sinex_schemas.automaton_manifests
          SET version = $1,
              status = $2,
              last_heartbeat_ts = $3,
              produces_event_types = $4::jsonb
-         WHERE agent_name = $5",
+         WHERE automaton_name = $5",
     )
     .bind("1.1.0")
     .bind("stopped")
@@ -2232,7 +2232,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Verify updates and trigger
     let (version, status, updated_new): (String, String, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
-            "SELECT version, status, updated_at FROM sinex_schemas.agent_manifests WHERE agent_name = $1"
+            "SELECT version, status, updated_at FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1"
         )
         .bind("update_test_agent")
         .fetch_one(ctx.pool())
@@ -2253,7 +2253,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     // Create agent
-    sqlx::query("INSERT INTO sinex_schemas.agent_manifests (agent_name, version) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version) VALUES ($1, $2)")
         .bind("delete_test_agent")
         .bind("1.0.0")
         .execute(ctx.pool())
@@ -2264,9 +2264,9 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     let event_id = sinex_ulid::Ulid::new();
     sqlx::query(
         "INSERT INTO raw.events (id, source, event_type, host, payload)
-         VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
+         VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
     )
-    .bind(event_id.to_string())
+    .bind(event_id.to_uuid())
     .bind("delete_test")
     .bind("test_event")
     .bind("test_host")
@@ -2276,17 +2276,17 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-         VALUES ($1::ulid, $2)",
+        "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_automaton_name)
+         VALUES ($1::uuid, $2)",
     )
-    .bind(event_id.to_string())
+    .bind(event_id.to_uuid())
     .bind("delete_test_agent")
     .execute(ctx.pool())
     .await
     .unwrap();
 
     // Delete agent - should cascade delete work queue items
-    sqlx::query("DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1")
+    sqlx::query("DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1")
         .bind("delete_test_agent")
         .execute(ctx.pool())
         .await
@@ -2294,7 +2294,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 
     // Verify agent is deleted
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        "SELECT COUNT(*) FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
     )
     .bind("delete_test_agent")
     .fetch_one(ctx.pool())
@@ -2305,7 +2305,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 
     // Verify work queue items were cascade deleted
     let queue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_agent_name = $1",
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
     )
     .bind("delete_test_agent")
     .fetch_one(ctx.pool())
@@ -2321,7 +2321,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
     // Create agent in pending state
     sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, status)
+        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, status)
          VALUES ($1, $2, $3)",
     )
     .bind("status_test_agent")
@@ -2343,7 +2343,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
 
     for status in valid_statuses {
         let result = sqlx::query(
-            "UPDATE sinex_schemas.agent_manifests SET status = $1 WHERE agent_name = $2",
+            "UPDATE sinex_schemas.automaton_manifests SET status = $1 WHERE automaton_name = $2",
         )
         .bind(status)
         .bind("status_test_agent")
@@ -2360,9 +2360,9 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
     // Test error state with error tracking
     let error_time = chrono::Utc::now();
     sqlx::query(
-        "UPDATE sinex_schemas.agent_manifests
+        "UPDATE sinex_schemas.automaton_manifests
          SET status = $1, last_error_ts = $2, last_error_summary = $3
-         WHERE agent_name = $4",
+         WHERE automaton_name = $4",
     )
     .bind("error_state")
     .bind(error_time)
@@ -2378,7 +2378,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
         Option<String>,
     ) = sqlx::query_as(
         "SELECT status, last_error_ts, last_error_summary
-             FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+             FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
     )
     .bind("status_test_agent")
     .fetch_one(ctx.pool())
@@ -2420,8 +2420,8 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
     });
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.agent_manifests
-         (agent_name, version, required_capabilities, llm_dependencies)
+        "INSERT INTO sinex_schemas.automaton_manifests
+         (automaton_name, version, required_capabilities, llm_dependencies)
          VALUES ($1, $2, $3::jsonb, $4::jsonb)",
     )
     .bind("capability_test_agent")
@@ -2434,7 +2434,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
 
     // Query agents by capability
     let agents_with_fs_write: Vec<String> = sqlx::query_scalar(
-        "SELECT agent_name FROM sinex_schemas.agent_manifests
+        "SELECT agent_name FROM sinex_schemas.automaton_manifests
          WHERE required_capabilities ? 'filesystem_write'",
     )
     .fetch_all(ctx.pool())
@@ -2445,7 +2445,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
 
     // Query agents using specific LLM model
     let agents_using_gpt4: Vec<String> = sqlx::query_scalar(
-        "SELECT agent_name FROM sinex_schemas.agent_manifests
+        "SELECT agent_name FROM sinex_schemas.automaton_manifests
          WHERE llm_dependencies @> '{\"models_used\": [\"openai/gpt-4-turbo\"]}'",
     )
     .fetch_all(ctx.pool())
@@ -2489,8 +2489,8 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     for (name, subscriptions) in agents {
         sqlx::query(
-            "INSERT INTO sinex_schemas.agent_manifests
-             (agent_name, version, subscribes_to_event_types)
+            "INSERT INTO sinex_schemas.automaton_manifests
+             (automaton_name, version, subscribes_to_event_types)
              VALUES ($1, $2, $3::jsonb)",
         )
         .bind(name)
@@ -2503,7 +2503,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     // Query agents subscribing to any events (using GIN index)
     let subscribers: Vec<String> = sqlx::query_scalar(
-        "SELECT agent_name FROM sinex_schemas.agent_manifests
+        "SELECT agent_name FROM sinex_schemas.automaton_manifests
          WHERE subscribes_to_event_types IS NOT NULL
          ORDER BY agent_name",
     )
@@ -2515,7 +2515,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     // Query agents subscribing to specific event feed
     let raw_feed_subscribers: Vec<String> = sqlx::query_scalar(
-        "SELECT agent_name FROM sinex_schemas.agent_manifests
+        "SELECT agent_name FROM sinex_schemas.automaton_manifests
          WHERE subscribes_to_event_types ? 'raw.events_feed_all'
          ORDER BY agent_name",
     )

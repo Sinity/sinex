@@ -8,8 +8,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use sinex_db::ulid_to_uuid;
-use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -388,7 +386,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Res
 }
 
 async fn record_verification_result(report: &VerificationReport) -> Result<()> {
-    // Record verification results in the component_heartbeats table for monitoring
+    // Record verification results as a process.heartbeat event
     let database_url =
         std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?;
 
@@ -397,27 +395,33 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         .context("Failed to connect to database for verification recording")?;
 
     let status_str = match report.overall_status {
-        VerificationStatus::Pass => "PASS",
-        VerificationStatus::Fail => "FAIL",
-        VerificationStatus::Warning => "WARNING",
-        VerificationStatus::Running => "RUNNING",
+        VerificationStatus::Pass => "healthy",
+        VerificationStatus::Fail => "failed",
+        VerificationStatus::Warning => "degraded",
+        VerificationStatus::Running => "running",
     };
+
+    let payload = serde_json::json!({
+        "process_name": "sinex-preflight",
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": 0,
+        "memory_mb": 0,
+        "cpu_percent": 0.0,
+        "events_processed": 0,
+        "errors_count": report.errors.len(),
+        "health_status": status_str,
+        "custom_metrics": serde_json::to_value(report)?,
+    });
 
     sqlx::query!(
         r#"
-        INSERT INTO component_heartbeats (
-            id,
-            component_name,
-            status,
-            binary_version,
-            metrics
-        ) VALUES ($1::uuid, $2, $3, $4, $5)
+        INSERT INTO raw.events (source, event_type, host, payload)
+        VALUES ($1, $2, $3, $4)
         "#,
-        ulid_to_uuid(Ulid::new()),
-        "sinex-preflight",
-        status_str,
-        env!("CARGO_PKG_VERSION"),
-        serde_json::to_value(report)?
+        "sinex.process",
+        "process.heartbeat",
+        report.system_info.hostname,
+        payload
     )
     .execute(&pool)
     .await
@@ -519,13 +523,15 @@ async fn generate_verification_report(
     let recent_verifications = sqlx::query!(
         r#"
         SELECT 
-            id::uuid as "id!",
-            status,
-            metrics,
-            timestamp
-        FROM component_heartbeats 
-        WHERE component_name = 'sinex-preflight'
-        ORDER BY timestamp DESC
+            id::text as id,
+            payload->>'health_status' as status,
+            payload as metrics,
+            ts_ingest as timestamp
+        FROM raw.events
+        WHERE source = 'sinex.process'
+          AND event_type = 'process.heartbeat'
+          AND payload->>'process_name' = 'sinex-preflight'
+        ORDER BY ts_ingest DESC
         LIMIT 10
         "#
     )
@@ -556,8 +562,8 @@ async fn generate_verification_report(
                     verification
                         .timestamp
                         .map_or("N/A".to_string(), |t| t.to_string()),
-                    verification.status,
-                    verification.id
+                    verification.status.as_deref().unwrap_or("UNKNOWN"),
+                    verification.id.as_deref().unwrap_or("N/A")
                 );
             }
         }

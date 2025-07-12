@@ -625,36 +625,36 @@ async fn verify_event_pipeline(messages: &mut Vec<String>) -> Result<Value> {
         }
     }
 
-    // Test 2: Work queue operations
-    let queue_start = Instant::now();
-    let queue_result = test_work_queue_operations(&pool).await;
-    let queue_duration = queue_start.elapsed();
+    // Test 2: Automaton checkpoint operations
+    let checkpoint_start = Instant::now();
+    let checkpoint_result = test_checkpoint_operations(&pool).await;
+    let checkpoint_duration = checkpoint_start.elapsed();
 
-    match queue_result {
-        Ok(queue_data) => {
+    match checkpoint_result {
+        Ok(checkpoint_data) => {
             pipeline_info.insert(
-                "work_queue",
+                "automaton_checkpoints",
                 json!({
                     "success": true,
-                    "duration_ms": queue_duration.as_millis(),
-                    "queue_operations": queue_data
+                    "duration_ms": checkpoint_duration.as_millis(),
+                    "checkpoint_operations": checkpoint_data
                 }),
             );
             messages.push(format!(
-                "✓ Work queue operations test passed ({}ms)",
-                queue_duration.as_millis()
+                "✓ Automaton checkpoint operations test passed ({}ms)",
+                checkpoint_duration.as_millis()
             ));
         }
         Err(e) => {
             pipeline_info.insert(
-                "work_queue",
+                "automaton_checkpoints",
                 json!({
                     "success": false,
-                    "duration_ms": queue_duration.as_millis(),
+                    "duration_ms": checkpoint_duration.as_millis(),
                     "error": e.to_string()
                 }),
             );
-            bail!("Work queue operations test failed: {}", e);
+            bail!("Automaton checkpoint operations test failed: {}", e);
         }
     }
 
@@ -720,91 +720,69 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
     Ok(inserted_count)
 }
 
-async fn test_work_queue_operations(pool: &PgPool) -> Result<Value> {
-    // This would test the work queue table operations
-    // For now, we'll do a basic table existence and operation test
 
-    // Check if work queue table exists
+async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
+    // Test automaton checkpoint table operations
+    
+    // Check if automaton_checkpoints table exists
     let table_exists = sqlx::query!(
         r#"
         SELECT EXISTS (
             SELECT FROM information_schema.tables 
-            WHERE table_schema = 'sinex_schemas' 
-            AND table_name = 'work_queue'
+            WHERE table_schema = 'core' 
+            AND table_name = 'automaton_checkpoints'
         ) as exists
         "#
     )
     .fetch_one(pool)
     .await
-    .context("Failed to check work queue table existence")?;
+    .context("Failed to check automaton_checkpoints table existence")?;
 
     if !table_exists.exists.unwrap_or(false) {
         return Ok(json!({
             "table_exists": false,
-            "note": "Work queue table not found - will be created during deployment"
+            "note": "Automaton checkpoints table not found - will be created during deployment"
         }));
     }
 
-    // Test basic queue operations
-
-    // Test queue insertion (this would typically be done by the router)
-    // First create a test event to reference
-    let test_event = sqlx::query!(
+    // Test basic checkpoint operations
+    match sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO core.automaton_checkpoints (
+            automaton_name, consumer_group, consumer_name, 
+            last_processed_id, processed_count, state_data
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id::uuid as "id!"
         "#,
-        "sinex-preflight-work-queue-test",
-        "verification.work_queue_test",
-        "localhost",
-        json!({"test": "work_queue_operations"})
+        "test-automaton",
+        "test-group", 
+        "test-consumer",
+        "0-0",
+        0i64,
+        json!({"test": "checkpoint_operations"})
     )
     .fetch_one(pool)
     .await
-    .context("Failed to create test event for work queue")?;
-
-    match sqlx::query!(
-        r#"
-        INSERT INTO sinex_schemas.work_queue (raw_event_id, target_agent_name)
-        VALUES ($1::uuid, $2)
-        "#,
-        test_event.id,
-        "batch-test-agent"
-    )
-    .execute(pool)
-    .await
     {
-        Ok(_) => {
-            // Clean up test queue entry
-            sqlx::query!(
-                "DELETE FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
-                test_event.id
+        Ok(checkpoint) => {
+            // Clean up test checkpoint
+            let _ = sqlx::query!(
+                "DELETE FROM core.automaton_checkpoints WHERE id::uuid = $1",
+                checkpoint.id
             )
             .execute(pool)
-            .await
-            .ok();
-
-            // Clean up test event
-            sqlx::query!(
-                "DELETE FROM raw.events WHERE source = $1",
-                "sinex-preflight-work-queue-test"
-            )
-            .execute(pool)
-            .await
-            .ok();
+            .await;
 
             Ok(json!({
                 "table_exists": true,
                 "insert_test": "success",
-                "delete_test": "success"
+                "checkpoint_id": checkpoint.id.to_string()
             }))
         }
-        Err(e) => Ok(json!({
-            "table_exists": true,
-            "insert_test": "failed",
-            "error": e.to_string()
-        })),
+        Err(e) => {
+            return Err(anyhow::anyhow!("Automaton checkpoint insert test failed: {}", e));
+        }
     }
 }
 

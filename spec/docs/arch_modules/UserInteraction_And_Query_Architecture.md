@@ -1,8 +1,8 @@
 # User Interaction & Query Architecture: The Bridge to Self
 
-*   **Version:** 1.1
-*   **Date:** 2025-01-19
-*   **Implementation Status:** 🚧 **10% IMPLEMENTED** - Basic CLI exists, advanced interfaces and query systems not implemented
+*   **Version:** 1.2
+*   **Date:** 2025-07-15
+*   **Implementation Status:** 🚧 **25% IMPLEMENTED** - CLI operational, gateway architecture working, command/response patterns active
 *   **Purpose:** This document describes the architectural principles and high-level design of how users interact with Sinex, query its vast data stores, and how the system facilitates understanding, narrative construction, and self-modeling. It outlines the architecture of user interfaces, query mechanisms, and feedback loops.
 *   **Primary Sources:** Vision Document Part V; STAD (System Technical Architecture Document) Part IV (Retrieval sections like 17, 19).
 
@@ -24,11 +24,11 @@ The design of all user-facing aspects is guided by principles outlined in the Vi
 *   **Aesthetics of Clarity and Calm:** Designing interfaces that reduce cognitive load.
 *   **Support for Neurodiversity and Varied Cognitive Styles:** Catering to different ways of thinking and working.
 
-## 2. Primary Interaction Channels: Architectural Overview
+## 2. Gateway Architecture: Unified API and Native Messaging
 
-> **🚧 IMPLEMENTATION STATUS: PARTIAL** - Basic CLI implemented, advanced interfaces not developed
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via Redis Streams
 
-Sinex offers multiple channels for interaction, each tailored to different needs and workflows.
+Sinex provides user interaction through a unified gateway architecture that handles API requests, native messaging, and orchestrates responses through the satellite constellation.
 
 ### 2.1. Neovim Plugin (`sinex-nvim`) (Vision V.1.2)
 
@@ -51,17 +51,40 @@ The Neovim plugin would serve as the primary power-user cockpit for deep, keyboa
     *   `[TIM-NeovimPluginIntegration.md](docs/tims/ingestors/pkm_email_nvim/TIM-NeovimPluginIntegration.md)` for plugin architecture, LSP/RPC patterns, Yjs integration, Treesitter usage.
     *   `[ADR-004-PKMNoteContentManagementAndSync.md](docs/adr/ADR-004-PKMNoteContentManagementAndSync.md)` for PKM strategy.
 
-### 2.2. `exo` Command-Line Interface (CLI) (Vision V.1.3)
+### 2.1. sinex-gateway: Central API Hub
 
-> **✅ IMPLEMENTATION STATUS: BASIC WORKING** - Basic CLI implemented with limited functionality
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Gateway service handling API requests and command/response orchestration
 
-The `exo` CLI is the scriptable and universally accessible backbone for all Sinex interactions.
-*   **Architectural Role:** Provides comprehensive functionality for power users, automation scripts, and integration with other tools. It directly interacts with the Sinex backend (PostgreSQL database, agent control mechanisms).
-*   **Architectural Design:**
-    *   **Subcommand Structure:** ✅ **BASIC WORKING** - Basic subcommands implemented (e.g., `query`).
-    *   **Output Formatting:** ❌ **NOT IMPLEMENTED** - Advanced output formatting options not implemented.
-    *   **Shell Completions:** ❌ **NOT IMPLEMENTED** - Shell completions not implemented.
-    *   **`fzf` Integration:** ❌ **NOT IMPLEMENTED** - Interactive selection not implemented.
+The `sinex-gateway` service acts as the central API hub, translating user requests into command events and orchestrating responses through the satellite constellation.
+*   **Architectural Role:** Provides unified entry point for all user interactions, handles authentication, request validation, and manages asynchronous command/response patterns.
+*   **Communication Patterns:**
+    *   **Command Event Generation:** ✅ **OPERATIONAL** - API calls transformed into `api.command.*` events with correlation IDs
+    *   **Response Orchestration:** ✅ **OPERATIONAL** - Subscribes to `api.response.*` events and matches responses to pending requests
+    *   **Async by Default:** ✅ **OPERATIONAL** - All operations inherently asynchronous with timeout handling
+    *   **Native Messaging:** ✅ **OPERATIONAL** - Browser extension communication through native messaging protocol
+
+### 2.2. Command/Response Pattern via Redis Streams
+
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Full request/response lifecycle working through message bus
+
+User interactions follow a standardized command/response pattern that provides auditability and enables asynchronous processing.
+*   **Request Flow:**
+    1. **API Request** - User calls gateway endpoint or CLI command
+    2. **Command Event** - Gateway generates `api.command.*` event with unique request ID
+    3. **Service Processing** - Appropriate service automaton processes command from Redis Streams
+    4. **Response Event** - Service emits `api.response.*` event with request ID
+    5. **Response Delivery** - Gateway matches response and returns to client
+*   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `raw.events`
+*   **Timeout Handling:** ✅ **OPERATIONAL** - Gateway implements request timeouts with graceful error handling
+
+### 2.3. `exo` Command-Line Interface
+
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - CLI working with gateway integration
+
+The `exo` CLI provides scriptable access to all Sinex functionality through the gateway API.
+*   **Gateway Integration:** ✅ **OPERATIONAL** - CLI communicates with sinex-gateway via HTTP/JSON-RPC
+*   **Subcommand Structure:** ✅ **OPERATIONAL** - Comprehensive subcommands for query, management, and monitoring
+*   **Async Support:** ✅ **OPERATIONAL** - CLI handles asynchronous operations with progress indication
 *   **Referenced TIMs:**
     *   A future `TIM-ExoCLIReferenceAndDesign.md` (derived from UG App D and actual CLI implementation using libraries like `clap` for Rust) would detail all commands, options, and output formats.
 
@@ -98,15 +121,17 @@ A core interaction pattern for managing new and attention-requiring items within
 
 Unlocking the value of Sinex relies on powerful and flexible query capabilities.
 
-### 3.1. Layered Query Capabilities
+### 3.1. Query Service Architecture
 
-The system offers multiple layers for querying, catering to different needs and skill levels.
-*   **Direct SQL on PostgreSQL:**
-    *   **Architectural Role:** ✅ **WORKING** - Provides ultimate power and flexibility for complex queries, data analysis, and custom reporting. Users can directly query `raw.events` and basic tables.
-    *   **Key Features Leveraged:** ✅ **BASIC** - JSONB operators working. ❌ **NOT IMPLEMENTED** - Full-Text Search, GIS, advanced window functions, recursive CTEs, and `pgvector` operators not configured.
-*   **Simplified Query Syntax (`exo` CLI & Neovim Interface):**
-    *   **Architectural Role:** 🚧 **BASIC** - Basic `exo query` command implemented with limited functionality.
-    *   **Supported Filters:** 🚧 **PARTIAL** - Basic temporal and source filtering working. ❌ **NOT IMPLEMENTED** - Advanced payload content filtering, semantic similarity, tag-based search, and graph traversal not implemented.
+The query system operates through service automata that process search requests via the command/response pattern.
+*   **Query Service Automaton:**
+    *   **Architectural Role:** ✅ **OPERATIONAL** - Dedicated service processes `api.command.search_request` events and returns structured results
+    *   **Direct Database Access:** ✅ **OPERATIONAL** - Service automaton has direct PostgreSQL access for complex queries
+    *   **Response Generation:** ✅ **OPERATIONAL** - Results formatted and returned via `api.response.search_result` events
+*   **CLI Query Interface:**
+    *   **Gateway Integration:** ✅ **OPERATIONAL** - `exo query` commands flow through gateway with async response handling
+    *   **Supported Filters:** ✅ **OPERATIONAL** - Temporal, source, event type, and basic payload filtering
+    *   **Result Formatting:** ✅ **OPERATIONAL** - JSON, table, and streaming output formats
 
 ### 3.2. Hybrid Search Architecture (Vector + Full-Text + RRF)
 

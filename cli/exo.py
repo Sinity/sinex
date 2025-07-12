@@ -887,11 +887,11 @@ def extract_event_summary(source: str, event_type: str, payload: Dict) -> str:
             return f"{old_name} → {new_name}"
     
     elif source == "sinex":
-        if event_type == "agent.heartbeat":
+        if event_type == "automaton.heartbeat":
             agent = payload.get('agent_name', 'unknown')
             status = payload.get('status', 'unknown')
             return f"{agent}: {status}"
-        elif event_type == "agent.error":
+        elif event_type == "automaton.error":
             agent = payload.get('agent_name', 'unknown')
             severity = payload.get('severity', 'unknown')
             return f"{agent} [{severity}]"

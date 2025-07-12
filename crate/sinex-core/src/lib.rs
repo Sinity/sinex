@@ -9,18 +9,12 @@ pub mod error_context;
 pub mod event;
 // event_builders module moved to sinex-events crate
 pub mod event_pipeline;
-pub mod event_registry_macro;
-pub mod event_source_base;
-pub mod event_source_context;
 pub mod file_watcher;
 pub mod heartbeat;
 pub mod json_helpers;
-pub mod pipeline_integration;
 pub mod retry_helpers;
 pub mod sqlite_helpers;
 pub mod timestamp_helpers;
-pub mod unified_collector;
-pub mod unified_event_source;
 // strongly_typed_events module moved to sinex-events crate
 pub mod validation;
 pub mod validation_chains;
@@ -56,7 +50,8 @@ pub use sinex_events::{
     typed_event_channel, ClipboardCopiedPayload, ClipboardSelectedPayload, CommandCompletedPayload,
     CommandExecutedPayload, DirCreatedPayload, DirDeletedPayload, EnforcedTypedEventSource,
     EventEnvelope, FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
-    JournalEntryPayload, SessionEndedPayload, SessionStartedPayload, SystemStatePayload,
+    JournalEntryPayload, ProcessHeartbeatPayload, ProcessShutdownPayload, ProcessStartedPayload,
+    SessionEndedPayload, SessionStartedPayload, SystemStatePayload,
     TypedEventBuilder, TypedEventError, TypedEventPipelineAdapter, TypedEventReceiver,
     TypedEventResult, TypedEventSender, TypedRawEvent, TypedToJsonAdapter, WindowClosedPayload,
     WindowFocusedPayload, WindowOpenedPayload, WorkspaceSwitchedPayload,
@@ -69,18 +64,15 @@ pub use event_pipeline::{
     PipelineMetrics, PipelineStage, StageMetrics, StageResult, StageTimeouts, StagedEvent,
     StorageStage, ValidationStage,
 };
-pub use event_source_base::EventSourceBase;
-pub use event_source_context::EventSourceContext;
 pub use file_watcher::{
     FileChangeEvent, FileChangeKind, FileWatcher, FileWatcherBuilder, FileWatcherConfig,
 };
 pub use heartbeat::{
-    ComponentHeartbeat, HealthStatus, HeartbeatEmitter, MetricsProvider, SystemHealth,
+    determine_health_status, HealthStatus, MetricsProvider, ProcessHeartbeatEmitter, SystemHealth,
 };
 pub use json_helpers::{
     extract_field, parse_json, parse_json_file, parse_json_value, to_json_value,
 };
-pub use pipeline_integration::{PipelineAwareCollector, PipelineCollectorBuilder};
 pub use retry_helpers::{
     retry_async, retry_simple, retry_with_predicate, RetryBuilder, RetryConfig,
 };
@@ -90,11 +82,6 @@ pub use sqlite_helpers::{
 pub use timestamp_helpers::{
     parse_flexible_timestamp, timestamp_micros_to_datetime, timestamp_millis_to_datetime,
     timestamp_nanos_to_datetime, timestamp_to_datetime, timestamp_with_nanos_to_datetime,
-};
-pub use unified_collector::{EventOutput, EventSource, EventType};
-pub use unified_event_source::{
-    TypedClipboardEventBuilder, TypedFilesystemEventBuilder, TypedSystemEventBuilder,
-    TypedTerminalEventBuilder, TypedWindowManagerEventBuilder, UnifiedEventSource,
 };
 pub use validation::{contains_shell_metacharacters, validate_path_within_root};
 pub use validation_chains::{JsonType, MultiValidator, ValidationChain};
@@ -219,22 +206,34 @@ pub mod sources {
     pub const SHELL_KITTY: &str = "shell.kitty";
     pub const SHELL_ATUIN: &str = "shell.atuin";
     pub const SHELL_HISTORY: &str = "shell.history";
+    pub const SHELL_BASH_HISTFILE: &str = "shell.bash_histfile";
+    pub const SHELL_ZSH_HISTFILE: &str = "shell.zsh_histfile";  
+    pub const SHELL_FISH_HISTORY: &str = "shell.fish_history";
     pub const SHELL_RECORDING: &str = "shell.recording";
+    pub const SHELL_ASCIINEMA: &str = "shell.asciinema";
     pub const SHELL_SCROLLBACK: &str = "shell.scrollback";
     pub const WM_HYPRLAND: &str = "wm.hyprland";
     pub const CLIPBOARD: &str = "clipboard";
     pub const DBUS: &str = "dbus";
     pub const JOURNALD: &str = "journald";
+    pub const UDEV: &str = "udev";
+    pub const SYSTEMD: &str = "systemd";
 }
 
 /// Common event type constants
 pub mod event_type_constants {
     pub mod sinex {
-        pub const AGENT_STARTUP: &str = "agent.startup";
-        pub const AGENT_SHUTDOWN: &str = "agent.shutdown";
-        pub const AGENT_HEARTBEAT: &str = "agent.heartbeat";
-        pub const AGENT_ERROR: &str = "agent.error";
-        pub const AGENT_DLQ_EVENT_WRITTEN: &str = "agent.dlq_event_written";
+        pub const AUTOMATON_STARTUP: &str = "automaton.startup";
+        pub const AUTOMATON_SHUTDOWN: &str = "automaton.shutdown";
+        pub const AUTOMATON_HEARTBEAT: &str = "automaton.heartbeat";
+        pub const AUTOMATON_ERROR: &str = "automaton.error";
+        pub const AUTOMATON_DLQ_EVENT_WRITTEN: &str = "automaton.dlq_event_written";
+    }
+
+    pub mod process {
+        pub const PROCESS_STARTED: &str = "process.started";
+        pub const PROCESS_HEARTBEAT: &str = "process.heartbeat";
+        pub const PROCESS_SHUTDOWN: &str = "process.shutdown";
     }
 
     pub mod filesystem {

@@ -284,9 +284,9 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
         let event_id = Ulid::from_datetime(*ts);
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload)
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
+             VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(event_id.to_string())
+        .bind(event_id.to_uuid())
         .bind(event.source)
         .bind(event.event_type)
         .bind(event.host)
@@ -366,9 +366,9 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
         let event_id = Ulid::new();
         sqlx::query(
             "INSERT INTO raw.events (id, source, event_type, host, payload)
-             VALUES ($1::ulid, $2, $3, $4, $5::jsonb)",
+             VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
         )
-        .bind(event_id.to_string())
+        .bind(event_id.to_uuid())
         .bind("compression_test")
         .bind("old_event")
         .bind("test_host")
@@ -881,8 +881,8 @@ async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
     let metrics = calculate_queue_depth_metrics(pool).await?;
 
     // Verify metrics for each agent
-    let agent1_metric = metrics.iter().find(|m| m.target_agent_name == agent1);
-    let agent2_metric = metrics.iter().find(|m| m.target_agent_name == agent2);
+    let agent1_metric = metrics.iter().find(|m| m.target_automaton_name == agent1);
+    let agent2_metric = metrics.iter().find(|m| m.target_automaton_name == agent2);
 
     assert_eq!(
         agent1_metric.map(|m| m.queue_depth).unwrap_or(0),
@@ -940,14 +940,14 @@ async fn test_routing_cache_basic_functionality(ctx: TestContext) -> TestResult 
 
     // Query work queue to verify routing logic
     let work_items = sqlx::query!(
-        "SELECT queue_id::text, target_agent_name FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
+        "SELECT queue_id::text, target_automaton_name FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
         event_id.to_uuid()
     )
     .fetch_all(pool)
     .await?;
 
     assert!(work_items.len() > 0, "Should have work items");
-    assert_eq!(work_items[0].target_agent_name, "routing-agent");
+    assert_eq!(work_items[0].target_automaton_name, "routing-agent");
 
     Ok(())
 }

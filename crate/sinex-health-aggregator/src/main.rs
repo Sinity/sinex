@@ -43,21 +43,46 @@ async fn get_system_health(
 ) -> Result<Json<SystemHealthResponse>, StatusCode> {
     let cutoff = Utc::now() - Duration::minutes(3);
 
-    // Get latest heartbeat for each component
+    // Get latest heartbeat events from both legacy process heartbeats and satellite heartbeats via journald
     let heartbeats = match sqlx::query!(
         r#"
-        SELECT DISTINCT ON (component_name)
-            component_name,
-            timestamp,
-            status,
-            uptime_seconds,
-            memory_usage_mb,
-            events_processed_last_minute,
-            binary_version,
-            git_hash
-        FROM component_heartbeats
-        WHERE timestamp > $1
-        ORDER BY component_name, timestamp DESC
+        WITH satellite_heartbeats AS (
+            SELECT DISTINCT ON ((payload->>'message')::jsonb->'fields'->>'service_name')
+                (payload->>'message')::jsonb->'fields'->>'service_name' as component_name,
+                ts_ingest as timestamp,
+                (payload->>'message')::jsonb->'fields'->>'status' as status,
+                ((payload->>'message')::jsonb->'fields'->>'uptime_seconds')::bigint as uptime_seconds,
+                ((payload->>'message')::jsonb->'fields'->>'memory_usage_mb')::integer as memory_usage_mb,
+                ((payload->>'message')::jsonb->'fields'->>'events_processed')::integer as events_processed_last_minute,
+                (payload->>'message')::jsonb->'fields'->>'version' as binary_version,
+                (payload->>'message')::jsonb->'fields'->>'git_hash' as git_hash
+            FROM raw.events
+            WHERE source = 'journald'
+              AND event_type = 'entry.written'
+              AND payload->>'syslog_identifier' LIKE 'sinex-%'
+              AND (payload->>'message')::jsonb->>'message' = 'heartbeat'
+              AND ts_ingest > $1
+            ORDER BY (payload->>'message')::jsonb->'fields'->>'service_name', ts_ingest DESC
+        ),
+        process_heartbeats AS (
+            SELECT DISTINCT ON (payload->>'process_name')
+                payload->>'process_name' as component_name,
+                ts_ingest as timestamp,
+                payload->>'health_status' as status,
+                (payload->>'uptime_seconds')::bigint as uptime_seconds,
+                (payload->>'memory_mb')::integer as memory_usage_mb,
+                (payload->>'events_processed')::integer as events_processed_last_minute,
+                payload->>'version' as binary_version,
+                'unknown' as git_hash
+            FROM raw.events
+            WHERE source = 'sinex.process'
+              AND event_type = 'process.heartbeat'
+              AND ts_ingest > $1
+            ORDER BY payload->>'process_name', ts_ingest DESC
+        )
+        SELECT * FROM satellite_heartbeats
+        UNION ALL
+        SELECT * FROM process_heartbeats
         "#,
         cutoff
     )
@@ -71,12 +96,12 @@ async fn get_system_health(
                 e
             )))
             .with_operation("get_system_health")
-            .with_context("table", "component_heartbeats")
+            .with_context("table", "raw.events")
             .with_context("cutoff_time", cutoff.to_rfc3339())
-            .with_context("query_type", "fetch_recent_heartbeats")
+            .with_context("query_type", "fetch_recent_process_heartbeats")
             .with_context(
                 "suggestion",
-                "Check database connectivity and component_heartbeats table structure",
+                "Check database connectivity and process.heartbeat events in raw.events table",
             )
             .build();
 
@@ -84,7 +109,7 @@ async fn get_system_health(
                 error = %error_context,
                 cutoff_time = %cutoff,
                 operation = "get_system_health",
-                "Database query failed while fetching component heartbeats"
+                "Database query failed while fetching process heartbeat events"
             );
 
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -99,10 +124,14 @@ async fn get_system_health(
     let now = Utc::now();
 
     for hb in heartbeats {
-        let time_since_heartbeat = (now - hb.timestamp.unwrap_or_else(Utc::now)).num_seconds();
+        let time_since_heartbeat = (now - hb.timestamp.unwrap_or_else(Utc::now))
+            .num_seconds();
 
+        let status_str = hb.status.unwrap_or_else(|| "unknown".to_string());
+        let component_name = hb.component_name.unwrap_or_else(|| "unknown".to_string());
+        
         let status = ComponentStatus {
-            status: hb.status.clone(),
+            status: status_str.clone(),
             last_heartbeat: hb.timestamp.unwrap_or_else(Utc::now),
             uptime_seconds: hb.uptime_seconds.unwrap_or(0),
             memory_usage_mb: hb.memory_usage_mb.unwrap_or(0),
@@ -112,14 +141,14 @@ async fn get_system_health(
             time_since_last_heartbeat_seconds: time_since_heartbeat,
         };
 
-        match hb.status.as_str() {
-            "healthy" => healthy_count += 1,
-            "degraded" => degraded_count += 1,
-            "failed" => failed_count += 1,
+        match status_str.as_str() {
+            "healthy" | "PASS" => healthy_count += 1,
+            "degraded" | "WARNING" => degraded_count += 1,
+            "failed" | "FAIL" => failed_count += 1,
             _ => failed_count += 1, // Unknown status treated as failed
         }
 
-        components.insert(hb.component_name, status);
+        components.insert(component_name, status);
     }
 
     let total_count = components.len() as u32;
@@ -165,14 +194,49 @@ async fn get_component_details(
     State(pool): State<Arc<DbPool>>,
     axum::extract::Path(component_name): axum::extract::Path<String>,
 ) -> Result<Json<JsonValue>, StatusCode> {
-    // Get recent heartbeats for this component (last 10)
+    // Get recent heartbeat events for this component from both sources (last 10)
     let heartbeats = match sqlx::query!(
         r#"
-        SELECT timestamp, status, uptime_seconds, memory_usage_mb,
-               cpu_usage_percent, events_processed_last_minute, 
-               errors_last_hour, last_error_message, binary_version, git_hash
-        FROM component_heartbeats
-        WHERE component_name = $1
+        WITH satellite_heartbeats AS (
+            SELECT ts_ingest as timestamp,
+                   (payload->>'message')::jsonb->'fields'->>'status' as status,
+                   ((payload->>'message')::jsonb->'fields'->>'uptime_seconds')::bigint as uptime_seconds,
+                   ((payload->>'message')::jsonb->'fields'->>'memory_usage_mb')::integer as memory_usage_mb,
+                   ((payload->>'message')::jsonb->'fields'->>'cpu_usage_percent')::real as cpu_usage_percent,
+                   ((payload->>'message')::jsonb->'fields'->>'events_processed')::integer as events_processed_last_minute,
+                   ((payload->>'message')::jsonb->'fields'->>'errors_count')::integer as errors_last_hour,
+                   (payload->>'message')::jsonb->'fields'->>'last_error_message' as last_error_message,
+                   (payload->>'message')::jsonb->'fields'->>'version' as binary_version,
+                   (payload->>'message')::jsonb->'fields'->>'git_hash' as git_hash
+            FROM raw.events
+            WHERE source = 'journald'
+              AND event_type = 'entry.written'
+              AND payload->>'syslog_identifier' = $1
+              AND (payload->>'message')::jsonb->>'message' = 'heartbeat'
+            ORDER BY ts_ingest DESC
+            LIMIT 10
+        ),
+        process_heartbeats AS (
+            SELECT ts_ingest as timestamp,
+                   payload->>'health_status' as status,
+                   (payload->>'uptime_seconds')::bigint as uptime_seconds,
+                   (payload->>'memory_mb')::integer as memory_usage_mb,
+                   (payload->>'cpu_percent')::real as cpu_usage_percent,
+                   (payload->>'events_processed')::integer as events_processed_last_minute,
+                   (payload->>'errors_count')::integer as errors_last_hour,
+                   null as last_error_message,
+                   payload->>'version' as binary_version,
+                   'unknown' as git_hash
+            FROM raw.events
+            WHERE source = 'sinex.process'
+              AND event_type = 'process.heartbeat'
+              AND payload->>'process_name' = $1
+            ORDER BY ts_ingest DESC
+            LIMIT 10
+        )
+        SELECT * FROM satellite_heartbeats
+        UNION ALL
+        SELECT * FROM process_heartbeats
         ORDER BY timestamp DESC
         LIMIT 10
         "#,
@@ -216,10 +280,27 @@ async fn get_component_details(
 async fn list_components(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonValue>, StatusCode> {
     let components = match sqlx::query!(
         r#"
-        SELECT DISTINCT component_name,
-               MAX(timestamp) as last_seen
-        FROM component_heartbeats
-        GROUP BY component_name
+        WITH satellite_components AS (
+            SELECT DISTINCT (payload->>'message')::jsonb->'fields'->>'service_name' as component_name,
+                   MAX(ts_ingest) as last_seen
+            FROM raw.events
+            WHERE source = 'journald'
+              AND event_type = 'entry.written'
+              AND payload->>'syslog_identifier' LIKE 'sinex-%'
+              AND (payload->>'message')::jsonb->>'message' = 'heartbeat'
+            GROUP BY (payload->>'message')::jsonb->'fields'->>'service_name'
+        ),
+        process_components AS (
+            SELECT DISTINCT payload->>'process_name' as component_name,
+                   MAX(ts_ingest) as last_seen
+            FROM raw.events
+            WHERE source = 'sinex.process'
+              AND event_type = 'process.heartbeat'
+            GROUP BY payload->>'process_name'
+        )
+        SELECT * FROM satellite_components
+        UNION ALL
+        SELECT * FROM process_components
         ORDER BY component_name
         "#
     )
@@ -237,7 +318,7 @@ async fn list_components(State(pool): State<Arc<DbPool>>) -> Result<Json<JsonVal
     Ok(Json(serde_json::json!({
         "components": components.into_iter().map(|c| {
             serde_json::json!({
-                "name": c.component_name,
+                "name": c.component_name.unwrap_or_else(|| "unknown".to_string()),
                 "last_seen": c.last_seen
             })
         }).collect::<Vec<_>>(),

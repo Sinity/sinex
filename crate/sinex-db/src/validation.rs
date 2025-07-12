@@ -565,7 +565,7 @@ impl EventValidator {
 
     fn register_sinex_rules(&mut self) {
         // agent.heartbeat validation
-        self.register_rule("sinex", "agent.heartbeat", |payload| {
+        self.register_rule("sinex", "automaton.heartbeat", |payload| {
             // Required: agent_name, status, version
             let _agent_name = validate_required_string_field(payload, "agent_name")?;
             let _status = validate_required_string_field(payload, "status")?;
@@ -584,7 +584,7 @@ impl EventValidator {
         });
 
         // agent.error validation
-        self.register_rule("sinex", "agent.error", |payload| {
+        self.register_rule("sinex", "automaton.error", |payload| {
             // Required: agent_name, error_message
             let _agent_name = validate_required_string_field(payload, "agent_name")?;
             let _error_message = validate_required_string_field(payload, "error_message")?;
