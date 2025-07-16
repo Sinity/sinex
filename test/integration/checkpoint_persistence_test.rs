@@ -1,4 +1,4 @@
-use sinex_core::test_util::SINEX_TEST;
+use sinex_test_macros::sinex_test;
 use sinex_db::SqlxPgPool;
 use sinex_satellite_sdk::{
     automaton::{HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, HotlogAutomatonRunner, ProcessingResult, EventFilter},
@@ -72,7 +72,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
 }
 
 /// Integration test for checkpoint persistence bug fix
-#[SINEX_TEST]
+#[sinex_test]
 async fn test_checkpoint_persistence_and_restart_recovery(ctx: crate::TestContext) -> crate::TestResult {
     let pool = ctx.pool();
     let redis_client = ctx.redis_client().await?;

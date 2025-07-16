@@ -22,7 +22,6 @@
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use sinex_collector::{output_event, OutputConfig};
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
 

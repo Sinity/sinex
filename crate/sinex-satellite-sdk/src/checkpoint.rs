@@ -205,7 +205,7 @@ impl CheckpointManager {
         
         // Serialize the unified checkpoint
         let checkpoint_data = serde_json::to_value(&state.checkpoint)
-            .map_err(|e| SatelliteError::Serialization(e))?;
+            .map_err(SatelliteError::Serialization)?;
 
         // Extract legacy fields for backward compatibility
         let last_processed_id = match &state.checkpoint {

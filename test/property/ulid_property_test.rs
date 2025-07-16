@@ -480,7 +480,7 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
 
             // Property: Database ordering should match generation order
             let db_ordered_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT id::text FROM raw.events
+                "SELECT id::text FROM core.events
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY id"
             )
@@ -494,7 +494,7 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
 
             // Property: Ordering by id should match ordering by ts_ingest
             let ts_ordered_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT id::text FROM raw.events
+                "SELECT id::text FROM core.events
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY ts_ingest"
             )
@@ -506,7 +506,7 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
                 "Ordering by ULID should match ordering by extracted timestamp");
 
             // Cleanup
-            sqlx::query("DELETE FROM raw.events WHERE source = 'property.ulid_ordering'")
+            sqlx::query("DELETE FROM core.events WHERE source = 'property.ulid_ordering'")
                 .execute(pool)
                 .await
                 .expect("Cleanup failed");
@@ -582,7 +582,7 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
 
             // Property: Range queries should partition events correctly
             let count_before: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM raw.events
+                "SELECT COUNT(*) FROM core.events
                  WHERE source = $1 AND id < $2::ulid"
             )
             .bind(&source_name)
@@ -592,7 +592,7 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
             .expect("Query failed");
 
             let count_after: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM raw.events
+                "SELECT COUNT(*) FROM core.events
                  WHERE source = $1 AND id >= $2::ulid"
             )
             .bind(&source_name)
@@ -621,7 +621,7 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
 
             // Property: Total should equal sum of parts
             let total_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM raw.events WHERE source = $1"
+                "SELECT COUNT(*) FROM core.events WHERE source = $1"
             )
             .bind(&source_name)
             .fetch_one(pool)
@@ -634,7 +634,7 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
                 "Total count should equal sum of batch sizes");
 
             // Cleanup
-            sqlx::query("DELETE FROM raw.events WHERE source = $1")
+            sqlx::query("DELETE FROM core.events WHERE source = $1")
                 .bind(&source_name)
                 .execute(pool)
                 .await
@@ -801,7 +801,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             for i in 0..num_relationships {
                 let found_event_id: String = sqlx::query_scalar(
                     "SELECT e.id::text
-                     FROM raw.events e
+                     FROM core.events e
                      JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id
                      WHERE q.queue_id = $1::ulid"
                 )
@@ -833,7 +833,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             // Property: Join count should match relationship count
             let join_count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*)
-                 FROM raw.events e
+                 FROM core.events e
                  JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id
                  WHERE e.source = 'property.fk_test'"
             )
@@ -851,7 +851,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 .await
                 .expect("Queue cleanup failed");
 
-            sqlx::query("DELETE FROM raw.events WHERE source = 'property.fk_test'")
+            sqlx::query("DELETE FROM core.events WHERE source = 'property.fk_test'")
                 .execute(pool)
                 .await
                 .expect("Event cleanup failed");

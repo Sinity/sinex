@@ -10,7 +10,6 @@ use sinex_satellite_sdk::{HotlogAutomatonRunner, EventFilter, RedisStreamClient,
 use sinex_db::create_pool;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "sinex-rpc-dispatcher")]

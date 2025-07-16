@@ -196,7 +196,7 @@ impl AtuinWatcher {
 
         // Update last processed timestamp
         if let Some(new_ts) = max_timestamp {
-            if self.last_timestamp.map_or(true, |last| new_ts > last) {
+            if self.last_timestamp.is_none_or(|last| new_ts > last) {
                 self.last_timestamp = Some(new_ts);
                 debug!("Updated last timestamp to: {}", new_ts);
             }

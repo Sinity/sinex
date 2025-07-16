@@ -415,7 +415,7 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
 
     sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload)
+        INSERT INTO core.events (source, event_type, host, payload)
         VALUES ($1, $2, $3, $4)
         "#,
         "sinex.process",
@@ -523,11 +523,11 @@ async fn generate_verification_report(
     let recent_verifications = sqlx::query!(
         r#"
         SELECT 
-            id::text as id,
+            event_id::text as id,
             payload->>'health_status' as status,
             payload as metrics,
             ts_ingest as timestamp
-        FROM raw.events
+        FROM core.events
         WHERE source = 'sinex.process'
           AND event_type = 'process.heartbeat'
           AND payload->>'process_name' = 'sinex-preflight'
@@ -561,7 +561,7 @@ async fn generate_verification_report(
                     "  {} - {} ({})",
                     verification
                         .timestamp
-                        .map_or("N/A".to_string(), |t| t.to_string()),
+                        .to_string(),
                     verification.status.as_deref().unwrap_or("UNKNOWN"),
                     verification.id.as_deref().unwrap_or("N/A")
                 );

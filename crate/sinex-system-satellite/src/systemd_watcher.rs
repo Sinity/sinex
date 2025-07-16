@@ -6,7 +6,6 @@ use serde_json::json;
 use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
 use sinex_satellite_sdk::SatelliteResult;
-use std::collections::HashMap;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -192,7 +191,7 @@ impl SystemdWatcher {
         loop {
             // Start journalctl to follow systemd messages
             let mut child = Command::new("journalctl")
-                .args(&[
+                .args([
                     "--follow",
                     "--output=json",
                     "--lines=0",

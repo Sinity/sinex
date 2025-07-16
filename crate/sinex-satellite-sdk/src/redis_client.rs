@@ -104,7 +104,7 @@ impl RedisStreamClient {
         count: Option<usize>,
         block_ms: Option<usize>,
     ) -> SatelliteResult<Vec<StreamMessage>> {
-        let mut conn = self.get_connection().await?;
+        let _conn = self.get_connection().await?;
 
         // Build stream specs (stream_name -> last_id)
         let mut stream_specs = Vec::new();
@@ -120,7 +120,7 @@ impl RedisStreamClient {
         }
 
         if let Some(block_ms) = block_ms {
-            options = options.block(block_ms);
+            let _options = options.block(block_ms);
         }
 
         // TODO: Fix xreadgroup API - temporarily hardcoded for compilation

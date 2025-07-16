@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use tokio::time::{interval, sleep};
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 /// Kitty window information

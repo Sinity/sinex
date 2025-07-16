@@ -12,7 +12,7 @@ use sinex_satellite_sdk::{
     automaton::{HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult, EventFilter},
     SatelliteError, SatelliteResult,
 };
-use sinex_events::{RawEvent, RawEventBuilder};
+use sinex_events::RawEventBuilder;
 use sinex_ulid::Ulid;
 use tracing::{debug, info};
 
@@ -396,6 +396,7 @@ struct CommandData {
     environment_hash: Option<String>,
     source_events: Vec<Ulid>,
     timestamp: DateTime<Utc>,
+    #[allow(dead_code)]
     source: String,
     host: Option<String>,
 }

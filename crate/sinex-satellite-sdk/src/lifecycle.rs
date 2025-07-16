@@ -228,7 +228,7 @@ impl LifecycleManager {
                 info!(service = %service_name_clone, "Starting heartbeat emission");
                 
                 // Create a metadata provider that includes current status
-                let metadata_provider: Box<dyn Fn() -> Option<serde_json::Value> + Send> = 
+                let _metadata_provider: Box<dyn Fn() -> Option<serde_json::Value> + Send> = 
                     Box::new(move || {
                         Some(serde_json::json!({
                             "service_type": "satellite",

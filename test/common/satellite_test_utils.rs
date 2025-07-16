@@ -4,7 +4,7 @@
 //! and automaton interactions.
 
 use crate::common::prelude::*;
-use redis::aio::ConnectionManager;
+use redis::aio::MultiplexedConnection;
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, SatelliteConfig},
@@ -58,6 +58,46 @@ impl TestSatelliteHandle {
     pub async fn events_sent_count(&self) -> usize {
         self.events_sent.lock().await.len()
     }
+
+    /// Start a test satellite with configuration
+    pub async fn start(
+        config: SatelliteConfig,
+        pool: sqlx::PgPool,
+    ) -> Result<Self> {
+        let satellite_id = format!("test-satellite-{}", Ulid::new());
+        let satellite_id_clone = satellite_id.clone();
+        let events_sent = Arc::new(Mutex::new(Vec::new()));
+        let events_sent_clone = events_sent.clone();
+
+        // Create a mock satellite that sends test events
+        let task_handle = tokio::spawn(async move {
+            // Simplified satellite behavior for testing
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+            
+            loop {
+                interval.tick().await;
+                
+                // Generate a test event
+                let event = sinex_events::RawEventBuilder::new(
+                    "test.satellite",
+                    "test.event",
+                    serde_json::json!({
+                        "satellite_id": satellite_id_clone,
+                        "timestamp": chrono::Utc::now(),
+                        "sequence": events_sent_clone.lock().await.len()
+                    })
+                ).build();
+                
+                events_sent_clone.lock().await.push(event);
+            }
+        });
+
+        Ok(TestSatelliteHandle {
+            satellite_id,
+            task_handle,
+            events_sent,
+        })
+    }
 }
 
 /// Handle to a running test automaton
@@ -81,12 +121,75 @@ impl TestAutomatonHandle {
 
     /// Get current checkpoint
     pub async fn get_checkpoint(&self) -> Result<CheckpointState> {
-        self.checkpoint_manager.load_checkpoint().await
+        self.checkpoint_manager.load_checkpoint().await.map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Get processed event count
     pub async fn processed_count(&self) -> usize {
         self.processed_events.lock().await.len()
+    }
+
+    /// Start a test automaton
+    pub async fn start(
+        automaton_type: &str,
+        pool: sqlx::PgPool,
+        redis: MultiplexedConnection,
+    ) -> Result<Self> {
+        let automaton_id = format!("test-{}-{}", automaton_type, Ulid::new());
+        let checkpoint_manager = CheckpointManager::new(
+            pool.clone(),
+            automaton_id.clone(),
+            format!("{}-group", automaton_type),
+            automaton_id.clone(),
+        );
+        
+        let processed_events = Arc::new(Mutex::new(Vec::new()));
+        let processed_events_clone = processed_events.clone();
+        let automaton_id_clone = automaton_id.clone();
+
+        let task_handle = tokio::spawn(async move {
+            // Simplified automaton that processes events from database
+            let mut last_id: Option<Ulid> = None;
+            
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                
+                // Query for new events
+                let query = if let Some(id) = last_id {
+                    sqlx::query!(
+                        "SELECT event_id::text, source, event_type, payload 
+                         FROM core.events 
+                         WHERE event_id::uuid > $1::uuid 
+                         ORDER BY event_id 
+                         LIMIT 10",
+                        id.to_uuid()
+                    )
+                } else {
+                    sqlx::query!(
+                        "SELECT event_id::text, source, event_type, payload 
+                         FROM core.events 
+                         ORDER BY event_id 
+                         LIMIT 10"
+                    )
+                };
+                
+                if let Ok(rows) = query.fetch_all(&pool).await {
+                    for row in rows {
+                        if let Ok(id) = Ulid::from_string(&row.id) {
+                            processed_events_clone.lock().await.push(row.id.clone());
+                            last_id = Some(id);
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(TestAutomatonHandle {
+            id: automaton_id,
+            task_handle,
+            checkpoint_manager,
+            processed_events,
+        })
     }
 }
 
@@ -154,18 +257,18 @@ impl TestContext {
                 // Query for new events
                 let query = if let Some(id) = last_id {
                     sqlx::query!(
-                        "SELECT id::text, source, event_type, payload 
-                         FROM raw.events 
-                         WHERE id > $1::ulid 
-                         ORDER BY id 
+                        "SELECT event_id::text, source, event_type, payload 
+                         FROM core.events 
+                         WHERE event_id::uuid > $1::uuid 
+                         ORDER BY event_id 
                          LIMIT 10",
-                        id.to_string()
+                        id.to_uuid()
                     )
                 } else {
                     sqlx::query!(
-                        "SELECT id::text, source, event_type, payload 
-                         FROM raw.events 
-                         ORDER BY id 
+                        "SELECT event_id::text, source, event_type, payload 
+                         FROM core.events 
+                         ORDER BY event_id 
                          LIMIT 10"
                     )
                 };
@@ -192,7 +295,7 @@ impl TestContext {
     /// Wait for events to appear in Redis stream
     pub async fn wait_for_redis_stream_length(
         &self,
-        redis: &mut ConnectionManager,
+        redis: &mut MultiplexedConnection,
         stream: &str,
         expected: usize,
     ) -> Result<()> {
@@ -258,8 +361,8 @@ impl TestContext {
                 last_processed_id,
                 processed_count,
                 last_activity,
-                data,
-                version
+                state_data,
+                checkpoint_version
             FROM core.automaton_checkpoints
             WHERE automaton_name = $1
             ORDER BY last_activity DESC
@@ -283,15 +386,15 @@ impl TestContext {
     }
 
     /// Create a test Redis connection
-    pub async fn create_redis_connection(&self) -> Result<ConnectionManager> {
+    pub async fn create_redis_connection(&self) -> Result<MultiplexedConnection> {
         let client = redis::Client::open("redis://127.0.0.1/")?;
-        Ok(ConnectionManager::new(client).await?)
+        Ok(client.get_multiplexed_async_connection().await?)
     }
 
     /// Publish event to Redis stream
     pub async fn publish_to_redis_stream(
         &self,
-        redis: &mut ConnectionManager,
+        redis: &mut MultiplexedConnection,
         stream: &str,
         event: &sinex_core::RawEvent,
     ) -> Result<String> {
@@ -316,7 +419,7 @@ impl TestContext {
     /// Consume from Redis stream using consumer group
     pub async fn consume_from_redis_stream(
         &self,
-        redis: &mut ConnectionManager,
+        redis: &mut MultiplexedConnection,
         stream: &str,
         group: &str,
         consumer: &str,
@@ -395,10 +498,10 @@ pub async fn start_test_ingestd_with_config(
         
         #[tonic::async_trait]
         impl sinex_ingestd::proto::ingest_service_server::IngestService for TestIngestService {
-            async fn send_event(
+            async fn ingest_event(
                 &self,
-                request: Request<sinex_ingestd::proto::EventMessage>,
-            ) -> Result<Response<sinex_ingestd::proto::EventResponse>, Status> {
+                request: Request<sinex_ingestd::proto::RawEvent>,
+            ) -> Result<Response<sinex_ingestd::proto::IngestResponse>, Status> {
                 let event_msg = request.into_inner();
                 
                 // Convert proto message to RawEvent
@@ -415,13 +518,14 @@ pub async fn start_test_ingestd_with_config(
                     }
                 }
                 
-                Ok(Response::new(sinex_ingestd::proto::EventResponse {
+                Ok(Response::new(sinex_ingestd::proto::IngestResponse {
                     success: true,
-                    message: "Event received".to_string(),
+                    error: None,
+                    event_id: Some(sinex_ulid::Ulid::new().to_string()),
                 }))
             }
             
-            async fn send_event_batch(
+            async fn ingest_batch(
                 &self,
                 request: Request<sinex_ingestd::proto::EventBatch>,
             ) -> Result<Response<sinex_ingestd::proto::BatchResponse>, Status> {
@@ -444,9 +548,22 @@ pub async fn start_test_ingestd_with_config(
                 }
                 
                 Ok(Response::new(sinex_ingestd::proto::BatchResponse {
-                    success_count,
-                    error_count: (batch.events.len() - success_count) as u32,
-                    message: format!("Processed {} events", success_count),
+                    success: true,
+                    error: None,
+                    event_ids: vec![sinex_ulid::Ulid::new().to_string(); success_count],
+                    processed_count: success_count as u32,
+                    failed_count: (batch.events.len() - success_count) as u32,
+                }))
+            }
+
+            async fn health(
+                &self,
+                _request: Request<sinex_ingestd::proto::HealthRequest>,
+            ) -> Result<Response<sinex_ingestd::proto::HealthResponse>, Status> {
+                Ok(Response::new(sinex_ingestd::proto::HealthResponse {
+                    healthy: true,
+                    status: "OK".to_string(),
+                    message: None,
                 }))
             }
         }
@@ -498,7 +615,7 @@ impl StreamMessage {
 
 /// Simulate a consumer reading from Redis Streams
 pub async fn simulate_redis_consumer(
-    redis: ConnectionManager,
+    redis: MultiplexedConnection,
     stream_key: String,
     group_name: String,
     consumer_name: String,

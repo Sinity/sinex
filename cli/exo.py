@@ -96,8 +96,8 @@ def _query_with_database(source: Optional[str], event_type: Optional[str],
         with conn.cursor() as cur:
             # Build query using new schema
             query_parts = [
-                "SELECT id, source, event_type, ts_ingest, ts_orig, host, "
-                "ingestor_version, payload_schema_id, payload FROM raw.events"
+                "SELECT event_id, source, event_type, ts_ingest, ts_orig, host, "
+                "ingestor_version, payload_schema_id, payload FROM core.events"
             ]
             conditions = []
             params = []
@@ -170,7 +170,7 @@ def _sources_with_database() -> List[Dict]:
                     MAX(ts_ingest) as last_event,
                     AVG(CASE WHEN ts_orig IS NOT NULL THEN 
                         EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) as avg_ingest_delay
-                FROM raw.events
+                FROM core.events
                 GROUP BY source
                 ORDER BY event_count DESC
             """)
@@ -229,7 +229,7 @@ def _stats_with_database() -> None:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             # Total events
-            cur.execute("SELECT COUNT(*) as total FROM raw.events")
+            cur.execute("SELECT COUNT(*) as total FROM core.events")
             total = cur.fetchone()['total']
             
             # DLQ statistics
@@ -246,7 +246,7 @@ def _stats_with_database() -> None:
             cur.execute("""
                 SELECT DATE(ts_ingest) as day, COUNT(*) as count,
                        COUNT(DISTINCT source) as sources
-                FROM raw.events
+                FROM core.events
                 WHERE ts_ingest > NOW() - INTERVAL '7 days'
                 GROUP BY day
                 ORDER BY day DESC
@@ -258,7 +258,7 @@ def _stats_with_database() -> None:
                 SELECT s.event_source, s.event_type, s.schema_version,
                        COUNT(e.id) as usage_count
                 FROM sinex_schemas.event_payload_schemas s
-                LEFT JOIN raw.events e ON e.payload_schema_id = s.id
+                LEFT JOIN core.events e ON e.payload_schema_id = s.id
                 WHERE s.is_active = true
                 GROUP BY s.event_source, s.event_type, s.schema_version
                 ORDER BY usage_count DESC
@@ -266,18 +266,18 @@ def _stats_with_database() -> None:
             """)
             schema_usage = cur.fetchall()
             
-            # Agent health
+            # Automaton health
             cur.execute("""
                 SELECT 
-                    payload->>'agent_name' as agent_name,
+                    payload->>'automaton_name' as automaton_name,
                     payload->>'status' as status,
                     MAX(ts_ingest) as last_heartbeat
-                FROM raw.events
-                WHERE source = 'sinex' AND event_type = 'agent.heartbeat'
-                GROUP BY payload->>'agent_name', payload->>'status'
+                FROM core.events
+                WHERE source = 'sinex' AND event_type = 'automaton.heartbeat'
+                GROUP BY payload->>'automaton_name', payload->>'status'
                 ORDER BY last_heartbeat DESC
             """)
-            agent_health = cur.fetchall()
+            automaton_health = cur.fetchall()
     
     console.print(f"\n[bold]📊 Total Events:[/bold] {total:,}")
     
@@ -552,22 +552,22 @@ def schema_get(schema_identifier: str):
 
 
 @cli.group()
-def agent():
-    """Agent introspection commands."""
+def automaton():
+    """Automaton introspection commands."""
     pass
 
 
-@agent.command('list')
+@automaton.command('list')
 @click.option('--status', '-s', help='Filter by status (development, stable, deprecated)')
-def agent_list(status: Optional[str]):
-    """List all registered agents."""
+def automaton_list(status: Optional[str]):
+    """List all registered automata."""
     
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             query_parts = [
-                "SELECT agent_name, description, version, status, "
+                "SELECT automaton_name, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
-                "FROM sinex_schemas.agent_manifests"
+                "FROM sinex_schemas.automaton_manifests"
             ]
             params = []
             
@@ -575,25 +575,25 @@ def agent_list(status: Optional[str]):
                 query_parts.append("WHERE status = %s")
                 params.append(status)
             
-            query_parts.append("ORDER BY agent_name")
+            query_parts.append("ORDER BY automaton_name")
             
             query_sql = " ".join(query_parts)
             cur.execute(query_sql, params)
-            agents = cur.fetchall()
+            automata = cur.fetchall()
     
-    if not agents:
-        console.print("[yellow]No agents found.[/yellow]")
+    if not automata:
+        console.print("[yellow]No automata found.[/yellow]")
         return
     
-    table = Table(title="Registered Agents")
-    table.add_column("Agent", style="cyan")
+    table = Table(title="Registered Automata")
+    table.add_column("Automaton", style="cyan")
     table.add_column("Version", style="green")
     table.add_column("Status", style="yellow")
     table.add_column("Last Heartbeat", style="red")
     table.add_column("Description", style="white")
     
-    for agent in agents:
-        last_heartbeat = agent['last_heartbeat_ts']
+    for automaton in automata:
+        last_heartbeat = automaton['last_heartbeat_ts']
         if last_heartbeat:
             # Check if heartbeat is recent (within 5 minutes)
             age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
@@ -608,52 +608,52 @@ def agent_list(status: Optional[str]):
             heartbeat_text = "Never"
         
         table.add_row(
-            agent['agent_name'],
-            agent['version'],
-            agent['status'],
+            automaton['automaton_name'],
+            automaton['version'],
+            automaton['status'],
             Text(heartbeat_text, style=heartbeat_style),
-            agent['description'] or ""
+            automaton['description'] or ""
         )
     
     console.print(table)
 
 
-@agent.command('status')
-@click.argument('agent_name')
-def agent_status(agent_name: str):
-    """Show detailed status for a specific agent."""
+@automaton.command('status')
+@click.argument('automaton_name')
+def automaton_status(automaton_name: str):
+    """Show detailed status for a specific automaton."""
     
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Get agent manifest
+            # Get automaton manifest
             cur.execute("""
-                SELECT * FROM sinex_schemas.agent_manifests
-                WHERE agent_name = %s
-            """, (agent_name,))
-            agent = cur.fetchone()
+                SELECT * FROM sinex_schemas.automaton_manifests
+                WHERE automaton_name = %s
+            """, (automaton_name,))
+            automaton = cur.fetchone()
             
-            if not agent:
-                console.print(f"[red]Agent not found: {agent_name}[/red]")
+            if not automaton:
+                console.print(f"[red]Automaton not found: {automaton_name}[/red]")
                 return
             
             # Get recent heartbeats
             cur.execute("""
-                SELECT payload, ts_ingest FROM raw.events
-                WHERE source = 'sinex' AND event_type = 'agent.heartbeat'
-                AND payload->>'agent_name' = %s
+                SELECT payload, ts_ingest FROM core.events
+                WHERE source = 'sinex' AND event_type = 'automaton.heartbeat'
+                AND payload->>'automaton_name' = %s
                 ORDER BY ts_ingest DESC
                 LIMIT 5
-            """, (agent_name,))
+            """, (automaton_name,))
             heartbeats = cur.fetchall()
             
             # Get recent errors
             cur.execute("""
-                SELECT payload, ts_ingest FROM raw.events
-                WHERE source = 'sinex' AND event_type = 'agent.error'
-                AND payload->>'agent_name' = %s
+                SELECT payload, ts_ingest FROM core.events
+                WHERE source = 'sinex' AND event_type = 'automaton.error'
+                AND payload->>'automaton_name' = %s
                 ORDER BY ts_ingest DESC
                 LIMIT 10
-            """, (agent_name,))
+            """, (automaton_name,))
             errors = cur.fetchall()
             
             # Get DLQ count from actual DLQ table
@@ -663,27 +663,27 @@ def agent_status(agent_name: str):
                     COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending_dlq,
                     COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved_dlq
                 FROM sinex_schemas.dlq_events
-                WHERE agent_name = %s
-            """, (agent_name,))
+                WHERE automaton_name = %s
+            """, (automaton_name,))
             dlq_counts = cur.fetchone()
     
-    # Display agent information
+    # Display automaton information
     panel_content = []
-    panel_content.append(f"[bold]Agent:[/bold] {agent['agent_name']}")
-    panel_content.append(f"[bold]Version:[/bold] {agent['version']}")
-    panel_content.append(f"[bold]Status:[/bold] {agent['status']}")
-    panel_content.append(f"[bold]Description:[/bold] {agent['description'] or 'N/A'}")
-    panel_content.append(f"[bold]Registered:[/bold] {agent['registered_at']}")
+    panel_content.append(f"[bold]Automaton:[/bold] {automaton['automaton_name']}")
+    panel_content.append(f"[bold]Version:[/bold] {automaton['version']}")
+    panel_content.append(f"[bold]Status:[/bold] {automaton['status']}")
+    panel_content.append(f"[bold]Description:[/bold] {automaton['description'] or 'N/A'}")
+    panel_content.append(f"[bold]Registered:[/bold] {automaton['registered_at']}")
     panel_content.append(f"[bold]DLQ Total:[/bold] {dlq_counts['total_dlq']}")
     panel_content.append(f"[bold]DLQ Pending:[/bold] {dlq_counts['pending_dlq']}")
     panel_content.append(f"[bold]DLQ Resolved:[/bold] {dlq_counts['resolved_dlq']}")
     
-    console.print(Panel("\n".join(panel_content), title=f"Agent Status: {agent_name}"))
+    console.print(Panel("\n".join(panel_content), title=f"Automaton Status: {automaton_name}"))
     
     # Display event types produced
-    if agent['produces_event_types']:
+    if automaton['produces_event_types']:
         console.print("\n[bold]Produces Event Types:[/bold]")
-        produces = agent['produces_event_types']
+        produces = automaton['produces_event_types']
         for source, types in produces.items():
             console.print(f"  [cyan]{source}:[/cyan] {', '.join(types)}")
     
@@ -888,11 +888,11 @@ def extract_event_summary(source: str, event_type: str, payload: Dict) -> str:
     
     elif source == "sinex":
         if event_type == "automaton.heartbeat":
-            agent = payload.get('agent_name', 'unknown')
+            automaton = payload.get('automaton_name', 'unknown')
             status = payload.get('status', 'unknown')
             return f"{agent}: {status}"
         elif event_type == "automaton.error":
-            agent = payload.get('agent_name', 'unknown')
+            automaton = payload.get('automaton_name', 'unknown')
             severity = payload.get('severity', 'unknown')
             return f"{agent} [{severity}]"
     
@@ -1171,7 +1171,7 @@ def blob_get(blob_id: str, output: Optional[str], annex_repo: str):
             cur.execute("""
                 SELECT id, annex_key, original_filename, size_bytes, mime_type
                 FROM core.blobs 
-                WHERE id LIKE %s OR id = %s
+                WHERE event_id LIKE %s OR event_id = %s
             """, (f"{blob_id}%", blob_id))
             blob = cur.fetchone()
     
@@ -1255,6 +1255,448 @@ def blob_verify(annex_repo: str, fast: bool):
             console.print(e.stderr)
 
 
+@blob.command('stage')
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--source-id', '-s', required=True, help='Source identifier (e.g., "old-laptop-bash", "live-kitty-stream")')
+@click.option('--comment', '-c', help='User comment describing the significance of this source material')
+@click.option('--tags', '-t', help='Comma-separated tags for grouping and filtering')
+@click.option('--annex-repo', '-r', help='Git-annex repository path', 
+              default=lambda: os.environ.get('SINEX_ANNEX_PATH', '/realm/data/sinex-annex/sinex-blobs'))
+def blob_stage(file_path: str, source_id: str, comment: Optional[str], tags: Optional[str], annex_repo: str):
+    """Stage external source material into the unified architecture.
+    
+    This command is the critical acquisition workflow that creates entries in 
+    raw.source_material_registry and provides the foundation for the unified 
+    data architecture.
+    
+    Examples:
+        exo blob stage /path/to/data.json --source-id live-kitty-stream
+        exo blob stage history.txt --source-id old-laptop-bash --comment "Historical command data from old laptop" --tags backup,historical,shell
+    """
+    import subprocess
+    import socket
+    import uuid
+    import os
+    import getpass
+    from pathlib import Path
+    import shlex
+    
+    file_path = Path(file_path)
+    annex_repo = Path(annex_repo)
+    
+    # Validate inputs
+    source_id = source_id.strip()
+    if not source_id:
+        console.print(f"[red]Error: source-id cannot be empty[/red]")
+        return
+    
+    if not annex_repo.exists():
+        console.print(f"[red]Git-annex repository not found: {annex_repo}[/red]")
+        console.print("Run: ./script/init_git_annex.sh to initialize")
+        return
+    
+    # Parse tags
+    parsed_tags = []
+    if tags:
+        parsed_tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+    
+    # Generate stage batch ID to group files staged together
+    stage_batch_id = str(uuid.uuid4())
+    operation_id = None
+    
+    try:
+        # Step 1: Compute BLAKE3 checksum (fallback to SHA256 for testing)
+        console.print(f"📁 Computing checksum for: {file_path.name}")
+        try:
+            hash_cmd = subprocess.run(
+                ['blake3sum', str(file_path)], 
+                capture_output=True, text=True, check=True
+            )
+            blake3_hash = hash_cmd.stdout.split()[0]
+        except FileNotFoundError:
+            # Fallback to SHA256 if blake3sum not available
+            hash_cmd = subprocess.run(
+                ['sha256sum', str(file_path)], 
+                capture_output=True, text=True, check=True
+            )
+            blake3_hash = hash_cmd.stdout.split()[0]
+            console.print("[yellow]Note: Using SHA256 fallback (blake3sum not available)[/yellow]")
+        
+        # Step 2: Check for deduplication in source_material_registry
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT blob_id, source_identifier, staged_at FROM raw.source_material_registry WHERE checksum = %s",
+                    (blake3_hash,)
+                )
+                existing = cur.fetchone()
+                
+                if existing:
+                    console.print(f"[yellow]⚠️  File already staged in source material registry![/yellow]")
+                    console.print(f"Blob ID: {existing['blob_id']}")
+                    console.print(f"Source ID: {existing['source_identifier']}")
+                    console.print(f"Staged: {existing['staged_at']}")
+                    console.print(f"Checksum: {blake3_hash}")
+                    return
+        
+        # Step 3: Start operation logging
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Get the full command for logging
+                full_command = f"exo blob stage {shlex.quote(str(file_path))} --source-id {shlex.quote(source_id)}"
+                if comment:
+                    full_command += f" --comment {shlex.quote(comment)}"
+                if tags:
+                    full_command += f" --tags {shlex.quote(tags)}"
+                
+                # Start operation
+                import json
+                cur.execute(
+                    "SELECT core.start_operation(%s, %s, %s::jsonb) AS operation_id",
+                    ('stage', getpass.getuser(), json.dumps({
+                        'command': full_command,
+                        'file_path': str(file_path),
+                        'source_identifier': source_id,
+                        'checksum': blake3_hash,
+                        'stage_batch_id': stage_batch_id
+                    }))
+                )
+                operation_id = cur.fetchone()['operation_id']
+                conn.commit()
+        
+        # Step 4: Get file metadata
+        file_stat = file_path.stat()
+        source_size = file_stat.st_size
+        source_mtime = file_stat.st_mtime
+        
+        # Step 5: Add file to git-annex
+        console.print("📦 Adding to git-annex...")
+        working_copy = annex_repo / file_path.name
+        
+        # Copy file to annex repository
+        subprocess.run(['cp', str(file_path), str(working_copy)], check=True)
+        
+        # Add to git-annex
+        add_result = subprocess.run(
+            ['git-annex', 'add', file_path.name],
+            cwd=annex_repo, capture_output=True, text=True, check=True
+        )
+        
+        # Get annex key
+        key_result = subprocess.run(
+            ['git-annex', 'lookupkey', file_path.name],
+            cwd=annex_repo, capture_output=True, text=True, check=True
+        )
+        annex_key = key_result.stdout.strip()
+        
+        # Step 6: Create source_material_registry record
+        console.print("💾 Creating source material registry record...")
+        
+        # Get system context
+        hostname = socket.gethostname()
+        staged_by_user = getpass.getuser()
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Generate ULID for blob_id using database function
+                cur.execute("SELECT gen_ulid() AS blob_id")
+                blob_id = cur.fetchone()['blob_id']
+                
+                # Insert into source_material_registry
+                cur.execute("""
+                    INSERT INTO raw.source_material_registry (
+                        blob_id, checksum, stage_batch_id,
+                        source_identifier, user_comment, user_tags,
+                        staged_by_user, staged_on_host, staged_via_command,
+                        source_path, source_mtime, source_size,
+                        timing_info_type, source_material_format, processing_status
+                    ) VALUES (
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, to_timestamp(%s), %s,
+                        %s, %s, %s
+                    )
+                """, (
+                    blob_id, blake3_hash, stage_batch_id,
+                    source_id, comment, parsed_tags,
+                    staged_by_user, hostname, full_command,
+                    str(file_path.absolute()), source_mtime, source_size,
+                    'none',  # timing_info_type - could be enhanced with content analysis
+                    'raw',   # source_material_format - could be inferred from file extension
+                    'staged' # processing_status
+                ))
+                conn.commit()
+        
+        # Step 7: Commit to git
+        subprocess.run(['git', 'add', file_path.name], cwd=annex_repo, check=True)
+        commit_msg = f"Stage source material: {source_id}"
+        if comment:
+            commit_msg += f" - {comment}"
+        subprocess.run(['git', 'commit', '-m', commit_msg], cwd=annex_repo, check=True)
+        
+        # Step 8: Complete operation logging
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT core.complete_operation(%s, %s::jsonb) AS result",
+                    (operation_id, json.dumps({
+                        'blob_id': str(blob_id),
+                        'checksum': blake3_hash,
+                        'annex_key': annex_key,
+                        'source_size': source_size,
+                        'stage_batch_id': stage_batch_id
+                    }))
+                )
+                conn.commit()
+        
+        # Step 9: Success feedback
+        console.print(f"[green]✅ Successfully staged source material![/green]")
+        console.print(f"🆔 Blob ID: {blob_id}")
+        console.print(f"🏷️  Source ID: {source_id}")
+        console.print(f"📊 Size: {source_size:,} bytes")
+        console.print(f"🔒 Checksum: {blake3_hash}")
+        console.print(f"🗝️  Annex Key: {annex_key}")
+        console.print(f"📦 Batch ID: {stage_batch_id}")
+        if parsed_tags:
+            console.print(f"🏷️  Tags: {', '.join(parsed_tags)}")
+        
+    except subprocess.CalledProcessError as e:
+        # Fail the operation if we started logging
+        if operation_id:
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT core.fail_operation(%s, %s::jsonb) AS result",
+                            (operation_id, json.dumps({
+                                'error': str(e),
+                                'stderr': e.stderr if e.stderr else None,
+                                'command': e.cmd if hasattr(e, 'cmd') else None
+                            }))
+                        )
+                        conn.commit()
+            except Exception:
+                pass  # Don't fail the failure logging
+        
+        console.print(f"[red]Command failed: {' '.join(e.cmd) if hasattr(e, 'cmd') else str(e)}[/red]")
+        if hasattr(e, 'stderr') and e.stderr:
+            console.print(f"[red]Error: {e.stderr}[/red]")
+        return
+        
+    except Exception as e:
+        # Fail the operation if we started logging
+        if operation_id:
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT core.fail_operation(%s, %s::jsonb) AS result",
+                            (operation_id, json.dumps({'error': str(e)}))
+                        )
+                        conn.commit()
+            except Exception:
+                pass  # Don't fail the failure logging
+        
+        console.print(f"[red]Error: {e}[/red]")
+        return
+
+
+@blob.command('archive')
+@click.argument('blob_id')
+@click.option('--reason', '-r', required=True, help='Reason for archiving this blob')
+@click.option('--dry-run', is_flag=True, help='Show what would be archived without actually doing it')
+@click.option('--force', is_flag=True, help='Archive without confirmation prompt')
+def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
+    """Archive a blob and all events derived from it (The Sledgehammer).
+    
+    This command performs cascading archival of all events that originated from 
+    the specified blob, effectively retracting all data derived from this source.
+    
+    This is the 'sledgehammer' approach - use with caution as it affects all
+    events that trace back to this blob.
+    
+    Examples:
+        exo blob archive 01ARZ3NDEKTSV4RRFFQ69G5FAV --reason "Duplicate data source"
+        exo blob archive 01ARZ3NDEKTSV4RRFFQ69G5FAV --reason "Privacy request" --dry-run
+    """
+    import getpass
+    import json
+    
+    operation_id = None
+    
+    try:
+        # Validate blob_id format (basic ULID check)
+        if len(blob_id) != 26:
+            console.print(f"[red]Error: Invalid blob_id format. Expected 26-character ULID.[/red]")
+            return
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Step 1: Verify blob exists
+                cur.execute(
+                    "SELECT blob_id, source_identifier, user_comment, staged_at, staged_by_user "
+                    "FROM raw.source_material_registry WHERE blob_id = %s::uuid",
+                    (blob_id,)
+                )
+                blob_info = cur.fetchone()
+                
+                if not blob_info:
+                    console.print(f"[red]Error: Blob {blob_id} not found in source material registry.[/red]")
+                    return
+                
+                # Step 2: Find all events with this source_material_id
+                cur.execute("""
+                    SELECT COUNT(*) as direct_events
+                    FROM core.events 
+                    WHERE source_material_id = %s::uuid
+                """, (blob_id,))
+                direct_count = cur.fetchone()['direct_events']
+                
+                # Step 3: Find dependent events (events that depend on events from this blob)
+                cur.execute("""
+                    WITH blob_events AS (
+                        SELECT event_id FROM core.events WHERE source_material_id = %s::uuid
+                    ),
+                    all_dependent_events AS (
+                        SELECT DISTINCT d.event_id, d.dependency_depth
+                        FROM blob_events be
+                        CROSS JOIN LATERAL core.find_dependent_events(be.event_id) d
+                    )
+                    SELECT COUNT(*) as dependent_events
+                    FROM all_dependent_events
+                """, (blob_id,))
+                dependent_count = cur.fetchone()['dependent_events']
+                
+                total_events = direct_count + dependent_count
+                
+                # Step 4: Display impact summary
+                console.print(f"\n[bold blue]Blob Archive Impact Analysis[/bold blue]")
+                console.print(f"Blob ID: [yellow]{blob_id}[/yellow]")
+                console.print(f"Source: [cyan]{blob_info['source_identifier']}[/cyan]")
+                console.print(f"Comment: {blob_info['user_comment'] or 'None'}")
+                console.print(f"Staged: {blob_info['staged_at']} by {blob_info['staged_by_user']}")
+                console.print(f"\n[bold]Events to be archived:[/bold]")
+                console.print(f"  Direct events: [yellow]{direct_count}[/yellow]")
+                console.print(f"  Dependent events: [yellow]{dependent_count}[/yellow]")
+                console.print(f"  Total events: [red]{total_events}[/red]")
+                console.print(f"Reason: [cyan]{reason}[/cyan]")
+                
+                if dry_run:
+                    console.print(f"\n[green]Dry run mode - no changes made.[/green]")
+                    return
+                
+                if total_events == 0:
+                    console.print(f"\n[yellow]No events found for this blob. Nothing to archive.[/yellow]")
+                    return
+                
+                # Step 5: Confirmation
+                if not force:
+                    response = click.confirm(
+                        f"\nAre you sure you want to archive {total_events} events? This action cannot be easily undone.",
+                        default=False
+                    )
+                    if not response:
+                        console.print("[yellow]Archive cancelled.[/yellow]")
+                        return
+                
+                # Step 6: Start operation logging
+                cur.execute(
+                    "SELECT core.start_operation(%s, %s, %s::jsonb) AS operation_id",
+                    ('archive', getpass.getuser(), json.dumps({
+                        'operation_type': 'blob_archive',
+                        'blob_id': blob_id,
+                        'reason': reason,
+                        'expected_direct_events': direct_count,
+                        'expected_dependent_events': dependent_count,
+                        'total_expected_events': total_events
+                    }))
+                )
+                operation_id = cur.fetchone()['operation_id']
+                conn.commit()
+                
+                # Step 7: Set archive metadata for the trigger
+                cur.execute(
+                    "SELECT core.set_archive_metadata(%s, %s, %s)",
+                    (getpass.getuser(), f"blob_archive: {reason}", None)
+                )
+                
+                # Step 8: Delete events (dependent events first, then direct events)
+                # This ensures cascading works correctly
+                
+                # First delete dependent events
+                if dependent_count > 0:
+                    cur.execute("""
+                        WITH blob_events AS (
+                            SELECT event_id FROM core.events WHERE source_material_id = %s::uuid
+                        ),
+                        all_dependent_events AS (
+                            SELECT DISTINCT d.event_id
+                            FROM blob_events be
+                            CROSS JOIN LATERAL core.find_dependent_events(be.event_id) d
+                        )
+                        DELETE FROM core.events 
+                        WHERE event_id IN (SELECT event_id FROM all_dependent_events)
+                    """, (blob_id,))
+                    dependent_deleted = cur.rowcount
+                else:
+                    dependent_deleted = 0
+                
+                # Then delete direct events from the blob
+                if direct_count > 0:
+                    cur.execute(
+                        "DELETE FROM core.events WHERE source_material_id = %s::uuid",
+                        (blob_id,)
+                    )
+                    direct_deleted = cur.rowcount
+                else:
+                    direct_deleted = 0
+                
+                # Step 9: Mark blob as archived in source material registry
+                cur.execute(
+                    "UPDATE raw.source_material_registry SET processing_status = 'archived' WHERE blob_id = %s::uuid",
+                    (blob_id,)
+                )
+                
+                # Step 10: Complete operation logging
+                actual_total = direct_deleted + dependent_deleted
+                cur.execute(
+                    "SELECT core.complete_operation(%s, %s::jsonb) AS result",
+                    (operation_id, json.dumps({
+                        'direct_events_archived': direct_deleted,
+                        'dependent_events_archived': dependent_deleted,
+                        'total_events_archived': actual_total,
+                        'blob_status_updated': True
+                    }))
+                )
+                conn.commit()
+                
+                # Step 11: Success message
+                console.print(f"\n[green]Successfully archived blob {blob_id}[/green]")
+                console.print(f"Events archived: {actual_total} (direct: {direct_deleted}, dependent: {dependent_deleted})")
+                console.print(f"Operation ID: {operation_id}")
+                
+    except Exception as e:
+        # Fail the operation if we started logging
+        if operation_id:
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT core.fail_operation(%s, %s::jsonb) AS result",
+                            (operation_id, json.dumps({
+                                'error': str(e),
+                                'error_type': type(e).__name__
+                            }))
+                        )
+                        conn.commit()
+            except Exception:
+                pass  # Don't fail the failure logging
+        
+        console.print(f"[red]Error during blob archive: {e}[/red]")
+        return
+
+
 @cli.group()
 def dlq():
     """Dead Letter Queue management commands."""
@@ -1280,7 +1722,7 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
         with conn.cursor() as cur:
             # Build dynamic query
             query_parts = [
-                "SELECT dlq_id, agent_name, source, event_type, failure_reason, "
+                "SELECT dlq_id, automaton_name, source, event_type, failure_reason, "
                 "error_category, retry_count, failed_at, last_retry_at, next_retry_at, "
                 "resolved_at, resolved_by, "
                 "EXTRACT(EPOCH FROM (now() - failed_at)) AS age_seconds "
@@ -1293,7 +1735,7 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
                 conditions.append("resolved_at IS NULL")
             
             if agent:
-                conditions.append("agent_name = %s")
+                conditions.append("automaton_name = %s")
                 params.append(agent)
             
             if source:
@@ -1351,7 +1793,7 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
         # Table format
         table = Table(title=f"DLQ Entries ({len(dlq_entries)} shown)")
         table.add_column("DLQ ID", style="cyan")
-        table.add_column("Agent", style="green")
+        table.add_column("Automaton", style="green")
         table.add_column("Source", style="yellow")
         table.add_column("Event Type", style="blue")
         table.add_column("Category", style="magenta")
@@ -1373,7 +1815,7 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
             
             table.add_row(
                 str(entry['dlq_id'])[:8],  # Truncated DLQ ID
-                entry['agent_name'],
+                entry['automaton_name'],
                 entry['source'],
                 entry['event_type'],
                 entry['error_category'],
@@ -1415,7 +1857,7 @@ def dlq_show(dlq_id: str):
     panel_content = []
     panel_content.append(f"[bold]DLQ ID:[/bold] {entry['dlq_id']}")
     panel_content.append(f"[bold]Failed Event ID:[/bold] {entry['failed_event_id']}")
-    panel_content.append(f"[bold]Agent:[/bold] {entry['agent_name']}")
+    panel_content.append(f"[bold]Automaton:[/bold] {entry['automaton_name']}")
     panel_content.append(f"[bold]Source:[/bold] {entry['source']}")
     panel_content.append(f"[bold]Event Type:[/bold] {entry['event_type']}")
     panel_content.append(f"[bold]Error Category:[/bold] {entry['error_category']}")
@@ -1477,7 +1919,7 @@ def dlq_retry(dlq_id: str, dry_run: bool):
         return
     
     console.print(f"[bold]Retrying DLQ entry:[/bold] {entry['dlq_id']}")
-    console.print(f"Agent: {entry['agent_name']}")
+    console.print(f"Automaton: {entry['automaton_name']}")
     console.print(f"Source: {entry['source']}")
     console.print(f"Event Type: {entry['event_type']}")
     console.print(f"Current Retry Count: {entry['retry_count']}")
@@ -1537,7 +1979,7 @@ def dlq_resolve(dlq_id: str, resolution: str, dry_run: bool):
         return
     
     console.print(f"[bold]Resolving DLQ entry:[/bold] {entry['dlq_id']}")
-    console.print(f"Agent: {entry['agent_name']}")
+    console.print(f"Automaton: {entry['automaton_name']}")
     console.print(f"Source: {entry['source']}")
     console.print(f"Event Type: {entry['event_type']}")
     console.print(f"Resolution: {resolution}")
@@ -1574,7 +2016,7 @@ def dlq_stats(agent: Optional[str], days: int):
             params = [days]
             
             if agent:
-                where_clause += " AND agent_name = %s"
+                where_clause += " AND automaton_name = %s"
                 params.append(agent)
             
             # Total DLQ entries
@@ -1595,13 +2037,13 @@ def dlq_stats(agent: Optional[str], days: int):
             # DLQ by agent
             cur.execute(f"""
                 SELECT 
-                    agent_name,
+                    automaton_name,
                     COUNT(*) as total,
                     COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
                     AVG(retry_count) as avg_retries
                 FROM sinex_schemas.dlq_events
                 {where_clause}
-                GROUP BY agent_name
+                GROUP BY automaton_name
                 ORDER BY total DESC
             """, params)
             by_agent = cur.fetchall()
@@ -1651,22 +2093,22 @@ def dlq_stats(agent: Optional[str], days: int):
     
     # DLQ by agent
     if by_agent:
-        console.print(f"\n[bold]By Agent:[/bold]")
-        agent_table = Table()
-        agent_table.add_column("Agent", style="cyan")
-        agent_table.add_column("Total", justify="right", style="white")
-        agent_table.add_column("Pending", justify="right", style="red")
-        agent_table.add_column("Avg Retries", justify="right", style="yellow")
+        console.print(f"\n[bold]By Automaton:[/bold]")
+        automaton_table = Table()
+        automaton_table.add_column("Automaton", style="cyan")
+        automaton_table.add_column("Total", justify="right", style="white")
+        automaton_table.add_column("Pending", justify="right", style="red")
+        automaton_table.add_column("Avg Retries", justify="right", style="yellow")
         
         for row in by_agent:
-            agent_table.add_row(
-                row['agent_name'],
+            automaton_table.add_row(
+                row['automaton_name'],
                 f"{row['total']:,}",
                 f"{row['pending']:,}",
                 f"{row['avg_retries']:.1f}" if row['avg_retries'] else "0"
             )
         
-        console.print(agent_table)
+        console.print(automaton_table)
     
     # DLQ by category
     if by_category:
@@ -1824,6 +2266,1121 @@ def stats(ctx):
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option('--automaton', '-a', required=True, help='Automaton name to replay')
+@click.option('--since', '-s', help='Start time for replay (ISO format or relative like "1d")')
+@click.option('--until', '-u', help='End time for replay (ISO format or relative like "1h")')
+@click.option('--dry-run', is_flag=True, help='Show what would be replayed without executing')
+@click.option('--force', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def replay(ctx, automaton: str, since: Optional[str], until: Optional[str], dry_run: bool, force: bool):
+    """Replay automaton processing with dependency cascade.
+    
+    This command implements the replay coordinator from the comprehensive plan.
+    It traces dependency chains, archives old events, and triggers re-computation.
+    """
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Replay command requires direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        console.print(f"[bold blue]🔄 Sinex Replay Coordinator[/bold blue]")
+        console.print(f"Target automaton: [cyan]{automaton}[/cyan]")
+        
+        # Parse time range
+        since_dt = parse_time_argument(since) if since else None
+        until_dt = parse_time_argument(until) if until else datetime.utcnow()
+        
+        if since_dt:
+            console.print(f"Time range: [yellow]{since_dt.isoformat()}[/yellow] to [yellow]{until_dt.isoformat()}[/yellow]")
+        else:
+            console.print(f"Time range: [yellow]All time[/yellow] to [yellow]{until_dt.isoformat()}[/yellow]")
+        
+        # Step 1: Find events to be replayed
+        console.print("\n[bold]Step 1: Identifying events for replay[/bold]")
+        target_events = find_target_events(automaton, since_dt, until_dt)
+        
+        if not target_events:
+            console.print("[yellow]No events found for the specified criteria.[/yellow]")
+            return
+        
+        console.print(f"Found [cyan]{len(target_events)}[/cyan] events from automaton [cyan]{automaton}[/cyan]")
+        
+        # Step 2: Build dependency graph
+        console.print("\n[bold]Step 2: Building dependency cascade graph[/bold]")
+        dependency_graph = build_dependency_graph(target_events)
+        
+        total_affected = sum(len(events) for events in dependency_graph.values())
+        console.print(f"Total events in cascade: [red]{total_affected}[/red]")
+        
+        # Step 3: Display impact analysis
+        display_impact_analysis(dependency_graph)
+        
+        if dry_run:
+            console.print("\n[yellow]🚫 Dry run mode - no changes will be made[/yellow]")
+            return
+        
+        # Step 4: User confirmation
+        if not force:
+            if not click.confirm(f"\n⚠️  This will archive {total_affected} events and trigger re-processing. Continue?"):
+                console.print("[yellow]Replay cancelled.[/yellow]")
+                return
+        
+        # Step 5: Execute replay
+        console.print("\n[bold]Step 3: Executing replay operation[/bold]")
+        execute_replay(automaton, dependency_graph, since_dt, until_dt)
+        
+        console.print("\n[green]✅ Replay completed successfully![/green]")
+        console.print(f"[dim]Automaton [cyan]{automaton}[/cyan] will now re-process events from the specified time range.[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]❌ Replay failed: {e}[/red]")
+        sys.exit(1)
+
+
+def parse_time_argument(time_str: str) -> datetime:
+    """Parse time argument (ISO format or relative like '1d', '2h')."""
+    if not time_str:
+        return None
+        
+    # Try ISO format first
+    try:
+        return datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+    except ValueError:
+        pass
+    
+    # Try relative format
+    if time_str.endswith('d'):
+        days = int(time_str[:-1])
+        return datetime.utcnow() - timedelta(days=days)
+    elif time_str.endswith('h'):
+        hours = int(time_str[:-1])
+        return datetime.utcnow() - timedelta(hours=hours)
+    elif time_str.endswith('m'):
+        minutes = int(time_str[:-1])
+        return datetime.utcnow() - timedelta(minutes=minutes)
+    else:
+        raise ValueError(f"Invalid time format: {time_str}. Use ISO format or relative like '1d', '2h'")
+
+
+def find_target_events(automaton: str, since_dt: Optional[datetime], until_dt: datetime) -> List[Dict]:
+    """Find events created by the target automaton in the specified time range."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT event_id, source, event_type, ts_orig, ts_ingest, payload
+                FROM core.events 
+                WHERE source = %s AND ts_orig <= %s
+            """
+            params = [automaton, until_dt]
+            
+            if since_dt:
+                query += " AND ts_orig >= %s"
+                params.append(since_dt)
+            
+            query += " ORDER BY ts_orig ASC"
+            
+            cur.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def build_dependency_graph(target_events: List[Dict]) -> Dict[str, List[Dict]]:
+    """Build the full dependency cascade graph starting from target events."""
+    target_ids = [event['id'] for event in target_events]
+    all_affected = {}
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Start with target events
+            all_affected['target'] = target_events
+            
+            # Find all dependent events recursively
+            dependent_events = []
+            for target_id in target_ids:
+                cur.execute("""
+                    SELECT event_id, dependency_depth 
+                    FROM raw.find_dependent_events(%s)
+                    ORDER BY dependency_depth, event_id
+                """, [target_id])
+                
+                for row in cur.fetchall():
+                    # Get the full event details
+                    cur.execute("""
+                        SELECT id, source, event_type, ts_orig, ts_ingest, payload
+                        FROM core.events WHERE event_id = %s
+                    """, [row['event_id']])
+                    
+                    event = cur.fetchone()
+                    if event:
+                        dependent_events.append({
+                            **dict(event),
+                            'dependency_depth': row['dependency_depth']
+                        })
+            
+            # Group by dependency depth
+            for event in dependent_events:
+                depth = event['dependency_depth']
+                depth_key = f"depth_{depth}"
+                if depth_key not in all_affected:
+                    all_affected[depth_key] = []
+                all_affected[depth_key].append(event)
+    
+    return all_affected
+
+
+def display_impact_analysis(dependency_graph: Dict[str, List[Dict]]):
+    """Display a detailed impact analysis of the replay operation."""
+    console.print("\n[bold]Impact Analysis:[/bold]")
+    
+    table = Table(box=box.ROUNDED)
+    table.add_column("Level", style="cyan")
+    table.add_column("Count", justify="right", style="red")
+    table.add_column("Sources", style="yellow")
+    table.add_column("Event Types", style="green")
+    
+    for level, events in dependency_graph.items():
+        if not events:
+            continue
+            
+        sources = set(event['source'] for event in events)
+        event_types = set(event['event_type'] for event in events)
+        
+        table.add_row(
+            level.replace('_', ' ').title(),
+            str(len(events)),
+            ", ".join(sorted(sources)[:3]) + ("..." if len(sources) > 3 else ""),
+            ", ".join(sorted(event_types)[:3]) + ("..." if len(event_types) > 3 else "")
+        )
+    
+    console.print(table)
+
+
+def execute_replay(automaton: str, dependency_graph: Dict[str, List[Dict]], 
+                  since_dt: Optional[datetime], until_dt: datetime):
+    """Execute the actual replay operation."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Begin transaction
+            cur.execute("BEGIN")
+            
+            try:
+                # Set archive metadata
+                cur.execute("""
+                    SELECT raw.set_archive_metadata(
+                        %s, %s, NULL
+                    )
+                """, [
+                    'exo-replay-coordinator',
+                    f'Replay of automaton {automaton} from {since_dt or "beginning"} to {until_dt}'
+                ])
+                
+                # Archive all affected events in reverse dependency order
+                total_archived = 0
+                for level in sorted(dependency_graph.keys(), reverse=True):
+                    events = dependency_graph[level]
+                    if not events:
+                        continue
+                    
+                    event_ids = [event['id'] for event in events]
+                    console.print(f"  Archiving {len(event_ids)} events from {level}...")
+                    
+                    # Archive events in batches
+                    for i in range(0, len(event_ids), 100):
+                        batch = event_ids[i:i+100]
+                        cur.execute("""
+                            DELETE FROM core.events 
+                            WHERE event_id = ANY(%s)
+                        """, [batch])
+                        total_archived += cur.rowcount
+                
+                console.print(f"  Total archived: [red]{total_archived}[/red] events")
+                
+                # Commit the transaction
+                cur.execute("COMMIT")
+                console.print("  ✅ Archive transaction committed")
+                
+                # The automaton will automatically pick up and re-process the raw events
+                # when it runs its next scan cycle
+                console.print(f"  🔄 Automaton [cyan]{automaton}[/cyan] will re-process on next scan")
+                
+            except Exception as e:
+                cur.execute("ROLLBACK")
+                raise Exception(f"Replay transaction failed: {e}")
+
+
+@cli.command('event-archive')
+@click.argument('event_id')
+@click.option('--reason', '-r', required=True, help='Reason for archiving this event')
+@click.option('--dry-run', is_flag=True, help='Show what would be archived without actually doing it')
+@click.option('--force', is_flag=True, help='Archive without confirmation prompt')
+@click.pass_context
+def event_archive(ctx, event_id: str, reason: str, dry_run: bool, force: bool):
+    """Archive a specific event and its dependents (The Surgical Tool).
+    
+    This command performs surgical archival of a single event and all events
+    that depend on it. This is more precise than blob archive and allows for
+    fine-grained data curation.
+    
+    Use this command when you want to remove specific events while preserving
+    the rest of the data from the same source.
+    
+    Examples:
+        exo event-archive 01ARZ3NDEKTSV4RRFFQ69G5FAV --reason "Duplicate event"
+        exo event-archive 01ARZ3NDEKTSV4RRFFQ69G5FAV --reason "Privacy concern" --dry-run
+    """
+    import getpass
+    import json
+    
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Event archive command requires direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    operation_id = None
+    
+    try:
+        # Validate event_id format (basic ULID check)
+        if len(event_id) != 26:
+            console.print(f"[red]Error: Invalid event_id format. Expected 26-character ULID.[/red]")
+            return
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Step 1: Verify event exists
+                cur.execute("""
+                    SELECT event_id, source, event_type, ts_orig, host, 
+                           source_material_id, source_event_ids
+                    FROM core.events 
+                    WHERE event_id = %s::uuid
+                """, (event_id,))
+                event_info = cur.fetchone()
+                
+                if not event_info:
+                    console.print(f"[red]Error: Event {event_id} not found.[/red]")
+                    return
+                
+                # Step 2: Find dependent events
+                cur.execute("""
+                    SELECT event_id, dependency_depth
+                    FROM core.find_dependent_events(%s::uuid)
+                    ORDER BY dependency_depth DESC, event_id
+                """, (event_id,))
+                dependent_events = cur.fetchall()
+                dependent_count = len(dependent_events)
+                total_events = 1 + dependent_count  # +1 for the target event itself
+                
+                # Step 3: Display impact summary
+                console.print(f"\n[bold blue]Event Archive Impact Analysis[/bold blue]")
+                console.print(f"Event ID: [yellow]{event_id}[/yellow]")
+                console.print(f"Source: [cyan]{event_info['source']}[/cyan]")
+                console.print(f"Type: [cyan]{event_info['event_type']}[/cyan]")
+                console.print(f"Original Time: {event_info['ts_orig']}")
+                console.print(f"Host: {event_info['host']}")
+                
+                # Show provenance info
+                if event_info['source_material_id']:
+                    console.print(f"Source Material: [yellow]{event_info['source_material_id']}[/yellow]")
+                if event_info['source_event_ids']:
+                    console.print(f"Source Events: {len(event_info['source_event_ids'])} events")
+                
+                console.print(f"\n[bold]Events to be archived:[/bold]")
+                console.print(f"  Target event: [yellow]1[/yellow]")
+                console.print(f"  Dependent events: [yellow]{dependent_count}[/yellow]")
+                console.print(f"  Total events: [red]{total_events}[/red]")
+                
+                # Show dependency tree if there are dependents
+                if dependent_count > 0:
+                    console.print(f"\n[bold]Dependency Tree:[/bold]")
+                    current_depth = -1
+                    for dep in dependent_events[:10]:  # Show first 10 for readability
+                        if dep['dependency_depth'] != current_depth:
+                            current_depth = dep['dependency_depth']
+                            console.print(f"  Depth {current_depth}:")
+                        console.print(f"    {dep['event_id']}")
+                    if dependent_count > 10:
+                        console.print(f"    ... and {dependent_count - 10} more")
+                
+                console.print(f"Reason: [cyan]{reason}[/cyan]")
+                
+                if dry_run:
+                    console.print(f"\n[green]Dry run mode - no changes made.[/green]")
+                    return
+                
+                # Step 4: Confirmation
+                if not force:
+                    response = click.confirm(
+                        f"\nAre you sure you want to archive {total_events} events? This action cannot be easily undone.",
+                        default=False
+                    )
+                    if not response:
+                        console.print("[yellow]Archive cancelled.[/yellow]")
+                        return
+                
+                # Step 5: Start operation logging
+                cur.execute(
+                    "SELECT core.start_operation(%s, %s, %s::jsonb) AS operation_id",
+                    ('archive', getpass.getuser(), json.dumps({
+                        'operation_type': 'event_archive',
+                        'target_event_id': event_id,
+                        'reason': reason,
+                        'expected_dependent_events': dependent_count,
+                        'total_expected_events': total_events
+                    }))
+                )
+                operation_id = cur.fetchone()['operation_id']
+                conn.commit()
+                
+                # Step 6: Set archive metadata for the trigger
+                cur.execute(
+                    "SELECT core.set_archive_metadata(%s, %s, %s)",
+                    (getpass.getuser(), f"event_archive: {reason}", None)
+                )
+                
+                # Step 7: Delete events (dependent events first, then target event)
+                # This ensures cascading works correctly
+                events_deleted = 0
+                
+                # First delete dependent events (deepest first)
+                for dep in dependent_events:
+                    cur.execute(
+                        "DELETE FROM core.events WHERE event_id = %s::uuid",
+                        (dep['event_id'],)
+                    )
+                    if cur.rowcount > 0:
+                        events_deleted += 1
+                
+                # Then delete the target event
+                cur.execute(
+                    "DELETE FROM core.events WHERE event_id = %s::uuid",
+                    (event_id,)
+                )
+                if cur.rowcount > 0:
+                    events_deleted += 1
+                
+                # Step 8: Complete operation logging
+                cur.execute(
+                    "SELECT core.complete_operation(%s, %s::jsonb) AS result",
+                    (operation_id, json.dumps({
+                        'events_archived': events_deleted,
+                        'expected_events': total_events,
+                        'target_event_archived': True
+                    }))
+                )
+                conn.commit()
+                
+                # Step 9: Success message
+                console.print(f"\n[green]Successfully archived event {event_id}[/green]")
+                console.print(f"Events archived: {events_deleted}")
+                console.print(f"Operation ID: {operation_id}")
+                
+    except Exception as e:
+        # Fail the operation if we started logging
+        if operation_id:
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT core.fail_operation(%s, %s::jsonb) AS result",
+                            (operation_id, json.dumps({
+                                'error': str(e),
+                                'error_type': type(e).__name__
+                            }))
+                        )
+                        conn.commit()
+            except Exception:
+                pass  # Don't fail the failure logging
+        
+        console.print(f"[red]Error during event archive: {e}[/red]")
+        return
+
+
+@cli.command()
+@click.option('--event-id', '-e', required=True, help='ULID of the archived event to restore')
+@click.option('--cascade', is_flag=True, help='Restore entire dependency subtree (default: true)')
+@click.option('--dry-run', is_flag=True, help='Show what would be restored without executing')
+@click.option('--force', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def restore(ctx, event_id: str, cascade: bool, dry_run: bool, force: bool):
+    """Restore an archived event (rollback a replay operation).
+    
+    This command is the symmetric opposite of replay. It finds the archived event,
+    identifies the replacement subtree, and swaps them atomically.
+    """
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Restore command requires direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        console.print(f"[bold blue]🔄 Sinex Restore Coordinator[/bold blue]")
+        console.print(f"Target event: [cyan]{event_id}[/cyan]")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Step 1: Find the archived event
+                cur.execute("""
+                    SELECT id, source, event_type, ts_orig, superseded_by_event_id, archive_reason
+                    FROM audit.archived_events 
+                    WHERE event_id = %s
+                """, [event_id])
+                
+                archived_event = cur.fetchone()
+                if not archived_event:
+                    console.print(f"[red]❌ Archived event {event_id} not found[/red]")
+                    sys.exit(1)
+                
+                console.print(f"Found archived event: [yellow]{archived_event['source']}[/yellow].[yellow]{archived_event['event_type']}[/yellow]")
+                console.print(f"Archived reason: [dim]{archived_event['archive_reason']}[/dim]")
+                
+                # Step 2: Find the replacement event if it exists
+                replacement_id = archived_event['superseded_by_event_id']
+                if replacement_id:
+                    console.print(f"Replacement event: [cyan]{replacement_id}[/cyan]")
+                    
+                    # Build dependency graph for replacement subtree
+                    cur.execute("""
+                        SELECT id, source, event_type, ts_orig, ts_ingest, payload
+                        FROM core.events WHERE event_id = %s
+                    """, [replacement_id])
+                    
+                    replacement_event = cur.fetchone()
+                    if replacement_event:
+                        replacement_graph = build_dependency_graph([dict(replacement_event)])
+                        replacement_count = sum(len(events) for events in replacement_graph.values())
+                    else:
+                        replacement_graph = {}
+                        replacement_count = 0
+                    console.print(f"Replacement subtree contains [red]{replacement_count}[/red] events")
+                else:
+                    console.print("[yellow]No replacement event found - this was a deletion[/yellow]")
+                    replacement_graph = {}
+                    replacement_count = 0
+                
+                # Step 3: Build dependency graph for archived subtree if cascade is enabled
+                if cascade:
+                    # Find all related archived events that should be restored together
+                    archived_graph = build_archived_dependency_graph(cur, event_id)
+                    archived_count = sum(len(events) for events in archived_graph.values())
+                    console.print(f"Archived subtree contains [green]{archived_count}[/green] events")
+                else:
+                    archived_graph = {0: [archived_event]}
+                    archived_count = 1
+                
+                # Step 4: Show impact analysis
+                console.print(f"\n[bold]Restore Impact Analysis:[/bold]")
+                console.print(f"  Events to restore: [green]{archived_count}[/green]")
+                console.print(f"  Events to archive: [red]{replacement_count}[/red]")
+                console.print(f"  Net change: [{'green' if archived_count >= replacement_count else 'red'}]{archived_count - replacement_count:+d}[/{'green' if archived_count >= replacement_count else 'red'}] events")
+                
+                if dry_run:
+                    console.print(f"\n[yellow]🔍 Dry run completed - no changes made[/yellow]")
+                    return
+                
+                # Step 5: Confirmation
+                if not force:
+                    console.print(f"\n[bold red]⚠️  This will permanently modify the event database![/bold red]")
+                    if not click.confirm("Continue with restore?"):
+                        console.print("[yellow]Restore cancelled[/yellow]")
+                        return
+                
+                # Step 6: Execute restore transaction
+                console.print(f"\n[bold]Executing restore transaction...[/bold]")
+                execute_restore(cur, archived_graph, replacement_graph, event_id)
+                
+                console.print(f"[green]✅ Restore completed successfully![/green]")
+                console.print(f"[green]✅ Restored {archived_count} events, archived {replacement_count} events[/green]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Restore failed: {e}[/red]")
+        sys.exit(1)
+
+
+def build_archived_dependency_graph(cur, root_event_id: str) -> Dict[int, List[Dict]]:
+    """Build dependency graph for archived events starting from root event."""
+    # For now, implement simple single-event restore
+    # Can be enhanced later for full dependency tracking
+    cur.execute("""
+        SELECT id, source, event_type, ts_orig, superseded_by_event_id, archive_reason
+        FROM audit.archived_events 
+        WHERE event_id = %s
+    """, [root_event_id])
+    
+    event = cur.fetchone()
+    if event:
+        return {0: [dict(event)]}
+    return {}
+
+
+def execute_restore(cur, archived_graph: Dict[int, List[Dict]], replacement_graph: Dict[int, List[Dict]], event_id: str):
+    """Execute the atomic restore operation."""
+    try:
+        # Begin transaction
+        cur.execute("BEGIN")
+        
+        # Step 1: Archive the replacement subtree (if it exists)
+        if replacement_graph:
+            console.print("  Archiving replacement subtree...")
+            for level in sorted(replacement_graph.keys(), reverse=True):
+                events = replacement_graph[level]
+                if not events:
+                    continue
+                
+                event_ids = [event['id'] for event in events]
+                
+                # Set archive metadata
+                cur.execute("""
+                    SELECT raw.set_archive_metadata(
+                        'restore_coordinator', 
+                        'Archived during restore operation',
+                        %s
+                    )
+                """, [event_id])
+                
+                # Archive events
+                for event_id_to_archive in event_ids:
+                    cur.execute("DELETE FROM core.events WHERE event_id = %s", [event_id_to_archive])
+        
+        # Step 2: Restore the archived subtree
+        console.print("  Restoring archived subtree...")
+        for level in sorted(archived_graph.keys()):
+            events = archived_graph[level]
+            if not events:
+                continue
+                
+            for event in events:
+                # Use the restore function from the database
+                cur.execute("""
+                    SELECT audit.restore_archived_event(%s)
+                """, [event['id']])
+        
+        # Commit transaction
+        cur.execute("COMMIT")
+        console.print("  ✅ Restore transaction committed")
+        
+    except Exception as e:
+        cur.execute("ROLLBACK")
+        raise Exception(f"Restore transaction failed: {e}")
+
+
+@cli.group()
+def explore():
+    """Satellite exploration and diagnostic commands."""
+    pass
+
+
+@explore.command('coverage')
+@click.option('--satellite', '-s', help='Satellite name (e.g., fs-watcher, terminal-satellite)')
+@click.option('--time-range', '-t', default='1d', help='Time range to analyze (e.g., 1d, 12h, 2w)')
+@click.option('--source', help='Filter by specific source within satellite')
+@click.pass_context
+def explore_coverage(ctx, satellite: Optional[str], time_range: str, source: Optional[str]):
+    """Analyze coverage and identify ingestion gaps."""
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Explore commands require direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        since_dt = datetime.utcnow() - parse_time_delta(time_range)
+        
+        console.print(f"[bold blue]🔍 Sinex Coverage Analysis[/bold blue]")
+        console.print(f"Time range: [yellow]{since_dt.isoformat()}[/yellow] to [yellow]{datetime.utcnow().isoformat()}[/yellow]")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Build query conditions
+                conditions = ["ts_orig >= %s"]
+                params = [since_dt]
+                
+                if satellite:
+                    # Map satellite name to source pattern
+                    satellite_patterns = {
+                        'fs-watcher': 'fs-%',
+                        'terminal-satellite': 'terminal-%', 
+                        'desktop-satellite': 'desktop-%',
+                        'system-satellite': 'system-%',
+                    }
+                    
+                    pattern = satellite_patterns.get(satellite, f"{satellite}-%")
+                    conditions.append("source LIKE %s")
+                    params.append(pattern)
+                
+                if source:
+                    conditions.append("source = %s")
+                    params.append(source)
+                
+                # Event count analysis
+                cur.execute(f"""
+                    SELECT 
+                        source,
+                        COUNT(*) as event_count,
+                        MIN(ts_orig) as first_event,
+                        MAX(ts_orig) as last_event,
+                        COUNT(DISTINCT event_type) as event_types
+                    FROM core.events
+                    WHERE {' AND '.join(conditions)}
+                    GROUP BY source
+                    ORDER BY event_count DESC
+                """, params)
+                
+                results = cur.fetchall()
+                
+                if not results:
+                    console.print("[yellow]No events found matching criteria[/yellow]")
+                    return
+                
+                # Display results
+                table = Table(title="Coverage Analysis")
+                table.add_column("Source", style="cyan")
+                table.add_column("Events", justify="right", style="green")
+                table.add_column("Types", justify="right", style="blue")
+                table.add_column("First Event", style="dim")
+                table.add_column("Last Event", style="dim")
+                table.add_column("Duration", style="yellow")
+                
+                for row in results:
+                    duration = row['last_event'] - row['first_event']
+                    table.add_row(
+                        row['source'],
+                        str(row['event_count']),
+                        str(row['event_types']),
+                        row['first_event'].strftime('%Y-%m-%d %H:%M'),
+                        row['last_event'].strftime('%Y-%m-%d %H:%M'),
+                        str(duration)
+                    )
+                
+                console.print(table)
+                
+                # Gap analysis
+                console.print(f"\n[bold]Gap Analysis:[/bold]")
+                total_duration = datetime.utcnow() - since_dt
+                
+                for row in results:
+                    source_duration = row['last_event'] - row['first_event']
+                    coverage_pct = (source_duration.total_seconds() / total_duration.total_seconds()) * 100
+                    
+                    if coverage_pct < 80:
+                        console.print(f"  [yellow]⚠️  {row['source']}: {coverage_pct:.1f}% coverage[/yellow]")
+                    else:
+                        console.print(f"  [green]✅ {row['source']}: {coverage_pct:.1f}% coverage[/green]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Coverage analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@explore.command('source-state')
+@click.option('--satellite', '-s', required=True, help='Satellite name (e.g., fs-watcher, terminal-satellite)')
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed source state information')
+@click.pass_context
+def explore_source_state(ctx, satellite: str, verbose: bool):
+    """Inspect current source state for a satellite."""
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Explore commands require direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        console.print(f"[bold blue]🔍 Sinex Source State Analysis[/bold blue]")
+        console.print(f"Satellite: [cyan]{satellite}[/cyan]")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Get automaton checkpoint for this satellite
+                cur.execute("""
+                    SELECT 
+                        automaton_name,
+                        last_processed_id,
+                        processed_count,
+                        last_activity,
+                        state_data
+                    FROM core.automaton_checkpoints
+                    WHERE automaton_name LIKE %s
+                    ORDER BY last_activity DESC
+                """, [f"%{satellite}%"])
+                
+                checkpoints = cur.fetchall()
+                
+                if not checkpoints:
+                    console.print(f"[yellow]No checkpoint found for satellite '{satellite}'[/yellow]")
+                    return
+                
+                console.print(f"\n[bold]Checkpoint Status:[/bold]")
+                
+                for checkpoint in checkpoints:
+                    console.print(f"  [cyan]{checkpoint['automaton_name']}[/cyan]")
+                    console.print(f"    Last processed: {checkpoint['last_processed_id'] or 'None'}")
+                    console.print(f"    Processed count: {checkpoint['processed_count']}")
+                    console.print(f"    Last activity: {checkpoint['last_activity']}")
+                    
+                    if verbose and checkpoint['state_data']:
+                        console.print(f"    State data: {JSON(checkpoint['state_data'])}")
+                    
+                    console.print()
+                
+                # Get recent events from this satellite
+                satellite_pattern = f"%{satellite}%"
+                cur.execute("""
+                    SELECT 
+                        source,
+                        event_type,
+                        ts_orig,
+                        payload
+                    FROM core.events
+                    WHERE source LIKE %s
+                    ORDER BY ts_orig DESC
+                    LIMIT 10
+                """, [satellite_pattern])
+                
+                recent_events = cur.fetchall()
+                
+                if recent_events:
+                    console.print(f"[bold]Recent Events (last 10):[/bold]")
+                    table = Table()
+                    table.add_column("Source", style="cyan")
+                    table.add_column("Event Type", style="blue")
+                    table.add_column("Timestamp", style="dim")
+                    table.add_column("Payload Preview", style="dim")
+                    
+                    for event in recent_events:
+                        payload_preview = str(event['payload'])[:50] + "..." if len(str(event['payload'])) > 50 else str(event['payload'])
+                        table.add_row(
+                            event['source'],
+                            event['event_type'],
+                            event['ts_orig'].strftime('%Y-%m-%d %H:%M:%S'),
+                            payload_preview
+                        )
+                    
+                    console.print(table)
+                
+    except Exception as e:
+        console.print(f"[red]❌ Source state analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@explore.command('missing-events')
+@click.option('--satellite', '-s', help='Satellite name to analyze')
+@click.option('--time-range', '-t', default='1h', help='Time range to check for missing events')
+@click.pass_context
+def explore_missing_events(ctx, satellite: Optional[str], time_range: str):
+    """Detect potential missing events by analyzing patterns."""
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Explore commands require direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        since_dt = datetime.utcnow() - parse_time_delta(time_range)
+        
+        console.print(f"[bold blue]🔍 Missing Events Analysis[/bold blue]")
+        console.print(f"Time range: [yellow]{since_dt.isoformat()}[/yellow] to [yellow]{datetime.utcnow().isoformat()}[/yellow]")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Look for gaps in time series data
+                conditions = ["ts_orig >= %s"]
+                params = [since_dt]
+                
+                if satellite:
+                    satellite_patterns = {
+                        'fs-watcher': 'fs-%',
+                        'terminal-satellite': 'terminal-%', 
+                        'desktop-satellite': 'desktop-%',
+                        'system-satellite': 'system-%',
+                    }
+                    
+                    pattern = satellite_patterns.get(satellite, f"{satellite}-%")
+                    conditions.append("source LIKE %s")
+                    params.append(pattern)
+                
+                # Find time gaps larger than expected
+                cur.execute(f"""
+                    WITH time_gaps AS (
+                        SELECT 
+                            source,
+                            ts_orig,
+                            LAG(ts_orig) OVER (PARTITION BY source ORDER BY ts_orig) as prev_ts,
+                            ts_orig - LAG(ts_orig) OVER (PARTITION BY source ORDER BY ts_orig) as time_gap
+                        FROM core.events
+                        WHERE {' AND '.join(conditions)}
+                    )
+                    SELECT 
+                        source,
+                        prev_ts,
+                        ts_orig,
+                        time_gap
+                    FROM time_gaps
+                    WHERE time_gap > interval '10 minutes'
+                    ORDER BY time_gap DESC
+                    LIMIT 20
+                """, params)
+                
+                gaps = cur.fetchall()
+                
+                if gaps:
+                    console.print(f"\n[bold]Significant Time Gaps (>10 minutes):[/bold]")
+                    table = Table()
+                    table.add_column("Source", style="cyan")
+                    table.add_column("Gap Start", style="dim")
+                    table.add_column("Gap End", style="dim")
+                    table.add_column("Duration", style="red")
+                    
+                    for gap in gaps:
+                        table.add_row(
+                            gap['source'],
+                            gap['prev_ts'].strftime('%Y-%m-%d %H:%M:%S'),
+                            gap['ts_orig'].strftime('%Y-%m-%d %H:%M:%S'),
+                            str(gap['time_gap'])
+                        )
+                    
+                    console.print(table)
+                else:
+                    console.print("[green]✅ No significant time gaps detected[/green]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Missing events analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@explore.command('curate')
+@click.option('--time-range', '-t', default='1d', help='Time range to analyze for duplicates (e.g., 1d, 12h, 2w)')
+@click.option('--source', '-s', help='Filter by specific source')
+@click.option('--event-type', '-e', help='Filter by specific event type')
+@click.option('--limit', '-n', default=50, help='Maximum number of duplicate groups to show')
+@click.option('--auto-resolve', is_flag=True, help='Automatically resolve obvious duplicates without prompting')
+@click.pass_context
+def explore_curate(ctx, time_range: str, source: Optional[str], event_type: Optional[str], 
+                  limit: int, auto_resolve: bool):
+    """Interactive curation mode for resolving data ambiguities and duplicates.
+    
+    This command analyzes your data for logical duplicates, timing inconsistencies,
+    and other anomalies, then provides an interactive menu to resolve them using
+    the surgical event archive command.
+    
+    Examples:
+        exo explore curate --time-range 1d
+        exo explore curate --source terminal-satellite --auto-resolve
+        exo explore curate --event-type command.executed --limit 20
+    """
+    import getpass
+    import json
+    from collections import defaultdict
+    
+    use_db = ctx.obj.get('use_db', False)
+    
+    if not use_db:
+        console.print("[red]Error: Explore curate command requires direct database access. Use --use-db flag.[/red]")
+        sys.exit(1)
+    
+    try:
+        since_dt = datetime.utcnow() - parse_time_delta(time_range)
+        
+        console.print(f"[bold blue]🔍 Sinex Data Curation Analysis[/bold blue]")
+        console.print(f"Time range: [yellow]{since_dt.isoformat()}[/yellow] to [yellow]{datetime.utcnow().isoformat()}[/yellow]")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Build query conditions
+                conditions = ["ts_orig >= %s"]
+                params = [since_dt]
+                
+                if source:
+                    conditions.append("source = %s")
+                    params.append(source)
+                
+                if event_type:
+                    conditions.append("event_type = %s")
+                    params.append(event_type)
+                
+                where_clause = " AND ".join(conditions)
+                
+                # Find potential duplicates based on several criteria
+                console.print("\n[bold]Searching for potential duplicates...[/bold]")
+                
+                # 1. Exact payload duplicates within short time windows
+                cur.execute(f"""
+                    WITH duplicate_groups AS (
+                        SELECT 
+                            source, event_type, payload::text as payload_text,
+                            array_agg(event_id ORDER BY ts_orig) as event_ids,
+                            array_agg(ts_orig ORDER BY ts_orig) as timestamps,
+                            COUNT(*) as dup_count,
+                            MAX(ts_orig) - MIN(ts_orig) as time_spread
+                        FROM core.events 
+                        WHERE {where_clause}
+                        GROUP BY source, event_type, payload::text
+                        HAVING COUNT(*) > 1 
+                           AND MAX(ts_orig) - MIN(ts_orig) < INTERVAL '5 minutes'
+                    )
+                    SELECT * FROM duplicate_groups 
+                    ORDER BY dup_count DESC, time_spread ASC
+                    LIMIT %s
+                """, params + [limit])
+                
+                duplicate_groups = cur.fetchall()
+                
+                if not duplicate_groups:
+                    console.print("[green]✅ No exact payload duplicates found in the specified time range.[/green]")
+                    
+                    # Look for near-duplicates (same type, source, similar timestamps)
+                    console.print("\n[bold]Searching for near-duplicates...[/bold]")
+                    cur.execute(f"""
+                        WITH time_clusters AS (
+                            SELECT 
+                                source, event_type,
+                                event_id, ts_orig, payload,
+                                LAG(ts_orig) OVER (PARTITION BY source, event_type ORDER BY ts_orig) as prev_ts
+                            FROM core.events 
+                            WHERE {where_clause}
+                        ),
+                        near_duplicates AS (
+                            SELECT 
+                                source, event_type, event_id, ts_orig, payload,
+                                ts_orig - prev_ts as time_diff
+                            FROM time_clusters
+                            WHERE prev_ts IS NOT NULL 
+                              AND ts_orig - prev_ts < INTERVAL '30 seconds'
+                        )
+                        SELECT * FROM near_duplicates 
+                        ORDER BY time_diff ASC
+                        LIMIT %s
+                    """, params + [limit])
+                    
+                    near_duplicates = cur.fetchall()
+                    
+                    if not near_duplicates:
+                        console.print("[green]✅ No near-duplicates found either. Your data looks clean![/green]")
+                        return
+                    else:
+                        console.print(f"[yellow]Found {len(near_duplicates)} potential near-duplicates[/yellow]")
+                        
+                        # Show a few examples
+                        for i, dup in enumerate(near_duplicates[:5]):
+                            console.print(f"\n[dim]Near-duplicate {i+1}:[/dim]")
+                            console.print(f"  Source: [cyan]{dup['source']}[/cyan]")
+                            console.print(f"  Type: [cyan]{dup['event_type']}[/cyan]")
+                            console.print(f"  Time diff: [yellow]{dup['time_diff']}[/yellow]")
+                            console.print(f"  Event ID: {dup['event_id']}")
+                        
+                        if len(near_duplicates) > 5:
+                            console.print(f"  ... and {len(near_duplicates) - 5} more")
+                        
+                        console.print("\n[yellow]Use specific event IDs with 'exo event-archive' to remove individual duplicates.[/yellow]")
+                    return
+                
+                console.print(f"[yellow]Found {len(duplicate_groups)} duplicate groups[/yellow]")
+                
+                # Interactive resolution for each duplicate group
+                resolved_count = 0
+                for i, group in enumerate(duplicate_groups):
+                    console.print(f"\n[bold]Duplicate Group {i+1}/{len(duplicate_groups)}[/bold]")
+                    console.print(f"Source: [cyan]{group['source']}[/cyan]")
+                    console.print(f"Type: [cyan]{group['event_type']}[/cyan]")
+                    console.print(f"Count: [yellow]{group['dup_count']} events[/yellow]")
+                    console.print(f"Time spread: [yellow]{group['time_spread']}[/yellow]")
+                    
+                    # Show the events in this group
+                    event_ids = group['event_ids']
+                    timestamps = group['timestamps']
+                    
+                    console.print(f"\nEvents in this group:")
+                    for j, (event_id, ts) in enumerate(zip(event_ids, timestamps)):
+                        console.print(f"  {j+1}. {event_id} at {ts}")
+                    
+                    if auto_resolve and group['dup_count'] <= 5 and group['time_spread'].total_seconds() < 60:
+                        # Auto-resolve: keep the first event, archive the rest
+                        events_to_archive = event_ids[1:]  # Keep first, archive rest
+                        console.print(f"\n[green]Auto-resolving: keeping first event, archiving {len(events_to_archive)} duplicates[/green]")
+                        
+                        for event_id in events_to_archive:
+                            # Use the archive metadata function
+                            cur.execute(
+                                "SELECT core.set_archive_metadata(%s, %s, %s)",
+                                (getpass.getuser(), f"auto_curate: exact duplicate resolved", None)
+                            )
+                            cur.execute(
+                                "DELETE FROM core.events WHERE event_id = %s",
+                                (event_id,)
+                            )
+                        
+                        resolved_count += len(events_to_archive)
+                        continue
+                    
+                    # Interactive resolution
+                    console.print(f"\nResolution options:")
+                    console.print(f"  [P]refer event (choose which one to keep)")
+                    console.print(f"  [A]rchive all but first")
+                    console.print(f"  [S]kip this group")
+                    console.print(f"  [Q]uit curation")
+                    
+                    choice = click.prompt("Choose action", type=click.Choice(['P', 'A', 'S', 'Q'], case_sensitive=False))
+                    
+                    if choice.upper() == 'Q':
+                        break
+                    elif choice.upper() == 'S':
+                        continue
+                    elif choice.upper() == 'A':
+                        # Archive all but first
+                        events_to_archive = event_ids[1:]
+                        console.print(f"Archiving {len(events_to_archive)} duplicate events...")
+                        
+                        for event_id in events_to_archive:
+                            cur.execute(
+                                "SELECT core.set_archive_metadata(%s, %s, %s)",
+                                (getpass.getuser(), f"manual_curate: duplicate resolved", None)
+                            )
+                            cur.execute(
+                                "DELETE FROM core.events WHERE event_id = %s",
+                                (event_id,)
+                            )
+                        
+                        resolved_count += len(events_to_archive)
+                        console.print(f"[green]✅ Archived {len(events_to_archive)} events[/green]")
+                        
+                    elif choice.upper() == 'P':
+                        # Let user choose which event to prefer
+                        event_choice = click.prompt(
+                            f"Which event to keep? (1-{len(event_ids)})", 
+                            type=click.IntRange(1, len(event_ids))
+                        )
+                        
+                        preferred_event = event_ids[event_choice - 1]
+                        events_to_archive = [eid for j, eid in enumerate(event_ids) if j != (event_choice - 1)]
+                        
+                        console.print(f"Keeping {preferred_event}, archiving {len(events_to_archive)} others...")
+                        
+                        for event_id in events_to_archive:
+                            cur.execute(
+                                "SELECT core.set_archive_metadata(%s, %s, %s)",
+                                (getpass.getuser(), f"manual_curate: preferred {preferred_event}", None)
+                            )
+                            cur.execute(
+                                "DELETE FROM core.events WHERE event_id = %s",
+                                (event_id,)
+                            )
+                        
+                        resolved_count += len(events_to_archive)
+                        console.print(f"[green]✅ Archived {len(events_to_archive)} events[/green]")
+                
+                # Summary
+                console.print(f"\n[bold green]Curation completed![/bold green]")
+                console.print(f"Resolved events: {resolved_count}")
+                
+                if resolved_count > 0:
+                    console.print(f"[dim]Use 'exo query --source audit.archived_events' to see archived events[/dim]")
+                
+    except Exception as e:
+        console.print(f"[red]❌ Curation analysis failed: {e}[/red]")
         sys.exit(1)
 
 

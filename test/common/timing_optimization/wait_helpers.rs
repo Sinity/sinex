@@ -68,7 +68,7 @@ pub async fn wait_for_worker_processed_events(
 
     while start.elapsed() < timeout_duration {
         let processed_count = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM raw.events WHERE payload->>'processed_by' = $1",
+            "SELECT COUNT(*) FROM core.events WHERE payload->>'processed_by' = $1",
             worker_name
         )
         .fetch_one(pool)
@@ -104,7 +104,7 @@ pub async fn wait_for_filtered_event_count(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        let query = format!("SELECT COUNT(*) FROM raw.events WHERE {}", where_condition);
+        let query = format!("SELECT COUNT(*) FROM core.events WHERE {}", where_condition);
         let mut query_builder = sqlx::query_scalar::<_, i64>(&query);
 
         for param in params {

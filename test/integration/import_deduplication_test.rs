@@ -10,13 +10,8 @@
 use crate::common::prelude::*;
 use chrono::{TimeZone, Utc};
 use tracing::info;
-use sinex_core::{
-    CoreError, EventSource, EventSourceContext, ScannerArgs, ScanReport,
-    EventFactory,
-};
-use sinex_events_shell::{
-    AtuinHistoryImporter, ShellHistoryMonitor, ShellConfig,
-};
+use sinex_core::{CoreError, EventFactory};
+use sinex_satellite_sdk::{ScanArgs, ScanReport, EventSourceContext, EventSource, ScannerArgs};
 use sinex_annex::{BlobManager, AnnexConfig};
 use std::fs;
 use std::path::PathBuf;
@@ -316,7 +311,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
     
     // Manually verify we can detect the overlap in the database
     let existing_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'shell.history' AND event_type = 'command.imported'"
+        "SELECT COUNT(*) FROM core.events WHERE source = 'shell.history' AND event_type = 'command.imported'"
     )
     .fetch_one(ctx.pool())
     .await?
@@ -426,7 +421,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     
     // Verify both events exist but with different sources
     let total_events = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE payload->>'command_line' = $1",
+        "SELECT COUNT(*) FROM core.events WHERE payload->>'command_line' = $1",
         command
     )
     .fetch_one(ctx.pool())
@@ -437,7 +432,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     
     // Verify different source attribution
     let atuin_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'shell.atuin' AND payload->>'command_line' = $1",
+        "SELECT COUNT(*) FROM core.events WHERE source = 'shell.atuin' AND payload->>'command_line' = $1",
         command
     )
     .fetch_one(ctx.pool())
@@ -445,7 +440,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
     
     let shell_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'shell.history' AND payload->>'command_line' = $1", 
+        "SELECT COUNT(*) FROM core.events WHERE source = 'shell.history' AND payload->>'command_line' = $1", 
         command
     )
     .fetch_one(ctx.pool())

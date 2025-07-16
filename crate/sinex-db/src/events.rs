@@ -23,7 +23,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
     let record = sqlx::query!(
         r#"
         SELECT 
-            id::uuid as "id!", 
+            event_id::uuid as "id!", 
             source as "source!", 
             event_type as "event_type!", 
             ts_ingest as "ts_ingest!",
@@ -33,8 +33,8 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
             source_event_ids::uuid[] as "source_event_ids"
-        FROM raw.events 
-        WHERE id::uuid = $1
+        FROM core.events 
+        WHERE event_id::uuid = $1
         "#,
         event_uuid
     )
@@ -52,7 +52,7 @@ pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawE
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
         source_event_ids: record.source_event_ids.map(|ids| {
-            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+            ids.into_iter().map(uuid_to_ulid).collect()
         }),
     })
 }
@@ -78,10 +78,10 @@ pub async fn insert_event_with_validator(
 
     let record = sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, source_event_ids)
+        INSERT INTO core.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, source_event_ids)
         VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid[])
         RETURNING 
-            id::uuid as "id!", 
+            event_id::uuid as "id!", 
             source as "source!", 
             event_type as "event_type!", 
             ts_ingest as "ts_ingest!",
@@ -115,14 +115,14 @@ pub async fn insert_event_with_validator(
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
         source_event_ids: record.source_event_ids.map(|ids| {
-            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+            ids.into_iter().map(uuid_to_ulid).collect()
         }),
     })
 }
 
 /// Count total number of events in the database
 pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
-    let record = sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
+    let record = sqlx::query!("SELECT COUNT(*) as count FROM core.events")
         .fetch_one(pool)
         .await?;
 
@@ -152,10 +152,10 @@ pub async fn insert_event_with_blob(
 
     let record = sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, blob_id, source_event_ids)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9::uuid[])
+        INSERT INTO core.events (source, event_type, host, payload, ts_orig, ingestor_version, payload_schema_id, associated_blob_ids, source_event_ids)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, ARRAY[$8::uuid], $9::uuid[])
         RETURNING 
-            id::uuid as "id!", 
+            event_id::uuid as "id!", 
             source as "source!", 
             event_type as "event_type!", 
             ts_ingest as "ts_ingest!",
@@ -164,7 +164,7 @@ pub async fn insert_event_with_blob(
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            blob_id::uuid as "blob_id",
+            associated_blob_ids::uuid[] as "associated_blob_ids",
             source_event_ids::uuid[] as "source_event_ids"
         "#,
         event.source,
@@ -191,7 +191,7 @@ pub async fn insert_event_with_blob(
         payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
         payload: record.payload,
         source_event_ids: record.source_event_ids.map(|ids| {
-            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+            ids.into_iter().map(uuid_to_ulid).collect()
         }),
     })
 }
@@ -208,7 +208,7 @@ pub async fn get_events_with_blobs(
     let records = sqlx::query!(
         r#"
         SELECT 
-            id::uuid as "id!", 
+            event_id::uuid as "id!", 
             source as "source!", 
             event_type as "event_type!", 
             ts_ingest as "ts_ingest!",
@@ -217,10 +217,10 @@ pub async fn get_events_with_blobs(
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            blob_id::uuid as "blob_id!",
+            associated_blob_ids::uuid[] as "associated_blob_ids!",
             source_event_ids::uuid[] as "source_event_ids"
-        FROM raw.events 
-        WHERE blob_id IS NOT NULL
+        FROM core.events 
+        WHERE associated_blob_ids IS NOT NULL
         ORDER BY ts_ingest DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -244,10 +244,10 @@ pub async fn get_events_with_blobs(
                 payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
                 payload: record.payload,
                 source_event_ids: record.source_event_ids.map(|ids| {
-            ids.into_iter().map(|id| uuid_to_ulid(id)).collect()
+            ids.into_iter().map(uuid_to_ulid).collect()
         }),
             };
-            let blob_id = uuid_to_ulid(record.blob_id);
+            let blob_id = uuid_to_ulid(record.associated_blob_ids[0]);
             (event, blob_id)
         })
         .collect();
@@ -265,7 +265,7 @@ pub async fn attach_blob_to_event(
     let blob_uuid = ulid_to_uuid(blob_id);
 
     sqlx::query!(
-        "UPDATE raw.events SET blob_id = $2::uuid WHERE id::uuid = $1",
+        "UPDATE core.events SET associated_blob_ids = ARRAY[$2::uuid] WHERE event_id::uuid = $1",
         event_uuid,
         blob_uuid
     )
@@ -280,7 +280,7 @@ pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> Resu
     let event_uuid = ulid_to_uuid(event_id);
 
     sqlx::query!(
-        "UPDATE raw.events SET blob_id = NULL WHERE id::uuid = $1",
+        "UPDATE core.events SET associated_blob_ids = NULL WHERE event_id::uuid = $1",
         event_uuid
     )
     .execute(pool)

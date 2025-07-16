@@ -59,9 +59,9 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
                 let extra_data = "y".repeat(100 * 1024 * 1024); // 100MB more
                 let update_result = sqlx::query!(
                     r#"
-                    UPDATE raw.events
+                    UPDATE core.events
                     SET payload = payload || jsonb_build_object('extra_data', $2::text)
-                    WHERE id::uuid = $1::uuid
+                    WHERE event_id::uuid = $1::uuid
                     "#,
                     event.id.to_uuid(),
                     extra_data
@@ -235,13 +235,13 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     // Test increasingly complex queries
     let complex_queries = vec![
         // Simple query
-        ("SELECT COUNT(*) FROM raw.events WHERE source = 'complexity_test'", "simple_count"),
+        ("SELECT COUNT(*) FROM core.events WHERE source = 'complexity_test'", "simple_count"),
         
         // Complex aggregation
-        ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM raw.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
+        ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM core.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
         
         // Very complex query with multiple joins and subqueries
-        ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM raw.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM raw.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
+        ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM core.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM core.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
     ];
 
     for (query, description) in complex_queries {
@@ -608,7 +608,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
                 .fetch_one(pool)
@@ -679,7 +679,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
                 .fetch_one(pool)

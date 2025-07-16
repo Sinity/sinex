@@ -63,7 +63,7 @@ impl DbusWatcher {
 
         loop {
             let mut child = Command::new("dbus-monitor")
-                .args(&["--session"])
+                .args(["--session"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -124,7 +124,7 @@ impl DbusWatcher {
 
         loop {
             let mut child = Command::new("dbus-monitor")
-                .args(&["--system"])
+                .args(["--system"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()

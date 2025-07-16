@@ -162,7 +162,7 @@ impl HistoryWatcher {
         });
 
         RawEventBuilder::new(source_name, "command.hist", payload)
-            .with_host("localhost") // TODO: Get actual hostname
+            .with_host(std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string()))
             .build()
     }
 

@@ -129,17 +129,17 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
     // CRITICAL: Test various SQL injection patterns
     let injection_patterns = vec![
         // Classic SQL injection attempts
-        "'; DROP TABLE raw.events; --",
+        "'; DROP TABLE core.events; --",
         "' OR '1'='1",
         "\" OR \"1\"=\"1",
-        "1; DELETE FROM raw.events WHERE 1=1; --",
+        "1; DELETE FROM core.events WHERE 1=1; --",
         "1' UNION SELECT * FROM pg_user --",
         // Attempting to break out of ILIKE
-        "%'; DROP TABLE raw.events; --",
-        "_'; UPDATE raw.events SET payload = '{}' WHERE '1'='1",
+        "%'; DROP TABLE core.events; --",
+        "_'; UPDATE core.events SET payload = '{}' WHERE '1'='1",
         // PostgreSQL specific injection attempts
-        "'; COPY raw.events TO '/tmp/stolen.csv'; --",
-        "'; CREATE TABLE hacked AS SELECT * FROM raw.events; --",
+        "'; COPY core.events TO '/tmp/stolen.csv'; --",
+        "'; CREATE TABLE hacked AS SELECT * FROM core.events; --",
         // Time-based blind SQL injection
         "' OR pg_sleep(10) --",
         "'; SELECT CASE WHEN (1=1) THEN pg_sleep(10) ELSE pg_sleep(0) END--",
@@ -164,7 +164,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
         assert!(result.is_ok(), "Search failed for pattern: {}", pattern);
 
         // Verify the database wasn't corrupted
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM raw.events")
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
             .fetch_one(pool)
             .await?;
         assert!(
@@ -187,7 +187,7 @@ async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
     // Test SQL injection in source filter
     let query = SearchQuery {
         text: None,
-        sources: vec!["fs'; DROP TABLE raw.events; --".to_string()],
+        sources: vec!["fs'; DROP TABLE core.events; --".to_string()],
         event_types: vec![],
         start_time: None,
         end_time: None,

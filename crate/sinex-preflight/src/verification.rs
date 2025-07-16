@@ -246,9 +246,9 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     // CREATE: Insert a test event
     let insert_result = sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload)
+        INSERT INTO core.events (source, event_type, host, payload)
         VALUES ($1, $2, $3, $4)
-        RETURNING id::uuid as "id!"
+        RETURNING event_id::uuid as "id!"
         "#,
         test_source,
         test_event_type,
@@ -263,7 +263,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 
     // READ: Query the test event
     let read_result = sqlx::query!(
-        "SELECT id::uuid as \"id!\", source, event_type, payload FROM raw.events WHERE id = $1::uuid::ulid",
+        "SELECT event_id::uuid as \"id!\", source, event_type, payload FROM core.events WHERE event_id = $1::uuid::ulid",
         ulid_to_uuid(inserted_id)
     )
     .fetch_optional(pool)
@@ -282,7 +282,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 
     // UPDATE: Modify the test event payload
     let update_result = sqlx::query!(
-        "UPDATE raw.events SET payload = $1 WHERE id = $2::uuid::ulid",
+        "UPDATE core.events SET payload = $1 WHERE event_id = $2::uuid::ulid",
         json!({"test": "crud_operations", "operation": "update", "modified": true}),
         ulid_to_uuid(inserted_id)
     )
@@ -299,7 +299,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
 
     // DELETE: Remove the test event
     let delete_result = sqlx::query!(
-        "DELETE FROM raw.events WHERE id = $1::uuid::ulid",
+        "DELETE FROM core.events WHERE event_id = $1::uuid::ulid",
         ulid_to_uuid(inserted_id)
     )
     .execute(pool)
@@ -316,7 +316,7 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     // Verify deletion
     let id_as_uuid = ulid_to_uuid(inserted_id);
     let verify_result = sqlx::query!(
-        "SELECT id::uuid as \"id!\" FROM raw.events WHERE id::uuid = $1",
+        "SELECT event_id::uuid as \"id!\" FROM core.events WHERE event_id::uuid = $1",
         id_as_uuid
     )
     .fetch_optional(pool)
@@ -345,7 +345,7 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload)
+        INSERT INTO core.events (source, event_type, host, payload)
         VALUES ($1, $2, $3, $4)
         "#,
         "sinex-preflight-tx-test",
@@ -361,7 +361,7 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     // Verify committed transaction exists (we can't predict the auto-generated ID)
     let committed_event = sqlx::query!(
-        "SELECT COUNT(*) as count FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "SELECT COUNT(*) as count FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
         "sinex-preflight-tx-test",
         "verification.transaction_test", 
         "commit"
@@ -382,7 +382,7 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     sqlx::query!(
         r#"
-        INSERT INTO raw.events (source, event_type, host, payload)
+        INSERT INTO core.events (source, event_type, host, payload)
         VALUES ($1, $2, $3, $4)
         "#,
         "sinex-preflight-tx-test",
@@ -400,7 +400,7 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     // Verify rolled back transaction doesn't exist
     let rollback_event = sqlx::query!(
-        "SELECT COUNT(*) as count FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "SELECT COUNT(*) as count FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
         "sinex-preflight-tx-test",
         "verification.transaction_test",
         "rollback"
@@ -415,7 +415,7 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
 
     // Cleanup committed event
     sqlx::query!(
-        "DELETE FROM raw.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
+        "DELETE FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
         "sinex-preflight-tx-test",
         "verification.transaction_test",
         "commit"
@@ -439,9 +439,9 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
         join_set.spawn(async move {
             let result = sqlx::query!(
                 r#"
-                INSERT INTO raw.events (source, event_type, host, payload)
+                INSERT INTO core.events (source, event_type, host, payload)
                 VALUES ($1, $2, $3, $4)
-                RETURNING id::uuid as "id!"
+                RETURNING event_id::uuid as "id!"
                 "#,
                 "sinex-preflight-concurrent-test",
                 "verification.concurrent_test",
@@ -476,7 +476,7 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
 
     // Cleanup test events using source and event_type filter
     sqlx::query!(
-        "DELETE FROM raw.events WHERE source = $1 AND event_type = $2",
+        "DELETE FROM core.events WHERE source = $1 AND event_type = $2",
         "sinex-preflight-concurrent-test",
         "verification.concurrent_test"
     )
@@ -669,9 +669,9 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
     for i in 0..event_count {
         let result = sqlx::query!(
             r#"
-            INSERT INTO raw.events (source, event_type, host, payload)
+            INSERT INTO core.events (source, event_type, host, payload)
             VALUES ($1, $2, $3, $4)
-            RETURNING id::uuid as "id!"
+            RETURNING event_id::uuid as "id!"
             "#,
             "sinex-preflight-pipeline-test",
             "verification.ingestion_test",
@@ -691,7 +691,7 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     // Verify all events were inserted
     let count_result = sqlx::query!(
-        "SELECT COUNT(*) as count FROM raw.events WHERE source = $1",
+        "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
         "sinex-preflight-pipeline-test"
     )
     .fetch_one(pool)
@@ -702,7 +702,7 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     // Cleanup test events using source filter (more efficient)
     sqlx::query!(
-        "DELETE FROM raw.events WHERE source = $1",
+        "DELETE FROM core.events WHERE source = $1",
         "sinex-preflight-pipeline-test"
     )
     .execute(pool)
@@ -781,7 +781,7 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
             }))
         }
         Err(e) => {
-            return Err(anyhow::anyhow!("Automaton checkpoint insert test failed: {}", e));
+            Err(anyhow::anyhow!("Automaton checkpoint insert test failed: {}", e))
         }
     }
 }
@@ -857,7 +857,7 @@ async fn test_database_performance(pool: &PgPool) -> Result<Value> {
     for _ in 0..query_count {
         let query_start = Instant::now();
 
-        sqlx::query!("SELECT COUNT(*) as count FROM raw.events")
+        sqlx::query!("SELECT COUNT(*) as count FROM core.events")
             .fetch_one(pool)
             .await
             .context("Performance test query failed")?;

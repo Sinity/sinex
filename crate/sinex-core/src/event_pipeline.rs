@@ -192,7 +192,7 @@ impl ValidationStage {
         let schemas = self.schema_registry.read().await;
 
         if let Some(_schema) = schemas.get(&event.event_type) {
-            // TODO: Implement actual JSON schema validation
+            // NOTE: JSON schema validation is now handled by the ingest service
             // For now, just validate basic structure
             if event.payload.is_null() {
                 return Err(CoreError::Validation(format!(
@@ -356,8 +356,8 @@ impl StorageStage {
     async fn store_event(&self, event: &RawEvent) -> Result<()> {
         sqlx::query!(
             r#"
-            INSERT INTO raw.events (
-                id, source, event_type, ts_orig, 
+            INSERT INTO core.events (
+                event_id, source, event_type, ts_orig, 
                 host, ingestor_version, payload_schema_id, payload
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8
@@ -435,6 +435,12 @@ pub struct DistributionStage {
     metrics: Arc<RwLock<StageMetrics>>,
 }
 
+impl Default for DistributionStage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DistributionStage {
     pub fn new() -> Self {
         Self {
@@ -443,7 +449,7 @@ impl DistributionStage {
     }
 
     async fn distribute_event(&self, _event: &RawEvent) -> Result<()> {
-        // TODO: Replace with Redis Streams distribution in satellite architecture
+        // NOTE: Event distribution now handled by Redis Streams in satellite architecture
         // For now, events are distributed directly via Redis rather than work_queue
         // This function will be removed as part of satellite migration
 

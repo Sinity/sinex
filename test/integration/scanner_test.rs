@@ -8,14 +8,8 @@
 
 use crate::common::prelude::*;
 use chrono::{TimeZone, Utc};
-use sinex_core::{
-    CoreError, EventSource, EventSourceContext, ScannerArgs, ScanReport,
-    EventFactory,
-};
-use sinex_events_fs::filesystem::FilesystemMonitor;
-use sinex_events_shell::{
-    AtuinHistoryImporter, ShellHistoryMonitor,
-};
+use sinex_core::{CoreError, EventFactory};
+use sinex_satellite_sdk::{ScanArgs, ScanReport, EventSourceContext, EventSource, ScannerArgs};
 use std::fs;
 use std::path::PathBuf;
 use std::collections::HashMap;

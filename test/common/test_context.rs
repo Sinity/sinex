@@ -30,6 +30,7 @@ use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use redis::aio::MultiplexedConnection;
 
 /// Event builder factory for fluent API access
 pub struct EventBuilderFactory;
@@ -104,6 +105,8 @@ pub struct TestContext {
     start_time: Instant,
     /// Track events created in this test
     created_events: Arc<Mutex<Vec<Ulid>>>,
+    /// Redis connection for stream testing
+    redis_client: Option<redis::Client>,
 }
 
 impl TestContext {
@@ -121,6 +124,7 @@ impl TestContext {
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            redis_client: None,
         })
     }
 
@@ -131,6 +135,7 @@ impl TestContext {
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            redis_client: None,
         })
     }
 
@@ -172,7 +177,30 @@ impl TestContext {
 
     /// Get a temporary work directory for this test
     pub fn work_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from("/tmp/sinex-test").join(&self.config.test_name)
+        let dir = std::path::PathBuf::from("/tmp/sinex-test").join(&self.config.test_name);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    // ===== Redis Operations =====
+
+    /// Get or create Redis connection
+    pub async fn redis(&self) -> Result<MultiplexedConnection> {
+        let client = match &self.redis_client {
+            Some(client) => client.clone(),
+            None => {
+                let redis_url = std::env::var("REDIS_URL")
+                    .unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string());
+                redis::Client::open(redis_url)?
+            }
+        };
+        Ok(client.get_multiplexed_async_connection().await?)
+    }
+
+    /// Initialize Redis client for testing
+    pub fn with_redis_url(mut self, redis_url: &str) -> Result<Self> {
+        self.redis_client = Some(redis::Client::open(redis_url)?);
+        Ok(self)
     }
 
     // ===== Database Operations =====
@@ -211,7 +239,7 @@ impl TestContext {
             .unwrap_or_else(|| "unknown".to_string());
         eprintln!("  [event_count] Querying database: {}", db_name);
 
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
             .fetch_one(self.pool())
             .await?;
         Ok(count.unwrap_or(0))
@@ -226,7 +254,7 @@ impl TestContext {
     pub async fn get_event_by_id(&self, id: Ulid) -> Result<Option<DbRawEvent>> {
         let event = sqlx::query!(
             r#"SELECT 
-                id::uuid as "id!",
+                event_id::uuid as "id!",
                 source,
                 event_type,
                 payload,
@@ -235,7 +263,7 @@ impl TestContext {
                 host,
                 ingestor_version,
                 payload_schema_id::uuid
-            FROM raw.events WHERE id::uuid = $1"#,
+            FROM core.events WHERE event_id::uuid = $1"#,
             id.to_uuid()
         )
         .fetch_optional(self.pool())
@@ -250,6 +278,7 @@ impl TestContext {
             host: row.host,
             ingestor_version: row.ingestor_version,
             payload_schema_id: row.payload_schema_id.map(uuid_to_ulid),
+            source_event_ids: None,
         });
         Ok(event)
     }
@@ -357,7 +386,7 @@ impl TestContext {
 
             while attempt < max_attempts {
                 tokio::time::sleep(Duration::from_millis(5)).await;
-                let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
+                let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
                     .fetch_one(&pool_clone)
                     .await
                     .map(|c| c.unwrap_or(0))
@@ -415,15 +444,12 @@ impl TestContext {
     /// Wait for Redis stream to contain expected number of messages
     pub async fn wait_for_redis_stream_length(
         &self,
-        redis_url: &str,
         stream_key: &str,
         expected: usize,
     ) -> TestResult {
-        use redis::{AsyncCommands, Client};
+        use redis::AsyncCommands;
         
-        let client = Client::open(redis_url)?;
-        let mut conn = redis::aio::ConnectionManager::new(client).await?;
-        
+        let mut conn = self.redis().await?;
         let timeout = self.config.default_timeout;
         let start = std::time::Instant::now();
         
@@ -445,6 +471,64 @@ impl TestContext {
             
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    /// Publish event to Redis stream
+    pub async fn publish_to_redis_stream(
+        &self,
+        stream_key: &str,
+        event: &RawEvent,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        use redis::AsyncCommands;
+        
+        let mut conn = self.redis().await?;
+        let event_json = serde_json::to_string(event)?;
+        
+        let message_id: String = conn
+            .xadd(
+                stream_key,
+                "*",
+                &[
+                    ("event", event_json),
+                    ("source", event.source.clone()),
+                    ("event_type", event.event_type.clone()),
+                    ("id", event.id.to_string()),
+                ],
+            )
+            .await?;
+            
+        Ok(message_id)
+    }
+
+    /// Consume from Redis stream using consumer group
+    pub async fn consume_from_redis_stream(
+        &self,
+        stream_key: &str,
+        group_name: &str,
+        consumer_name: &str,
+    ) -> Result<Vec<StreamMessage>, Box<dyn std::error::Error>> {
+        use redis::AsyncCommands;
+        
+        let mut conn = self.redis().await?;
+        
+        // Ensure consumer group exists
+        let _: Result<String, redis::RedisError> = conn
+            .xgroup_create(stream_key, group_name, "$")
+            .await;
+        
+        // Use xread for simplified testing since xreadgroup signature is different
+        let result: Vec<(String, Vec<(String, String)>)> = conn
+            .xread(&[(stream_key, "0")], Some(10))
+            .await?;
+        
+        let mut messages = Vec::new();
+        for (_stream, stream_messages) in result {
+            for (id, fields) in stream_messages {
+                messages.push(StreamMessage { id, fields });
+            }
+        }
+        
+        Ok(messages)
     }
 
     /// Wait for work queue to reach expected count
@@ -650,10 +734,192 @@ impl TestContext {
             .timestamp(timestamp)
             .build()
     }
+
+    // ===== Satellite Architecture Support =====
+
+    /// Start a test ingestd server
+    pub async fn start_test_ingestd(&self) -> Result<TestIngestdHandle, Box<dyn std::error::Error>> {
+        crate::common::satellite_test_utils::start_test_ingestd_with_config(
+            self,
+            crate::common::satellite_test_utils::TestIngestdConfig::default(),
+        )
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
+    /// Start a test satellite with configuration
+    pub async fn start_test_satellite(
+        &self,
+        config: sinex_satellite_sdk::config::SatelliteConfig,
+    ) -> Result<TestSatelliteHandle, Box<dyn std::error::Error>> {
+        crate::common::satellite_test_utils::TestSatelliteHandle::start(config, self.pool().clone())
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
+    /// Start a test automaton of specified type
+    pub async fn start_test_automaton(&self, automaton_type: &str) -> Result<TestAutomatonHandle, Box<dyn std::error::Error>> {
+        crate::common::satellite_test_utils::TestAutomatonHandle::start(
+            automaton_type,
+            self.pool().clone(),
+            self.redis().await?,
+        )
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
+    /// Wait for checkpoint to reach expected progress
+    pub async fn wait_for_checkpoint_progress(
+        &self,
+        automaton_name: &str,
+        expected_count: u64,
+    ) -> TestResult {
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let checkpoint = sqlx::query!(
+                "SELECT processed_count FROM core.automaton_checkpoints WHERE automaton_name = $1 ORDER BY last_activity DESC LIMIT 1",
+                automaton_name
+            )
+            .fetch_optional(self.pool())
+            .await?;
+            
+            if let Some(row) = checkpoint {
+                if row.processed_count >= expected_count as i64 {
+                    return Ok(());
+                }
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for automaton {} to reach count {}",
+                        automaton_name, expected_count
+                    ),
+                )));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Verify automaton checkpoint state
+    pub async fn verify_checkpoint(
+        &self,
+        automaton_name: &str,
+    ) -> Result<CheckpointState, Box<dyn std::error::Error>> {
+        let checkpoint = sqlx::query!(
+            r#"
+            SELECT 
+                last_processed_id,
+                processed_count,
+                last_activity,
+                state_data,
+                checkpoint_version,
+                checkpoint_data
+            FROM core.automaton_checkpoints
+            WHERE automaton_name = $1
+            ORDER BY last_activity DESC
+            LIMIT 1
+            "#,
+            automaton_name
+        )
+        .fetch_optional(self.pool())
+        .await?;
+
+        match checkpoint {
+            Some(row) => {
+                // Use the unified checkpoint format if available (version 2+)
+                if row.checkpoint_version >= 2 && row.checkpoint_data.is_some() {
+                    let checkpoint_data = row.checkpoint_data.unwrap();
+                    let checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint = 
+                        serde_json::from_value(checkpoint_data).unwrap_or(
+                            sinex_satellite_sdk::stream_processor::Checkpoint::None
+                        );
+                    
+                    Ok(sinex_satellite_sdk::checkpoint::CheckpointState {
+                        checkpoint,
+                        processed_count: row.processed_count as u64,
+                        last_activity: row.last_activity,
+                        data: row.state_data,
+                        version: row.checkpoint_version as u32,
+                    })
+                } else {
+                    // Legacy format (version 1) - convert Redis Stream message ID
+                    let checkpoint = if let Some(id) = row.last_processed_id {
+                        sinex_satellite_sdk::stream_processor::Checkpoint::Stream {
+                            message_id: id,
+                            event_id: None,
+                        }
+                    } else {
+                        sinex_satellite_sdk::stream_processor::Checkpoint::None
+                    };
+                    
+                    Ok(sinex_satellite_sdk::checkpoint::CheckpointState {
+                        checkpoint,
+                        processed_count: row.processed_count as u64,
+                        last_activity: row.last_activity,
+                        data: row.state_data,
+                        version: row.checkpoint_version as u32,
+                    })
+                }
+            },
+            None => Ok(CheckpointState::default()),
+        }
+    }
+
+    /// Create a test event with minimal payload
+    pub fn create_test_event(&self, source: &str, event_type: &str) -> RawEvent {
+        self.event_builder(source, event_type)
+            .payload(json!({
+                "test": true,
+                "test_name": self.config.test_name,
+                "created_at": chrono::Utc::now()
+            }))
+            .build()
+    }
+
+    /// Wait for event type to appear in database
+    pub async fn wait_for_event_type(&self, event_type: &str, count: usize) -> TestResult {
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let actual_count = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.events WHERE event_type = $1",
+                event_type
+            )
+            .fetch_one(self.pool())
+            .await?
+            .unwrap_or(0) as usize;
+            
+            if actual_count >= count {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for {} events of type {}, got {}",
+                        count, event_type, actual_count
+                    ),
+                )));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 // Re-export for convenience
 pub use sinex_db::RawEvent as DbRawEvent;
+
+// Import needed types for satellite architecture
+use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle, StreamMessage};
+use sinex_satellite_sdk::checkpoint::CheckpointState;
 
 /// Performance metrics for test execution
 #[derive(Debug, Clone)]

@@ -48,22 +48,24 @@ DECISION_HEURISTICS:
 
 ARCH: Satellites(systemd)→ingestd(gRPC:/run/sinex/ingest.sock)→raw.events+Redis(sinex:events)→Automata→synthesis.events
 
+SATELLITE_TYPES: Ingestors(fs-watcher,terminal-satellite,desktop-satellite,system-satellite), Automata(command-canonicalizer,health-aggregator,pkm-automaton)
+
 CRITICAL_PATHS:
-- Ingestion: satellite→gRPC→ingestd→{PostgreSQL(batch),Redis(XADD)}
-- Processing: Redis(XREADGROUP)→automaton→checkpoint→synthesis
+- Ingestion: ingestor_satellite→gRPC→ingestd→{PostgreSQL(batch),Redis(XADD)}
+- Processing: Redis(XREADGROUP)→automaton_satellite→checkpoint→synthesis
 - API: client→gateway→Redis(api.command.*)→service_automaton→Redis(api.response.*)→gateway
 
 QUICK_NAVIGATION:
 want_to_add_event_type→crate/sinex-events/src/lib.rs
-want_new_satellite→copy crate/sinex-fs-watcher, update Cargo.toml, add to flake.nix
+want_new_ingestor→copy crate/sinex-fs-watcher, update Cargo.toml, add to flake.nix
 want_new_automaton→copy crate/sinex-terminal-command-canonicalizer
 config_loading→crate/sinex-satellite-sdk/src/config.rs
 event_validation→crate/sinex-ingestd/src/validation.rs
 checkpoint_logic→crate/sinex-satellite-sdk/src/checkpoint.rs:CheckpointManager
 redis_integration→crate/sinex-satellite-sdk/src/redis_client.rs
 
-NEW_SATELLITE_CHECKLIST:
-1. Copy existing satellite (e.g., sinex-fs-watcher)
+NEW_INGESTOR_CHECKLIST:
+1. Copy existing ingestor (e.g., sinex-fs-watcher)
 2. Update Cargo.toml name, add to workspace
 3. Implement StatefulStreamProcessor trait
 4. Add to flake.nix outputs.packages
@@ -71,7 +73,7 @@ NEW_SATELLITE_CHECKLIST:
 6. Add event types to sinex-events/src/lib.rs
 7. Create migration for any new schemas
 8. Add to services.sinex.eventSources in NixOS config
-9. Test: nix build .#sinex-new-satellite
+9. Test: nix build .#sinex-new-ingestor
 10. Document in CLAUDE.md QUICK_NAVIGATION
 
 
@@ -167,14 +169,14 @@ sdk: StatefulStreamProcessor,ProcessorCliRunner(processor_main!),CheckpointManag
 bus: Redis(durable,ordered),ConsumerGroups(auto-track),gRPC(high-perf)
 proc: HotlogAutomatonRunner,source_event_ids(provenance),pg_jsonschema
 
-STATUS_2025-07-15:
-done: satellite_constellation,deep_symmetry,redis_streams,journald_heartbeat,checkpoint_hybrid,gRPC,GitOps_schema
-bugs: HotlogAutomatonRunner_no_checkpoint_save
-missing: raw_event_provenance, CLI(replay,explore), source_event_ids_impl
+STATUS_2025-07-16:
+done: satellite_constellation,deep_symmetry,redis_streams,journald_heartbeat,checkpoint_hybrid,gRPC,GitOps_schema,checkpoint_persistence_fix,raw_event_provenance,CLI_replay_explore,source_event_ids_impl
+bugs: (none currently identified)
+missing: test_coverage_gaps_from_architecture_migration
 reality>vision: redis_streams_mature, sdk_abstractions_solid, checkpoint_hybrid>redis_only, journald>direct_db
 
 CRITICAL: system captures entire digital life→reliability non-negotiable
-STATE: sophisticated but needs checkpoint_fix+CLI_features
+STATE: sophisticated, core features complete, needs test_coverage_completion
 
 RECOVERY_PROCEDURES:
 corrupted_db: pg_dump sinex_dev>/tmp/backup.sql before any destructive ops
@@ -218,9 +220,9 @@ events_not_processing:
 5. Check automaton service running
 
 DB_SCHEMA:
-raw.events(id ULID PK, source TEXT, event_type TEXT, ts_orig TIMESTAMPTZ, ts_ingest TIMESTAMPTZ, host TEXT, payload JSONB)
+raw.events(id ULID PK, source TEXT, event_type TEXT, ts_orig TIMESTAMPTZ, ts_ingest TIMESTAMPTZ, host TEXT, payload JSONB, source_event_ids ULID[])
 core.automaton_checkpoints(id UUID, automaton_name TEXT, consumer_group TEXT, last_processed_id TEXT, state_data JSONB)
-synthesis.events(like raw.events + source_event_ids ULID[]) [NOT YET IMPLEMENTED]
+provenance: source_event_ids distinguishes raw(NULL) from synthesis(Vec<ULID>)
 
 USEFUL_QUERIES:
 -- Recent events by type
@@ -269,3 +271,4 @@ MEMORY_MAINTENANCE:
 - Remove outdated info immediately (don't accumulate cruft)
 - If something NOT in CLAUDE.md causes confusion→add it
 - Review & compress periodically (token efficiency)
+- CRITICAL: Before ANY commit, review CLAUDE.md for info obsoleted by changes and update it

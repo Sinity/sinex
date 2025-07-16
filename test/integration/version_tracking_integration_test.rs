@@ -4,7 +4,7 @@
 //! without relying on complex API dependencies.
 
 use crate::common::prelude::*;
-use sinex_core::VersionInfo;
+use sinex_satellite_sdk::VersionInfo;
 use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;

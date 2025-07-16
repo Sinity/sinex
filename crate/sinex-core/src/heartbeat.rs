@@ -336,7 +336,7 @@ impl ProcessHeartbeatEmitter {
         // Insert event into raw.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
-            INSERT INTO raw.events (source, event_type, ts_orig, host, payload)
+            INSERT INTO core.events (source, event_type, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5)
             "#,
             event.source,
@@ -375,7 +375,7 @@ impl ProcessHeartbeatEmitter {
         // Insert event into raw.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
-            INSERT INTO raw.events (source, event_type, ts_orig, host, payload)
+            INSERT INTO core.events (source, event_type, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5)
             "#,
             event.source,
@@ -437,10 +437,7 @@ impl ProcessHeartbeatEmitter {
         ).to_string();
 
         let custom_metrics = if let Some(ref provider) = self.metrics_provider {
-            match serde_json::from_value::<HashMap<String, serde_json::Value>>(provider.get_custom_metrics()) {
-                Ok(metrics) => metrics,
-                Err(_) => HashMap::new(),
-            }
+            serde_json::from_value::<HashMap<String, serde_json::Value>>(provider.get_custom_metrics()).unwrap_or_default()
         } else {
             HashMap::new()
         };
@@ -462,7 +459,7 @@ impl ProcessHeartbeatEmitter {
         // Insert event into raw.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
-            INSERT INTO raw.events (source, event_type, ts_orig, host, payload)
+            INSERT INTO core.events (source, event_type, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5)
             "#,
             event.source,

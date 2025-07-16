@@ -197,11 +197,7 @@ impl FilesystemProcessor {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
             Checkpoint::External { position, .. } => {
                 // Try to parse timestamp from external position
-                if let Ok(ts) = serde_json::from_value::<DateTime<Utc>>(position.clone()) {
-                    Some(ts)
-                } else {
-                    None
-                }
+                serde_json::from_value::<DateTime<Utc>>(position.clone()).ok()
             }
             _ => None,
         };
@@ -901,7 +897,7 @@ impl ExplorationProvider for FilesystemProcessor {
                 ("watch_patterns".to_string(), serde_json::to_value(&self.config.watch_patterns)?),
                 ("ignore_patterns".to_string(), serde_json::to_value(&self.config.ignore_patterns)?),
                 ("debounce_ms".to_string(), serde_json::to_value(self.config.debounce_ms)?),
-                ("max_depth".to_string(), serde_json::to_value(&self.config.max_depth)?),
+                ("max_depth".to_string(), serde_json::to_value(self.config.max_depth)?),
                 ("processor_type".to_string(), serde_json::Value::String("ingestor".to_string())),
             ]),
             healthy: true,

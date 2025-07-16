@@ -1,5 +1,5 @@
 // Configuration extraction utilities
-// TODO: Move from sinex-core when ready
+// Note: Moved from sinex-core to separate concerns
 
 pub struct ConfigExtractor;
 pub struct ConfigValidator;

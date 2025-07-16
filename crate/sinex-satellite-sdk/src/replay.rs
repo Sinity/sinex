@@ -90,7 +90,7 @@ impl ReplayManager {
 
     /// Get replay statistics
     pub async fn get_replay_stats(&self) -> SatelliteResult<ReplayStats> {
-        let (query, params) = self.build_count_query()?;
+        let (_query, _params) = self.build_count_query()?;
         
         // TODO: Fix bind_all usage - temporarily hardcoded for compilation
         let row = sqlx::query("SELECT COUNT(*) FROM raw.events")
@@ -102,7 +102,7 @@ impl ReplayManager {
         Ok(ReplayStats {
             total_events: total_events as u64,
             batch_size: self.batch_size,
-            estimated_batches: (total_events as usize + self.batch_size - 1) / self.batch_size,
+            estimated_batches: (total_events as usize).div_ceil(self.batch_size),
         })
     }
 
@@ -130,7 +130,7 @@ impl ReplayManager {
             "Replay statistics"
         );
 
-        let (query, params) = self.build_replay_query()?;
+        let (query, _params) = self.build_replay_query()?;
         
         let mut total_processed = 0;
         let mut total_batches = 0;
@@ -139,7 +139,7 @@ impl ReplayManager {
 
         loop {
             // Build query with LIMIT and OFFSET
-            let paginated_query = format!("{} LIMIT {} OFFSET {}", query, self.batch_size, offset);
+            let _paginated_query = format!("{} LIMIT {} OFFSET {}", query, self.batch_size, offset);
             
             // TODO: Fix bind_all usage - temporarily hardcoded for compilation
             let rows = sqlx::query("SELECT id::text, source, event_type, host, payload, payload_schema_id, ts_ingest, ts_orig, ingestor_version FROM raw.events ORDER BY ts_ingest LIMIT 100")

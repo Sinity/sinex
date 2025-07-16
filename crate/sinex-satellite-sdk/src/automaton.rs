@@ -237,8 +237,7 @@ impl PayloadFilter {
     /// Simple path existence check
     fn path_exists(&self, payload: &serde_json::Value, path: &str) -> bool {
         // Basic implementation for simple paths like "$.command"
-        if path.starts_with("$.") {
-            let key = &path[2..];
+        if let Some(key) = path.strip_prefix("$.") {
             payload.get(key).is_some()
         } else {
             false
@@ -248,8 +247,7 @@ impl PayloadFilter {
     /// Get value at path
     fn get_path_value<'a>(&self, payload: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
         // Basic implementation for simple paths like "$.command"
-        if path.starts_with("$.") {
-            let key = &path[2..];
+        if let Some(key) = path.strip_prefix("$.") {
             payload.get(key)
         } else {
             None
@@ -280,7 +278,7 @@ impl HotlogAutomatonEvent {
             .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Missing event data in hotlog message")))?;
             
         let event: RawEvent = serde_json::from_str(&event_data)
-            .map_err(|e| SatelliteError::Serialization(e))?;
+            .map_err(SatelliteError::Serialization)?;
             
         // Convert redis::Value fields to strings
         let mut stream_fields = HashMap::new();
@@ -345,7 +343,7 @@ pub trait HotlogAutomaton: Send + Sync {
 pub struct HotlogAutomatonRunner<T: HotlogAutomaton> {
     automaton: T,
     context: Option<HotlogAutomatonContext>,
-    shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
+    _shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl<T: HotlogAutomaton> HotlogAutomatonRunner<T> {
@@ -354,7 +352,7 @@ impl<T: HotlogAutomaton> HotlogAutomatonRunner<T> {
         Self {
             automaton,
             context: None,
-            shutdown_receiver: None,
+            _shutdown_receiver: None,
         }
     }
     

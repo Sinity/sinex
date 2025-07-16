@@ -112,7 +112,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
         b1.wait().await;
         // Try to claim event for processing
         sqlx::query!(
-            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb WHERE id::uuid = $1::uuid",
+            "UPDATE core.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb WHERE event_id::uuid = $1::uuid",
             event_id.to_uuid()
         )
         .execute(&pool1)
@@ -123,7 +123,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
         b2.wait().await;
         // Try to claim same event
         sqlx::query!(
-            "UPDATE raw.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb WHERE id::uuid = $1::uuid",
+            "UPDATE core.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb WHERE event_id::uuid = $1::uuid",
             event_id.to_uuid()
         )
         .execute(&pool2)
@@ -141,7 +141,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
 
     // Check final state
     let final_event = sqlx::query!(
-        "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+        "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
     .fetch_one(pool)
@@ -173,7 +173,7 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
                     .build();
 
             sqlx::query(
-                "INSERT INTO raw.events (id, source, event_type, payload, host, ts_ingest)
+                "INSERT INTO core.events (id, source, event_type, payload, host, ts_ingest)
                  VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(event.id.to_uuid())
@@ -636,7 +636,7 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
 
     // Retrieve and verify
     let retrieved = sqlx::query!(
-        "SELECT id::uuid as id FROM raw.events WHERE source = 'ulid_test' AND event_type = 'storage_test'"
+        "SELECT event_id::uuid as id FROM core.events WHERE source = 'ulid_test' AND event_type = 'storage_test'"
     )
     .fetch_one(pool)
     .await?;
@@ -658,7 +658,7 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
 
     // Query in chronological order
     let ordered_events = sqlx::query!(
-        "SELECT id::uuid as id FROM raw.events WHERE source = 'ulid_test' ORDER BY id"
+        "SELECT event_id::uuid as id FROM core.events WHERE source = 'ulid_test' ORDER BY id"
     )
     .fetch_all(pool)
     .await?;

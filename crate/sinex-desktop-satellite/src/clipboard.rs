@@ -544,7 +544,7 @@ impl ClipboardWatcher {
         });
 
         RawEventBuilder::new(sinex_core::sources::CLIPBOARD, "copied", payload)
-            .with_host(&gethostname::gethostname().to_string_lossy().to_string())
+            .with_host(gethostname::gethostname().to_string_lossy().to_string())
             .build()
     }
 
@@ -599,7 +599,7 @@ impl ClipboardWatcher {
         });
 
         RawEventBuilder::new(sinex_core::sources::CLIPBOARD, "selected", payload)
-            .with_host(&gethostname::gethostname().to_string_lossy().to_string())
+            .with_host(gethostname::gethostname().to_string_lossy().to_string())
             .build()
     }
 

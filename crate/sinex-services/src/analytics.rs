@@ -28,7 +28,7 @@ impl AnalyticsService {
                 let rows = sqlx::query!(
                     r#"
                     SELECT source, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     WHERE ts_ingest >= $1 AND ts_ingest <= $2
                     GROUP BY source
                     ORDER BY count DESC
@@ -49,7 +49,7 @@ impl AnalyticsService {
                 let rows = sqlx::query!(
                     r#"
                     SELECT source, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     GROUP BY source
                     ORDER BY count DESC
                     "#
@@ -81,7 +81,7 @@ impl AnalyticsService {
                 let rows = sqlx::query!(
                     r#"
                     SELECT event_type, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     WHERE ts_ingest >= $1 AND ts_ingest <= $2
                     GROUP BY event_type
                     ORDER BY count DESC
@@ -102,7 +102,7 @@ impl AnalyticsService {
                 let rows = sqlx::query!(
                     r#"
                     SELECT event_type, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     GROUP BY event_type
                     ORDER BY count DESC
                     "#
@@ -139,7 +139,7 @@ impl AnalyticsService {
             SELECT 
                 time_bucket($1::interval, ts_ingest) as bucket,
                 COUNT(*) as count
-            FROM raw.events
+            FROM core.events
             WHERE ts_ingest >= $2 AND ts_ingest <= $3
             GROUP BY bucket
             ORDER BY bucket ASC
@@ -176,7 +176,7 @@ impl AnalyticsService {
                     SELECT 
                         payload->>'command' as command,
                         COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     WHERE event_type = 'command.executed'
                         AND payload ? 'command'
                         AND ts_ingest >= $1 AND ts_ingest <= $2
@@ -203,7 +203,7 @@ impl AnalyticsService {
                     SELECT 
                         payload->>'command' as command,
                         COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     WHERE event_type = 'command.executed'
                         AND payload ? 'command'
                     GROUP BY payload->>'command'
@@ -243,7 +243,7 @@ impl AnalyticsService {
             SELECT 
                 time_bucket($1::interval, ts_ingest) as bucket,
                 COUNT(*) as count
-            FROM raw.events
+            FROM core.events
             GROUP BY bucket
             ORDER BY count DESC
             LIMIT $2

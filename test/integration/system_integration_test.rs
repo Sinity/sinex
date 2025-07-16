@@ -11,6 +11,7 @@
 //! - Query interface testing
 
 use crate::common::prelude::*;
+use sinex_satellite_sdk::EventSourceContext;
 use crate::common::{assertions, events};
 use async_trait::async_trait;
 use sinex_collector::config::CollectorConfig;
@@ -126,7 +127,7 @@ async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestRe
 
 async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
     let tables = vec![
-        "raw.events",
+        "core.events",
         "sinex_schemas.work_queue",
         "sinex_schemas.automaton_manifests",
     ];
@@ -599,7 +600,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     // Test database state
     let event_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = $1",
+        "SELECT COUNT(*) FROM core.events WHERE source = $1",
         "integration_test"
     )
     .fetch_one(ctx.pool())
@@ -956,7 +957,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
     );
 
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM raw.events WHERE source = 'buffering_test'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = 'buffering_test'")
             .fetch_one(pool)
             .await?;
 
@@ -1186,7 +1187,7 @@ async fn test_component_health_checks(
 async fn check_database_health(pool: &DbPool) -> Result<HealthStatus> {
     match sqlx::query("SELECT 1").fetch_one(pool).await {
         Ok(_) => {
-            match sqlx::query("SELECT COUNT(*) FROM raw.events")
+            match sqlx::query("SELECT COUNT(*) FROM core.events")
                 .fetch_one(pool)
                 .await
             {
@@ -2081,7 +2082,7 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
     }
 
     let error_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM raw.events WHERE payload->>'storage_type' = 'failed_annex'",
+        "SELECT COUNT(*) FROM core.events WHERE payload->>'storage_type' = 'failed_annex'",
     )
     .fetch_one(pool)
     .await?;
@@ -2125,7 +2126,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
         ]
     }))
     .bind(json!({
-        "raw.events_feed_all": [
+        "core.events_feed_all": [
             {"source_filter": "app.browser.*", "event_type_filter": "page_loaded"}
         ]
     }))
@@ -2263,7 +2264,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     // Create event and promotion queue item
     let event_id = sinex_ulid::Ulid::new();
     sqlx::query(
-        "INSERT INTO raw.events (id, source, event_type, host, payload)
+        "INSERT INTO core.events (id, source, event_type, host, payload)
          VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
     )
     .bind(event_id.to_uuid())
@@ -2400,7 +2401,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
         "filesystem_write": ["/tmp/sinex"],
         "network_host_allow": ["api.openai.com:443", "github.com:443"],
         "db_tables_rw": ["core.artifacts", "core.entities"],
-        "db_tables_ro": ["raw.events"],
+        "db_tables_ro": ["core.events"],
         "system_commands": ["ps", "top", "df"]
     });
 
@@ -2464,7 +2465,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
         (
             "subscriber_1",
             json!({
-                "raw.events_feed_all": [
+                "core.events_feed_all": [
                     {"source_filter": "desktop.hyprland.*", "event_type_filter": "window_*"}
                 ]
             }),
@@ -2472,7 +2473,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
         (
             "subscriber_2",
             json!({
-                "raw.events_feed_all": [
+                "core.events_feed_all": [
                     {"source_filter": "app.browser.*", "event_type_filter": "page_loaded"},
                     {"source_filter": "app.terminal.*", "event_type_filter": "command_executed"}
                 ]
@@ -2516,7 +2517,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
     // Query agents subscribing to specific event feed
     let raw_feed_subscribers: Vec<String> = sqlx::query_scalar(
         "SELECT agent_name FROM sinex_schemas.automaton_manifests
-         WHERE subscribes_to_event_types ? 'raw.events_feed_all'
+         WHERE subscribes_to_event_types ? 'core.events_feed_all'
          ORDER BY agent_name",
     )
     .fetch_all(ctx.pool())

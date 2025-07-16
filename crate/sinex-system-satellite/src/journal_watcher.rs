@@ -128,7 +128,7 @@ impl JournalWatcher {
         loop {
             // Start journalctl process to follow journal entries
             let mut child = Command::new("journalctl")
-                .args(&[
+                .args([
                     "--follow", 
                     "--output=json",
                     "--lines=0", // Start from now, don't dump existing entries

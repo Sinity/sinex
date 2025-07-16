@@ -1,9 +1,9 @@
 # Automaton Ecosystem Architecture: Event Processing and Intelligence in the Satellite Constellation
 
-*   **Version:** 1.2
-*   **Date:** 2025-07-15
-*   **Implementation Status:** 🚧 **30% IMPLEMENTED** - Satellite architecture operational, automaton framework working, Redis Streams active, LLM integration planned
-*   **Purpose:** This document describes the Sinex automaton ecosystem within the satellite constellation architecture. It covers the distinction between deterministic automata and AI-powered agentic systems, Redis Streams processing, checkpoint management, and the planned LLM integration framework.
+*   **Version:** 1.3
+*   **Date:** 2025-07-16
+*   **Implementation Status:** 🚧 **35% IMPLEMENTED** - Satellite architecture operational, automaton framework working, Redis Streams active, StatefulStreamProcessor interface implemented, LLM integration planned
+*   **Purpose:** This document describes the Sinex automaton ecosystem within the satellite constellation architecture. It covers the distinction between deterministic automata and AI-powered agentic systems, Redis Streams processing, checkpoint management, the StatefulStreamProcessor interface, and the planned LLM integration framework.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Part VI (Agent Manifests); Vision Document Part IV.
 
 ## 1. Introduction & Philosophy of Agentic Design (Vision IV.1.1)
@@ -27,17 +27,17 @@ This section details the core infrastructure supporting the agentic ecosystem.
 
 ### 2.1. Automaton Checkpoint System (`core.automaton_checkpoints`)
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Checkpoint system working with Redis Streams integration
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Checkpoint system working with Redis Streams integration and StatefulStreamProcessor interface
 
-The checkpoint system provides state management for all satellite processors, replacing the previous agent manifest approach with a unified state tracking mechanism.
-*   **Architectural Role:** Provides unified state management for all satellite processors (ingestors and automata) enabling recovery, replay, and horizontal scaling through Redis Streams consumer groups.
+The checkpoint system provides state management for all satellite processors through the unified StatefulStreamProcessor interface, enabling seamless recovery, replay, and horizontal scaling.
+*   **Architectural Role:** Provides unified state management for all satellite processors (ingestors and automata) enabling recovery, replay, and horizontal scaling through Redis Streams consumer groups and the StatefulStreamProcessor interface.
 *   **Key Schema Fields Overview:**
-    *   `automaton_id TEXT PRIMARY KEY`: Unique processor identifier (e.g., `"sinex-terminal-satellite"`)
-    *   `checkpoint_type TEXT`: Type of checkpoint (stream_position, file_offset, timestamp)
-    *   `checkpoint_data JSONB`: Type-specific state data (Redis consumer group position, file offsets, etc.)
-    *   `last_processed_event_id ULID`: For event stream processors, the last successfully processed event
+    *   `automaton_name TEXT PRIMARY KEY`: Unique processor identifier (e.g., `"sinex-terminal-satellite"`)
+    *   `consumer_group TEXT`: Redis consumer group name for stream processing
+    *   `last_processed_id TEXT`: Last successfully processed event or stream position
+    *   `processed_count BIGINT`: Number of events processed for monitoring
+    *   `state_data JSONB`: Additional processor-specific state data
     *   `created_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ`: Checkpoint lifecycle tracking
-    *   `metadata JSONB`: Additional processor-specific metadata for recovery and monitoring
 *   **Referenced TIMs:**
     *   `[TIM-AgentManifestManagement.md](docs/tims/architecture_crosscutting/TIM-AgentManifestManagement.md)` (Section 2) for the full DDL and detailed field descriptions.
 

@@ -36,25 +36,27 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
                          │
 ┌────────────────────────┴────────────────────────────────────────┐
 │                      sinex-gateway                               │
-│            API Gateway & Native Messaging Host                   │
+│            API Gateway & Command/Response Handler                │
 └────────────────────────┬────────────────────────────────────────┘
                          │
 ┌────────────────────────┴────────────────────────────────────────┐
 │                   Message Bus (Redis Streams)                    │
-│      Real-time Event Distribution & Command/Response             │
-└───┬────────────────────┴────────────────────────────────────┬───┘
-    │                                                        │
-┌───▼──────────────────┐  ┌─────────────────────────────────▼───┐
-│   Satellite Services  │  │          sinex-ingestd             │
-│ ┌─────────────────┐   │  │    Ingestion Hub & Validator       │
-│ │ Event Sources   │   │  └─────────────────┬───────────────────┘
-│ │ - fs-watcher    │   │                    │
-│ │ - terminal      │   │  ┌─────────────────▼───────────────────┐
-│ │ - desktop       │   │  │        Data Substrate               │
-│ │ - system        │   │  │ PostgreSQL + TimescaleDB + Git-Annex│
-│ └─────────────────┘   │  └─────────────────────────────────────┘
-│ ┌─────────────────┐   │
-│ │ Automata        │   │
+│      Real-time Event Distribution & Consumer Groups              │
+└───┬────────────────────┴────────────────────────────────────┬───┐
+    │                                                        │   │
+┌───▼──────────────────┐  ┌─────────────────────────────────▼───┐ │
+│   Satellite Services  │  │          sinex-ingestd             │ │
+│ ┌─────────────────┐   │  │    Ingestion Hub & Validator       │ │
+│ │ Event Sources   │   │  └─────────────────┬───────────────────┘ │
+│ │ - fs-watcher    │   │                    │                     │
+│ │ - terminal      │   │  ┌─────────────────▼───────────────────┐ │
+│ │ - desktop       │   │  │        Data Substrate               │ │
+│ │ - system        │   │  │ PostgreSQL + TimescaleDB + Git-Annex│ │
+│ └─────────────────┘   │  └─────────────────────────────────────┘ │
+│ ┌─────────────────┐   │                                          │
+│ │ Automata        │   │──────────────────────────────────────────┘
+│ │ - health        │   │  (Consumer Groups: stream processing)
+│ │ - canonicalizer │   │
 │ │ - analytics     │   │
 │ │ - content       │   │
 │ │ - search        │   │
@@ -64,13 +66,13 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 ```
 
 ### Key Architectural Principles
-- **Satellite Constellation** - Independent services orchestrated by systemd/NixOS with deep symmetry
+- **Satellite Constellation** - Independent services orchestrated by systemd/NixOS with StatefulStreamProcessor interface
 - **Redis Streams Message Bus** - Durable, real-time event distribution with consumer groups and checkpointing
-- **Immutable Event Log** - All data preserved with full provenance tracking via source_event_ids
+- **Unified Events Table** - Single source of truth with comprehensive provenance tracking
 - **Time-Ordered Keys** - ULID primary keys for natural chronological ordering and distributed generation
 - **GitOps Schema Management** - Version-controlled JSON Schema validation with automatic deployment
 - **Journald Heartbeat Pattern** - Elegant observability through structured logging and systemd integration
-- **Command/Response Architecture** - Asynchronous API patterns with full auditability
+- **Command/Response Architecture** - Asynchronous API patterns with full auditability via message bus
 - **Local-First & User Sovereign** - Complete functionality and control without cloud dependencies
 
 ## 2. Data Substrate Architecture
@@ -85,10 +87,10 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
   - **pgvector** - Future semantic search capabilities
 
 ### Event Storage
-- **Immutable Event Log** (`raw.events`) - Source of truth for all captured data
-- **Schema Registry** (`event_payload_schemas`) - Versioned JSON schemas
-- **Checkpoint System** (`core.automaton_checkpoints`) - Stateful processor recovery
-- **Message Bus** - Redis Streams for real-time event distribution and command/response patterns
+- **Unified Events Table** (`raw.events`) - Single source of truth for all captured data with provenance tracking
+- **Schema Registry** (`event_payload_schemas`) - Versioned JSON schemas with GitOps management
+- **Checkpoint System** (`core.automaton_checkpoints`) - Stateful processor recovery with unified interface
+- **Message Bus** - Redis Streams for real-time event distribution with consumer groups
 
 ### Knowledge Representation (Future)
 - **Knowledge Graph** (`core.entities`, `core.entity_relations`)
@@ -219,7 +221,7 @@ Infrastructure for reliable, secure operation.
 ## 7. Summary & Next Steps
 
 ### Current State
-Sinex has successfully implemented a sophisticated satellite constellation architecture with operational event collection, real-time message distribution, and processing infrastructure. The system captures events across four major domains (filesystem, terminal, desktop, system) through independent satellite services, provides reliable storage in TimescaleDB with Redis Streams for real-time processing, and offers a unified API through the gateway service. The work_queue architecture has been fully replaced with Redis Streams providing superior performance and reliability.
+Sinex has successfully implemented a sophisticated satellite constellation architecture with operational event collection, real-time message distribution, and processing infrastructure. The system captures events across four major domains (filesystem, terminal, desktop, system) through independent satellite services implementing the StatefulStreamProcessor interface, provides reliable storage in TimescaleDB with Redis Streams for real-time processing, and offers a unified API through the gateway service. The unified events table provides comprehensive provenance tracking while Redis Streams enable scalable, durable event processing.
 
 ### Near-Term Priorities
 1. **Expand Automaton Ecosystem** - Build specialized processors for different data domains

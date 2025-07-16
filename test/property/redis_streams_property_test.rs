@@ -6,7 +6,7 @@
 
 use crate::common::prelude::*;
 use proptest::prelude::*;
-use redis::aio::ConnectionManager;
+use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, RedisResult};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};

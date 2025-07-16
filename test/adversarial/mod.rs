@@ -30,7 +30,7 @@ pub mod utils {
     pub fn create_malicious_payload(attack_type: &str) -> serde_json::Value {
         match attack_type {
             "sql_injection" => json!({
-                "user_input": "'; DROP TABLE raw.events; --",
+                "user_input": "'; DROP TABLE core.events; --",
                 "data": "<script>alert('xss')</script>"
             }),
             "large_payload" => {

@@ -179,7 +179,7 @@ impl IngestdConfig {
 
     /// Test Redis connection
     async fn test_redis_connection(&self) -> IngestdResult<()> {
-        use redis::AsyncCommands;
+        
 
         let client = redis::Client::open(self.redis_url.as_str())?;
         let mut conn = client.get_async_connection().await?;

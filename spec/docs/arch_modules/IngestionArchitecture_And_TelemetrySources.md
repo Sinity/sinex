@@ -1,9 +1,9 @@
 # Ingestion Architecture & Telemetry Sources: The Sensory Network of the Exocortex
 
-*   **Version:** 1.2
-*   **Date:** 2025-07-15
+*   **Version:** 1.3
+*   **Date:** 2025-07-16
 *   **Implementation Status:** 🚧 **SATELLITE CONSTELLATION OPERATIONAL** - Multiple satellites capturing events ✅ **WORKING**, advanced sources 🔨 **EXPANDING**
-*   **Purpose:** This document describes the Sinex satellite constellation architecture for event ingestion. It details the ingestd hub pattern, satellite services, unified processor model, and provides architectural overviews for each telemetry domain. The satellite architecture has replaced the previous unified collector approach with independent, systemd-managed services.
+*   **Purpose:** This document describes the Sinex satellite constellation architecture for event ingestion. It details the ingestd hub pattern, satellite services, StatefulStreamProcessor unified model, and provides architectural overviews for each telemetry domain. The satellite architecture provides independent, systemd-managed services with deep symmetry between ingestors and automata.
 *   **Primary Sources:** STAD (System Technical Architecture Document) Parts II & III; Vision Document Part III.2.
 
 ## 1. Introduction & Philosophy of Ingestion
@@ -25,7 +25,7 @@ The Ingestion Layer is responsible for sensing and capturing a comprehensive ran
 The ingestion system follows a satellite constellation pattern where independent satellite services capture domain-specific events and send them through `sinex-ingestd` to `raw.events`:
 
 **Architecture Flow:**
-1. **Satellite Services** - Independent systemd services capture domain events
+1. **Satellite Services** - Independent systemd services implementing StatefulStreamProcessor interface
 2. **sinex-ingestd Hub** - Central ingestion service receives events via gRPC  
 3. **Dual Output** - Events written to PostgreSQL `raw.events` AND Redis Streams
 4. **Event Format** - All satellites format events using unified `RawEvent` structure:
@@ -36,7 +36,7 @@ The ingestion system follows a satellite constellation pattern where independent
    *   `ts_ingest TIMESTAMPTZ`: Ingestion timestamp from ingestd
    *   `host TEXT`: Originating machine identifier
    *   `payload JSONB`: Event-specific data with GitOps-validated schemas
-   *   `source_event_ids ULID[]`: Provenance links for derived events
+   *   `source_event_ids ULID[]`: Provenance links for derived events (unified events table)
 
 ## 2. Satellite Constellation Management
 

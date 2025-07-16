@@ -344,7 +344,7 @@ impl WindowManagerWatcher {
     }
 
     /// Send command to Hyprland (using socket1 for commands)
-    async fn send_hyprland_command(&self, command: &str) -> SatelliteResult<String> {
+    async fn _send_hyprland_command(&self, command: &str) -> SatelliteResult<String> {
         let socket_path = self.socket_path.as_ref()
             .ok_or_else(|| sinex_satellite_sdk::SatelliteError::EventSource("No socket path".to_string()))?
             .replace(".socket2.sock", ".socket.sock"); // Use command socket

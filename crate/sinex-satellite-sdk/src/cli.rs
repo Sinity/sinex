@@ -421,14 +421,12 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             }
                         }
                     }
+                } else if let Some(db_url) = args.database_url {
+                    SqlxPgPool::connect(&db_url).await?
                 } else {
-                    if let Some(db_url) = args.database_url {
-                        SqlxPgPool::connect(&db_url).await?
-                    } else {
-                        let db_url = std::env::var("DATABASE_URL")
-                            .map_err(|_| "DATABASE_URL not set")?;
-                        SqlxPgPool::connect(&db_url).await?
-                    }
+                    let db_url = std::env::var("DATABASE_URL")
+                        .map_err(|_| "DATABASE_URL not set")?;
+                    SqlxPgPool::connect(&db_url).await?
                 };
                 
                 let ingest_client = IngestClient::new(&args.ingest_socket_path).await?;

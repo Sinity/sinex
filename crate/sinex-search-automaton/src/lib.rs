@@ -99,9 +99,9 @@ impl HotlogAutomaton for SearchServiceAutomaton {
             match self.handle_search_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
-                    let ctx = self.context.as_ref().unwrap();
+                    let _ctx = self.context.as_ref().unwrap();
                     
-                    let response_event = serde_json::json!({
+                    let _response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "response": response,
                         "service": "search"
@@ -116,8 +116,8 @@ impl HotlogAutomaton for SearchServiceAutomaton {
                     warn!("Search request failed: {}", e);
                     
                     // Submit error response
-                    let ctx = self.context.as_ref().unwrap();
-                    let error_response = serde_json::json!({
+                    let _ctx = self.context.as_ref().unwrap();
+                    let _error_response = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "error": {
                             "code": -32603,

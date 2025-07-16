@@ -1,7 +1,7 @@
 use clap::Parser;
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use sinex_satellite_sdk::{
-    automaton::{HotlogAutomatonRunner, HotlogAutomaton, EventFilter},
+    automaton::{HotlogAutomatonRunner, HotlogAutomaton},
     config::AutomatonConfig,
     redis_client::RedisStreamClient,
     grpc_client::IngestClient,
@@ -9,7 +9,7 @@ use sinex_satellite_sdk::{
     SatelliteResult,
 };
 use sinex_db::create_pool;
-use std::{path::PathBuf, collections::HashMap};
+use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Parser, Debug)]

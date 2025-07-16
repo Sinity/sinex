@@ -13,15 +13,17 @@ path = "src/main.rs"
 [dependencies]
 # Core Sinex dependencies
 sinex-core = { path = "../sinex-core" }
+sinex-events = { path = "../sinex-events" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-db = { path = "../sinex-db" }
 
-# HTTP server
-axum = { workspace = true }
-tokio = { workspace = true }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+# CLI parsing
+clap = { version = "4.0", features = ["derive", "env"] }
 
-# Database
+# Async runtime
+tokio = { workspace = true }
+
+# Database (for potential direct queries if needed)
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 
 # Serialization
@@ -39,4 +41,10 @@ thiserror = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# System info
+gethostname = "0.4"
+
 # Collections (using std lib)
+
+# Async traits
+async-trait = { workspace = true }

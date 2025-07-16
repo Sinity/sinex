@@ -5,7 +5,6 @@
 //! Ported from the legacy sinex-events-system implementation with satellite support.
 
 use crate::payloads::*;
-use serde_json::json;
 use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
 use sinex_satellite_sdk::SatelliteResult;

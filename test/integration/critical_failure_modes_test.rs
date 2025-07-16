@@ -4,8 +4,8 @@
 //! in production, focusing on basic functionality without complex dependencies.
 
 use crate::common::prelude::*;
-use sinex_core::{VersionInfo, EventSource, EventSourceContext};
-use sinex_events_fs::FilesystemMonitor;
+use sinex_satellite_sdk::EventSourceContext;
+use sinex_satellite_sdk::VersionInfo;
 use std::fs;
 use tempfile::TempDir;
 

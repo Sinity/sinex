@@ -192,7 +192,7 @@ impl TestDatabase {
         let row = sqlx::query!(
             r#"
             SELECT
-                (SELECT COUNT(*) FROM raw.events) as event_count,
+                (SELECT COUNT(*) FROM core.events) as event_count,
                 (SELECT COUNT(*) FROM synthesis.events) as synthesis_count,
                 0 as checkpoint_count
             "#
@@ -203,7 +203,7 @@ impl TestDatabase {
         Ok(DatabaseStats {
             event_count: row.event_count.unwrap_or(0),
             agent_count: row.synthesis_count.unwrap_or(0),
-            work_queue_count: row.checkpoint_count.unwrap_or(0),
+            work_queue_count: row.checkpoint_count.unwrap_or(0) as i64,
         })
     }
 
@@ -573,7 +573,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
 
         // Fall back to DELETE in dependency order
         let delete_queries = [
-            // First, delete from tables that reference raw.events
+            // First, delete from tables that reference core.events
             "DELETE FROM core.event_annotations",
             "DELETE FROM core.event_artifact_refs",
             "DELETE FROM core.event_relations",
@@ -615,24 +615,24 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
         eprintln!("  ✅ Tables truncated successfully");
     }
 
-    // Handle raw.events separately (hypertable cannot be truncated)
-    match sqlx::query("DELETE FROM raw.events").execute(pool).await {
+    // Handle core.events separately (hypertable cannot be truncated)
+    match sqlx::query("DELETE FROM core.events").execute(pool).await {
         Ok(result) => {
             let rows = result.rows_affected();
             if rows > 0 {
-                eprintln!("  🧹 Deleted {} rows from raw.events", rows);
+                eprintln!("  🧹 Deleted {} rows from core.events", rows);
             }
         }
         Err(e) => {
-            eprintln!("  ⚠️  Failed to delete from raw.events: {}", e);
+            eprintln!("  ⚠️  Failed to delete from core.events: {}", e);
             // Try TimescaleDB-specific cleanup
             match sqlx::query(
-                "SELECT drop_chunks('raw.events', older_than => INTERVAL '0 seconds')",
+                "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
             )
             .execute(pool)
             .await
             {
-                Ok(_) => eprintln!("  🧹 Dropped all chunks from raw.events"),
+                Ok(_) => eprintln!("  🧹 Dropped all chunks from core.events"),
                 Err(e2) => eprintln!("  ⚠️  Failed to drop chunks: {}", e2),
             }
         }
@@ -645,7 +645,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
 
     // Verification with detailed output
     let verification_queries = [
-        ("raw.events", "SELECT COUNT(*) FROM raw.events"),
+        ("core.events", "SELECT COUNT(*) FROM core.events"),
         (
             "core.event_annotations",
             "SELECT COUNT(*) FROM core.event_annotations",
@@ -694,7 +694,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
 
         // Use CASCADE DELETE on primary tables to force cleanup
         let cascade_queries = [
-            "DELETE FROM raw.events CASCADE",
+            "DELETE FROM core.events CASCADE",
             "DELETE FROM core.entities CASCADE",
             "DELETE FROM core.artifacts CASCADE",
             "DELETE FROM core.event_clusters CASCADE",
@@ -1037,7 +1037,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
 
         // Disable autovacuum on template (tests don't need it)
         let disable_autovacuum_tables = vec![
-            "raw.events",
+            "core.events",
             "core.artifacts",
             "core.event_annotations",
             "sinex_schemas.work_queue",
@@ -1051,16 +1051,16 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
         }
 
         // Set test-friendly table settings
-        sqlx::query("ALTER TABLE raw.events SET (fillfactor = 100)")
+        sqlx::query("ALTER TABLE core.events SET (fillfactor = 100)")
             .execute(pool)
             .await
             .unwrap_or_else(|_| {
-                eprintln!("⚠️  Could not set fillfactor on raw.events");
+                eprintln!("⚠️  Could not set fillfactor on core.events");
                 Default::default()
             });
 
         // Clean up any test data that might have snuck in
-        sqlx::query("DELETE FROM raw.events WHERE source LIKE 'test_%'")
+        sqlx::query("DELETE FROM core.events WHERE source LIKE 'test_%'")
             .execute(pool)
             .await
             .unwrap_or_else(|_| {

@@ -8,8 +8,9 @@
 //! - Shell integration and environment setup
 
 use crate::common::prelude::*;
+use sinex_satellite_sdk::EventSourceContext;
 use chrono::Utc;
-use sinex_core::{EventSource, EventSourceContext, EventType};
+use sinex_satellite_sdk::{EventSource, EventSourceContext};
 use sinex_events_terminal::{
     asciinema::{AsciinemaConfig, AsciinemaRecorder},
     kitty::{

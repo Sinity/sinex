@@ -4,6 +4,7 @@
 //! environment override, and security validation across all event sources.
 
 use crate::common::prelude::*;
+use sinex_satellite_sdk::EventSourceContext;
 
 // =============================================================================
 // CONFIGURATION VALIDATION TESTS

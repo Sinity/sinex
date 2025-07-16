@@ -99,7 +99,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     
     // Verify heartbeat event was created
     let heartbeat_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
+        "SELECT COUNT(*) FROM core.events WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
         "test_process"
     )
     .fetch_one(ctx.pool())
@@ -110,7 +110,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     
     // Get the actual event to check payload
     let event_payload: serde_json::Value = sqlx::query_scalar!(
-        "SELECT payload FROM raw.events WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
+        "SELECT payload FROM core.events WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
         "test_process"
     )
     .fetch_one(ctx.pool())
@@ -160,7 +160,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
     
     // Verify all events were created in correct order
     let all_events = sqlx::query!(
-        "SELECT event_type, payload, ts_orig FROM raw.events 
+        "SELECT event_type, payload, ts_orig FROM core.events 
          WHERE source = 'sinex.process' AND payload->>'process_name' = $1 
          ORDER BY ts_orig ASC",
         "lifecycle_test"
@@ -219,7 +219,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     
     // Verify custom metrics are included
     let events = sqlx::query!(
-        "SELECT payload FROM raw.events 
+        "SELECT payload FROM core.events 
          WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
         "custom_metrics_test"
     )
@@ -274,7 +274,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     
     // Verify multiple heartbeat events were emitted
     let heartbeat_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events 
+        "SELECT COUNT(*) FROM core.events 
          WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
         "continuous_test"
     )
@@ -287,7 +287,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     
     // Verify latest heartbeat has updated metrics
     let latest_event = sqlx::query!(
-        "SELECT payload FROM raw.events 
+        "SELECT payload FROM core.events 
          WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1
          ORDER BY ts_orig DESC LIMIT 1",
         "continuous_test"
@@ -348,7 +348,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
             (payload->>'memory_mb')::integer as memory_usage_mb,
             (payload->>'events_processed')::integer as events_processed_last_minute,
             payload->>'version' as binary_version
-        FROM raw.events
+        FROM core.events
         WHERE source = 'sinex.process'
           AND event_type = 'process.heartbeat'
         ORDER BY payload->>'process_name', ts_orig DESC
@@ -411,7 +411,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     
     // Verify the failure progression is recorded
     let events = sqlx::query!(
-        "SELECT event_type, payload, ts_orig FROM raw.events 
+        "SELECT event_type, payload, ts_orig FROM core.events 
          WHERE source = 'sinex.process' AND payload->>'process_name' = $1 
          ORDER BY ts_orig ASC",
         "failing_process"
@@ -490,7 +490,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     
     // Verify restart is detectable by analyzing events
     let all_events = sqlx::query!(
-        "SELECT event_type, payload, ts_orig FROM raw.events 
+        "SELECT event_type, payload, ts_orig FROM core.events 
          WHERE source = 'sinex.process' AND payload->>'process_name' = $1 
          ORDER BY ts_orig ASC",
         process_name
@@ -557,7 +557,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     
     // Verify all heartbeats were recorded
     let count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.events 
+        "SELECT COUNT(*) FROM core.events 
          WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1",
         "high_freq_test"
     )
@@ -572,7 +572,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     
     // Verify chronological ordering
     let timestamps = sqlx::query!(
-        "SELECT ts_orig FROM raw.events 
+        "SELECT ts_orig FROM core.events 
          WHERE source = 'sinex.process' AND event_type = 'process.heartbeat' AND payload->>'process_name' = $1
          ORDER BY ts_orig ASC",
         "high_freq_test"

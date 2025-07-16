@@ -12,13 +12,13 @@ use tracing::{debug, info, warn};
 
 /// udev watcher
 pub struct UdevWatcher {
-    monitor_hotplug: bool,
+    _monitor_hotplug: bool,
 }
 
 impl UdevWatcher {
     /// Create new udev watcher
     pub async fn new(monitor_hotplug: bool) -> SatelliteResult<Self> {
-        let watcher = Self { monitor_hotplug };
+        let watcher = Self { _monitor_hotplug: monitor_hotplug };
 
         info!("udev watcher initialized (hotplug: {})", monitor_hotplug);
         Ok(watcher)

@@ -1,9 +1,9 @@
 # User Interaction & Query Architecture: The Bridge to Self
 
-*   **Version:** 1.2
-*   **Date:** 2025-07-15
-*   **Implementation Status:** 🚧 **25% IMPLEMENTED** - CLI operational, gateway architecture working, command/response patterns active
-*   **Purpose:** This document describes the architectural principles and high-level design of how users interact with Sinex, query its vast data stores, and how the system facilitates understanding, narrative construction, and self-modeling. It outlines the architecture of user interfaces, query mechanisms, and feedback loops.
+*   **Version:** 1.3
+*   **Date:** 2025-07-16
+*   **Implementation Status:** 🚧 **25% IMPLEMENTED** - CLI operational, gateway architecture working, command/response patterns active via Redis Streams
+*   **Purpose:** This document describes the architectural principles and high-level design of how users interact with Sinex, query its vast data stores, and how the system facilitates understanding, narrative construction, and self-modeling. It outlines the architecture of user interfaces, query mechanisms, and feedback loops within the satellite constellation architecture.
 *   **Primary Sources:** Vision Document Part V; STAD (System Technical Architecture Document) Part IV (Retrieval sections like 17, 19).
 
 ## 1. Introduction & UI/UX Philosophy (Vision V.1)

@@ -14,7 +14,6 @@ pub mod automaton;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
-pub mod event_source;
 pub mod examples;
 pub mod grpc_client;
 pub mod heartbeat;
@@ -29,10 +28,7 @@ pub use automaton::{
 };
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-pub use event_source::{
-    EventSource, EventSourceContext, EventSourceRunner, ScannerArgs, 
-    ScannerEstimate, VersionInfo
-};
+// Legacy EventSource types removed - use StatefulStreamProcessor instead
 pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatEmitter, HeartbeatCounterHandle, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};

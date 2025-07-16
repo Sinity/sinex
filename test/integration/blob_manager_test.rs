@@ -809,7 +809,7 @@ async fn test_storage_statistics_emission(ctx: TestContext) -> TestResult {
     // Emit storage statistics
     fixture.manager.emit_storage_stats().await?;
 
-    // Verify statistics event was created in raw.events
+    // Verify statistics event was created in core.events
     let recent_events = crate::common::get_recent_events(ctx.pool(), 10).await?;
     let stats_events: Vec<_> = recent_events
         .iter()

@@ -76,11 +76,7 @@ impl FilesystemProcessor {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
             Checkpoint::External { position, .. } => {
                 // Try to parse timestamp from position
-                if let Ok(ts) = serde_json::from_value::<DateTime<Utc>>(position.clone()) {
-                    Some(ts)
-                } else {
-                    None
-                }
+                serde_json::from_value::<DateTime<Utc>>(position.clone()).ok()
             }
             _ => None,
         };

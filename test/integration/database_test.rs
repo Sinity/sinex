@@ -6,7 +6,7 @@
 //! - TimescaleDB hypertable functionality
 //! - ULID primary key integration
 //! - JSON schema validation with pg_jsonschema
-//! - Work queue operations and TTL
+//! - Checkpoint operations and progress tracking
 //! - Connection pool edge cases and limits
 //! - Query performance and optimization
 //! - Data integrity and consistency
@@ -19,6 +19,7 @@ use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_core::RawEventBuilder;
+use sinex_ulid::Ulid;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
@@ -77,7 +78,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Check total count - use basic query
-    let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
+    let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
         .fetch_one(ctx.pool())
         .await?;
     assert!(count.unwrap_or(0) >= 10);
@@ -207,7 +208,7 @@ async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> TestResult {
 async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
-    // Verify raw.events is a hypertable
+    // Verify core.events is a hypertable
     let hypertable_info: Option<(String, String, String, String)> = sqlx::query_as(
         "SELECT hypertable_schema, hypertable_name,
                 column_name, dimension_type
@@ -219,7 +220,7 @@ async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult
 
     assert!(
         hypertable_info.is_some(),
-        "raw.events should be a hypertable"
+        "core.events should be a hypertable"
     );
     let (schema, table, dimension_col, dimension_type) = hypertable_info.unwrap();
     pretty_assertions::assert_eq!(schema, "raw");
@@ -252,7 +253,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Clean up any previous test data
-    let _ = sqlx::query("DELETE FROM raw.events WHERE source = 'chunk_test'")
+    let _ = sqlx::query("DELETE FROM core.events WHERE source = 'chunk_test'")
         .execute(pool)
         .await;
 
@@ -283,7 +284,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
         sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload)
+            "INSERT INTO core.events (id, source, event_type, host, payload)
              VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
         )
         .bind(event_id.to_uuid())
@@ -311,7 +312,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     // Verify chunks contain the correct data
     for (i, ts) in time_periods.iter().enumerate() {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM raw.events
+            "SELECT COUNT(*) FROM core.events
              WHERE source = $1
              AND event_type = $2
              AND ts_ingest >= $3 - interval '1 hour'
@@ -365,7 +366,7 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
     for i in 0..10 {
         let event_id = Ulid::new();
         sqlx::query(
-            "INSERT INTO raw.events (id, source, event_type, host, payload)
+            "INSERT INTO core.events (id, source, event_type, host, payload)
              VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
         )
         .bind(event_id.to_uuid())
@@ -433,7 +434,7 @@ async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
 
     // Verify schema was stored correctly
     let retrieved_schema: serde_json::Value = sqlx::query_scalar(
-        "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid"
+        "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE event_id = $1::ulid"
     )
     .bind(schema_id.to_uuid())
     .fetch_one(ctx.pool())
@@ -486,7 +487,7 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult 
             "INSERT INTO sinex_schemas.event_payload_schemas
          (event_source, event_type, schema_version, json_schema_definition)
          VALUES ($1, $2, $3, $4::jsonb)
-         RETURNING id::uuid",
+         RETURNING event_id::uuid",
         )
         .bind(&event_source)
         .bind(&event_type)
@@ -719,236 +720,372 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 }
 
 // =============================================================================
-// WORK QUEUE TESTS
+// CHECKPOINT TESTS
 // =============================================================================
 
-// Schema existence tests removed - these are handled by database migrations
-// and implicitly verified by every work queue operation test
-
+/// Test checkpoint persistence and progress tracking
 #[sinex_test]
-async fn test_work_queue_status_enum_includes_succeeded(ctx: TestContext) -> TestResult {
-    // Test that the status column supports 'succeeded' and 'failed' values
-
-    // First insert a test event
-    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "data"})).build();
-    let event_id = insert_event(ctx.pool(), &event).await?;
-
-    // Add to work queue
-    let _queue_item = add_to_work_queue(ctx.pool(), event_id, "test-agent", 3).await?;
-
-    // Try to update status to 'succeeded' - should work with new enum values
-    let result = sqlx::query!(
-        "UPDATE sinex_schemas.work_queue SET status = 'succeeded', processed_at = now() WHERE raw_event_id = $1::uuid::ulid",
-        event_id.to_uuid()
-    )
-    .execute(ctx.pool())
-    .await;
-
-    assert!(
-        result.is_ok(),
-        "Should be able to set status to 'succeeded'"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_work_queue_basic_operations(ctx: TestContext) -> TestResult {
-    // Test basic work queue operations
-    let event = RawEventBuilder::new("test_source", "test_event", json!({"test": "data"})).build();
-    let event_id = insert_event(ctx.pool(), &event).await?;
-
-    // Add to work queue
-    let _queue_item = add_to_work_queue(ctx.pool(), event_id, "test-agent", 3).await?;
-
-    // Claim the item
-    let claimed_items = claim_work_queue_items(ctx.pool(), "test-agent", "worker-1", 1).await?;
-    assert_eq!(claimed_items.len(), 1);
-
-    // Complete the item
-    complete_work_queue_item(ctx.pool(), claimed_items[0].queue_id).await?;
-
-    // Verify it's completed
-    let completed_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE queue_id = $1::uuid::ulid AND status = 'succeeded'",
-        claimed_items[0].queue_id.to_uuid()
-    )
-    .fetch_one(ctx.pool())
-    .await?;
-
-    assert_eq!(completed_count.unwrap(), 1);
-
-    Ok(())
-}
-
-// =============================================================================
-// WORK QUEUE TTL TESTS
-// =============================================================================
-
-#[sinex_test]
-async fn test_ttl_policy_purges_old_succeeded_items(ctx: TestContext) -> TestResult {
-    // Create test events
-    let old_event = RawEventBuilder::new(
-        "test_source",
-        "test_event",
-        json!({"test": "old_succeeded"}),
-    )
-    .build();
-    let old_event_id = insert_event(ctx.pool(), &old_event).await?;
-
-    let recent_event = RawEventBuilder::new(
-        "test_source",
-        "test_event",
-        json!({"test": "recent_succeeded"}),
-    )
-    .build();
-    let recent_event_id = insert_event(ctx.pool(), &recent_event).await?;
-
-    // Add to work queue
-    let old_queue_item = add_to_work_queue(ctx.pool(), old_event_id, "test-agent", 3).await?;
-    let recent_queue_item = add_to_work_queue(ctx.pool(), recent_event_id, "test-agent", 3).await?;
-
-    // Mark both as succeeded but with different timestamps
-    let old_timestamp = Utc::now() - Duration::days(8); // Over TTL
-    let recent_timestamp = Utc::now() - Duration::hours(1); // Within TTL
-
-    sqlx::query!(
-        "UPDATE sinex_schemas.work_queue SET status = 'succeeded', processed_at = $1 WHERE queue_id = $2::uuid::ulid",
-        old_timestamp,
-        old_queue_item.to_uuid()
-    )
-    .execute(ctx.pool())
-    .await?;
-
-    sqlx::query!(
-        "UPDATE sinex_schemas.work_queue SET status = 'succeeded', processed_at = $1 WHERE queue_id = $2::uuid::ulid",
-        recent_timestamp,
-        recent_queue_item.to_uuid()
-    )
-    .execute(ctx.pool())
-    .await?;
-
-    // Simulate TTL cleanup (normally done by background job)
-    let cleaned_up = sqlx::query!(
-        "DELETE FROM sinex_schemas.work_queue WHERE status = 'succeeded' AND processed_at < now() - interval '7 days' RETURNING queue_id::text"
-    )
-    .fetch_all(ctx.pool())
-    .await?;
-
-    assert!(
-        cleaned_up.len() > 0,
-        "Should have cleaned up old succeeded items"
-    );
-
-    // Verify recent item still exists
-    let recent_exists = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE queue_id = $1::uuid::ulid",
-        recent_queue_item.to_uuid()
-    )
-    .fetch_one(ctx.pool())
-    .await?;
-
-    assert_eq!(recent_exists.unwrap(), 1, "Recent item should still exist");
-
-    Ok(())
-}
-
-// =============================================================================
-// QUEUE METRICS TESTS
-// =============================================================================
-
-#[sinex_test]
-async fn test_queue_depth_metric_calculation(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-
-    // Create test events
-    let event1 = RawEventBuilder::new("metrics_test", "event1", json!({"test": 1})).build();
-    let event2 = RawEventBuilder::new("metrics_test", "event2", json!({"test": 2})).build();
-    let event3 = RawEventBuilder::new("metrics_test", "event3", json!({"test": 3})).build();
-
-    let event1_id = insert_event(pool, &event1).await?;
-    let event2_id = insert_event(pool, &event2).await?;
-    let event3_id = insert_event(pool, &event3).await?;
-
-    // Add to work queue for different agents
-    let agent1 = "metrics-agent-1";
-    let agent2 = "metrics-agent-2";
-
-    add_to_work_queue(pool, event1_id, agent1, 3).await?;
-    add_to_work_queue(pool, event2_id, agent1, 3).await?;
-    add_to_work_queue(pool, event3_id, agent2, 3).await?;
-
-    // Calculate queue depth metrics
-    let metrics = calculate_queue_depth_metrics(pool).await?;
-
-    // Verify metrics for each agent
-    let agent1_metric = metrics.iter().find(|m| m.target_automaton_name == agent1);
-    let agent2_metric = metrics.iter().find(|m| m.target_automaton_name == agent2);
-
-    assert_eq!(
-        agent1_metric.map(|m| m.queue_depth).unwrap_or(0),
-        2,
-        "Agent 1 should have 2 items"
-    );
-    assert_eq!(
-        agent2_metric.map(|m| m.queue_depth).unwrap_or(0),
-        1,
-        "Agent 2 should have 1 item"
-    );
-
-    Ok(())
-}
-
-// =============================================================================
-// ROUTING CACHE TESTS
-// =============================================================================
-
-#[sinex_test]
-async fn test_routing_cache_view_exists(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
-
-    // Test that the routing_cache materialized view exists
-    let view_exists = sqlx::query!(
-        r#"
-        SELECT COUNT(*) as count
-        FROM pg_matviews
-        WHERE schemaname = 'sinex_schemas'
-        AND matviewname = 'routing_cache'
-        "#
+    
+    // Create a test automaton checkpoint
+    let automaton_name = "test_checkpoint_automaton";
+    let consumer_group = "test_group";
+    let checkpoint_id = Ulid::new();
+    
+    // Insert checkpoint
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, consumer_group, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4, $5)",
+        checkpoint_id.to_uuid(),
+        automaton_name,
+        consumer_group,
+        "test_event_id",
+        json!({"processed_count": 42, "test_data": true})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify checkpoint exists
+    let checkpoint = sqlx::query!(
+        "SELECT automaton_name, consumer_group, last_processed_id, state_data
+         FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        checkpoint_id.to_uuid()
     )
     .fetch_one(pool)
     .await?;
-
-    // Note: This might be 0 if the view doesn't exist yet
-    println!(
-        "Routing cache view exists: {}",
-        view_exists.count.unwrap_or(0) > 0
-    );
-
+    
+    assert_eq!(checkpoint.automaton_name, automaton_name);
+    assert_eq!(checkpoint.consumer_group.as_deref(), Some(consumer_group));
+    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("test_event_id"));
+    
+    let state_data = checkpoint.state_data.unwrap();
+    assert_eq!(state_data.get("processed_count").unwrap().as_u64().unwrap(), 42);
+    assert_eq!(state_data.get("test_data").unwrap().as_bool().unwrap(), true);
+    
     Ok(())
 }
 
 #[sinex_test]
-async fn test_routing_cache_basic_functionality(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
+    
+    let automaton_name = "test_update_automaton";
+    let checkpoint_id = Ulid::new();
+    
+    // Insert initial checkpoint
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint_id.to_uuid(),
+        automaton_name,
+        "initial_event",
+        json!({"processed_count": 10})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Update checkpoint
+    sqlx::query!(
+        "UPDATE core.automaton_checkpoints 
+         SET last_processed_id = $2, state_data = $3, updated_at = NOW()
+         WHERE event_id = $1::uuid",
+        checkpoint_id.to_uuid(),
+        "updated_event",
+        json!({"processed_count": 25, "status": "active"})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify update
+    let checkpoint = sqlx::query!(
+        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("updated_event"));
+    
+    let state_data = checkpoint.state_data.unwrap();
+    assert_eq!(state_data.get("processed_count").unwrap().as_u64().unwrap(), 25);
+    assert_eq!(state_data.get("status").unwrap().as_str().unwrap(), "active");
+    
+    Ok(())
+}
 
-    // Create a test event
-    let event = RawEventBuilder::new("routing_test", "test_event", json!({"data": "test"})).build();
-    let event_id = insert_event(pool, &event).await?;
+// =============================================================================
+// CHECKPOINT LIFECYCLE TESTS  
+// =============================================================================
 
-    // Add to work queue
-    let _queue_item = add_to_work_queue(pool, event_id, "routing-agent", 3).await?;
-
-    // Query work queue to verify routing logic
-    let work_items = sqlx::query!(
-        "SELECT queue_id::text, target_automaton_name FROM sinex_schemas.work_queue WHERE raw_event_id::uuid = $1",
-        event_id.to_uuid()
+#[sinex_test]
+async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Test checkpoint creation and cleanup patterns
+    let automaton_name = "test_lifecycle_automaton";
+    
+    // Create multiple checkpoints for the same automaton
+    let checkpoint_ids = [
+        Ulid::new(),
+        Ulid::new(), 
+        Ulid::new()
+    ];
+    
+    for (i, checkpoint_id) in checkpoint_ids.iter().enumerate() {
+        sqlx::query!(
+            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data, created_at)
+             VALUES ($1::uuid, $2, $3, $4, $5)",
+            checkpoint_id.to_uuid(),
+            automaton_name,
+            format!("event_{}", i),
+            json!({"processed_count": i * 10}),
+            Utc::now() - Duration::hours((i + 1) as i64)
+        )
+        .execute(pool)
+        .await?;
+    }
+    
+    // Verify all checkpoints exist
+    let checkpoint_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
+        automaton_name
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+    
+    assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
+    
+    // Get the most recent checkpoint
+    let latest_checkpoint = sqlx::query!(
+        "SELECT id::text, last_processed_id, state_data 
+         FROM core.automaton_checkpoints 
+         WHERE automaton_name = $1 
+         ORDER BY created_at DESC 
+         LIMIT 1",
+        automaton_name
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(latest_checkpoint.last_processed_id.as_deref(), Some("event_0"));
+    
+    // Cleanup old checkpoints (keeping only the latest)
+    let deleted_count = sqlx::query!(
+        "DELETE FROM core.automaton_checkpoints 
+         WHERE automaton_name = $1 
+         AND id != $2::uuid 
+         RETURNING id::text",
+        automaton_name,
+        latest_checkpoint.id.unwrap().parse::<Ulid>().unwrap().to_uuid()
     )
     .fetch_all(pool)
     .await?;
+    
+    assert_eq!(deleted_count.len(), 2, "Should cleanup old checkpoints");
+    
+    // Verify only latest remains
+    let remaining_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
+        automaton_name
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+    
+    assert_eq!(remaining_count, 1, "Only latest checkpoint should remain");
+    
+    Ok(())
+}
 
-    assert!(work_items.len() > 0, "Should have work items");
-    assert_eq!(work_items[0].target_automaton_name, "routing-agent");
+// =============================================================================
+// CHECKPOINT METRICS TESTS
+// =============================================================================
 
+#[sinex_test]
+async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Create test checkpoints for different automata
+    let automaton1 = "metrics-automaton-1";
+    let automaton2 = "metrics-automaton-2";
+    
+    let checkpoint1_id = Ulid::new();
+    let checkpoint2_id = Ulid::new();
+    let checkpoint3_id = Ulid::new();
+    
+    // Insert checkpoints with different progress levels
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint1_id.to_uuid(),
+        automaton1,
+        "event_100",
+        json!({"processed_count": 100, "last_activity": "2024-01-01T10:00:00Z"})
+    )
+    .execute(pool)
+    .await?;
+    
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint2_id.to_uuid(),
+        automaton1,
+        "event_200",
+        json!({"processed_count": 200, "last_activity": "2024-01-01T11:00:00Z"})
+    )
+    .execute(pool)
+    .await?;
+    
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint3_id.to_uuid(),
+        automaton2,
+        "event_50",
+        json!({"processed_count": 50, "last_activity": "2024-01-01T09:00:00Z"})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Calculate checkpoint metrics by automaton
+    let metrics = sqlx::query!(
+        "SELECT automaton_name, COUNT(*) as checkpoint_count,
+                MAX((state_data->>'processed_count')::int) as max_processed
+         FROM core.automaton_checkpoints
+         WHERE automaton_name IN ($1, $2)
+         GROUP BY automaton_name
+         ORDER BY automaton_name",
+        automaton1,
+        automaton2
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    assert_eq!(metrics.len(), 2, "Should have metrics for both automata");
+    
+    let automaton1_metrics = metrics.iter().find(|m| m.automaton_name == automaton1).unwrap();
+    let automaton2_metrics = metrics.iter().find(|m| m.automaton_name == automaton2).unwrap();
+    
+    assert_eq!(automaton1_metrics.checkpoint_count.unwrap(), 2);
+    assert_eq!(automaton1_metrics.max_processed.unwrap(), 200);
+    
+    assert_eq!(automaton2_metrics.checkpoint_count.unwrap(), 1);
+    assert_eq!(automaton2_metrics.max_processed.unwrap(), 50);
+    
+    Ok(())
+}
+
+// =============================================================================
+// REDIS STREAMS INTEGRATION TESTS
+// =============================================================================
+
+#[sinex_test]
+async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Test that checkpoint data coordinates with Redis Streams
+    // This simulates the satellite architecture pattern
+    
+    let automaton_name = "redis-test-automaton";
+    let consumer_group = "test_consumer_group";
+    
+    // Create checkpoint that would correspond to Redis consumer group state
+    let checkpoint_id = Ulid::new();
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, consumer_group, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4, $5)",
+        checkpoint_id.to_uuid(),
+        automaton_name,
+        consumer_group,
+        "1640995200000-0", // Redis stream ID format
+        json!({
+            "consumer_group": consumer_group,
+            "last_message_id": "1640995200000-0",
+            "processed_count": 15,
+            "pending_count": 3
+        })
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify checkpoint exists and has expected Redis-compatible structure
+    let checkpoint = sqlx::query!(
+        "SELECT automaton_name, consumer_group, last_processed_id, state_data
+         FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(checkpoint.automaton_name, automaton_name);
+    assert_eq!(checkpoint.consumer_group.as_deref(), Some(consumer_group));
+    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("1640995200000-0"));
+    
+    let state = checkpoint.state_data.unwrap();
+    assert_eq!(state.get("processed_count").unwrap().as_u64().unwrap(), 15);
+    assert_eq!(state.get("pending_count").unwrap().as_u64().unwrap(), 3);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Test checkpoint progress tracking for satellite architecture
+    let automaton_name = "progress-tracking-automaton";
+    
+    // Simulate processing progress over time
+    let progress_points = [
+        ("1640995200000-0", 0),
+        ("1640995210000-0", 5),
+        ("1640995220000-0", 12),
+        ("1640995230000-0", 18),
+    ];
+    
+    let checkpoint_id = Ulid::new();
+    
+    // Insert initial checkpoint
+    sqlx::query!(
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint_id.to_uuid(),
+        automaton_name,
+        progress_points[0].0,
+        json!({"processed_count": progress_points[0].1})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Simulate progress updates
+    for (stream_id, count) in &progress_points[1..] {
+        sqlx::query!(
+            "UPDATE core.automaton_checkpoints 
+             SET last_processed_id = $2, state_data = $3, updated_at = NOW()
+             WHERE event_id = $1::uuid",
+            checkpoint_id.to_uuid(),
+            stream_id,
+            json!({"processed_count": count})
+        )
+        .execute(pool)
+        .await?;
+    }
+    
+    // Verify final state
+    let final_checkpoint = sqlx::query!(
+        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(final_checkpoint.last_processed_id.as_deref(), Some("1640995230000-0"));
+    
+    let state = final_checkpoint.state_data.unwrap();
+    assert_eq!(state.get("processed_count").unwrap().as_u64().unwrap(), 18);
+    
     Ok(())
 }
 
@@ -1093,6 +1230,315 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
         cached_duration, uncached_duration
     );
 
+    Ok(())
+}
+
+// =============================================================================
+// OPERATIONS LOG TESTS
+// =============================================================================
+
+/// Test operations_log table basic functionality
+#[sinex_test]
+async fn test_operations_log_basic_functionality(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Test start_operation function
+    let operation_id: Ulid = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+        "stage",
+        "test_user", 
+        json!({"command": "exo blob stage test.log", "flags": ["--verbose"]})
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    // Verify operation was created correctly
+    let operation = sqlx::query!(
+        "SELECT operation_type, status, invoked_by_user, parameters
+         FROM core.operations_log WHERE operation_id = $1::uuid",
+        operation_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(operation.operation_type, "stage");
+    assert_eq!(operation.status, "started");
+    assert_eq!(operation.invoked_by_user.as_deref(), Some("test_user"));
+    
+    let params = operation.parameters;
+    assert_eq!(params.get("command").unwrap().as_str().unwrap(), "exo blob stage test.log");
+    
+    // Test complete_operation function
+    sqlx::query!(
+        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
+        operation_id,
+        json!({"events_created": 42, "blobs_processed": 1})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify completion and duration calculation
+    let completed_operation = sqlx::query!(
+        "SELECT status, completed_at, duration_ms, summary
+         FROM core.operations_log WHERE operation_id = $1::uuid",
+        operation_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(completed_operation.status, "completed");
+    assert!(completed_operation.completed_at.is_some());
+    assert!(completed_operation.duration_ms.is_some());
+    assert!(completed_operation.duration_ms.unwrap() >= 0);
+    
+    let summary = completed_operation.summary.unwrap();
+    assert_eq!(summary.get("events_created").unwrap().as_u64().unwrap(), 42);
+    assert_eq!(summary.get("blobs_processed").unwrap().as_u64().unwrap(), 1);
+    
+    Ok(())
+}
+
+/// Test operations_log error handling and validation
+#[sinex_test]
+async fn test_operations_log_error_handling(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Test invalid operation type
+    let result = sqlx::query_scalar::<_, Ulid>(
+        "SELECT core.start_operation($1, $2, $3::jsonb)"
+    )
+    .bind("invalid_type")
+    .bind("test_user")
+    .bind(json!({}))
+    .fetch_one(pool)
+    .await;
+    
+    assert!(result.is_err(), "Should reject invalid operation type");
+    
+    // Test fail_operation function
+    let operation_id: Ulid = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+        "replay",
+        "test_user",
+        json!({"command": "exo replay --ingestor fs-watcher --blob abc123"})
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    sqlx::query!(
+        "SELECT core.fail_operation($1::ulid, $2::jsonb)",
+        operation_id,
+        json!({"error": "blob not found", "error_code": "E404"})
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify failure was recorded
+    let failed_operation = sqlx::query!(
+        "SELECT status, completed_at, duration_ms, summary
+         FROM core.operations_log WHERE operation_id = $1::uuid",
+        operation_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(failed_operation.status, "failed");
+    assert!(failed_operation.completed_at.is_some());
+    assert!(failed_operation.duration_ms.is_some());
+    
+    let summary = failed_operation.summary.unwrap();
+    assert_eq!(summary.get("error").unwrap().as_str().unwrap(), "blob not found");
+    assert_eq!(summary.get("error_code").unwrap().as_str().unwrap(), "E404");
+    
+    Ok(())
+}
+
+/// Test operations_log performance indexes
+#[sinex_test]
+async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Create multiple operations for index testing
+    let operation_types = ["stage", "replay", "archive", "restore", "curate"];
+    let users = ["user1", "user2", "user3"];
+    
+    for op_type in &operation_types {
+        for user in &users {
+            let operation_id: Ulid = sqlx::query_scalar!(
+                "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+                op_type,
+                user,
+                json!({"test": true})
+            )
+            .fetch_one(pool)
+            .await?;
+            
+            // Complete half of them, fail the other half
+            if operation_id.to_string().chars().last().unwrap() as u8 % 2 == 0 {
+                sqlx::query!(
+                    "SELECT core.complete_operation($1::ulid, $2::jsonb)",
+                    operation_id,
+                    json!({"test": "completed"})
+                )
+                .execute(pool)
+                .await?;
+            } else {
+                sqlx::query!(
+                    "SELECT core.fail_operation($1::ulid, $2::jsonb)",
+                    operation_id,
+                    json!({"test": "failed"})
+                )
+                .execute(pool)
+                .await?;
+            }
+        }
+    }
+    
+    // Test that index is used for common queries
+    // Query by operation type and status (should use idx_operations_log_monitoring)
+    let explain_result = sqlx::query!(
+        "EXPLAIN SELECT * FROM core.operations_log 
+         WHERE operation_type = $1 AND status = $2 
+         ORDER BY started_at DESC LIMIT 10",
+        "stage",
+        "completed"
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let plan = explain_result
+        .iter()
+        .map(|row| row.query_plan.as_deref().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    
+    // Should use the monitoring index
+    assert!(plan.contains("idx_operations_log_monitoring") || plan.contains("Index Scan"),
+            "Query should use index efficiently: {}", plan);
+    
+    // Test user-based query
+    let user_operations = sqlx::query!(
+        "SELECT COUNT(*) as count FROM core.operations_log WHERE invoked_by_user = $1",
+        "user1"
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    assert_eq!(user_operations.count.unwrap(), 5); // 5 operation types for user1
+    
+    Ok(())
+}
+
+/// Test operations_log auditability and intent tracking
+#[sinex_test]
+async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    
+    // Simulate a complete workflow with proper audit trail
+    let user = "audit_test_user";
+    
+    // 1. Stage operation
+    let stage_op_id: Ulid = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+        "stage",
+        user,
+        json!({
+            "command": "exo blob stage /path/to/important.log",
+            "flags": ["--source", "production-server", "--comment", "Critical system logs"],
+            "file_size": 1048576,
+            "file_path": "/path/to/important.log"
+        })
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    sqlx::query!(
+        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
+        stage_op_id,
+        json!({
+            "blob_id": "01K0B2PBEWTZTS5AG5A128C92Z",
+            "events_created": 1,
+            "bytes_staged": 1048576,
+            "checksum": "blake3:abc123def456"
+        })
+    )
+    .execute(pool)
+    .await?;
+    
+    // 2. Replay operation
+    let replay_op_id: Ulid = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+        "replay",
+        user,
+        json!({
+            "command": "exo replay --ingestor system-logs --blob 01K0B2PBEWTZTS5AG5A128C92Z",
+            "flags": ["--since", "2025-01-01T00:00:00Z", "--until", "2025-01-02T00:00:00Z"],
+            "ingestor": "system-logs",
+            "blob_id": "01K0B2PBEWTZTS5AG5A128C92Z"
+        })
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    sqlx::query!(
+        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
+        replay_op_id,
+        json!({
+            "events_created": 127,
+            "events_archived": 3,
+            "time_range_processed": {
+                "start": "2025-01-01T00:00:00Z",
+                "end": "2025-01-02T00:00:00Z"
+            },
+            "ingestor_version": "v2.1.0"
+        })
+    )
+    .execute(pool)
+    .await?;
+    
+    // Verify complete audit trail
+    let audit_trail = sqlx::query!(
+        "SELECT operation_id::text, operation_type, status, 
+                started_at, completed_at, duration_ms, parameters, summary
+         FROM core.operations_log 
+         WHERE invoked_by_user = $1 
+         ORDER BY started_at ASC",
+        user
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    assert_eq!(audit_trail.len(), 2, "Should have complete audit trail");
+    
+    // Verify stage operation
+    let stage_record = &audit_trail[0];
+    assert_eq!(stage_record.operation_type, "stage");
+    assert_eq!(stage_record.status, "completed");
+    assert!(stage_record.duration_ms.is_some());
+    
+    let stage_params = &stage_record.parameters;
+    assert_eq!(stage_params.get("command").unwrap().as_str().unwrap(), 
+               "exo blob stage /path/to/important.log");
+    
+    let stage_summary = stage_record.summary.as_ref().unwrap();
+    assert_eq!(stage_summary.get("events_created").unwrap().as_u64().unwrap(), 1);
+    assert_eq!(stage_summary.get("bytes_staged").unwrap().as_u64().unwrap(), 1048576);
+    
+    // Verify replay operation
+    let replay_record = &audit_trail[1];
+    assert_eq!(replay_record.operation_type, "replay");
+    assert_eq!(replay_record.status, "completed");
+    
+    let replay_params = &replay_record.parameters;
+    assert_eq!(replay_params.get("ingestor").unwrap().as_str().unwrap(), "system-logs");
+    
+    let replay_summary = replay_record.summary.as_ref().unwrap();
+    assert_eq!(replay_summary.get("events_created").unwrap().as_u64().unwrap(), 127);
+    assert_eq!(replay_summary.get("events_archived").unwrap().as_u64().unwrap(), 3);
+    
+    // Verify operations are in chronological order
+    assert!(audit_trail[0].started_at < audit_trail[1].started_at);
+    
     Ok(())
 }
 

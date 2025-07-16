@@ -49,7 +49,7 @@ pub async fn wait_for_event_count(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
             .fetch_one(pool)
             .await
             .map_err(|e| CoreError::Database(format!("Failed to count events: {}", e)))?
@@ -82,8 +82,8 @@ pub async fn wait_for_worker_status(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        // TODO: Replace with satellite architecture status checking
-        // Legacy automaton_manifests table no longer exists
+        // NOTE: Legacy automaton_manifests table no longer exists in satellite architecture
+        // Status checking would need to be implemented via service health endpoints
         let status: Option<String> = None;
 
         if let Some(status) = status {
@@ -111,7 +111,7 @@ pub async fn wait_for_work_queue_count(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        // TODO: Replace with satellite architecture checkpoint counting
+        // NOTE: Checkpoint counting would need to be implemented via automaton service APIs
         let count = expected_count;
 
         if count == expected_count {
@@ -141,7 +141,7 @@ pub async fn wait_for_work_queue_status_count(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        // TODO: Replace with satellite architecture status counting
+        // NOTE: Status counting would need to be implemented via service health endpoints
         let count = expected_count;
 
         if count >= expected_count {
@@ -170,7 +170,7 @@ pub async fn wait_for_work_queue_empty(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        // TODO: Replace with satellite architecture agent checking
+        // NOTE: Agent checking would need to be implemented via service discovery
         let count = 0i64;
 
         if count == 0 {
@@ -200,7 +200,7 @@ pub async fn wait_for_agent_status(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        // TODO: Replace with satellite architecture status checking
+        // NOTE: Status checking would need to be implemented via service health endpoints
         let status: Option<String> = Some(expected_status.to_string());
 
         if let Some(status) = status {

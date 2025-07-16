@@ -194,7 +194,7 @@ fn is_result_type(ty: &Type) -> bool {
                 if segment.ident == "Result" {
                     // Check if it has generic arguments
                     if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        return args.args.len() >= 1; // Result<T> or Result<T, E>
+                        return !args.args.is_empty(); // Result<T> or Result<T, E>
                     }
                 }
             }

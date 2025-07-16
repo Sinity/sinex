@@ -131,7 +131,7 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
             match self.handle_analytics_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
-                    let ctx = self.context.as_ref().unwrap();
+                    let _ctx = self.context.as_ref().unwrap();
                     
                     let response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
@@ -148,7 +148,7 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
                     warn!("Analytics request failed: {}", e);
                     
                     // Submit error response
-                    let ctx = self.context.as_ref().unwrap();
+                    let _ctx = self.context.as_ref().unwrap();
                     let error_response = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "error": {

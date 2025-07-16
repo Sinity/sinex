@@ -275,7 +275,7 @@ impl EnhancedDbusWatcher {
         {
             let player = sender
                 .as_deref()
-                .and_then(|s| s.split('.').last())
+                .and_then(|s| s.split('.').next_back())
                 .unwrap_or("unknown");
 
             let payload = Self::parse_mpris_properties(args, player, sender, timestamp.clone())

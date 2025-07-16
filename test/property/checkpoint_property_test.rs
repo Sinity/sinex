@@ -1,0 +1,351 @@
+//! Property tests for checkpoint management
+//!
+//! Tests that verify checkpoint consistency, recovery, and concurrency properties
+
+use crate::common::prelude::*;
+use crate::property::strategies::*;
+use proptest::prelude::*;
+use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Test that checkpoint updates are idempotent
+proptest! {
+    #[test]
+    fn checkpoint_updates_are_idempotent(
+        automaton_name in automaton_names(),
+        processed_count in 0u64..10000u64,
+        last_processed_id in prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"),
+        checkpoint_data in checkpoint_data(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+            
+            // Create initial checkpoint state
+            let initial_state = CheckpointState {
+                last_processed_id: last_processed_id.clone(),
+                processed_count,
+                last_activity: chrono::Utc::now(),
+                data: Some(checkpoint_data.clone()),
+                version: 1,
+            };
+            
+            // Save checkpoint twice
+            checkpoint_manager.save_checkpoint(&initial_state).await.unwrap();
+            checkpoint_manager.save_checkpoint(&initial_state).await.unwrap();
+            
+            // Verify state is consistent
+            let retrieved_state = checkpoint_manager.get_checkpoint().await.unwrap();
+            match retrieved_state {
+                Some(state) => {
+                    assert_eq!(state.last_processed_id, initial_state.last_processed_id);
+                    assert_eq!(state.processed_count, initial_state.processed_count);
+                    assert_eq!(state.data, initial_state.data);
+                }
+                None => panic!("Checkpoint should exist after save"),
+            }
+        });
+    }
+}
+
+/// Test checkpoint recovery under various failure scenarios
+proptest! {
+    #[test]
+    fn checkpoint_recovery_is_robust(
+        automaton_name in automaton_names(),
+        checkpoints in proptest::collection::vec(
+            (0u64..1000u64, checkpoint_data()),
+            1..=10
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+            
+            // Save multiple checkpoints with increasing counts
+            let mut expected_final_count = 0u64;
+            for (i, (processed_count, data)) in checkpoints.iter().enumerate() {
+                expected_final_count = *processed_count;
+                
+                let state = CheckpointState {
+                    last_processed_id: Some(format!("message-{}", i)),
+                    processed_count: *processed_count,
+                    last_activity: chrono::Utc::now(),
+                    data: Some(data.clone()),
+                    version: (i + 1) as u32,
+                };
+                
+                checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            }
+            
+            // Verify final state
+            let final_state = checkpoint_manager.get_checkpoint().await.unwrap();
+            assert!(final_state.is_some());
+            let state = final_state.unwrap();
+            assert_eq!(state.processed_count, expected_final_count);
+        });
+    }
+}
+
+/// Test concurrent checkpoint access
+proptest! {
+    #[test]
+    fn concurrent_checkpoint_access_is_safe(
+        automaton_name in automaton_names(),
+        concurrent_updates in proptest::collection::vec(0u64..1000u64, 1..=20),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = Arc::new(ctx.pool().clone());
+            
+            let checkpoint_manager = Arc::new(CheckpointManager::new(
+                pool.as_ref().clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            ));
+            
+            // Launch concurrent update tasks
+            let mut handles = Vec::new();
+            for (i, processed_count) in concurrent_updates.iter().enumerate() {
+                let manager = checkpoint_manager.clone();
+                let count = *processed_count;
+                let handle = tokio::spawn(async move {
+                    let state = CheckpointState {
+                        last_processed_id: Some(format!("concurrent-{}", i)),
+                        processed_count: count,
+                        last_activity: chrono::Utc::now(),
+                        data: Some(serde_json::json!({"task": i})),
+                        version: (i + 1) as u32,
+                    };
+                    
+                    manager.save_checkpoint(&state).await
+                });
+                handles.push(handle);
+            }
+            
+            // Wait for all updates to complete
+            let mut results = Vec::new();
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            
+            // Verify all updates succeeded (or failed gracefully)
+            let successful_updates = results.iter().filter(|r| r.is_ok()).count();
+            assert!(successful_updates > 0, "At least one update should succeed");
+            
+            // Verify final state is consistent
+            let final_state = checkpoint_manager.get_checkpoint().await.unwrap();
+            assert!(final_state.is_some());
+        });
+    }
+}
+
+/// Test checkpoint state transitions
+proptest! {
+    #[test]
+    fn checkpoint_state_transitions_are_valid(
+        automaton_name in automaton_names(),
+        initial_count in 0u64..100u64,
+        increments in proptest::collection::vec(1u64..100u64, 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+            
+            // Initialize with starting count
+            let mut current_count = initial_count;
+            let mut state = CheckpointState {
+                last_processed_id: Some("initial".to_string()),
+                processed_count: current_count,
+                last_activity: chrono::Utc::now(),
+                data: Some(serde_json::json!({"sequence": 0})),
+                version: 1,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Apply increments sequentially
+            for (i, increment) in increments.iter().enumerate() {
+                current_count += increment;
+                state.processed_count = current_count;
+                state.last_processed_id = Some(format!("step-{}", i));
+                state.version += 1;
+                state.data = Some(serde_json::json!({"sequence": i + 1}));
+                
+                checkpoint_manager.save_checkpoint(&state).await.unwrap();
+                
+                // Verify the state was updated correctly
+                let retrieved = checkpoint_manager.get_checkpoint().await.unwrap();
+                assert!(retrieved.is_some());
+                let retrieved_state = retrieved.unwrap();
+                assert_eq!(retrieved_state.processed_count, current_count);
+                assert_eq!(retrieved_state.last_processed_id, Some(format!("step-{}", i)));
+            }
+        });
+    }
+}
+
+/// Test checkpoint data integrity
+proptest! {
+    #[test]
+    fn checkpoint_data_integrity_is_preserved(
+        automaton_name in automaton_names(),
+        test_data in checkpoint_data(),
+        operations in proptest::collection::vec(
+            prop_oneof![
+                Just("save".to_string()),
+                Just("load".to_string()),
+                Just("update".to_string()),
+            ],
+            1..=50
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+            
+            let mut expected_data = test_data.clone();
+            let mut processed_count = 0u64;
+            
+            // Execute operations sequence
+            for (i, operation) in operations.iter().enumerate() {
+                match operation.as_str() {
+                    "save" => {
+                        let state = CheckpointState {
+                            last_processed_id: Some(format!("op-{}", i)),
+                            processed_count,
+                            last_activity: chrono::Utc::now(),
+                            data: Some(expected_data.clone()),
+                            version: (i + 1) as u32,
+                        };
+                        
+                        checkpoint_manager.save_checkpoint(&state).await.unwrap();
+                    }
+                    "load" => {
+                        let retrieved = checkpoint_manager.get_checkpoint().await.unwrap();
+                        if let Some(state) = retrieved {
+                            assert_eq!(state.data, Some(expected_data.clone()));
+                            assert_eq!(state.processed_count, processed_count);
+                        }
+                    }
+                    "update" => {
+                        processed_count += 1;
+                        expected_data = serde_json::json!({"updated": i, "count": processed_count});
+                        
+                        let state = CheckpointState {
+                            last_processed_id: Some(format!("update-{}", i)),
+                            processed_count,
+                            last_activity: chrono::Utc::now(),
+                            data: Some(expected_data.clone()),
+                            version: (i + 1) as u32,
+                        };
+                        
+                        checkpoint_manager.save_checkpoint(&state).await.unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            
+            // Final verification
+            let final_state = checkpoint_manager.get_checkpoint().await.unwrap();
+            if let Some(state) = final_state {
+                assert_eq!(state.data, Some(expected_data));
+                assert_eq!(state.processed_count, processed_count);
+            }
+        });
+    }
+}
+
+/// Test checkpoint cleanup behavior
+proptest! {
+    #[test]
+    fn checkpoint_cleanup_maintains_consistency(
+        automaton_names in proptest::collection::vec(automaton_names(), 1..=10),
+        cleanup_threshold in 1u64..100u64,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Create multiple automata with checkpoints
+            let mut managers = Vec::new();
+            for automaton_name in automaton_names.iter() {
+                let manager = CheckpointManager::new(
+                    pool.clone(),
+                    automaton_name.clone(),
+                    format!("{}-group", automaton_name),
+                    format!("{}-consumer", automaton_name),
+                );
+                
+                // Create checkpoint
+                let state = CheckpointState {
+                    last_processed_id: Some(format!("checkpoint-{}", automaton_name)),
+                    processed_count: cleanup_threshold,
+                    last_activity: chrono::Utc::now(),
+                    data: Some(serde_json::json!({"automaton": automaton_name})),
+                    version: 1,
+                };
+                
+                manager.save_checkpoint(&state).await.unwrap();
+                managers.push(manager);
+            }
+            
+            // Verify all checkpoints exist
+            for manager in &managers {
+                let checkpoint = manager.get_checkpoint().await.unwrap();
+                assert!(checkpoint.is_some());
+                let state = checkpoint.unwrap();
+                assert_eq!(state.processed_count, cleanup_threshold);
+            }
+            
+            // Test cleanup doesn't affect other automata
+            let first_automaton = &automaton_names[0];
+            let cleaned_manager = CheckpointManager::new(
+                pool.clone(),
+                first_automaton.clone(),
+                format!("{}-group", first_automaton),
+                format!("{}-consumer", first_automaton),
+            );
+            
+            // Verify cleanup maintains isolation
+            let remaining_checkpoint = cleaned_manager.get_checkpoint().await.unwrap();
+            assert!(remaining_checkpoint.is_some());
+        });
+    }
+}

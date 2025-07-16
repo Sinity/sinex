@@ -7,6 +7,12 @@
 use crate::common::prelude::*;
 use serde_json::{json, Value};
 use sinex_gateway::service_container::ServiceContainer;
+use sinex_gateway::handlers::{
+    handle_event_count_by_source, handle_activity_heatmap, handle_search_events,
+    handle_create_note, handle_create_entities, handle_link_entities,
+    handle_store_blob, handle_retrieve_blob
+};
+use std::str::FromStr;
 
 /// JSON-RPC 2.0 request structure for test requests
 #[derive(Debug, Clone, serde::Serialize)]
@@ -135,7 +141,7 @@ async fn invoke_rpc_method(
     method: &str,
     params: Value,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use sinex_host::handlers::*;
+    // Direct handler invocation for testing RPC logic without HTTP server complexity
 
     match method {
         "analytics.event_count_by_source" => {

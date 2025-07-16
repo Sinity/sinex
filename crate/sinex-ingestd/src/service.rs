@@ -7,7 +7,7 @@ use crate::{
         BatchResponse, EventBatch, HealthRequest, HealthResponse, IngestResponse,
         RawEvent as ProtoRawEvent,
     },
-    validator::{EventValidator, ValidationStats},
+    validator::EventValidator,
     IngestdError, IngestdResult,
 };
 use redis::{AsyncCommands, Client as RedisClient};
@@ -15,7 +15,6 @@ use sinex_core::RawEvent;
 use sqlx::PgPool;
 use sinex_ulid::Ulid;
 use std::{
-    collections::HashMap,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -329,12 +328,12 @@ impl IngestService {
             .iter()
             .partition(|event| event.is_raw_event());
 
-        // Insert raw events into raw.events table
+        // Insert raw events into core.events table
         for event in &raw_events {
             sqlx::query!(
                 r#"
-                INSERT INTO raw.events (
-                    id, source, event_type, host, payload,
+                INSERT INTO core.events (
+                    event_id, source, event_type, host, payload,
                     payload_schema_id, ts_orig, ingestor_version
                 ) VALUES (
                     $1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8
@@ -652,7 +651,7 @@ impl IngestServiceImpl {
     async fn proto_to_raw_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
         
-        let blob_id = if let Some(blob_id_str) = proto.blob_id {
+        let _blob_id = if let Some(blob_id_str) = proto.blob_id {
             Some(Ulid::from_str(&blob_id_str)
                 .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))?)
         } else {

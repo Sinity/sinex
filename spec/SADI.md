@@ -52,8 +52,9 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
 
 **Key Architectural Decisions:**
 - **ULID Primary Keys** - Time-ordered, globally unique ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md))
-- **Event Processing** - Work queue with `SELECT FOR UPDATE SKIP LOCKED` ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
-- **Routing Cache** - Materialized view for efficient event routing ([ADR-014](docs/adr/ADR-014-routing-cache.md))
+- **Satellite Constellation** - Independent services with unified StatefulStreamProcessor interface ([ADR-010](docs/adr/ADR-010-UnifiedCollectorEventCentricArchitecture.md))
+- **Redis Streams Message Bus** - Real-time event distribution with consumer groups ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
+- **Checkpoint-based Recovery** - Unified state management for ingestors and automata ([ADR-009](docs/adr/ADR-009-ULID-Primary-Key-With-TimescaleDB.md))
 - **Terminal Capture** - Layered approach with multiple sources ([ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md))
 - **Clock Regression** - Handling time jumps gracefully ([ADR-011](docs/adr/ADR-011-clock-regression-handling.md))
 
@@ -120,10 +121,10 @@ Technical Implementation Modules follow a consistent structure:
 ## 🚦 Implementation Status by Component
 
 ### ✅ Operational Components (60-85% Complete)
-- **Satellite Architecture** (75%) - Independent services working, deep symmetry implemented
-- **Message Bus** (70%) - Redis Streams with consumer groups, checkpoint management
-- **Data Substrate** (65%) - PostgreSQL + TimescaleDB + ULID, work_queue deprecated
-- **Gateway & APIs** (60%) - Command/response patterns, CLI integration
+- **Satellite Architecture** (75%) - Independent services operational, StatefulStreamProcessor interface implemented
+- **Message Bus** (70%) - Redis Streams with consumer groups, checkpoint management working
+- **Data Substrate** (65%) - PostgreSQL + TimescaleDB + ULID, unified events table operational
+- **Gateway & APIs** (60%) - Command/response patterns, CLI integration working
 
 ### 🚧 Partially Implemented (25-60% Complete)
 - **Event Sources** (45%) - Four domain satellites operational, expanding coverage
@@ -164,8 +165,9 @@ Technical Implementation Modules follow a consistent structure:
 
 ## 📝 Recent Updates
 
-- **2025-07**: Satellite constellation architecture complete - Redis Streams, checkpoint management, work_queue deprecation
-- **2025-07**: Documentation updates reflecting current implementation reality
+- **2025-07**: Satellite constellation architecture operational - Redis Streams, checkpoint management, unified events table
+- **2025-07**: StatefulStreamProcessor interface implemented with deep symmetry between ingestors and automata
+- **2025-07**: Documentation enhanced to match current implementation reality
 - **2025-01**: Major documentation cleanup and reorganization
 - **2024-12**: Comprehensive TIM restructuring with accurate implementation tracking
 - **2024-11**: NixOS module implementation and VM testing framework

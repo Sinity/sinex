@@ -439,7 +439,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let (event_sender, _event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channel
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
 
         // Get hostname

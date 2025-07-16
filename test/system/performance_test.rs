@@ -99,7 +99,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'load_test'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'load_test'")
         .execute(pool)
         .await?;
 
@@ -193,7 +193,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'concurrent_load_test'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'concurrent_load_test'")
         .execute(pool)
         .await?;
 
@@ -288,15 +288,15 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                 // Try to claim an event for processing
                 let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                     r#"
-                    SELECT id::uuid
-                    FROM raw.events
+                    SELECT event_id::uuid
+                    FROM core.events
                     WHERE source = 'concurrent_test'
                       AND event_type = 'process_me'
                       AND NOT EXISTS (
-                        SELECT 1 FROM raw.events processed
+                        SELECT 1 FROM core.events processed
                         WHERE processed.source = 'concurrent_test'
                           AND processed.event_type = 'processed'
-                          AND processed.payload->>'original_id' = raw.events.id::text
+                          AND processed.payload->>'original_id' = core.events.id::text
                       )
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
@@ -381,10 +381,10 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
 
     // Test various query patterns
     let queries_to_test = vec![
-        ("Simple count", "SELECT COUNT(*) FROM raw.events WHERE source = 'latency_test'"),
-        ("Filtered count", "SELECT COUNT(*) FROM raw.events WHERE source = 'latency_test' AND event_type = 'type_a'"),
-        ("JSON query", "SELECT COUNT(*) FROM raw.events WHERE source = 'latency_test' AND payload->>'category' = 'special'"),
-        ("Recent events", "SELECT * FROM raw.events WHERE source = 'latency_test' ORDER BY ts_ingest DESC LIMIT 10"),
+        ("Simple count", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test'"),
+        ("Filtered count", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND event_type = 'type_a'"),
+        ("JSON query", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND payload->>'category' = 'special'"),
+        ("Recent events", "SELECT * FROM core.events WHERE source = 'latency_test' ORDER BY ts_ingest DESC LIMIT 10"),
     ];
 
     for (name, query) in queries_to_test {
@@ -460,7 +460,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'memory_test'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'memory_test'")
         .execute(pool)
         .await?;
 
@@ -529,15 +529,15 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                 loop {
                     let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                         r#"
-                        SELECT id::uuid
-                        FROM raw.events
+                        SELECT event_id::uuid
+                        FROM core.events
                         WHERE source = 'scaling_test'
                           AND event_type = 'worker_event'
                           AND NOT EXISTS (
-                            SELECT 1 FROM raw.events processed
+                            SELECT 1 FROM core.events processed
                             WHERE processed.source = 'scaling_test'
                               AND processed.event_type = 'processed'
-                              AND processed.payload->>'original_id' = raw.events.id::text
+                              AND processed.payload->>'original_id' = core.events.id::text
                           )
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
@@ -593,7 +593,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
         );
 
         // Cleanup for next test
-        sqlx::query!("DELETE FROM raw.events WHERE source = 'scaling_test'")
+        sqlx::query!("DELETE FROM core.events WHERE source = 'scaling_test'")
             .execute(pool)
             .await?;
     }
@@ -714,7 +714,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
         );
 
         // Cleanup
-        sqlx::query!("DELETE FROM raw.events WHERE source = 'large_payload_test'")
+        sqlx::query!("DELETE FROM core.events WHERE source = 'large_payload_test'")
             .execute(pool)
             .await?;
     }
@@ -780,7 +780,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'burst_test'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'burst_test'")
         .execute(pool)
         .await?;
 

@@ -1,10 +1,10 @@
 # Data Substrate Architecture: The Foundation of Sinex
 
-*   **Version:** 1.2
-*   **Date:** 2025-07-15
+*   **Version:** 1.3
+*   **Date:** 2025-07-16
 *   **Implementation Status:** 🚧 **65% IMPLEMENTED** - Core substrate operational with satellite constellation architecture
 *   **Purpose:** This document provides a comprehensive architectural understanding of Sinex's core data storage, event logging, fundamental data structuring mechanisms, and knowledge representation. It details the "what" and "why" of the data layer supporting the satellite constellation architecture with Redis Streams message bus.
-*   **Current State:** PostgreSQL + TimescaleDB operational, ULID keys functional, Redis Streams active, checkpoint-based processing implemented, work_queue system removed
+*   **Current State:** PostgreSQL + TimescaleDB operational, ULID keys functional, Redis Streams active, checkpoint-based processing implemented, unified events table with provenance tracking
 
 ## 1. Introduction & Philosophy
 
@@ -105,24 +105,24 @@ To enforce data integrity at or near the point of ingestion, the `pg_jsonschema`
 
 ## 4. Satellite Processing Infrastructure
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Redis Streams functional, checkpoint system working, automaton framework active, work_queue architecture deprecated
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Redis Streams functional, checkpoint system working, automaton framework active, unified events table operational
 
-Once events are in `raw.events`, they flow through the satellite constellation for real-time processing via Redis Streams and checkpoint-based state management. The previous work_queue-based architecture has been replaced with Redis Streams for superior performance and durability.
+Once events are in `raw.events`, they flow through the satellite constellation for real-time processing via Redis Streams and checkpoint-based state management. The unified events table provides comprehensive provenance tracking while Redis Streams enable scalable, durable event processing.
 
 ### 4.1. Checkpoint-Based State Management (`core.automaton_checkpoints`)
 
-Automata maintain their processing state through a unified checkpoint system that enables stateful processing with recovery capabilities, replacing the deprecated work_queue approach.
-*   **Purpose:** Provides exactly-once semantics, replay capabilities, and fault tolerance for automaton processing in the satellite architecture.
-*   **Key Schema Elements:** Stores `automaton_id`, `checkpoint_type` (stream position, file offset, timestamp), `checkpoint_data` (JSONB with type-specific state), `created_at`, `updated_at`.
-*   **State Recovery:** Automata resume from their last checkpoint after restarts, using Redis Streams consumer groups and database checkpoints for durability.
+Satellites maintain their processing state through a unified checkpoint system that enables stateful processing with recovery capabilities through the StatefulStreamProcessor interface.
+*   **Purpose:** Provides exactly-once semantics, replay capabilities, and fault tolerance for satellite processing in the constellation architecture.
+*   **Key Schema Elements:** Stores `automaton_name`, `consumer_group`, `checkpoint_type` (stream position, file offset, timestamp), `checkpoint_data` (JSONB with type-specific state), `last_processed_id`, `processed_count`.
+*   **State Recovery:** Satellites resume from their last checkpoint after restarts, using Redis Streams consumer groups and database checkpoints for durability.
 *   **Replay Support:** Checkpoints enable historical reprocessing by resetting state and replaying from specific stream positions or timestamps.
-*   **Deep Symmetry:** Both ingestors and automata use the same checkpoint system, differing only in checkpoint type (external cursors vs. stream positions).
+*   **Deep Symmetry:** Both ingestors and automata use the same checkpoint system via StatefulStreamProcessor, differing only in checkpoint type (external cursors vs. stream positions).
 
 ### 4.2. Redis Streams Message Bus Architecture
 
-Real-time event distribution uses Redis Streams as the central nervous system, completely replacing the previous work_queue polling architecture for superior performance and reliability.
+Real-time event distribution uses Redis Streams as the central nervous system, providing superior performance and reliability for the satellite constellation architecture.
 *   **Architectural Pattern:** Events flow from `sinex-ingestd` to a unified Redis Stream (`sinex:events`) where automata consume them using consumer groups, enabling horizontal scaling.
-*   **Durability:** Redis Streams provide persistent, ordered event logs with automatic consumer group state management, eliminating the complexity of work_queue claiming and status tracking.
+*   **Durability:** Redis Streams provide persistent, ordered event logs with automatic consumer group state management, providing exactly-once processing semantics.
 *   **Concurrency:** Multiple automaton instances process events concurrently through Redis consumer groups with automatic load balancing and backpressure handling.
 *   **Command/Response:** API commands and responses flow through the message bus using correlation IDs for request/response patterns, enabling asynchronous service communication.
 *   **Stream Management:** Automatic trimming, consumer group recovery, and stream monitoring provide operational robustness.
@@ -232,7 +232,7 @@ This table is the Exocortex's authoritative index for all annexed content, linki
 ## 7. Advanced PostgreSQL Features Utilized (Summary)
 
 The data substrate architecture leverages several advanced PostgreSQL features:
-*   **Triggers:** For automated actions like populating the `work_queue` or eventifying schema changes.
+*   **Triggers:** For automated actions like archive triggers for the unified events table and eventifying schema changes.
 *   **Logical Replication (Conceptual for CDC):** Understanding this for potential future data synchronization to external systems (e.g., dedicated vector DBs).
 *   **Recursive CTEs (for Graph Traversal):** Standard SQL method for querying the `core_entities`/`core_entity_relations` graph.
 *   **Apache AGE (Optional Graph Extension):** Provides OpenCypher query capabilities as an alternative for complex graph queries, requiring schema synchronization.

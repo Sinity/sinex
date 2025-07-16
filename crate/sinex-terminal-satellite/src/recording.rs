@@ -12,13 +12,13 @@ use std::time::{Duration, SystemTime};
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// Recording session information
 #[derive(Debug)]
 struct RecordingSession {
     id: String,
-    file_path: PathBuf,
+    _file_path: PathBuf,
     start_time: chrono::DateTime<chrono::Utc>,
     last_size: u64,
     header: Option<AsciinemaHeader>,
@@ -306,7 +306,7 @@ end
                 path.clone(),
                 RecordingSession {
                     id: session_id.clone(),
-                    file_path: path.clone(),
+                    _file_path: path.clone(),
                     start_time: chrono::Utc::now(),
                     last_size: 0,
                     header: None,

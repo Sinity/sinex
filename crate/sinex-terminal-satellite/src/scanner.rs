@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use serde_json::json;
 use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
-use sinex_satellite_sdk::event_source::{ScanReport, ScannerArgs, ScannerEstimate, VersionInfo};
+use sinex_satellite_sdk::stream_processor::{ScanReport, ScanArgs, ScanEstimate};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ impl TerminalScanner {
     }
 
     /// Scan historical terminal data and generate events
-    pub async fn scan_historical_data(&self, args: ScannerArgs) -> SatelliteResult<ScanReport> {
+    pub async fn scan_historical_data(&self, args: ScanArgs) -> SatelliteResult<ScanReport> {
         let start_time = Instant::now();
         let mut stats = HashMap::new();
         let mut total_events = 0;
@@ -41,10 +41,10 @@ impl TerminalScanner {
         info!("Starting terminal historical scan with {} paths", args.paths.len());
 
         // Determine what to scan
-        let scan_paths = if args.paths.is_empty() {
+        let scan_paths = if args.targets.is_empty() {
             self.discover_scan_paths()?
         } else {
-            args.paths.clone()
+            args.targets.clone()
         };
 
         info!("Discovered {} paths to scan", scan_paths.len());
@@ -95,29 +95,23 @@ impl TerminalScanner {
         );
 
         Ok(ScanReport {
-            events_generated: total_events,
+            events_processed: total_events,
             duration,
-            blob_id: None, // Could be implemented for large datasets
+            final_checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint::timestamp(Utc::now(), None),
             time_range: earliest_time.zip(latest_time),
-            content_hash: None, // Could be implemented for reproducibility
-            source_stats: stats,
-            version_info: VersionInfo {
-                git_revision: option_env!("GIT_HASH").unwrap_or("unknown").to_string(),
-                binary_hash: "unknown".to_string(), // Could be computed from binary
-                component_version: format!("sinex-terminal-satellite-{}", env!("CARGO_PKG_VERSION")),
-                scan_timestamp: Utc::now(),
-            },
-            processed_paths,
-            failed_paths,
+            processor_stats: stats,
+            successful_targets: processed_paths,
+            failed_targets: failed_paths.into_iter().map(|(path, err)| (path, err)).collect(),
+            warnings: Vec::new(),
         })
     }
 
     /// Estimate the scope of a scanner operation
-    pub async fn estimate_scope(&self, args: &ScannerArgs) -> SatelliteResult<ScannerEstimate> {
-        let scan_paths = if args.paths.is_empty() {
+    pub async fn estimate_scope(&self, args: &ScanArgs) -> SatelliteResult<ScanEstimate> {
+        let scan_paths = if args.targets.is_empty() {
             self.discover_scan_paths()?
         } else {
-            args.paths.clone()
+            args.targets.clone()
         };
 
         let mut estimated_events = 0;
@@ -139,9 +133,9 @@ impl TerminalScanner {
         }
 
         // Estimate processing time based on events (rough heuristic)
-        let estimated_duration = Duration::from_millis((estimated_events as u64) / 10); // ~100 events per second
+        let estimated_duration = Duration::from_millis(estimated_events / 10); // ~100 events per second
 
-        Ok(ScannerEstimate {
+        Ok(ScanEstimate {
             estimated_events,
             estimated_duration,
             estimated_data_size,
@@ -188,7 +182,7 @@ impl TerminalScanner {
     async fn scan_path(
         &self,
         path: &Path,
-        args: &ScannerArgs,
+        args: &ScanArgs,
     ) -> SatelliteResult<(u64, HashMap<String, u64>, Option<(DateTime<Utc>, DateTime<Utc>)>)> {
         let mut stats = HashMap::new();
         
@@ -217,7 +211,7 @@ impl TerminalScanner {
     async fn scan_atuin_database(
         &self,
         db_path: &Path,
-        args: &ScannerArgs,
+        args: &ScanArgs,
         stats: &mut HashMap<String, u64>,
     ) -> SatelliteResult<(u64, HashMap<String, u64>, Option<(DateTime<Utc>, DateTime<Utc>)>)> {
         let db_path = db_path.to_path_buf();
@@ -339,7 +333,7 @@ impl TerminalScanner {
     async fn scan_history_file(
         &self,
         file_path: &Path,
-        _args: &ScannerArgs,
+        _args: &ScanArgs,
         stats: &mut HashMap<String, u64>,
     ) -> SatelliteResult<(u64, HashMap<String, u64>, Option<(DateTime<Utc>, DateTime<Utc>)>)> {
         info!("Scanning history file: {}", file_path.display());
@@ -356,7 +350,7 @@ impl TerminalScanner {
     async fn scan_recording_file(
         &self,
         file_path: &Path,
-        _args: &ScannerArgs,
+        _args: &ScanArgs,
         stats: &mut HashMap<String, u64>,
     ) -> SatelliteResult<(u64, HashMap<String, u64>, Option<(DateTime<Utc>, DateTime<Utc>)>)> {
         info!("Scanning recording file: {}", file_path.display());
@@ -373,7 +367,7 @@ impl TerminalScanner {
     async fn scan_directory(
         &self,
         dir_path: &Path,
-        args: &ScannerArgs,
+        args: &ScanArgs,
         stats: &mut HashMap<String, u64>,
     ) -> SatelliteResult<(u64, HashMap<String, u64>, Option<(DateTime<Utc>, DateTime<Utc>)>)> {
         info!("Scanning directory: {}", dir_path.display());

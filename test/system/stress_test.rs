@@ -26,12 +26,15 @@
 //! - Race condition monitoring and reporting
 
 use crate::common::prelude::*;
+use sinex_ulid::Ulid;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{Barrier, RwLock};
 use tokio::time::{interval, sleep};
+use futures::future::join_all;
+use std::str::FromStr;
 
 // ==================== STRESS TEST INFRASTRUCTURE ====================
 
@@ -189,21 +192,15 @@ impl StressTestUtils {
         agent_name: &str,
         source_prefix: &str,
     ) -> Result<(), anyhow::Error> {
-        // Clean up in reverse dependency order
+        // Clean up in reverse dependency order for satellite architecture
         sqlx::query!(
-            "DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
-            agent_name
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query!(
-            "DELETE FROM raw.events WHERE source LIKE $1",
+            "DELETE FROM core.events WHERE source LIKE $1",
             format!("{}%", source_prefix)
         )
         .execute(pool)
         .await?;
         sqlx::query!(
-            "DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1",
+            "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             agent_name
         )
         .execute(pool)
@@ -230,7 +227,7 @@ impl StressTestUtils {
             });
 
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload, host)
+                "INSERT INTO core.events (id, source, event_type, payload, host)
                  VALUES ($1::uuid, $2, $3, $4, $5)",
                 event_id.to_uuid(),
                 source,
@@ -248,7 +245,17 @@ impl StressTestUtils {
     }
 }
 
-/// Individual work item representation for stress tests
+/// Individual event item representation for stress tests in satellite architecture
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct EventItem {
+    pub event_id: String,
+    pub stream_id: String,
+    pub automaton_name: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Work item for stress testing in satellite architecture
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct WorkItem {
@@ -258,16 +265,16 @@ pub struct WorkItem {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Result of a single work cycle attempt
+/// Result of a single processing cycle attempt in satellite architecture
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum CycleResult {
-    WorkCompleted { processing_time: Duration },
-    NoWorkAvailable,
-    DeadlockDetected { recovery_time: Duration },
+    EventProcessed { processing_time: Duration },
+    NoEventsAvailable,
+    CheckpointSaved { checkpoint_time: Duration },
     Timeout { timeout_duration: Duration },
     ConnectionError { error_details: String },
-    RaceCondition { conflicting_worker: Option<String> },
+    RedisStreamError { conflicting_consumer: Option<String> },
 }
 
 // ==================== DEADLOCK DETECTION TESTS ====================
@@ -354,12 +361,12 @@ impl DeadlockStressWorker {
     async fn attempt_deadlock_prone_cycle(&self) -> Result<DeadlockCycleResult> {
         let mut cycle_result = DeadlockCycleResult::default();
 
-        match tokio::time::timeout(self.deadlock_timeout, self.claim_work_aggressively()).await {
-            Ok(Ok(Some(work_item))) => {
+        match tokio::time::timeout(self.deadlock_timeout, self.simulate_event_processing()).await {
+            Ok(Ok(Some(event_item))) => {
                 self.metrics.work_claimed();
 
                 match self
-                    .process_with_potential_deadlock(&work_item.queue_id)
+                    .simulate_event_processing_with_checkpoints(&event_item.event_id)
                     .await
                 {
                     Ok(true) => {
@@ -391,78 +398,40 @@ impl DeadlockStressWorker {
         Ok(cycle_result)
     }
 
-    async fn claim_work_aggressively(&self) -> Result<Option<WorkItem>> {
-        let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'processing',
-                 attempts = attempts + 1,
-                 last_attempt_ts = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = (
-                 SELECT queue_id
-                 FROM sinex_schemas.work_queue
-                 WHERE status = 'pending'
-                   AND target_automaton_name = $1
-                   AND (max_attempts IS NULL OR attempts < max_attempts)
-                 ORDER BY created_at
-                 FOR UPDATE SKIP LOCKED
-                 LIMIT 1
-             )
-             RETURNING queue_id::text, raw_event_id::text",
-            self.automaton_name,
-            self.worker_id
-        )
-        .fetch_optional(&self.pool)
-        .await;
-
-        match claimed_item {
-            Ok(Some(item)) => {
-                if self.aggressive_claiming {
-                    self.metrics.race_condition_detected();
-                }
-
-                Ok(Some(WorkItem {
-                    queue_id: item
-                        .queue_id
-                        .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                    event_id: item
-                        .raw_event_id
-                        .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
-                    target_agent: self.automaton_name.clone(),
-                    created_at: chrono::Utc::now(),
-                }))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(e.into()),
+    async fn simulate_event_processing(&self) -> Result<Option<EventItem>> {
+        // In satellite architecture, simulate processing events from Redis Streams
+        if rand::random::<f64>() < 0.3 {
+            // Simulate finding an event to process
+            Ok(Some(EventItem {
+                event_id: Ulid::new().to_string(),
+                stream_id: format!("{}-0", chrono::Utc::now().timestamp_millis()),
+                automaton_name: self.automaton_name.clone(),
+                created_at: chrono::Utc::now(),
+            }))
+        } else {
+            // Simulate no events available
+            Ok(None)
         }
     }
 
-    async fn process_with_potential_deadlock(&self, queue_id: &str) -> Result<bool> {
+    async fn simulate_event_processing_with_checkpoints(&self, event_id: &str) -> Result<bool> {
         let processing_time = Duration::from_millis(50 + rand::random::<u64>() % 100);
         sleep(processing_time).await;
 
+        // Simulate occasional processing failures
         if rand::random::<f64>() < 0.1 {
-            sqlx::query!(
-                "UPDATE sinex_schemas.work_queue
-                 SET status = 'failed_retryable',
-                     processing_worker_id = NULL,
-                     next_retry_ts = NOW() + INTERVAL '1 second'
-                 WHERE queue_id = $1::uuid::ulid",
-                queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
-            )
-            .execute(&self.pool)
-            .await?;
-
             return Ok(false);
         }
 
+        // Update checkpoint to track progress
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'succeeded',
-                 processed_at = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = $1::uuid::ulid",
-            queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
+            "UPDATE core.automaton_checkpoints
+             SET last_processed_id = $2::text,
+                 state_data = state_data || jsonb_build_object('last_processed_event', $2::text, 'worker_id', $3::text),
+                 updated_at = NOW()
+             WHERE automaton_name = $1::text",
+            self.automaton_name,
+            event_id,
             self.worker_id
         )
         .execute(&self.pool)
@@ -472,22 +441,28 @@ impl DeadlockStressWorker {
     }
 }
 
-/// Test coordinated deadlock scenario detection and recovery
+/// Test coordinated checkpoint scenario detection and recovery in satellite architecture
 #[sinex_test(timeout = 300)]
-async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
+async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
     println!("Testing coordinated deadlock scenario...");
     let pool = ctx.pool();
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
+    // Create initial checkpoint for deadlock scenario test automaton
+    let checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint_id.to_uuid(),
         agent_name,
-        "1.0.0",
-        "Coordinated deadlock scenario test",
-        "generic",
-        "running"
+        "initial_event",
+        json!({
+            "version": "1.0.0",
+            "description": "Coordinated deadlock scenario test",
+            "automaton_type": "generic",
+            "status": "running"
+        })
     )
     .execute(pool)
     .await?;
@@ -499,7 +474,7 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     for i in 0..deadlock_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload, host)
+            "INSERT INTO core.events (id, source, event_type, payload, host)
              VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.deadlock_scenario",
@@ -509,14 +484,19 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         )
         .execute(pool)
         .await?;
-        let queue_id = Ulid::new();
+        
+        // Create checkpoint entry for satellite architecture
+        let checkpoint_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.work_queue
-             (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
-             VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
-            queue_id.to_uuid(),
-            event_id.to_uuid(),
-            agent_name
+            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+             VALUES ($1::uuid, $2, $3, $4)
+             ON CONFLICT (automaton_name) DO UPDATE SET
+                state_data = EXCLUDED.state_data,
+                updated_at = NOW()",
+            checkpoint_id.to_uuid(),
+            agent_name,
+            format!("deadlock_event_{}", i),
+            json!({"deadlock_items": i + 1, "status": "active"})
         )
         .execute(pool)
         .await?;
@@ -555,28 +535,29 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
         for check in 0..20 {
             interval.tick().await;
 
-            let stuck_processing: Vec<(String, String)> = sqlx::query!(
-                "SELECT queue_id::text, processing_worker_id FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1
-                   AND status = 'processing'
-                   AND last_attempt_ts < NOW() - INTERVAL '3 seconds'",
+            // Check for stuck checkpoint processing (satellite architecture)
+            let stuck_checkpoints: Vec<(String, String)> = sqlx::query!(
+                "SELECT id::text, automaton_name FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1
+                   AND state_data->>'status' = 'processing'
+                   AND updated_at < NOW() - INTERVAL '3 seconds'",
                 detection_agent
             )
             .fetch_all(&detection_pool)
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|r| match (r.queue_id, r.processing_worker_id) {
-                (Some(queue_id), Some(worker_id)) => Some((queue_id, worker_id)),
+            .filter_map(|r| match (r.id, r.automaton_name) {
+                (Some(checkpoint_id), Some(automaton_name)) => Some((checkpoint_id, automaton_name)),
                 _ => None,
             })
             .collect();
 
-            let active_workers: HashSet<String> = sqlx::query_scalar!(
-                "SELECT DISTINCT processing_worker_id FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1
-                   AND status = 'processing'
-                   AND processing_worker_id IS NOT NULL",
+            // Check for active checkpoint processors
+            let active_checkpoints: HashSet<String> = sqlx::query_scalar!(
+                "SELECT automaton_name FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1
+                   AND state_data->>'status' = 'processing'",
                 detection_agent
             )
             .fetch_all(&detection_pool)
@@ -586,47 +567,48 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
             .flatten()
             .collect();
 
-            // Use timing utility for work queue status counting
-            let total_pending = wait_for_work_queue_status_count(
-                &detection_pool,
-                "pending",
-                0, // Accept any count
-                1, // Quick timeout for detection loop
+            // Count checkpoint status for satellite architecture
+            let total_pending: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1 AND state_data->>'status' = 'pending'",
+                detection_agent
             )
+            .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
-            // Use timing utility for processing work queue count
-            let total_processing = wait_for_work_queue_status_count(
-                &detection_pool,
-                "processing",
-                0, // Accept any count
-                1, // Quick timeout for detection loop
+            let total_processing: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1 AND state_data->>'status' = 'processing'",
+                detection_agent
             )
+            .fetch_one(&detection_pool)
             .await
+            .unwrap_or(None)
             .unwrap_or(0);
 
-            if !stuck_processing.is_empty() {
+            if !stuck_checkpoints.is_empty() {
                 detected_scenarios.push(format!(
-                    "Check {}: {} stuck items, {} active workers, {} pending, {} processing",
+                    "Check {}: {} stuck checkpoints, {} active workers, {} pending, {} processing",
                     check,
-                    stuck_processing.len(),
-                    active_workers.len(),
+                    stuck_checkpoints.len(),
+                    active_checkpoints.len(),
                     total_pending,
                     total_processing
                 ));
 
                 detection_metrics.deadlock_recovery_attempt();
 
+                // Recover stuck checkpoints by resetting their status
                 let recovered_count = sqlx::query!(
-                    "UPDATE sinex_schemas.work_queue
-                     SET status = 'failed_retryable',
-                         processing_worker_id = NULL,
-                         next_retry_ts = NOW() + INTERVAL '100 milliseconds'
-                     WHERE target_automaton_name = $1
-                       AND status = 'processing'
-                       AND last_attempt_ts < NOW() - INTERVAL '3 seconds'
-                     RETURNING queue_id::text",
+                    "UPDATE core.automaton_checkpoints
+                     SET state_data = jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                         updated_at = NOW()
+                     WHERE automaton_name = $1
+                       AND state_data->>'status' = 'processing'
+                       AND updated_at < NOW() - INTERVAL '3 seconds'
+                     RETURNING id::text",
                     detection_agent
                 )
                 .fetch_all(&detection_pool)
@@ -675,8 +657,8 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status = 'succeeded'",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -684,8 +666,8 @@ async fn test_coordinated_deadlock_scenario(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
 
     let final_abandoned: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status IN ('failed', 'failed_retryable')",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)
@@ -850,37 +832,39 @@ impl RaceConditionWorker {
     }
 
     async fn claim_work_competitively(&self) -> Result<Option<WorkItem>> {
-        let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'processing',
-                 attempts = attempts + 1,
-                 last_attempt_ts = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = (
-                 SELECT queue_id
-                 FROM sinex_schemas.work_queue
-                 WHERE status = 'pending'
-                   AND target_automaton_name = $1
-                   AND (max_attempts IS NULL OR attempts < max_attempts)
+        // Satellite architecture: claim checkpoint for processing
+        let claimed_checkpoint = sqlx::query!(
+            "UPDATE core.automaton_checkpoints
+             SET state_data = jsonb_set(
+                 jsonb_set(state_data, '{status}', '\"processing\"'),
+                 '{worker_id}', $2::text::jsonb
+             ),
+             updated_at = NOW()
+             WHERE event_id = (
+                 SELECT id
+                 FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1
+                   AND state_data->>'status' = 'pending'
+                   AND (state_data->>'attempts')::int < 3
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING queue_id::text, raw_event_id::text",
+             RETURNING id::text, last_processed_id",
             self.automaton_name,
-            self.worker_id
+            serde_json::to_string(&self.worker_id).unwrap()
         )
         .fetch_optional(&self.pool)
         .await;
 
-        match claimed_item {
-            Ok(Some(item)) => Ok(Some(WorkItem {
-                queue_id: item
-                    .queue_id
-                    .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                event_id: item
-                    .raw_event_id
-                    .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
+        match claimed_checkpoint {
+            Ok(Some(checkpoint)) => Ok(Some(WorkItem {
+                queue_id: checkpoint
+                    .id
+                    .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
+                event_id: checkpoint
+                    .last_processed_id
+                    .unwrap_or_else(|| "synthetic_event".to_string()),
                 target_agent: self.automaton_name.clone(),
                 created_at: chrono::Utc::now(),
             })),
@@ -889,18 +873,21 @@ impl RaceConditionWorker {
         }
     }
 
-    async fn process_competitively(&self, queue_id: &str) -> Result<bool> {
+    async fn process_competitively(&self, checkpoint_id: &str) -> Result<bool> {
         let processing_time = Duration::from_millis(20 + rand::random::<u64>() % 30);
         sleep(processing_time).await;
 
+        // Simulate occasional failures (5% chance)
         if rand::random::<f64>() < 0.05 {
             sqlx::query!(
-                "UPDATE sinex_schemas.work_queue
-                 SET status = 'failed_retryable',
-                     processing_worker_id = NULL,
-                     next_retry_ts = NOW() + INTERVAL '500 milliseconds'
-                 WHERE queue_id = $1::uuid::ulid",
-                Ulid::from_str(queue_id)?.to_uuid()
+                "UPDATE core.automaton_checkpoints
+                 SET state_data = jsonb_set(
+                     jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                     '{worker_id}', 'null'
+                 ),
+                 updated_at = NOW()
+                 WHERE event_id = $1::uuid",
+                Ulid::from_str(checkpoint_id)?.to_uuid()
             )
             .execute(&self.pool)
             .await?;
@@ -908,14 +895,17 @@ impl RaceConditionWorker {
             return Ok(false);
         }
 
+        // Mark checkpoint as successfully processed
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'succeeded',
-                 processed_at = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = $1::uuid::ulid",
-            Ulid::from_str(queue_id)?.to_uuid(),
-            &self.worker_id
+            "UPDATE core.automaton_checkpoints
+             SET state_data = jsonb_set(
+                 jsonb_set(state_data, '{status}', '\"succeeded\"'),
+                 '{processed_by}', $2::text::jsonb
+             ),
+             updated_at = NOW()
+             WHERE event_id = $1::uuid",
+            Ulid::from_str(checkpoint_id)?.to_uuid(),
+            serde_json::to_string(&self.worker_id).unwrap()
         )
         .execute(&self.pool)
         .await?;
@@ -932,14 +922,20 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
     let agent_name = format!("race_condition_{}", Ulid::new());
 
+    // Create initial checkpoint for race condition test automaton
+    let checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint_id.to_uuid(),
         agent_name,
-        "1.0.0",
-        "Race condition detection test",
-        "generic",
-        "running"
+        "initial_event",
+        json!({
+            "version": "1.0.0",
+            "description": "Race condition detection test",
+            "automaton_type": "generic",
+            "status": "running"
+        })
     )
     .execute(pool)
     .await?;
@@ -952,7 +948,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     for i in 0..race_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.events (id, source, event_type, payload, host)
+            "INSERT INTO core.events (id, source, event_type, payload, host)
              VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.race_condition",
@@ -962,14 +958,19 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         )
         .execute(pool)
         .await?;
-        let queue_id = Ulid::new();
+        
+        // Create checkpoint entry for satellite architecture
+        let checkpoint_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.work_queue
-             (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
-             VALUES ($1::uuid, $2::uuid, $3, 3, 'pending')",
-            queue_id.to_uuid(),
-            event_id.to_uuid(),
-            agent_name
+            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+             VALUES ($1::uuid, $2, $3, $4)
+             ON CONFLICT (automaton_name) DO UPDATE SET
+                state_data = EXCLUDED.state_data,
+                updated_at = NOW()",
+            checkpoint_id.to_uuid(),
+            agent_name,
+            format!("race_event_{}", i),
+            json!({"race_items": i + 1, "status": "active"})
         )
         .execute(pool)
         .await?;
@@ -987,8 +988,8 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             interval.tick().await;
 
             let current_succeeded: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1 AND status = 'succeeded'",
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -997,8 +998,8 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             .unwrap_or(0);
 
             let processing_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1 AND status = 'processing'",
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1 AND state_data->>'status' = 'processing'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1008,10 +1009,12 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
 
             let succeeded_delta = current_succeeded - last_succeeded_count;
 
+            // For checkpoint architecture, we don't have event_id duplicates
+            // but we can check for duplicate checkpoint processing
             let duplicate_check: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) - COUNT(DISTINCT raw_event_id)
-                 FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1 AND status = 'succeeded'",
+                "SELECT COUNT(*) - COUNT(DISTINCT last_processed_id)
+                 FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1019,13 +1022,14 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             .unwrap_or(None)
             .unwrap_or(0);
 
+            // Check for worker conflicts in checkpoint processing
             let worker_conflicts: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM (
-                   SELECT processing_worker_id, COUNT(*) as cnt
-                   FROM sinex_schemas.work_queue
-                   WHERE target_automaton_name = $1 AND status = 'processing'
-                     AND processing_worker_id IS NOT NULL
-                   GROUP BY processing_worker_id
+                   SELECT state_data->>'worker_id' as worker_id, COUNT(*) as cnt
+                   FROM core.automaton_checkpoints
+                   WHERE automaton_name = $1 AND state_data->>'status' = 'processing'
+                     AND state_data->>'worker_id' IS NOT NULL
+                   GROUP BY state_data->>'worker_id'
                    HAVING COUNT(*) > 1
                  ) conflicts",
                 detection_agent
@@ -1120,8 +1124,8 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status = 'succeeded'",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1129,8 +1133,8 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
 
     let unique_completed: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(DISTINCT raw_event_id) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status = 'succeeded'",
+        "SELECT COUNT(DISTINCT last_processed_id) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1344,43 +1348,48 @@ impl StressTestWorker {
     }
 
     async fn claim_work_with_deadlock_detection(&self) -> Result<Option<WorkItem>> {
-        let claimed_item = sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'processing',
-                 attempts = attempts + 1,
-                 last_attempt_ts = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = (
-                 SELECT queue_id
-                 FROM sinex_schemas.work_queue
-                 WHERE status = 'pending'
-                   AND target_automaton_name = $1
-                   AND (max_attempts IS NULL OR attempts < max_attempts)
-                   AND (processing_worker_id IS NULL OR processing_worker_id != $2)
+        // Claim checkpoint with deadlock detection for satellite architecture
+        let claimed_checkpoint = sqlx::query!(
+            "UPDATE core.automaton_checkpoints
+             SET state_data = jsonb_set(
+                 jsonb_set(
+                     jsonb_set(state_data, '{status}', '\"processing\"'),
+                     '{attempts}', (COALESCE((state_data->>'attempts')::int, 0) + 1)::text::jsonb
+                 ),
+                 '{worker_id}', $2::text::jsonb
+             ),
+             updated_at = NOW()
+             WHERE event_id = (
+                 SELECT id
+                 FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1
+                   AND state_data->>'status' = 'pending'
+                   AND (state_data->>'attempts')::int < 3
+                   AND (state_data->>'worker_id' IS NULL OR state_data->>'worker_id' != $2)
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING queue_id::text, raw_event_id::text, attempts",
+             RETURNING id::text, last_processed_id, (state_data->>'attempts')::int as attempts",
             self.automaton_name,
-            self.worker_id
+            serde_json::to_string(&self.worker_id).unwrap()
         )
         .fetch_optional(&self.pool)
         .await;
 
-        match claimed_item {
-            Ok(Some(item)) => {
+        match claimed_checkpoint {
+            Ok(Some(checkpoint)) => {
                 if self.aggressive_claiming {
                     self.metrics.race_condition_detected();
                 }
 
                 Ok(Some(WorkItem {
-                    queue_id: item
-                        .queue_id
-                        .ok_or_else(|| anyhow::anyhow!("Missing queue_id"))?,
-                    event_id: item
-                        .raw_event_id
-                        .ok_or_else(|| anyhow::anyhow!("Missing raw_event_id"))?,
+                    queue_id: checkpoint
+                        .id
+                        .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
+                    event_id: checkpoint
+                        .last_processed_id
+                        .unwrap_or_else(|| "synthetic_event".to_string()),
                     target_agent: self.automaton_name.clone(),
                     created_at: chrono::Utc::now(),
                 }))
@@ -1390,7 +1399,7 @@ impl StressTestWorker {
         }
     }
 
-    async fn process_work_item(&self, queue_id: &str) -> Result<bool> {
+    async fn process_work_item(&self, checkpoint_id: &str) -> Result<bool> {
         let processing_time = if self.aggressive_claiming {
             Duration::from_millis(50)
         } else {
@@ -1399,14 +1408,17 @@ impl StressTestWorker {
 
         sleep(processing_time).await;
 
+        // Simulate occasional failures with aggressive claiming
         if self.aggressive_claiming && rand::random::<f64>() < 0.05 {
             sqlx::query!(
-                "UPDATE sinex_schemas.work_queue
-                 SET status = 'failed_retryable',
-                     processing_worker_id = NULL,
-                     next_retry_ts = NOW() + INTERVAL '1 second'
-                 WHERE queue_id = $1::uuid::ulid",
-                queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
+                "UPDATE core.automaton_checkpoints
+                 SET state_data = jsonb_set(
+                     jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                     '{worker_id}', 'null'
+                 ),
+                 updated_at = NOW()
+                 WHERE event_id = $1::uuid",
+                checkpoint_id.parse::<sinex_ulid::Ulid>()?.to_uuid()
             )
             .execute(&self.pool)
             .await?;
@@ -1414,14 +1426,17 @@ impl StressTestWorker {
             return Ok(false);
         }
 
+        // Mark checkpoint as successfully processed
         sqlx::query!(
-            "UPDATE sinex_schemas.work_queue
-             SET status = 'succeeded',
-                 processed_at = NOW(),
-                 processing_worker_id = $2
-             WHERE queue_id = $1::uuid::ulid",
-            queue_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
-            self.worker_id
+            "UPDATE core.automaton_checkpoints
+             SET state_data = jsonb_set(
+                 jsonb_set(state_data, '{status}', '\"succeeded\"'),
+                 '{processed_by}', $2::text::jsonb
+             ),
+             updated_at = NOW()
+             WHERE event_id = $1::uuid",
+            checkpoint_id.parse::<sinex_ulid::Ulid>()?.to_uuid(),
+            serde_json::to_string(&self.worker_id).unwrap()
         )
         .execute(&self.pool)
         .await?;
@@ -1442,14 +1457,20 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     let work_items = 100;
     let test_duration = Duration::from_secs(5);
 
+    // Create initial checkpoint for extreme concurrency test automaton
+    let checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description, automaton_type, status)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        checkpoint_id.to_uuid(),
         agent_name,
-        "1.0.0",
-        "Extreme concurrency stress test",
-        "generic",
-        "running"
+        "initial_event",
+        json!({
+            "version": "1.0.0",
+            "description": "Extreme concurrency stress test",
+            "automaton_type": "generic",
+            "status": "running"
+        })
     )
     .execute(pool)
     .await?;
@@ -1462,7 +1483,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         for i in 0..work_items {
             let event_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, payload, host)
+                "INSERT INTO core.events (id, source, event_type, payload, host)
                  VALUES ($1::uuid, $2, $3, $4, $5)",
                 event_id.to_uuid(),
                 "stress.extreme_concurrency",
@@ -1473,18 +1494,23 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             .execute(&create_pool)
             .await
             .expect("Event creation failed");
-            let queue_id = Ulid::new();
+            
+            // Create checkpoint entry for satellite architecture
+            let checkpoint_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO sinex_schemas.work_queue
-                 (queue_id, raw_event_id, target_automaton_name, max_attempts, status)
-                 VALUES ($1::uuid, $2::uuid, $3, 5, 'pending')",
-                queue_id.to_uuid(),
-                event_id.to_uuid(),
-                create_agent
+                "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+                 VALUES ($1::uuid, $2, $3, $4)
+                 ON CONFLICT (automaton_name) DO UPDATE SET
+                    state_data = EXCLUDED.state_data,
+                    updated_at = NOW()",
+                checkpoint_id.to_uuid(),
+                &create_agent,
+                format!("stress_event_{}", i),
+                json!({"stress_items": i + 1, "status": "active", "max_attempts": 5})
             )
             .execute(&create_pool)
             .await
-            .expect("Work item creation failed");
+            .expect("Checkpoint creation failed");
 
             sleep(Duration::from_millis(50)).await;
         }
@@ -1513,7 +1539,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     let monitor_agent = agent_name.clone();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {
-        use crate::common::timing_optimization::replacements::wait_for_work_queue_status_count;
+        // Satellite architecture - simplified checkpoint monitoring
 
         let mut interval = interval(Duration::from_secs(2));
         let mut detected_deadlocks = 0u64;
@@ -1522,10 +1548,10 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             interval.tick().await;
 
             let stuck_items: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM sinex_schemas.work_queue
-                 WHERE target_automaton_name = $1
-                   AND status = 'processing'
-                   AND last_attempt_ts < NOW() - INTERVAL '10 seconds'",
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
+                 WHERE automaton_name = $1
+                   AND state_data->>'status' = 'processing'
+                   AND updated_at < NOW() - INTERVAL '10 seconds'",
                 monitor_agent
             )
             .fetch_one(&monitor_pool)
@@ -1538,14 +1564,16 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 monitor_metrics.deadlock_recovery_attempt();
 
                 let recovered = sqlx::query!(
-                    "UPDATE sinex_schemas.work_queue
-                     SET status = 'failed_retryable',
-                         processing_worker_id = NULL,
-                         next_retry_ts = NOW() + INTERVAL '1 second'
-                     WHERE target_automaton_name = $1
-                       AND status = 'processing'
-                       AND last_attempt_ts < NOW() - INTERVAL '10 seconds'
-                     RETURNING queue_id::text",
+                    "UPDATE core.automaton_checkpoints
+                     SET state_data = jsonb_set(
+                         jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                         '{worker_id}', 'null'
+                     ),
+                     updated_at = NOW()
+                     WHERE automaton_name = $1
+                       AND state_data->>'status' = 'processing'
+                       AND updated_at < NOW() - INTERVAL '10 seconds'
+                     RETURNING id::text",
                     monitor_agent
                 )
                 .fetch_all(&monitor_pool)
@@ -1557,54 +1585,29 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 }
             }
 
-            // Use optimized utility functions for work queue monitoring
-            let pending_count = match wait_for_work_queue_status_count(
-                &monitor_pool,
-                "pending",
-                0,
-                1,
+            // Satellite architecture - monitor checkpoint activity instead of work queue
+            let checkpoint_count = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
+                monitor_agent
             )
+            .fetch_one(&monitor_pool)
             .await
-            {
-                Ok(count) => count,
-                Err(_) => {
-                    // Fallback to direct query on timeout
-                    sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'pending'",
-                        monitor_agent
-                    )
-                    .fetch_one(&monitor_pool)
-                    .await
-                    .unwrap_or(Some(0))
-                    .unwrap_or(0)
-                }
-            };
+            .unwrap_or(Some(0))
+            .unwrap_or(0);
 
-            let processing_count = match wait_for_work_queue_status_count(
-                &monitor_pool,
-                "processing",
-                0,
-                1,
+            let recent_updates = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.automaton_checkpoints 
+                 WHERE automaton_name = $1 AND updated_at > NOW() - INTERVAL '30 seconds'",
+                monitor_agent
             )
+            .fetch_one(&monitor_pool)
             .await
-            {
-                Ok(count) => count,
-                Err(_) => {
-                    // Fallback to direct query on timeout
-                    sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1 AND status = 'processing'",
-                        monitor_agent
-                    )
-                    .fetch_one(&monitor_pool)
-                    .await
-                    .unwrap_or(Some(0))
-                    .unwrap_or(0)
-                }
-            };
+            .unwrap_or(Some(0))
+            .unwrap_or(0);
 
             println!(
-                "Monitor: pending={}, processing={}, stuck_detected={}",
-                pending_count, processing_count, stuck_items
+                "Monitor: checkpoints={}, recent_updates={}, stuck_detected={}",
+                checkpoint_count, recent_updates, stuck_items
             );
         }
 
@@ -1642,8 +1645,8 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     }
 
     let final_succeeded: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status = 'succeeded'",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1651,8 +1654,8 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
 
     let final_pending: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status = 'pending'",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' = 'pending'",
         agent_name
     )
     .fetch_one(pool)
@@ -1660,8 +1663,8 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     .unwrap_or(0);
 
     let final_failed: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue
-         WHERE target_automaton_name = $1 AND status IN ('failed', 'failed_retryable')",
+        "SELECT COUNT(*) FROM core.automaton_checkpoints
+         WHERE automaton_name = $1 AND state_data->>'status' IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)

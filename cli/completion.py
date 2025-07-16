@@ -24,7 +24,7 @@ def get_sources() -> List[str]:
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT source FROM raw.events ORDER BY source")
+                cur.execute("SELECT DISTINCT source FROM core.events ORDER BY source")
                 return [row['source'] for row in cur.fetchall()]
     except Exception:
         # Fallback to common sources if DB unavailable
@@ -38,17 +38,17 @@ def get_event_types(source: Optional[str] = None) -> List[str]:
             with conn.cursor() as cur:
                 if source:
                     cur.execute(
-                        "SELECT DISTINCT event_type FROM raw.events WHERE source = %s ORDER BY event_type",
+                        "SELECT DISTINCT event_type FROM core.events WHERE source = %s ORDER BY event_type",
                         (source,)
                     )
                 else:
-                    cur.execute("SELECT DISTINCT event_type FROM raw.events ORDER BY event_type")
+                    cur.execute("SELECT DISTINCT event_type FROM core.events ORDER BY event_type")
                 return [row['event_type'] for row in cur.fetchall()]
     except Exception:
         # Fallback to common event types
         return [
             'window.focused', 'workspace.changed', 'command.executed', 
-            'file.created', 'file.modified', 'agent.heartbeat'
+            'file.created', 'file.modified', 'automaton.heartbeat'
         ]
 
 
@@ -57,19 +57,49 @@ def get_hosts() -> List[str]:
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT host FROM raw.events WHERE host IS NOT NULL ORDER BY host")
+                cur.execute("SELECT DISTINCT host FROM core.events WHERE host IS NOT NULL ORDER BY host")
                 return [row['host'] for row in cur.fetchall()]
     except Exception:
         return []
 
 
-def get_agents() -> List[str]:
-    """Get all agent names from manifests."""
+def get_automata() -> List[str]:
+    """Get all automaton names from manifests."""
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT agent_name FROM sinex_schemas.agent_manifests ORDER BY agent_name")
-                return [row['agent_name'] for row in cur.fetchall()]
+                cur.execute("SELECT DISTINCT automaton_name FROM sinex_schemas.automaton_manifests ORDER BY automaton_name")
+                return [row['automaton_name'] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def get_blob_ids() -> List[str]:
+    """Get blob IDs from source material registry (recent ones)."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT blob_id::text FROM raw.source_material_registry 
+                    ORDER BY staged_at DESC 
+                    LIMIT 100
+                """)
+                return [row['blob_id'] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def get_event_ids() -> List[str]:
+    """Get recent event IDs (for archive/restore operations)."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT event_id::text FROM core.events 
+                    ORDER BY ts_ingest DESC 
+                    LIMIT 50
+                """)
+                return [row['event_id'] for row in cur.fetchall()]
     except Exception:
         return []
 
@@ -107,7 +137,7 @@ _sinex_completion() {
     
     # Top-level commands
     if [[ ${COMP_CWORD} == 1 ]]; then
-        opts="query sources stats schema agent blob dlq"
+        opts="query sources stats schema automaton blob dlq event-archive explore replay restore completion"
         COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         return 0
     fi
@@ -191,7 +221,7 @@ _sinex_completion() {
                     ;;
             esac
             ;;
-        agent)
+        automaton)
             case "${COMP_WORDS[2]}" in
                 list)
                     case "${prev}" in
@@ -208,7 +238,7 @@ _sinex_completion() {
                     ;;
                 status)
                     if [[ ${COMP_CWORD} == 3 ]]; then
-                        local agents=$(python3 -c "from cli.completion import get_agents; print(' '.join(get_agents()))" 2>/dev/null)
+                        local agents=$(python3 -c "from cli.completion import get_automata; print(' '.join(get_automata()))" 2>/dev/null)
                         COMPREPLY=( $(compgen -W "${agents}" -- ${cur}) )
                         return 0
                     fi
@@ -274,9 +304,40 @@ _sinex_completion() {
                             ;;
                     esac
                     ;;
+                stage)
+                    case "${prev}" in
+                        --source-id|-s|--comment|-c|--tags|-t|--annex-repo|-r)
+                            return 0
+                            ;;
+                        *)
+                            opts="--source-id -s --comment -c --tags -t --annex-repo -r"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            if [[ ${COMP_CWORD} == 3 ]]; then
+                                COMPREPLY+=( $(compgen -f -- ${cur}) )
+                            fi
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                archive)
+                    case "${prev}" in
+                        --reason|-r)
+                            return 0
+                            ;;
+                        *)
+                            opts="--reason -r --dry-run --force"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            if [[ ${COMP_CWORD} == 3 ]]; then
+                                local blob_ids=$(python3 -c "from cli.completion import get_blob_ids; print(' '.join(get_blob_ids()))" 2>/dev/null)
+                                COMPREPLY+=( $(compgen -W "${blob_ids}" -- ${cur}) )
+                            fi
+                            return 0
+                            ;;
+                    esac
+                    ;;
                 *)
                     if [[ ${COMP_CWORD} == 2 ]]; then
-                        COMPREPLY=( $(compgen -W "ingest list get verify" -- ${cur}) )
+                        COMPREPLY=( $(compgen -W "ingest list get verify stage archive" -- ${cur}) )
                         return 0
                     fi
                     ;;
@@ -286,8 +347,8 @@ _sinex_completion() {
             case "${COMP_WORDS[2]}" in
                 list)
                     case "${prev}" in
-                        --agent|-a)
-                            local agents=$(python3 -c "from cli.completion import get_agents; print(' '.join(get_agents()))" 2>/dev/null)
+                        --automaton|-a)
+                            local agents=$(python3 -c "from cli.completion import get_automata; print(' '.join(get_automata()))" 2>/dev/null)
                             COMPREPLY=( $(compgen -W "${agents}" -- ${cur}) )
                             return 0
                             ;;
@@ -310,7 +371,7 @@ _sinex_completion() {
                             return 0
                             ;;
                         *)
-                            opts="--agent -a --source -s --event-type -t --category -c --limit -n --include-resolved --output-format"
+                            opts="--automaton -a --source -s --event-type -t --category -c --limit -n --include-resolved --output-format"
                             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
                             return 0
                             ;;
@@ -318,13 +379,13 @@ _sinex_completion() {
                     ;;
                 stats)
                     case "${prev}" in
-                        --agent|-a)
-                            local agents=$(python3 -c "from cli.completion import get_agents; print(' '.join(get_agents()))" 2>/dev/null)
+                        --automaton|-a)
+                            local agents=$(python3 -c "from cli.completion import get_automata; print(' '.join(get_automata()))" 2>/dev/null)
                             COMPREPLY=( $(compgen -W "${agents}" -- ${cur}) )
                             return 0
                             ;;
                         *)
-                            opts="--agent -a --days -d"
+                            opts="--automaton -a --days -d"
                             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
                             return 0
                             ;;
@@ -345,8 +406,8 @@ _sinex_completion() {
                     ;;
                 purge)
                     case "${prev}" in
-                        --agent|-a)
-                            local agents=$(python3 -c "from cli.completion import get_agents; print(' '.join(get_agents()))" 2>/dev/null)
+                        --automaton|-a)
+                            local agents=$(python3 -c "from cli.completion import get_automata; print(' '.join(get_automata()))" 2>/dev/null)
                             COMPREPLY=( $(compgen -W "${agents}" -- ${cur}) )
                             return 0
                             ;;
@@ -355,7 +416,7 @@ _sinex_completion() {
                             return 0
                             ;;
                         *)
-                            opts="--agent -a --category -c --older-than --resolved-only --dry-run --force"
+                            opts="--automaton -a --category -c --older-than --resolved-only --dry-run --force"
                             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
                             return 0
                             ;;
@@ -364,6 +425,126 @@ _sinex_completion() {
                 *)
                     if [[ ${COMP_CWORD} == 2 ]]; then
                         COMPREPLY=( $(compgen -W "list show retry resolve stats purge" -- ${cur}) )
+                        return 0
+                    fi
+                    ;;
+            esac
+            ;;
+        event-archive)
+            case "${prev}" in
+                --reason|-r)
+                    return 0
+                    ;;
+                *)
+                    opts="--reason -r --dry-run --force"
+                    COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                    if [[ ${COMP_CWORD} == 2 ]]; then
+                        local event_ids=$(python3 -c "from cli.completion import get_event_ids; print(' '.join(get_event_ids()))" 2>/dev/null)
+                        COMPREPLY+=( $(compgen -W "${event_ids}" -- ${cur}) )
+                    fi
+                    return 0
+                    ;;
+            esac
+            ;;
+        explore)
+            case "${COMP_WORDS[2]}" in
+                coverage)
+                    case "${prev}" in
+                        --satellite|-s)
+                            COMPREPLY=( $(compgen -W "fs-watcher terminal-satellite desktop-satellite system-satellite" -- ${cur}) )
+                            return 0
+                            ;;
+                        --time-range|-t)
+                            COMPREPLY=( $(compgen -W "1h 6h 12h 1d 3d 1w 2w" -- ${cur}) )
+                            return 0
+                            ;;
+                        --source)
+                            local sources=$(python3 -c "from cli.completion import get_sources; print(' '.join(get_sources()))" 2>/dev/null)
+                            COMPREPLY=( $(compgen -W "${sources}" -- ${cur}) )
+                            return 0
+                            ;;
+                        *)
+                            opts="--satellite -s --time-range -t --source"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                source-state)
+                    case "${prev}" in
+                        --satellite|-s)
+                            COMPREPLY=( $(compgen -W "fs-watcher terminal-satellite desktop-satellite system-satellite" -- ${cur}) )
+                            return 0
+                            ;;
+                        *)
+                            opts="--satellite -s --verbose -v"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                missing-events)
+                    case "${prev}" in
+                        --satellite|-s)
+                            COMPREPLY=( $(compgen -W "fs-watcher terminal-satellite desktop-satellite system-satellite" -- ${cur}) )
+                            return 0
+                            ;;
+                        --time-range|-t)
+                            COMPREPLY=( $(compgen -W "1h 6h 12h 1d 3d 1w" -- ${cur}) )
+                            return 0
+                            ;;
+                        *)
+                            opts="--satellite -s --time-range -t"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                curate)
+                    case "${prev}" in
+                        --time-range|-t)
+                            COMPREPLY=( $(compgen -W "1h 6h 12h 1d 3d 1w 2w" -- ${cur}) )
+                            return 0
+                            ;;
+                        --source|-s)
+                            local sources=$(python3 -c "from cli.completion import get_sources; print(' '.join(get_sources()))" 2>/dev/null)
+                            COMPREPLY=( $(compgen -W "${sources}" -- ${cur}) )
+                            return 0
+                            ;;
+                        --event-type|-e)
+                            local event_types=$(python3 -c "from cli.completion import get_event_types; print(' '.join(get_event_types()))" 2>/dev/null)
+                            COMPREPLY=( $(compgen -W "${event_types}" -- ${cur}) )
+                            return 0
+                            ;;
+                        --limit|-n)
+                            return 0
+                            ;;
+                        *)
+                            opts="--time-range -t --source -s --event-type -e --limit -n --auto-resolve"
+                            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                *)
+                    if [[ ${COMP_CWORD} == 2 ]]; then
+                        COMPREPLY=( $(compgen -W "coverage source-state missing-events curate" -- ${cur}) )
+                        return 0
+                    fi
+                    ;;
+            esac
+            ;;
+        completion)
+            case "${COMP_WORDS[2]}" in
+                install|generate)
+                    if [[ ${COMP_CWORD} == 3 ]]; then
+                        COMPREPLY=( $(compgen -W "bash zsh fish" -- ${cur}) )
+                        return 0
+                    fi
+                    ;;
+                *)
+                    if [[ ${COMP_CWORD} == 2 ]]; then
+                        COMPREPLY=( $(compgen -W "install generate" -- ${cur}) )
                         return 0
                     fi
                     ;;
@@ -413,7 +594,7 @@ _sinex_hosts() {
 
 _sinex_agents() {
     local agents
-    agents=($(python3 -c "from cli.completion import get_agents; print(' '.join(get_agents()))" 2>/dev/null))
+    agents=($(python3 -c "from cli.completion import get_automata; print(' '.join(get_automata()))" 2>/dev/null))
     _describe 'agents' agents
 }
 
@@ -438,9 +619,14 @@ _exo() {
                 "sources[List event sources]" \
                 "stats[Show database statistics]" \
                 "schema[Schema management]" \
-                "agent[Agent management]" \
+                "automaton[Automaton management]" \
                 "blob[Blob storage management]" \
-                "dlq[Dead letter queue management]"
+                "dlq[Dead letter queue management]" \
+                "event-archive[Archive specific events]" \
+                "explore[Explore and curate data]" \
+                "replay[Replay automaton processing]" \
+                "restore[Restore archived events]" \
+                "completion[Shell completion management]"
             ;;
         args)
             case $words[2] in
@@ -475,7 +661,7 @@ _exo() {
                             ;;
                     esac
                     ;;
-                agent)
+                automaton)
                     case $words[3] in
                         list)
                             _arguments \
@@ -483,12 +669,12 @@ _exo() {
                             ;;
                         status)
                             _arguments \
-                                '1:agent:_sinex_agents'
+                                '1:automaton:_sinex_automata'
                             ;;
                         *)
-                            _values "agent commands" \
-                                "list[List agents]" \
-                                "status[Show agent status]"
+                            _values "automaton commands" \
+                                "list[List automata]" \
+                                "status[Show automaton status]"
                             ;;
                     esac
                     ;;
@@ -516,12 +702,29 @@ _exo() {
                                 '(-r --annex-repo)'{-r,--annex-repo}'[Repository path]:path:_directories' \
                                 '--fast[Fast verification]'
                             ;;
+                        stage)
+                            _arguments \
+                                '1:file:_files' \
+                                '(-s --source-id)'{-s,--source-id}'[Source identifier]:source-id:' \
+                                '(-c --comment)'{-c,--comment}'[User comment]:comment:' \
+                                '(-t --tags)'{-t,--tags}'[Tags (comma-separated)]:tags:' \
+                                '(-r --annex-repo)'{-r,--annex-repo}'[Repository path]:path:_directories'
+                            ;;
+                        archive)
+                            _arguments \
+                                '1:blob-id:' \
+                                '(-r --reason)'{-r,--reason}'[Reason for archiving]:reason:' \
+                                '--dry-run[Show what would be archived]' \
+                                '--force[Archive without confirmation]'
+                            ;;
                         *)
                             _values "blob commands" \
                                 "ingest[Ingest file]" \
                                 "list[List blobs]" \
                                 "get[Get blob]" \
-                                "verify[Verify integrity]"
+                                "verify[Verify integrity]" \
+                                "stage[Stage source material]" \
+                                "archive[Archive blob and derived events]"
                             ;;
                     esac
                     ;;
@@ -529,7 +732,7 @@ _exo() {
                     case $words[3] in
                         list)
                             _arguments \
-                                '(-a --agent)'{-a,--agent}'[Filter by agent]:agent:_sinex_agents' \
+                                '(-a --automaton)'{-a,--automaton}'[Filter by automaton]:automaton:_sinex_automata' \
                                 '(-s --source)'{-s,--source}'[Filter by source]:source:_sinex_sources' \
                                 '(-t --event-type)'{-t,--event-type}'[Filter by event type]:event-type:_sinex_event_types' \
                                 '(-c --category)'{-c,--category}'[Filter by category]:category:(retryable permanent system user)' \
@@ -539,7 +742,7 @@ _exo() {
                             ;;
                         stats)
                             _arguments \
-                                '(-a --agent)'{-a,--agent}'[Filter by agent]:agent:_sinex_agents' \
+                                '(-a --automaton)'{-a,--automaton}'[Filter by automaton]:automaton:_sinex_automata' \
                                 '(-d --days)'{-d,--days}'[Number of days]:days:'
                             ;;
                         show|retry)
@@ -554,7 +757,7 @@ _exo() {
                             ;;
                         purge)
                             _arguments \
-                                '(-a --agent)'{-a,--agent}'[Purge by agent]:agent:_sinex_agents' \
+                                '(-a --automaton)'{-a,--automaton}'[Purge by automaton]:automaton:_sinex_automata' \
                                 '(-c --category)'{-c,--category}'[Purge by category]:category:(retryable permanent system user)' \
                                 '--older-than[Purge entries older than]:timespan:' \
                                 '--resolved-only[Only purge resolved entries]' \
@@ -569,6 +772,48 @@ _exo() {
                                 "resolve[Resolve DLQ entry]" \
                                 "stats[Show DLQ statistics]" \
                                 "purge[Purge DLQ entries]"
+                            ;;
+                    esac
+                    ;;
+                event-archive)
+                    _arguments \
+                        '1:event-id:' \
+                        '(-r --reason)'{-r,--reason}'[Reason for archiving]:reason:' \
+                        '--dry-run[Show what would be archived]' \
+                        '--force[Archive without confirmation]'
+                    ;;
+                explore)
+                    case $words[3] in
+                        coverage)
+                            _arguments \
+                                '(-s --satellite)'{-s,--satellite}'[Satellite name]:satellite:(fs-watcher terminal-satellite desktop-satellite system-satellite)' \
+                                '(-t --time-range)'{-t,--time-range}'[Time range]:time-range:(1h 6h 12h 1d 3d 1w 2w)' \
+                                '--source[Filter by source]:source:_sinex_sources'
+                            ;;
+                        source-state)
+                            _arguments \
+                                '(-s --satellite)'{-s,--satellite}'[Satellite name]:satellite:(fs-watcher terminal-satellite desktop-satellite system-satellite)' \
+                                '(-v --verbose)'{-v,--verbose}'[Verbose output]'
+                            ;;
+                        missing-events)
+                            _arguments \
+                                '(-s --satellite)'{-s,--satellite}'[Satellite name]:satellite:(fs-watcher terminal-satellite desktop-satellite system-satellite)' \
+                                '(-t --time-range)'{-t,--time-range}'[Time range]:time-range:(1h 6h 12h 1d 3d 1w)'
+                            ;;
+                        curate)
+                            _arguments \
+                                '(-t --time-range)'{-t,--time-range}'[Time range]:time-range:(1h 6h 12h 1d 3d 1w 2w)' \
+                                '(-s --source)'{-s,--source}'[Filter by source]:source:_sinex_sources' \
+                                '(-e --event-type)'{-e,--event-type}'[Filter by event type]:event-type:_sinex_event_types' \
+                                '(-n --limit)'{-n,--limit}'[Maximum groups to show]:limit:' \
+                                '--auto-resolve[Auto-resolve obvious duplicates]'
+                            ;;
+                        *)
+                            _values "explore commands" \
+                                "coverage[Analyze coverage gaps]" \
+                                "source-state[Inspect source state]" \
+                                "missing-events[Detect missing events]" \
+                                "curate[Interactive data curation]"
                             ;;
                     esac
                     ;;
@@ -600,9 +845,9 @@ function __sinex_hosts
     python3 -c "from cli.completion import get_hosts; print('\\n'.join(get_hosts()))" 2>/dev/null
 end
 
-# Function to get agents from database
-function __sinex_agents
-    python3 -c "from cli.completion import get_agents; print('\\n'.join(get_agents()))" 2>/dev/null
+# Function to get automata from database
+function __sinex_automata
+    python3 -c "from cli.completion import get_automata; print('\\n'.join(get_automata()))" 2>/dev/null
 end
 
 # Function to get schema identifiers
@@ -615,9 +860,14 @@ complete -c exo -f -n '__fish_use_subcommand' -a 'query' -d 'Query events from d
 complete -c exo -f -n '__fish_use_subcommand' -a 'sources' -d 'List event sources'
 complete -c exo -f -n '__fish_use_subcommand' -a 'stats' -d 'Show database statistics'
 complete -c exo -f -n '__fish_use_subcommand' -a 'schema' -d 'Schema management'
-complete -c exo -f -n '__fish_use_subcommand' -a 'agent' -d 'Agent management'
+complete -c exo -f -n '__fish_use_subcommand' -a 'automaton' -d 'Automaton management'
 complete -c exo -f -n '__fish_use_subcommand' -a 'blob' -d 'Blob storage management'
 complete -c exo -f -n '__fish_use_subcommand' -a 'dlq' -d 'Dead letter queue management'
+complete -c exo -f -n '__fish_use_subcommand' -a 'event-archive' -d 'Archive specific events'
+complete -c exo -f -n '__fish_use_subcommand' -a 'explore' -d 'Explore and curate data'
+complete -c exo -f -n '__fish_use_subcommand' -a 'replay' -d 'Replay automaton processing'
+complete -c exo -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore archived events'
+complete -c exo -f -n '__fish_use_subcommand' -a 'completion' -d 'Shell completion management'
 
 # Query command completions
 complete -c exo -f -n '__fish_seen_subcommand_from query' -s s -l source -d 'Filter by source' -a '(__sinex_sources)'
@@ -642,21 +892,23 @@ complete -c exo -f -n '__fish_seen_subcommand_from schema; and __fish_seen_subco
 # Schema get completions
 complete -c exo -f -n '__fish_seen_subcommand_from schema; and __fish_seen_subcommand_from get' -a '(__sinex_schemas)'
 
-# Agent subcommands
-complete -c exo -f -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from list status' -a 'list' -d 'List agents'
-complete -c exo -f -n '__fish_seen_subcommand_from agent; and not __fish_seen_subcommand_from list status' -a 'status' -d 'Show agent status'
+# Automaton subcommands
+complete -c exo -f -n '__fish_seen_subcommand_from automaton; and not __fish_seen_subcommand_from list status' -a 'list' -d 'List automata'
+complete -c exo -f -n '__fish_seen_subcommand_from automaton; and not __fish_seen_subcommand_from list status' -a 'status' -d 'Show automaton status'
 
-# Agent list completions
-complete -c exo -f -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from list' -s s -l status -d 'Filter by status' -a 'development stable deprecated'
+# Automaton list completions
+complete -c exo -f -n '__fish_seen_subcommand_from automaton; and __fish_seen_subcommand_from list' -s s -l status -d 'Filter by status' -a 'development stable deprecated'
 
-# Agent status completions
-complete -c exo -f -n '__fish_seen_subcommand_from agent; and __fish_seen_subcommand_from status' -a '(__sinex_agents)'
+# Automaton status completions
+complete -c exo -f -n '__fish_seen_subcommand_from automaton; and __fish_seen_subcommand_from status' -a '(__sinex_automata)'
 
 # Blob subcommands
-complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify' -a 'ingest' -d 'Ingest file'
-complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify' -a 'list' -d 'List blobs'
-complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify' -a 'get' -d 'Get blob'
-complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify' -a 'verify' -d 'Verify integrity'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'ingest' -d 'Ingest file'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'list' -d 'List blobs'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'get' -d 'Get blob'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'verify' -d 'Verify integrity'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'stage' -d 'Stage source material'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and not __fish_seen_subcommand_from ingest list get verify stage archive' -a 'archive' -d 'Archive blob and derived events'
 
 # Blob ingest completions
 complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from ingest' -s d -l description -d 'Description'
@@ -674,6 +926,17 @@ complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand
 complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from verify' -s r -l annex-repo -d 'Repository path'
 complete -c exo -f -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from verify' -l fast -d 'Fast verification'
 
+# Blob stage completions
+complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from stage' -s s -l source-id -d 'Source identifier'
+complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from stage' -s c -l comment -d 'User comment'
+complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from stage' -s t -l tags -d 'Tags (comma-separated)'
+complete -c exo -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from stage' -s r -l annex-repo -d 'Repository path'
+
+# Blob archive completions
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from archive' -s r -l reason -d 'Reason for archiving'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from archive' -l dry-run -d 'Show what would be archived'
+complete -c exo -f -n '__fish_seen_subcommand_from blob; and __fish_seen_subcommand_from archive' -l force -d 'Archive without confirmation'
+
 # DLQ subcommands
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and not __fish_seen_subcommand_from list show retry resolve stats purge' -a 'list' -d 'List DLQ entries'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and not __fish_seen_subcommand_from list show retry resolve stats purge' -a 'show' -d 'Show DLQ entry details'
@@ -683,7 +946,7 @@ complete -c exo -f -n '__fish_seen_subcommand_from dlq; and not __fish_seen_subc
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and not __fish_seen_subcommand_from list show retry resolve stats purge' -a 'purge' -d 'Purge DLQ entries'
 
 # DLQ list completions
-complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -s a -l agent -d 'Filter by agent' -a '(__sinex_agents)'
+complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -s a -l automaton -d 'Filter by automaton' -a '(__sinex_automata)'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -s s -l source -d 'Filter by source' -a '(__sinex_sources)'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -s t -l event-type -d 'Filter by event type' -a '(__sinex_event_types)'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -s c -l category -d 'Filter by category' -a 'retryable permanent system user'
@@ -692,7 +955,7 @@ complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcomma
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from list' -l output-format -d 'Output format' -a 'table json csv'
 
 # DLQ stats completions
-complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from stats' -s a -l agent -d 'Filter by agent' -a '(__sinex_agents)'
+complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from stats' -s a -l automaton -d 'Filter by automaton' -a '(__sinex_automata)'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from stats' -s d -l days -d 'Number of days'
 
 # DLQ resolve completions
@@ -700,12 +963,49 @@ complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcomma
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from resolve' -l dry-run -d 'Show what would be resolved'
 
 # DLQ purge completions
-complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -s a -l agent -d 'Purge by agent' -a '(__sinex_agents)'
+complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -s a -l automaton -d 'Purge by automaton' -a '(__sinex_automata)'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -s c -l category -d 'Purge by category' -a 'retryable permanent system user'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -l older-than -d 'Purge entries older than'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -l resolved-only -d 'Only purge resolved entries'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -l dry-run -d 'Show what would be purged'
 complete -c exo -f -n '__fish_seen_subcommand_from dlq; and __fish_seen_subcommand_from purge' -l force -d 'Skip confirmation'
+
+# Event-archive command completions  
+complete -c exo -f -n '__fish_seen_subcommand_from event-archive' -s r -l reason -d 'Reason for archiving'
+complete -c exo -f -n '__fish_seen_subcommand_from event-archive' -l dry-run -d 'Show what would be archived'
+complete -c exo -f -n '__fish_seen_subcommand_from event-archive' -l force -d 'Archive without confirmation'
+
+# Explore subcommands
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and not __fish_seen_subcommand_from coverage source-state missing-events curate' -a 'coverage' -d 'Analyze coverage gaps'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and not __fish_seen_subcommand_from coverage source-state missing-events curate' -a 'source-state' -d 'Inspect source state'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and not __fish_seen_subcommand_from coverage source-state missing-events curate' -a 'missing-events' -d 'Detect missing events'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and not __fish_seen_subcommand_from coverage source-state missing-events curate' -a 'curate' -d 'Interactive data curation'
+
+# Explore coverage completions
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from coverage' -s s -l satellite -d 'Satellite name' -a 'fs-watcher terminal-satellite desktop-satellite system-satellite'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from coverage' -s t -l time-range -d 'Time range' -a '1h 6h 12h 1d 3d 1w 2w'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from coverage' -l source -d 'Filter by source' -a '(__sinex_sources)'
+
+# Explore source-state completions
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from source-state' -s s -l satellite -d 'Satellite name' -a 'fs-watcher terminal-satellite desktop-satellite system-satellite'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from source-state' -s v -l verbose -d 'Verbose output'
+
+# Explore missing-events completions
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from missing-events' -s s -l satellite -d 'Satellite name' -a 'fs-watcher terminal-satellite desktop-satellite system-satellite'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from missing-events' -s t -l time-range -d 'Time range' -a '1h 6h 12h 1d 3d 1w'
+
+# Explore curate completions
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -s t -l time-range -d 'Time range' -a '1h 6h 12h 1d 3d 1w 2w'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -s s -l source -d 'Filter by source' -a '(__sinex_sources)'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -s e -l event-type -d 'Filter by event type' -a '(__sinex_event_types)'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -s n -l limit -d 'Maximum groups to show'
+complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -l auto-resolve -d 'Auto-resolve obvious duplicates'
+
+# Completion subcommands
+complete -c exo -f -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from install generate' -a 'install' -d 'Install shell completion'
+complete -c exo -f -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from install generate' -a 'generate' -d 'Generate completion script'
+complete -c exo -f -n '__fish_seen_subcommand_from completion; and __fish_seen_subcommand_from install' -a 'bash zsh fish' -d 'Shell type'
+complete -c exo -f -n '__fish_seen_subcommand_from completion; and __fish_seen_subcommand_from generate' -a 'bash zsh fish' -d 'Shell type'
 '''
 
 
@@ -775,10 +1075,14 @@ if __name__ == '__main__':
         print(' '.join(get_event_types(source)))
     elif shell == 'hosts':
         print(' '.join(get_hosts()))
-    elif shell == 'agents':
-        print(' '.join(get_agents()))
+    elif shell == 'automata':
+        print(' '.join(get_automata()))
     elif shell == 'schemas':
         print(' '.join(get_schema_identifiers()))
+    elif shell == 'blob-ids':
+        print(' '.join(get_blob_ids()))
+    elif shell == 'event-ids':
+        print(' '.join(get_event_ids()))
     else:
         print(f"Unknown command: {shell}")
         sys.exit(1)

@@ -5,11 +5,10 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::{SatelliteResult, SatelliteError};
+use sinex_satellite_sdk::SatelliteResult;
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
 };
-use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,8 +23,8 @@ pub struct RpcDispatcherAutomaton {
 #[derive(Clone)]
 struct PendingRequest {
     request_id: String,
-    method: String,
-    params: Value,
+    _method: String,
+    _params: Value,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -46,8 +45,8 @@ impl RpcDispatcherAutomaton {
         // Store pending request
         let pending_request = PendingRequest {
             request_id: request_id.to_string(),
-            method: method.to_string(),
-            params: params.clone(),
+            _method: method.to_string(),
+            _params: params.clone(),
             created_at: chrono::Utc::now(),
         };
 
@@ -57,7 +56,7 @@ impl RpcDispatcherAutomaton {
         }
 
         // Determine target service based on method prefix
-        let (service_name, service_method) = match method {
+        let (_service_name, service_method) = match method {
             m if m.starts_with("analytics.") => ("analytics", m),
             m if m.starts_with("pkm.") => ("pkm", m),
             m if m.starts_with("search.") => ("search", m),
@@ -74,8 +73,8 @@ impl RpcDispatcherAutomaton {
         };
 
         // Route to appropriate service automaton
-        let ctx = self.context.as_ref().unwrap();
-        let service_request = json!({
+        let _ctx = self.context.as_ref().unwrap();
+        let _service_request = json!({
             "request_id": request_id,
             "method": service_method,
             "params": params
@@ -95,8 +94,8 @@ impl RpcDispatcherAutomaton {
         message: &str,
         details: String,
     ) -> SatelliteResult<()> {
-        let ctx = self.context.as_ref().unwrap();
-        let error_response = json!({
+        let _ctx = self.context.as_ref().unwrap();
+        let _error_response = json!({
             "jsonrpc": "2.0",
             "error": {
                 "code": code,
@@ -128,8 +127,8 @@ impl RpcDispatcherAutomaton {
             return Ok(());
         }
 
-        let ctx = self.context.as_ref().unwrap();
-        let rpc_response = if let Some(error) = response.get("error") {
+        let _ctx = self.context.as_ref().unwrap();
+        let _rpc_response = if let Some(error) = response.get("error") {
             // Service returned an error
             json!({
                 "jsonrpc": "2.0",

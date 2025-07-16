@@ -521,7 +521,7 @@ async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestR
         .await?;
 
     // Verify data exists within transaction
-    let result = sqlx::query("SELECT value FROM test_isolation WHERE id = 1")
+    let result = sqlx::query("SELECT value FROM test_isolation WHERE event_id = 1")
         .fetch_one(&mut *tx)
         .await?;
 
