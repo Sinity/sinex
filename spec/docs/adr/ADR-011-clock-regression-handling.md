@@ -1,7 +1,7 @@
 # ADR-011: Clock Regression Handling
 
 ## Status
-Accepted
+Implemented
 
 ## Context
 

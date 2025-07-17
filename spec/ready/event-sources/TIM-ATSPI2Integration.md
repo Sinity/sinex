@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L2 - Ready for Implementation
 **Implementation**: 0% (Design complete, implementation not started)
-**Dependencies**: AT-SPI2 libraries, D-Bus integration, EventSource trait, accessibility bus
+**Dependencies**: AT-SPI2 libraries, D-Bus integration, StatefulStreamProcessor trait, accessibility bus
 **Blocks**: UI semantic capture, accessibility event monitoring, GUI context analysis
 
 ## MVP Specification
@@ -11,7 +11,7 @@
 - Basic UI element discovery and enumeration
 - Focus change and window activation event capture
 - Widget property extraction (name, role, value, state)
-- Integration with EventSource pattern
+- Integration with StatefulStreamProcessor pattern
 
 ## Enhanced Features
 - Advanced UI hierarchy traversal
@@ -24,7 +24,7 @@
 ## Implementation Checklist
 - [ ] AT-SPI2 library bindings and D-Bus integration
 - [ ] Accessibility bus connection management
-- [ ] EventSource trait implementation
+- [ ] StatefulStreamProcessor trait implementation
 - [ ] UI element discovery and enumeration
 - [ ] Focus and activation event monitoring
 - [ ] Widget property extraction pipeline
@@ -73,10 +73,10 @@ AT-SPI2 is the standard accessibility framework on Linux desktops, allowing Exoc
         import json # For payload construction
         import datetime
 
-        # Placeholder: Function to send event to Exocortex raw.events
+        # Placeholder: Function to send event to Exocortex core.events
         # In a real agent, this would use psycopg2 or an HTTP client to an ingest API.
-        def send_to_exocortex_raw_events(source, event_type, payload_dict):
-            # Construct full raw.events structure
+        def send_to_exocortex_core_events(source, event_type, payload_dict):
+            # Construct full core.events structure
             event_data = {
                 "source": source,
                 "event_type": event_type,
@@ -130,7 +130,7 @@ AT-SPI2 is the standard accessibility framework on Linux desktops, allowing Exoc
                     "widget_dbus_path_atspi": widget_path,
                     "_provenance": { /* ... correlation_id if available from broader context ... */ }
                 }
-                send_to_exocortex_raw_events("desktop.atspi.ingestor", "widget_focused", payload)
+                send_to_exocortex_core_events("desktop.atspi.ingestor", "widget_focused", payload)
 
             except Exception as e:
                 print(f"Error processing focus event: {e} for source: {event.source}")
@@ -162,7 +162,7 @@ AT-SPI2 is the standard accessibility framework on Linux desktops, allowing Exoc
                     "inserted_text": "REDACTED_SENSITIVE" if is_sensitive else inserted_text, # Basic redaction
                     "is_sensitive_widget": is_sensitive,
                 }
-                send_to_exocortex_raw_events("desktop.atspi.ingestor", "text_inserted", payload)
+                send_to_exocortex_core_events("desktop.atspi.ingestor", "text_inserted", payload)
             except Exception as e:
                 print(f"Error processing text_changed_insert event: {e}")
 

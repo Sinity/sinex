@@ -9,14 +9,10 @@
 //! - Complex query operations
 
 use crate::common::prelude::*;
-use sinex_satellite_sdk::EventSourceContext;
 use serde_json::json;
 use sinex_core::{event_type_constants, sources};
 use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::validation::EventValidator;
-// NOTE: work_queue functionality has been replaced by Redis Streams
-// use sinex_db::work_queue::claim_work_queue_items;
-// use sinex_db::AutomatonManifestParams;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32},
     Arc,
@@ -549,12 +545,9 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 }
 
 // =============================================================================
-// WORK QUEUE OPERATIONS
+// REDIS STREAMS OPERATIONS
 // =============================================================================
-// NOTE: work_queue functionality has been replaced by Redis Streams
-// These tests are disabled as they reference obsolete database structures
-
-/// Test Redis Streams event processing operations (replaces work_queue)
+/// Test Redis Streams event processing operations
 #[sinex_test(timeout = 45)]
 async fn test_redis_streams_event_processing(ctx: TestContext) -> TestResult {
     // Insert a raw event first
@@ -604,7 +597,7 @@ async fn test_redis_streams_event_processing(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test Redis Streams PEL retry logic and failure handling (replaces work_queue retry/DLQ)
+/// Test Redis Streams PEL retry logic and failure handling
 #[sinex_test(timeout = 45)]
 async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
     // Insert a raw event
@@ -617,7 +610,7 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
 
     let inserted_event = insert_event(ctx.pool(), &event).await?;
 
-    // Test checkpoint failure tracking (replaces work_queue retry logic)
+    // Test checkpoint failure tracking
     let automaton_name = "test_automaton";
     let consumer_group = "test_consumer_group";
     
@@ -985,76 +978,6 @@ impl Default for TestSourceConfig {
     }
 }
 
-/*
-struct TestEventSource {
-    config: TestSourceConfig,
-    events_sent: Arc<AtomicU32>,
-    should_error: Arc<AtomicBool>,
-}
-
-#[async_trait::async_trait]
-impl EventSource for TestEventSource {
-    type Config = TestSourceConfig;
-    const SOURCE_NAME: &'static str = "test_source";
-
-    async fn initialize(ctx: EventSourceContext) -> sinex_core::Result<Self> {
-        let config: TestSourceConfig = serde_json::from_value(ctx.config).map_err(|e| {
-            sinex_core::CoreError::Configuration(format!("Failed to parse config: {}", e))
-        })?;
-
-        Ok(Self {
-            config,
-            events_sent: Arc::new(AtomicU32::new(0)),
-            should_error: Arc::new(AtomicBool::new(false)),
-        })
-    }
-
-    async fn stream_events(
-        &mut self,
-        tx: tokio::sync::mpsc::Sender<RawEvent>,
-    ) -> sinex_core::Result<()> {
-        if self.config.should_fail {
-            return Err(sinex_core::CoreError::Other("Test failure".to_string()));
-        }
-
-        for i in 0..self.config.events_to_generate {
-            if self.should_error.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(sinex_core::CoreError::Other(
-                    "Test error during streaming".to_string(),
-                ));
-            }
-
-            let event = RawEventBuilder::new(
-                Self::SOURCE_NAME,
-                "test_event",
-                json!({"test": true, "sequence": i}),
-            )
-            .build();
-
-            if tx.send(event).await.is_err() {
-                break; // Receiver dropped
-            }
-
-            self.events_sent
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                self.config.generation_delay_ms,
-            ))
-            .await;
-        }
-
-        // Keep running until shutdown
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
-    }
-
-    async fn shutdown(&mut self) -> sinex_core::Result<()> {
-        Ok(())
-    }
-}
-*/
 
 /// Test satellite processor initialization (replaces EventSource trait)
 #[sinex_test]

@@ -68,8 +68,8 @@ def get_automata() -> List[str]:
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT automaton_name FROM sinex_schemas.automaton_manifests ORDER BY automaton_name")
-                return [row['automaton_name'] for row in cur.fetchall()]
+                cur.execute("SELECT DISTINCT processor_name FROM sinex_schemas.processor_manifests WHERE processor_type = 'automaton' ORDER BY processor_name")
+                return [row['processor_name'] for row in cur.fetchall()]
     except Exception:
         return []
 
@@ -102,6 +102,11 @@ def get_event_ids() -> List[str]:
                 return [row['event_id'] for row in cur.fetchall()]
     except Exception:
         return []
+
+
+def get_satellites() -> List[str]:
+    """Get available satellite names."""
+    return ['terminal', 'desktop', 'system', 'fs-watcher']
 
 
 def get_schema_identifiers() -> List[str]:
@@ -137,7 +142,7 @@ _sinex_completion() {
     
     # Top-level commands
     if [[ ${COMP_CWORD} == 1 ]]; then
-        opts="query sources stats schema automaton blob dlq event-archive explore replay restore completion"
+        opts="query sources stats schema automaton blob dlq event-archive explore replay restore scan completion"
         COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         return 0
     fi
@@ -534,6 +539,31 @@ _sinex_completion() {
                     ;;
             esac
             ;;
+        scan)
+            case "${prev}" in
+                --satellite|-s)
+                    local satellites=$(python3 -c "from cli.completion import get_satellites; print(' '.join(get_satellites()))" 2>/dev/null)
+                    COMPREPLY=( $(compgen -W "${satellites}" -- ${cur}) )
+                    return 0
+                    ;;
+                --since|--until)
+                    COMPREPLY=( $(compgen -W "1h 6h 12h 1d 3d 1w 2w" -- ${cur}) )
+                    return 0
+                    ;;
+                --targets)
+                    COMPREPLY=( $(compgen -f -- ${cur}) )
+                    return 0
+                    ;;
+                --timeout|--max-events)
+                    return 0
+                    ;;
+                *)
+                    opts="--satellite -s --all-satellites --since --until --targets --dry-run --estimate --interactive --max-events --timeout --parallel"
+                    COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+                    return 0
+                    ;;
+            esac
+            ;;
         completion)
             case "${COMP_WORDS[2]}" in
                 install|generate)
@@ -598,6 +628,12 @@ _sinex_agents() {
     _describe 'agents' agents
 }
 
+_sinex_satellites() {
+    local satellites
+    satellites=($(python3 -c "from cli.completion import get_satellites; print(' '.join(get_satellites()))" 2>/dev/null))
+    _describe 'satellites' satellites
+}
+
 _sinex_schemas() {
     local schemas
     schemas=($(python3 -c "from cli.completion import get_schema_identifiers; print(' '.join(get_schema_identifiers()))" 2>/dev/null))
@@ -626,6 +662,7 @@ _exo() {
                 "explore[Explore and curate data]" \
                 "replay[Replay automaton processing]" \
                 "restore[Restore archived events]" \
+                "scan[Coordinate satellite scan operations]" \
                 "completion[Shell completion management]"
             ;;
         args)
@@ -817,6 +854,20 @@ _exo() {
                             ;;
                     esac
                     ;;
+                scan)
+                    _arguments \
+                        '(-s --satellite)'{-s,--satellite}'[Satellite name]:satellite:_sinex_satellites' \
+                        '--all-satellites[Scan with all satellites]' \
+                        '--since[Start time for scan]:time:' \
+                        '--until[End time for scan]:time:' \
+                        '--targets[Targets to scan (multiple)]:targets:_files' \
+                        '--dry-run[Show what would be scanned]' \
+                        '--estimate[Show scan estimation]' \
+                        '--interactive[Enable interactive mode]' \
+                        '--max-events[Maximum events to process]:number:' \
+                        '--timeout[Timeout in seconds]:seconds:' \
+                        '--parallel[Run scans in parallel]'
+                    ;;
             esac
             ;;
     esac
@@ -850,6 +901,11 @@ function __sinex_automata
     python3 -c "from cli.completion import get_automata; print('\\n'.join(get_automata()))" 2>/dev/null
 end
 
+# Function to get satellites
+function __sinex_satellites
+    python3 -c "from cli.completion import get_satellites; print('\\n'.join(get_satellites()))" 2>/dev/null
+end
+
 # Function to get schema identifiers
 function __sinex_schemas
     python3 -c "from cli.completion import get_schema_identifiers; print('\\n'.join(get_schema_identifiers()))" 2>/dev/null
@@ -867,6 +923,7 @@ complete -c exo -f -n '__fish_use_subcommand' -a 'event-archive' -d 'Archive spe
 complete -c exo -f -n '__fish_use_subcommand' -a 'explore' -d 'Explore and curate data'
 complete -c exo -f -n '__fish_use_subcommand' -a 'replay' -d 'Replay automaton processing'
 complete -c exo -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore archived events'
+complete -c exo -f -n '__fish_use_subcommand' -a 'scan' -d 'Coordinate satellite scan operations'
 complete -c exo -f -n '__fish_use_subcommand' -a 'completion' -d 'Shell completion management'
 
 # Query command completions
@@ -1001,6 +1058,19 @@ complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subc
 complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -s n -l limit -d 'Maximum groups to show'
 complete -c exo -f -n '__fish_seen_subcommand_from explore; and __fish_seen_subcommand_from curate' -l auto-resolve -d 'Auto-resolve obvious duplicates'
 
+# Scan command completions
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -s s -l satellite -d 'Satellite name' -a '(__sinex_satellites)'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l all-satellites -d 'Scan with all satellites'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l since -d 'Start time for scan'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l until -d 'End time for scan'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l targets -d 'Targets to scan (multiple)'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l dry-run -d 'Show what would be scanned'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l estimate -d 'Show scan estimation'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l interactive -d 'Enable interactive mode'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l max-events -d 'Maximum events to process'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l timeout -d 'Timeout in seconds'
+complete -c exo -f -n '__fish_seen_subcommand_from scan' -l parallel -d 'Run scans in parallel'
+
 # Completion subcommands
 complete -c exo -f -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from install generate' -a 'install' -d 'Install shell completion'
 complete -c exo -f -n '__fish_seen_subcommand_from completion; and not __fish_seen_subcommand_from install generate' -a 'generate' -d 'Generate completion script'
@@ -1083,6 +1153,8 @@ if __name__ == '__main__':
         print(' '.join(get_blob_ids()))
     elif shell == 'event-ids':
         print(' '.join(get_event_ids()))
+    elif shell == 'satellites':
+        print(' '.join(get_satellites()))
     else:
         print(f"Unknown command: {shell}")
         sys.exit(1)

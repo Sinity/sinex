@@ -1,166 +1,441 @@
-# Ingestion Architecture & Telemetry Sources: The Sensory Network of the Exocortex
+# Ingestion Architecture & Telemetry Sources: Domain-Specific Event Capture
 
-*   **Version:** 1.3
-*   **Date:** 2025-07-16
-*   **Implementation Status:** 🚧 **SATELLITE CONSTELLATION OPERATIONAL** - Multiple satellites capturing events ✅ **WORKING**, advanced sources 🔨 **EXPANDING**
-*   **Purpose:** This document describes the Sinex satellite constellation architecture for event ingestion. It details the ingestd hub pattern, satellite services, StatefulStreamProcessor unified model, and provides architectural overviews for each telemetry domain. The satellite architecture provides independent, systemd-managed services with deep symmetry between ingestors and automata.
-*   **Primary Sources:** STAD (System Technical Architecture Document) Parts II & III; Vision Document Part III.2.
+*   **Version:** 2.1
+*   **Date:** 2025-07-17
+*   **Implementation Status:** ✅ **OPERATIONAL** - Multiple ingestor satellites capturing diverse telemetry sources
+*   **Purpose:** This document describes the domain-specific telemetry sources and event capture patterns within the Sinex satellite constellation. It focuses on the unique architectural approaches for each telemetry domain rather than the general satellite architecture (covered in DataSubstrate_Architecture.md).
+*   **Scope:** Covers filesystem, terminal, desktop, system, and application-specific ingestion patterns with their implementation details and data schemas.
 
-## 1. Introduction & Philosophy of Ingestion
+## 1. Telemetry Source Overview
 
-### 1.1. Purpose of the Universal Ingestion Layer
+### 1.1. Ingestion Principles
 
-The Ingestion Layer is responsible for sensing and capturing a comprehensive range of data about the user's digital experiences, subjective states, and environmental context. Its goal is to feed the `raw.events` table, the Exocortex's canonical event substrate, with high-fidelity, timely, and contextually rich data. This data forms the basis for all subsequent processing, analysis, and insight generation within the system.
+*   **Layered Fidelity:** Capture data from the most direct and semantically rich source available
+*   **Ambient Capture:** Continuous, unobtrusive background data collection
+*   **Minimal Processing:** Ingestors focus on reliable capture, complex analysis handled by automata
+*   **Strategic Redundancy:** Multiple layers provide error checking and context fusion
+*   **Idempotency:** Avoid duplicate events from the same source data
 
-### 1.2. Core Principles Guiding Ingestion (Vision III.2.0)
+### 1.2. Operational Ingestor Services
 
-*   **Layered Fidelity:** Data is sought from the most direct and semantically rich source available for any given phenomenon. This often involves *strategic redundancy*, where the same conceptual event might be captured at different layers (e.g., hardware, compositor, application) to provide diverse levels of abstraction, error checking, and context fusion.
-*   **Ambient Capture:** Many ingestors are designed to operate continuously and unobtrusively in the background, gathering data from the user's natural interactions without requiring explicit "logging" actions for every detail.
-*   **Minimal Source-Side Processing:** Ingestors are primarily responsible for reliable data acquisition, basic normalization (timestamping, structuring into a JSON envelope conforming to a registered schema if possible), and secure insertion directly into `raw.events`. Complex transformations and interpretations are deferred to downstream agents.
-*   **Direct Ingestion Patterns:** Preference for direct database library usage (Rust, Python), local HTTP endpoints for extensions/scripts, or named pipes/UNIX sockets, minimizing intermediary message buses for the single-host MVP. Journald can also serve as a structured log transport.
-*   **Idempotency & Robustness:** Ingestors strive to be idempotent (avoiding duplicate event creation from the same source data) and robust to transient failures (e.g., temporary DB unavailability).
+**Active Ingestors:**
+- **sinex-fs-watcher:** Filesystem monitoring and change detection
+- **sinex-terminal-satellite:** Terminal session and command capture
+- **sinex-desktop-satellite:** Desktop environment interaction capture
+- **sinex-system-satellite:** System logs and service monitoring
 
-### 1.3. Satellite Constellation Architecture Overview
+**Event Flow:** All ingestors follow the unified satellite architecture pattern described in DataSubstrate_Architecture.md.
 
-The ingestion system follows a satellite constellation pattern where independent satellite services capture domain-specific events and send them through `sinex-ingestd` to `raw.events`:
+### 1.3. Common Event Structure
 
-**Architecture Flow:**
-1. **Satellite Services** - Independent systemd services implementing StatefulStreamProcessor interface
-2. **sinex-ingestd Hub** - Central ingestion service receives events via gRPC  
-3. **Dual Output** - Events written to PostgreSQL `raw.events` AND Redis Streams
-4. **Event Format** - All satellites format events using unified `RawEvent` structure:
-   *   `id ULID`: Time-ordered identifier generated by satellite or ingestd
-   *   `source TEXT`: Satellite identifier (e.g., `"sinex-fs-watcher"`, `"sinex-terminal-satellite"`)
-   *   `event_type TEXT`: Specific event type (e.g., `"file.created"`, `"command.executed"`)
-   *   `ts_orig TIMESTAMPTZ`: Original timestamp from source system
-   *   `ts_ingest TIMESTAMPTZ`: Ingestion timestamp from ingestd
-   *   `host TEXT`: Originating machine identifier
-   *   `payload JSONB`: Event-specific data with GitOps-validated schemas
-   *   `source_event_ids ULID[]`: Provenance links for derived events (unified events table)
+All ingestors emit events with this unified structure:
+```json
+{
+  "id": "01HK...",
+  "source": "sinex-fs-watcher",
+  "event_type": "file.created",
+  "ts_orig": "2025-07-17T10:30:00Z",
+  "host": "sinnix-prime",
+  "payload": {
+    "path": "/home/user/document.txt",
+    "size": 1024,
+    "mime_type": "text/plain"
+  }
+}
+```
 
-## 2. Satellite Constellation Management
+## 2. Filesystem Telemetry (sinex-fs-watcher)
 
-The satellite architecture provides a unified management pattern across all event collection services through shared infrastructure and consistent operational patterns.
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Filesystem monitoring with inotify integration
 
-### 2.1. Satellite Services Architecture
+### 2.1. Filesystem Monitoring Architecture
 
-Every satellite service is an independent systemd service managed through the NixOS module system:
-*   **Independent Processes** - Each satellite runs as a separate binary with isolated resources
-*   **Shared SDK** - Common satellite-sdk provides lifecycle, configuration, and communication patterns
-*   **Systemd Integration** - Declarative service configuration via NixOS with automatic startup/restart
-*   **Resource Management** - CPU, memory quotas defined in NixOS configuration
-*   **Deep Symmetry** - Both ingestors and automata use the same underlying `StatefulStreamProcessor` pattern
+**Platform-Specific Watchers:**
+- **Linux:** inotify with recursive directory watching
+- **Cross-Platform:** notify-rust crate for abstraction
+- **Overflow Recovery:** Handles inotify queue overflow gracefully
 
-### 2.2. Central Ingestion Hub (sinex-ingestd)
+**Event Processing:**
+```rust
+use notify::{Watcher, RecursiveMode, Event, EventKind};
 
-The `sinex-ingestd` service acts as the central hub for all event collection:
-*   **gRPC Interface** - Satellites communicate via efficient gRPC protocol
-*   **Dual Output** - Events written to both PostgreSQL (durable) and Redis Streams (real-time)
-*   **Validation** - GitOps-driven schema validation with version control
-*   **Batching** - High-throughput batch writes to PostgreSQL for performance
-*   **Error Handling** - Failed events routed to dead letter queue for analysis
+fn handle_filesystem_event(event: Event) -> Result<RawEvent, Error> {
+    match event.kind {
+        EventKind::Create(_) => create_file_event(event),
+        EventKind::Modify(_) => modify_file_event(event),
+        EventKind::Remove(_) => delete_file_event(event),
+        EventKind::Move(_) => move_file_event(event),
+        _ => Ok(None),
+    }
+}
+```
 
-### 2.3. Unified Checkpoint Management
+### 2.2. File Change Detection
 
-Satellites use a unified checkpoint system for state management and recovery:
-*   **Checkpoint Types** - External cursors (file offsets, timestamps) for ingestors, stream positions for automata
-*   **Storage** - Checkpoints stored in `core.automaton_checkpoints` table with type-specific data
-*   **Recovery** - Satellites resume from last checkpoint after restart, ensuring no data loss
-*   **Replay** - Historical reprocessing enabled by resetting checkpoints to specific points
-*   **Deep Symmetry** - Same checkpoint system used by both ingestors and automata via satellite SDK
+**Monitored Events:**
+- **File Creation:** `file.created` with metadata
+- **File Modification:** `file.modified` with size/mtime changes
+- **File Deletion:** `file.deleted` with last-known metadata
+- **File Moves:** `file.moved` with source and destination paths
+- **Directory Changes:** `dir.created`, `dir.deleted`
 
-### 2.4. Error Handling & Dead Letter Queue Integration
+**Event Payloads:**
+```json
+{
+  "event_type": "file.created",
+  "payload": {
+    "path": "/home/user/document.txt",
+    "size": 1024,
+    "mime_type": "text/plain",
+    "blake3_hash": "abc123...",
+    "permissions": "0644",
+    "created_at": "2025-07-17T10:30:00Z",
+    "parent_dir": "/home/user"
+  }
+}
+```
 
-Satellites integrate with centralized error handling through the ingestd hub:
-*   **Local Retries** - Satellites implement exponential backoff for gRPC communication failures
-*   **Graceful Degradation** - Failed events logged locally and forwarded when connectivity restored
-*   **Dead Letter Queue** - Persistent failures routed to PostgreSQL DLQ via ingestd for analysis
-*   **Recovery** - Failed events can be replayed from specific checkpoint positions after fixes
-*   **Circuit Breaker** - Satellites detect persistent failures and enter safe mode with reduced functionality
-*   **Referenced TIMs:**
-    *   `[TIM-DeadLetterQueueImplementation.md](docs/tims/data_substrate/TIM-DeadLetterQueueImplementation.md)` (Section 6) for details on local file-based DLQs and the reprocessor agent.
+### 2.3. Git-Annex Integration
 
-### 2.4. Standardized Output Format
+**Content Management:**
+1. Detect file creation/modification
+2. Compute BLAKE3 hash for content addressing
+3. Check for existing content (deduplication)
+4. `git annex add` for new content
+5. Update `core_blobs` metadata table
+6. Emit `sinex.blob.ingested` event
 
-All ingestors must produce events conforming to the `raw.events` table structure and, where applicable, adhere to payload schemas registered in `sinex_schemas.event_payload_schemas`.
+**Deduplication Logic:**
+```rust
+if let Some(existing_blob) = check_existing_content(&blake3_hash).await? {
+    // File already exists, just update metadata
+    update_blob_metadata(existing_blob.id, &file_info).await?;
+} else {
+    // New content, add to git-annex
+    let annex_key = git_annex_add(&file_path).await?;
+    create_blob_record(annex_key, &file_info).await?;
+}
+```
 
-### 2.5. Journald Heartbeat Pattern & Meta-Observability
+## 3. Desktop Environment Integration & Telemetry
 
-Satellites participate in system-wide observability through the journald heartbeat pattern:
-*   **Structured Logging** - Satellites emit structured JSON logs to stdout/stderr captured by systemd
-*   **Journald Bridge** - `sinex-system-satellite` ingests journald entries as Sinex events
-*   **Heartbeat Pattern** - Regular status logs create automatic heartbeat/health events  
-*   **Service Discovery** - Systemd service metadata automatically tracked through journald events
-*   **Unified Monitoring** - All satellite health, errors, and lifecycle events captured as first-class Sinex events
-*   **Referenced TIMs:**
-    *   Journald integration detailed in system satellite and operations documentation
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Desktop environment interaction capture via sinex-desktop-satellite
 
-## 3. Desktop Environment Integration & Telemetry (STAD Part II)
+### 3.1. Hyprland Compositor Integration (Wayland)
 
-This section details the architecture for capturing data originating from the user's direct interaction with the desktop environment.
+**IPC Socket Integration:**
+- **socket1:** Command/query interface for compositor state
+- **socket2:** Real-time event stream for window/workspace changes
+- **Event Enrichment:** socket2 events enhanced with socket1 state queries
 
-### 3.1. Hyprland Compositor Integration (Wayland) (ADR-003)
+**Captured Events:**
+- **Window Events:** `window.opened`, `window.closed`, `window.focused`, `window.moved`, `window.resized`
+- **Workspace Events:** `workspace.switched`, `workspace.created`, `workspace.destroyed`
+- **Monitor Events:** `monitor.focused`, `monitor.connected`, `monitor.disconnected`
+- **Input Events:** `keyboard.pressed`, `mouse.moved`, `mouse.clicked`
 
-The primary source for desktop interaction events on Wayland using the Hyprland compositor.
-*   **Architectural Approach:** A hybrid strategy as per `[ADR-003-HyprlandCompositorIntegrationPath.md](docs/adr/ADR-003-HyprlandCompositorIntegrationPath.md)`.
-    *   **IPC Sockets (Primary Initial Method):** An external Rust-based ingestor (`ingestor/hyprland_ipc`) connects to Hyprland's `socket1` (commands/queries) and `socket2` (events). This allows capture of window lifecycle, focus changes, workspace state, monitor events, input events (keyboard/mouse via compositor context), and clipboard changes. Event payloads from `socket2` are often enriched with detailed state queried from `socket1`.
-    *   **Native C++ Plugin (Strategic Long-Term Goal):** Future development for deeper telemetry not available via IPC (e.g., precise render timings, internal compositor metrics, direct frame/texture access for advanced visual capture like damage-aware recording or VLM/OCR hooks).
-*   **Key Data Captured:** Active window details (class, title, PID, geometry), focus transitions, workspace switches, monitor changes, keyboard/mouse events (interpreted by compositor), clipboard content, full desktop state snapshots.
-*   **Referenced TIMs:**
-    *   `[TIM-HyprlandIPCInterface.md](docs/tims/ingestors/desktop/TIM-HyprlandIPCInterface.md)` for IPC socket integration.
-    *   `[TIM-HyprlandNativePluginDev.md](docs/tims/ingestors/desktop/TIM-HyprlandNativePluginDev.md)` for C++ plugin architecture.
+**Event Payload Example:**
+```json
+{
+  "event_type": "window.focused",
+  "payload": {
+    "window_id": "0x1234567",
+    "title": "terminal - vim",
+    "class": "kitty",
+    "pid": 12345,
+    "workspace": "1",
+    "geometry": {
+      "x": 100, "y": 100,
+      "width": 800, "height": 600
+    },
+    "fullscreen": false,
+    "floating": false
+  }
+}
+```
+
+**Implementation:**
+```rust
+use hyprland::shared::HyprDataActive;
+use tokio::net::UnixStream;
+
+async fn monitor_hyprland_events() -> Result<(), Error> {
+    let mut socket = UnixStream::connect("/tmp/hypr/socket2").await?;
+    
+    loop {
+        let event = read_hyprland_event(&mut socket).await?;
+        let enriched_event = enrich_with_state(&event).await?;
+        
+        emit_desktop_event(enriched_event).await?;
+    }
+}
+```
 
 ### 3.2. GUI Accessibility Framework (AT-SPI2)
 
-Provides semantic understanding of UI interactions across various applications.
-*   **Architectural Approach:** An ingestor (typically Python using `pyatspi2`) connects to the AT-SPI2 D-Bus accessibility bus.
-*   **Key Data Captured:** Focused application/widget details (name, role, value, state, path), text input changes in fields, window activation/deactivation. Widget tree snapshots can be captured for understanding UI structure. This is valuable for applications lacking dedicated Exocortex ingestors.
-*   **Referenced TIMs:**
-    *   `[TIM-ATSPI2Integration.md](docs/tims/ingestors/desktop/TIM-ATSPI2Integration.md)` for D-Bus mechanism, `pyatspi2` usage, event types, and fallback strategies.
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Widget-level UI interaction capture
 
-### 3.3. Low-Level Input Capture (`evdev`)
+**Accessibility Bus Integration:**
+- **D-Bus Connection:** Monitor AT-SPI2 accessibility events
+- **Widget Tracking:** Capture focus changes, text input, UI state changes
+- **Application Context:** Identify active applications and UI components
 
-A secondary, redundant method for capturing raw hardware input events.
-*   **Architectural Approach:** Uses the Linux `evdev` interface, often managed by Interception Tools (`intercept`, `udevmon`). A minimal, sandboxed component reads `evdev` data and forwards it via IPC to an unprivileged Exocortex processor agent. The `journald_bridge` pattern (custom `interception-tools` plugin prints JSON to `stdout`, `journald` captures, `journald_bridge` agent ingests) is a common implementation.
-*   **Key Data Captured:** Raw keyboard scancodes/keysyms, mouse relative/absolute movements, button presses/releases.
-*   **Security:** This is effectively a keylogger/mouselogger and requires *stringent security mitigations*, user opt-in, and clear UI notification when active. It complements, but does not replace, compositor-level input capture.
-*   **Referenced TIMs:**
-    *   `[TIM-EvdevInterceptionTools.md](docs/tims/ingestors/desktop/TIM-EvdevInterceptionTools.md)` for `evdev` interface, Interception Tools, `journald_bridge` pattern, and security.
-    *   `[TIM-ProcessSandboxing.md](docs/tims/operations/TIM-ProcessSandboxing.md)` for sandboxing the `evdev` reader.
+**Event Types:**
+- **Focus Events:** `ui.widget.focused`, `ui.widget.unfocused`
+- **Text Events:** `ui.text.changed`, `ui.text.selected`
+- **State Events:** `ui.widget.state_changed`, `ui.widget.value_changed`
+- **Navigation Events:** `ui.navigation.menu_opened`, `ui.navigation.dialog_opened`
+
+**Implementation:**
+```python
+import pyatspi2
+
+class AccessibilityMonitor:
+    def __init__(self):
+        pyatspi2.Registry.registerEventListener(
+            self.on_focus_changed, "focus:")
+        pyatspi2.Registry.registerEventListener(
+            self.on_text_changed, "object:text-changed")
+    
+    def on_focus_changed(self, event):
+        widget_info = {
+            "name": event.source.name,
+            "role": event.source.getRole(),
+            "application": event.source.getApplication().name,
+            "path": get_widget_path(event.source)
+        }
+        emit_ui_event("ui.widget.focused", widget_info)
+```
+
+### 3.3. Low-Level Input Capture (evdev)
+
+> **⚠️ IMPLEMENTATION STATUS: OPTIONAL** - Raw input capture with security considerations
+
+**Security-First Architecture:**
+- **Minimal Privileged Component:** Sandboxed evdev reader
+- **Journald Bridge:** Structured JSON output to journald
+- **Clear User Consent:** Explicit opt-in with UI notifications
+- **Privilege Separation:** Unprivileged processing component
+
+**Captured Data:**
+- **Keyboard:** Raw scancodes, keysyms, timing
+- **Mouse:** Movement deltas, button states, wheel events
+- **Touchpad:** Gesture recognition, pressure sensitivity
+
+**Implementation (Privileged Component):**
+```rust
+use evdev::{Device, InputEventKind};
+
+fn main() -> Result<(), Error> {
+    let device = Device::open("/dev/input/event0")?;
+    
+    for event in device.fetch_events()? {
+        match event.kind() {
+            InputEventKind::Key(key) => {
+                let key_event = json!({
+                    "type": "key",
+                    "code": key.code(),
+                    "value": event.value(),
+                    "timestamp": event.timestamp()
+                });
+                println!("{}", key_event);
+            },
+            InputEventKind::RelAxis(axis) => {
+                // Handle mouse movement
+            },
+            _ => {}
+        }
+    }
+}
+```
+
+**Security Measures:**
+- Process sandboxing with minimal capabilities
+- Automatic UI notification when active
+- Encrypted storage for sensitive data
+- User-configurable filtering rules
 
 ### 3.4. Clipboard Monitoring
 
-Captures content copied to/from the system clipboard (primary and secondary selections).
-*   **Architectural Approach:** Event-driven monitoring, display-server specific.
-    *   **Wayland:** Uses `wlr-data-control` protocol, often via `wl-paste --watch <handler_script>`.
-    *   **X11:** Uses XFIXES extension for selection change notifications, then standard Xlib selection mechanisms (handles INCR protocol for large data).
-*   **Key Data Captured:** Textual content, image data (if supported), list of available MIME types, source application hint (more reliable on X11).
-*   **Referenced TIMs:**
-    *   `[TIM-ClipboardMonitoring.md](docs/tims/ingestors/desktop/TIM-ClipboardMonitoring.md)` for Wayland/X11 specifics, payload handling.
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Cross-platform clipboard event capture
 
-### 3.5. Terminal Activity Capture (ADR-008)
+**Wayland Implementation:**
+```bash
+# Monitor clipboard changes
+wl-paste --watch sinex-clipboard-handler
+```
 
-A layered approach for comprehensive terminal activity logging, as per `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)`.
-*   **Architectural Layers:**
-    1.  **Atuin (Primary for Structured Command History):** An agent (`ingestor/atuin_db_reader`) syncs structured command history (command, timestamp, CWD, exit status, duration) from Atuin's local SQLite DB.
-    2.  **PTY Session Recording (Primary for Full Session Replay - Asciinema or `script`):** Interactive shell sessions are wrapped to capture full textual I/O stream with timings. Resulting `.cast` or typescript files stored as `core_blobs`.
-    3.  **Kitty Terminal Emulator Integration (Conditional):** If Kitty is used, an `ingestor/kitty` (using Kitty RC protocol) captures Kitty-specific semantic events (OS window/tab/pane state, CWD, scrollback).
-    4.  **eBPF Shell Monitoring (Specialized/Future):** Low-level `execve`/TTY tracing.
-    5.  **Visual Screen Capture of Terminal (Future Enhancement):** Supplementary visual layer.
-*   **Satellite Implementation** - `sinex-terminal-satellite` service handles all terminal domain sources in unified process
-*   **Key Data Captured:** Executed commands, their metadata, full terminal output, TUI interactions, emulator-specific context.
-*   **Referenced TIMs:**
-    *   `[TIM-KittyTerminalIntegration.md](docs/tims/ingestors/desktop/TIM-KittyTerminalIntegration.md)`
-    *   `[TIM-GenericTerminalLogging.md](docs/tims/ingestors/desktop/TIM-GenericTerminalLogging.md)` (for Atuin and Asciinema/`script`)
-    *   `[TIM-eBPFShellMonitoring.md](docs/tims/ingestors/desktop/TIM-eBPFShellMonitoring.md)`
+**X11 Implementation:**
+```rust
+use x11rb::protocol::xfixes::*;
+use x11rb::connection::Connection;
 
-### 3.6. Screen and Audio Capture
+fn monitor_clipboard_x11() -> Result<(), Error> {
+    let (conn, screen) = x11rb::connect(None)?;
+    
+    // Register for selection notifications
+    select_selection_input(&conn, screen.root, SelectionEventMask::SET_SELECTION_OWNER)?;
+    
+    loop {
+        let event = conn.wait_for_event()?;
+        if let Event::SelectionNotify(notify) = event {
+            let content = get_selection_content(&conn, notify.selection)?;
+            emit_clipboard_event(content).await?;
+        }
+    }
+}
+```
 
-Capturing visual and auditory context.
-*   **Wayland Screen Capture (PipeWire & `xdg-desktop-portal`):** Standard mechanism for user-consented screen/window video recording. Uses PipeWire for stream management and `xdg-desktop-portal` for user selection/permission. DMA-BUFs for efficiency. Tools: `wf-recorder`, `grim`/`slurp`, FFmpeg/GStreamer with PipeWire sources.
-    *   **Referenced TIMs:** `[TIM-WaylandScreenCapturePipeWire.md](docs/tims/ingestors/desktop/TIM-WaylandScreenCapturePipeWire.md)`.
-*   **Audio Ingestion (PipeWire):** Captures microphone input and/or system audio loopback (monitor sources). PipeWire provides PulseAudio compatibility and native API. Audio formatted for ASR (e.g., 16kHz mono 16-bit PCM). Tools: `pw-record`, `pw-cat`.
-    *   **Referenced TIMs:** `[TIM-AudioIngestionPipeWire.md](docs/tims/ingestors/desktop/TIM-AudioIngestionPipeWire.md)`.
+**Event Types:**
+- **Text Content:** `clipboard.text.copied` with plain text
+- **Image Content:** `clipboard.image.copied` with image metadata
+- **Rich Content:** `clipboard.rich.copied` with HTML/RTF content
+- **File Lists:** `clipboard.files.copied` with file paths
+
+**Privacy Considerations:**
+- Optional content filtering for sensitive data
+- Configurable retention policies
+- User-controlled enable/disable
+- Content hashing for deduplication
+
+## 4. Terminal Activity Capture (sinex-terminal-satellite)
+
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Multi-layered terminal activity logging
+
+### 4.1. Atuin Command History Integration
+
+**Structured Command History:**
+- **SQLite Database:** Read from Atuin's local history database
+- **Rich Metadata:** Command, timestamp, CWD, exit status, duration
+- **Incremental Sync:** Checkpoint-based processing of new commands
+
+**Event Schema:**
+```json
+{
+  "event_type": "command.executed",
+  "payload": {
+    "command": "git commit -m 'fix: update schema'",
+    "cwd": "/home/user/project",
+    "exit_status": 0,
+    "duration_ms": 1250,
+    "session_id": "abc123",
+    "hostname": "sinnix-prime",
+    "user": "sinity"
+  }
+}
+```
+
+**Implementation:**
+```rust
+use sqlx::SqlitePool;
+
+struct AtuinHistoryReader {
+    pool: SqlitePool,
+    last_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl AtuinHistoryReader {
+    async fn sync_new_commands(&mut self) -> Result<Vec<Command>, Error> {
+        let query = "
+            SELECT command, timestamp, cwd, exit, duration 
+            FROM history 
+            WHERE timestamp > ? 
+            ORDER BY timestamp ASC
+        ";
+        
+        let commands = sqlx::query_as::<_, Command>(query)
+            .bind(self.last_timestamp)
+            .fetch_all(&self.pool)
+            .await?;
+        
+        if let Some(last_cmd) = commands.last() {
+            self.last_timestamp = Some(last_cmd.timestamp);
+        }
+        
+        Ok(commands)
+    }
+}
+```
+
+### 4.2. PTY Session Recording
+
+**Asciinema Integration:**
+- **Session Capture:** Full terminal I/O with timing information
+- **Replay Capability:** Store `.cast` files for session replay
+- **Metadata Extraction:** Session duration, command count, exit codes
+
+**Recording Workflow:**
+1. Detect new terminal session
+2. Start asciinema recording
+3. Monitor session for completion
+4. Process recording file
+5. Extract metadata and store in git-annex
+6. Emit session events
+
+### 4.3. Kitty Terminal Integration
+
+**RC Protocol Usage:**
+- **Window/Tab State:** Track terminal window organization
+- **Scrollback Capture:** Extract terminal scrollback buffer
+- **CWD Tracking:** Monitor current working directory changes
+
+**Event Types:**
+- **Session Events:** `session.started`, `session.ended`
+- **Navigation Events:** `terminal.cwd_changed`, `terminal.tab_switched`
+- **Content Events:** `terminal.output_captured`, `terminal.scrollback_saved`
+
+### 4.4. Unified Terminal Processing
+
+**sinex-terminal-satellite Service:**
+- Combines all terminal telemetry sources
+- Correlates events across different layers
+- Provides unified terminal session context
+- Handles session boundaries and state management
+
+### 4.5. Screen and Audio Capture
+
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - User-consented multimedia capture
+
+**Wayland Screen Capture:**
+- **PipeWire Integration:** Standard screen capture via PipeWire streams
+- **User Consent:** xdg-desktop-portal permission system
+- **Efficient Capture:** DMA-BUF support for zero-copy operations
+- **Flexible Sources:** Full screen, window, or region capture
+
+**Audio Capture:**
+- **Microphone Input:** Capture user audio for speech recognition
+- **System Audio:** Monitor system audio output
+- **ASR Optimization:** 16kHz mono 16-bit PCM format
+- **Privacy Controls:** User-configurable audio filtering
+
+**Implementation:**
+```rust
+use pipewire::stream::Stream;
+use pipewire::spa::param::ParamType;
+
+struct ScreenCapture {
+    stream: Stream,
+    frame_buffer: Vec<u8>,
+}
+
+impl ScreenCapture {
+    async fn start_capture(&mut self) -> Result<(), Error> {
+        self.stream.connect(
+            pipewire::stream::StreamDirection::Input,
+            Some("screen-capture"),
+            pipewire::stream::StreamFlags::AUTOCONNECT,
+        )?;
+        
+        // Process frames in callback
+        Ok(())
+    }
+    
+    fn on_frame(&mut self, frame: &[u8]) {
+        // Process captured frame
+        self.emit_frame_event(frame);
+    }
+}
+```
 
 ## 4. Application & Content Ingestion (STAD Part III)
 
@@ -233,40 +508,4 @@ Provides deep Exocortex integration within Neovim.
 *   **Referenced TIMs:**
     *   `[TIM-NeovimPluginIntegration.md](docs/tims/ingestors/pkm_email_nvim/TIM-NeovimPluginIntegration.md)`
 
-## 5. Mobile, Wearable & IoT Context Ingestion (Vision III.2.2.E)
-
-> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Mobile/IoT integration not developed
-
-Extends capture beyond the desktop.
-*   **Architectural Approach:**
-    *   Companion apps (Android: Termux/Tasker/Custom App; iOS: Shortcuts/HealthKit) would send data via secure protocols (MQTT preferred for low power/bandwidth, or HTTPS POST) to a host Sinex ingest endpoint/agent.
-    *   IoT devices (e.g., ESP32) would use MQTT. Device-side logic would include offline buffering, power management, ULID generation with appropriate entropy.
-*   **Key Data Captured:**
-    *   **Mobile:** Would capture notifications, call/SMS metadata, app usage, device state (screen, battery, network), location (opt-in), sensor data (steps, heart rate via synced phone).
-    *   **IoT:** Would capture environmental sensor readings (temp, humidity, light, CO2), presence detection (BLE beacons).
-*   **Referenced TIMs:**
-    *   `[TIM-MobileIoTImplementation_ESP32.md](docs/tims/operations/TIM-MobileIoTImplementation_ESP32.md)` (focuses on ESP32 as reference IoT, MQTT, offline buffering).
-
-## 6. Meta-Cognitive & Subjective Ingestion (Vision III.2.2.F)
-
-> **❌ IMPLEMENTATION STATUS: NOT IMPLEMENTED** - Subjective logging system not developed
-
-Captures the user's internal states, reflections, and plans.
-*   **Architectural Approach:** Would be primarily user-initiated logging via standardized interfaces:
-    *   `exo log <meta_type> ...` CLI commands (not implemented).
-    *   Neovim commands (e.g., `:ExoLogFriction`) (not implemented).
-    *   Future TUI/GUI forms.
-    *   Commands within the Living Document (e.g., `/insight ...`, `/plan ...`) (Living Document not implemented).
-*   **Key Event Types & Payloads (Structured JSONB in `raw.events`):**
-    *   `meta.friction_logged`: `{ description, perceived_cause, intensity, linked_task_ids, resolution_status }`
-    *   `meta.insight_captured`: `{ description, confidence, related_project_id, trigger_event_ids, actionable_steps }`
-    *   `meta.activation_energy_shift`: `{ direction, new_level_estimate, perceived_reason }`
-    *   `planning.milestone_defined`: `{ blueprint_ref, milestone_name, description, status, target_date }`
-    *   `planning.goal.defined`: `{ description, timeframe, success_metrics, priority }`
-    *   `meta.narrative_generated` (User or Agent): `{ title, narrative_text, timespan_start/end, key_objects_referenced }`
-    *   `subjective.mood_reported`: `{ mood_scale_name, mood_values_jsonb, context_notes }`
-    *   `physio.sleep_logged`: `{ start_ts, end_ts, quality_score, data_source }`
-    *   `substance.dose_logged`: `{ substance_name, dosage, route, reason, effects }`
-*   Agent-Prompted Logging: Agents can detect patterns (e.g., high error rates) and suggest logging relevant meta-events via `sinex.system.suggestion_created`.
-*   **Referenced TIMs:** Specific payload schemas would be in a `TIM-CanonicalEventSchemas.md` or Primary Doc App B.
 

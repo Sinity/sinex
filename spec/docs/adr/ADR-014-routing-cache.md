@@ -2,7 +2,16 @@
 
 ## Status
 
-Accepted
+**Superseded by Redis Streams Architecture**
+
+This ADR has been replaced by the Redis Streams + StatefulStreamProcessor architecture. The complex routing cache and work queue system described here has been superseded by:
+
+- **Redis Streams**: Event distribution via `sinex:events` stream
+- **Consumer Groups**: Automatic load balancing and retry handling
+- **StatefulStreamProcessor**: Unified interface for all event processors
+- **Checkpoint System**: Hybrid Redis + PostgreSQL persistence
+
+The new architecture eliminates the need for complex routing caches and work queues by leveraging Redis's native stream processing capabilities.
 
 ## Context
 

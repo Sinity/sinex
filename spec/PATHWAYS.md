@@ -24,7 +24,7 @@ This document provides role-based guides for contributors to find appropriate en
 ### Prerequisites
 - Understanding of Rust and async programming
 - Familiarity with system APIs (D-Bus, file system, process monitoring)
-- Basic knowledge of PostgreSQL and the Event Storage system
+- Basic knowledge of PostgreSQL and the StatefulStreamProcessor interface
 
 ### Recommended Starting Point
 📍 **Start here:** `ready/event-sources/audio-pipewire.md`
@@ -32,14 +32,15 @@ This document provides role-based guides for contributors to find appropriate en
 **Why this project:**
 - Clear technical specification (L3 maturity)
 - No external dependencies beyond what's implemented
-- Good introduction to EventSource trait patterns
+- Good introduction to StatefulStreamProcessor patterns
 - Enables multimedia event processing capabilities
 
 ### Learning Path
 1. **Study existing implementations:**
-   - `implemented/event-storage.md` - Core event system
+   - `implemented/event-storage.md` - Core event system with core.events table
    - `implemented/event-sources/` - Filesystem, terminal, clipboard, Hyprland IPC
-   - Understand EventSource trait design
+   - Understand StatefulStreamProcessor interface design
+   - Review source material registry and processor manifests
 
 2. **First contribution options:**
    ```
@@ -50,8 +51,9 @@ This document provides role-based guides for contributors to find appropriate en
 
 3. **Implementation checklist:**
    - [ ] Design event schema for your source
-   - [ ] Implement EventSource trait
+   - [ ] Implement StatefulStreamProcessor interface
    - [ ] Add database migrations if needed
+   - [ ] Register processor manifest in GitOps schema
    - [ ] Write integration tests
    - [ ] Update documentation
 
@@ -61,7 +63,7 @@ This document provides role-based guides for contributors to find appropriate en
 - **Cross-platform support:** Windows/macOS event sources
 
 ### Mentorship Available
-- Review of EventSource trait implementations
+- Review of StatefulStreamProcessor implementations
 - Database schema design guidance
 - System integration best practices
 
@@ -87,9 +89,10 @@ This document provides role-based guides for contributors to find appropriate en
 
 ### Learning Path
 1. **Foundation knowledge:**
-   - Study the event storage system
-   - Understand the promotion queue architecture
+   - Study the core.events table structure with provenance tracking
+   - Understand the Redis Streams message bus architecture
    - Review planned AI integration points
+   - Learn about source material registry and processor manifests
 
 2. **Progressive complexity:**
    ```
@@ -100,7 +103,7 @@ This document provides role-based guides for contributors to find appropriate en
 
 3. **Implementation sequence:**
    - [ ] Set up Ollama integration
-   - [ ] Implement basic LLM worker
+   - [ ] Implement basic LLM worker as StatefulStreamProcessor
    - [ ] Add embedding generation
    - [ ] Design entity resolution system
    - [ ] Build context synthesis pipeline
@@ -139,13 +142,13 @@ This document provides role-based guides for contributors to find appropriate en
 ### Key Focus Areas
 
 #### Database Operations
-- **Performance tuning:** Query optimization, indexing strategies
+- **Performance tuning:** Query optimization, indexing strategies for core.events
 - **Backup systems:** pgBackRest configuration and testing
 - **Monitoring:** Database health metrics and alerting
 - **Scaling:** Partitioning strategies for time-series data
 
 #### System Integration
-- **Service management:** Systemd integration and process monitoring
+- **Service management:** Systemd integration and satellite process monitoring
 - **Configuration:** NixOS module development and deployment
 - **Security:** Access controls, encryption at rest
 - **Logging:** Structured logging and observability
@@ -196,8 +199,8 @@ Long-term (3+ months):
 ### Development Approaches
 
 #### Progressive Enhancement
-1. **Static mockups:** Design interfaces with sample data
-2. **API integration:** Connect to existing query endpoints
+1. **Static mockups:** Design interfaces with sample data from core.events
+2. **API integration:** Connect to existing query endpoints via sinex-gateway with command/response patterns
 3. **Real-time updates:** WebSocket integration for live data
 4. **Advanced features:** Interactive visualizations and filtering
 
@@ -239,14 +242,14 @@ CLI Enhancements
 ### Focus Areas
 
 #### Event Processing Pipeline
-- **Data validation:** Schema enforcement and data quality
-- **Transformation:** Raw event processing and enrichment
+- **Data validation:** Schema enforcement and data quality for core.events
+- **Transformation:** Event processing and enrichment via automaton satellites
 - **Aggregation:** Time-based summaries and statistics
 - **Pattern detection:** Behavioral analysis and anomalies
 
 #### Analysis Capabilities
-- **Activity segmentation:** Identify work sessions and contexts
-- **Trend analysis:** Track patterns over time
+- **Activity segmentation:** Identify work sessions and contexts from event streams
+- **Trend analysis:** Track patterns over time in core.events with provenance
 - **Correlation analysis:** Find relationships between different data types
 - **Predictive modeling:** Basic forecasting and recommendations
 
@@ -327,6 +330,8 @@ Advanced Analytics (Long-term):
 - Test infrastructure upgraded to 98% implementation
 - Database pool optimization (64 connections)
 - ULID foreign key constraint handling
+- Core.events table with comprehensive provenance
+- Source material registry and processor manifests
 - See `docs/test-infrastructure-improvements-2025-07.md` for details
 
 ### Enhancement Opportunities
@@ -366,12 +371,14 @@ Advanced Analytics (Long-term):
    ```bash
    cd /realm/project/sinex
    nix develop
-   ./script/db_reset.sh
+   just migrate
    cargo check --workspace
    ```
 
 2. **Understand the codebase:**
    - Read `spec/SADI.md` for architecture overview
+   - Study `plan.md` for unified architecture details
+   - Review core.events table structure and StatefulStreamProcessor interface
    - Study implemented features in detail
    - Run existing tests and understand their purpose
 

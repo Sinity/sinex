@@ -2,7 +2,7 @@
 //!
 //! Captures terminal scrollback content with chunking and git-annex integration
 
-use crate::SatelliteResult;
+use sinex_satellite_sdk::SatelliteResult;
 use serde_json::json;
 use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
@@ -86,18 +86,18 @@ impl ScrollbackWatcher {
             .output()
             .await
             .map_err(|e| {
-                crate::SatelliteError::EventSource(format!("Failed to execute kitty command: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to execute kitty command: {}", e))
             })?;
 
         if !output.status.success() {
-            return Err(crate::SatelliteError::EventSource(format!(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Kitty ls command failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
 
         let data: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to parse kitty response: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse kitty response: {}", e))
         })?;
 
         let mut windows = Vec::new();
@@ -149,11 +149,11 @@ impl ScrollbackWatcher {
         }
 
         let output = cmd.output().await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to get scrollback: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get scrollback: {}", e))
         })?;
 
         if !output.status.success() {
-            return Err(crate::SatelliteError::EventSource(format!(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to get scrollback for window {}: {}",
                 window_id,
                 String::from_utf8_lossy(&output.stderr)
@@ -196,7 +196,7 @@ impl ScrollbackWatcher {
     /// Store large content in git-annex
     async fn store_in_git_annex(&self, window: &WindowState, content: &ScrollbackContent) -> SatelliteResult<(String, String)> {
         let annex_repo = self.git_annex_repo.as_ref().ok_or_else(|| {
-            crate::SatelliteError::EventSource("Git-annex repository not configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("Git-annex repository not configured".to_string())
         })?;
 
         // Create filename with timestamp and window info
@@ -210,13 +210,13 @@ impl ScrollbackWatcher {
         // Ensure annex directory exists
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
-                crate::SatelliteError::EventSource(format!("Failed to create annex directory: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to create annex directory: {}", e))
             })?;
         }
 
         // Write content to file
         fs::write(&file_path, &content.text).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to write scrollback file: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to write scrollback file: {}", e))
         })?;
 
         // Add to git-annex (simplified - in real implementation would use git-annex commands)

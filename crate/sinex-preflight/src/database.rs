@@ -551,7 +551,7 @@ async fn verify_schema_compatibility(
 
     // Check for existence of critical tables
     let critical_tables = vec![
-        "raw.events",
+        "core.events",
         "core.automaton_checkpoints",
     ];
 

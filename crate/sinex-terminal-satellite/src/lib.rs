@@ -13,7 +13,6 @@ mod atuin;
 mod history;
 mod kitty;
 mod recording;
-mod scanner;
 mod scrollback;
 
 // New unified processor module

@@ -2,7 +2,7 @@
 //!
 //! Watches shell history files (.bash_history, .zsh_history, fish_history) for new commands
 
-use crate::SatelliteResult;
+use sinex_satellite_sdk::SatelliteResult;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher, EventKind};
 use serde_json::json;
 use sinex_core::RawEvent;
@@ -187,7 +187,7 @@ impl HistoryWatcher {
                 }
             },
             Config::default(),
-        ).map_err(|e| crate::SatelliteError::EventSource(format!("Failed to create file watcher: {}", e)))?;
+        ).map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to create file watcher: {}", e)))?;
 
         // Watch all history file directories
         let mut watched_dirs = std::collections::HashSet::new();
@@ -195,7 +195,7 @@ impl HistoryWatcher {
             if let Some(parent) = file_path.parent() {
                 if parent.exists() && watched_dirs.insert(parent.to_path_buf()) {
                     watcher.watch(parent, RecursiveMode::NonRecursive)
-                        .map_err(|e| crate::SatelliteError::EventSource(
+                        .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(
                             format!("Failed to watch directory {}: {}", parent.display(), e)))?;
                     info!("Watching directory: {}", parent.display());
                 }

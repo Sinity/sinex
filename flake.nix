@@ -159,6 +159,7 @@
             
             # Support services
             healthAggregator = buildRustPackage "sinex-health-aggregator";
+            sinexHealthAggregator = buildRustPackage "sinex-health-aggregator";
             sinexPreflight = buildRustPackage "sinex-preflight";
             sinexCli = sinex-cli;
             

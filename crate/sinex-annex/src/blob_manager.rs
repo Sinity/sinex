@@ -468,10 +468,10 @@ impl BlobManager {
             }
         });
 
-        // Insert metric event into raw.events
+        // Insert metric event into core.events
         sqlx::query(
             r#"
-            INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
+            INSERT INTO core.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
@@ -538,7 +538,7 @@ impl BlobManager {
         // Insert metric event
         sqlx::query(
             r#"
-            INSERT INTO raw.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
+            INSERT INTO core.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )

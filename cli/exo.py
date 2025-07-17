@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import subprocess
+import shutil
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -34,8 +35,6 @@ console = Console()
 def get_db_connection():
     """Get database connection using environment variable or default."""
     db_url = os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex')
-    # Debug: print the URL being used
-    # print(f"Using DB URL: {db_url}")
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 
@@ -91,10 +90,10 @@ def _query_with_rpc(rpc_url: Optional[str], source: Optional[str], event_type: O
 def _query_with_database(source: Optional[str], event_type: Optional[str],
                         since: Optional[str], until: Optional[str], last: Optional[str],
                         limit: int, host: Optional[str]) -> List[Dict]:
-    """Query events using direct database connection (legacy mode)."""
+    """Query events using direct database connection."""
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Build query using new schema
+            # Build query
             query_parts = [
                 "SELECT event_id, source, event_type, ts_ingest, ts_orig, host, "
                 "ingestor_version, payload_schema_id, payload FROM core.events"
@@ -557,6 +556,145 @@ def automaton():
     pass
 
 
+@cli.group()
+def processor():
+    """Processor introspection commands (unified view of ingestors and automata)."""
+    pass
+
+
+@processor.command('list')
+@click.option('--type', '-t', type=click.Choice(['ingestor', 'automaton']), help='Filter by processor type')
+@click.option('--status', '-s', help='Filter by status (development, stable, deprecated)')
+def processor_list(type: Optional[str], status: Optional[str]):
+    """List all registered processors (ingestors and automata)."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            query_parts = [
+                "SELECT processor_name, processor_type, description, version, status, "
+                "produces_event_types, last_heartbeat_ts, registered_at "
+                "FROM sinex_schemas.processor_manifests"
+            ]
+            params = []
+            where_conditions = []
+            
+            if type:
+                where_conditions.append("processor_type = %s")
+                params.append(type)
+            
+            if status:
+                where_conditions.append("status = %s")
+                params.append(status)
+            
+            if where_conditions:
+                query_parts.append("WHERE " + " AND ".join(where_conditions))
+            
+            query_parts.append("ORDER BY processor_type, processor_name")
+            
+            query_sql = " ".join(query_parts)
+            cur.execute(query_sql, params)
+            processors = cur.fetchall()
+    
+    if not processors:
+        console.print("[yellow]No processors found.[/yellow]")
+        return
+    
+    table = Table(title="Registered Processors")
+    table.add_column("Processor", style="cyan")
+    table.add_column("Type", style="blue")
+    table.add_column("Version", style="green")
+    table.add_column("Status", style="yellow")
+    table.add_column("Last Heartbeat", style="red")
+    table.add_column("Description", style="white")
+    
+    for processor in processors:
+        last_heartbeat = processor['last_heartbeat_ts']
+        if last_heartbeat:
+            # Check if heartbeat is recent (within 5 minutes)
+            age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
+            if age.total_seconds() < 300:
+                heartbeat_style = "green"
+                heartbeat_text = "🟢 " + last_heartbeat.strftime('%H:%M:%S')
+            else:
+                heartbeat_style = "red"
+                heartbeat_text = "🔴 " + last_heartbeat.strftime('%H:%M:%S')
+        else:
+            heartbeat_style = "dim"
+            heartbeat_text = "Never"
+        
+        # Add type-specific emoji
+        type_emoji = "🔄" if processor['processor_type'] == 'automaton' else "📥"
+        
+        table.add_row(
+            processor['processor_name'],
+            f"{type_emoji} {processor['processor_type']}",
+            processor['version'],
+            processor['status'],
+            Text(heartbeat_text, style=heartbeat_style),
+            processor['description'] or ""
+        )
+    
+    console.print(table)
+
+
+@processor.command('status')
+@click.argument('processor_name')
+def processor_status(processor_name: str):
+    """Show detailed status for a specific processor."""
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Get processor manifest
+            cur.execute("""
+                SELECT * FROM sinex_schemas.processor_manifests
+                WHERE processor_name = %s
+            """, (processor_name,))
+            processor = cur.fetchone()
+            
+            if not processor:
+                console.print(f"[red]Processor not found: {processor_name}[/red]")
+                return
+            
+            # Get recent checkpoints if this is an automaton
+            checkpoints = []
+            if processor['processor_type'] == 'automaton':
+                cur.execute("""
+                    SELECT automaton_name, last_processed_id, processed_count, 
+                           last_activity, state_data
+                    FROM core.automaton_checkpoints
+                    WHERE automaton_name = %s
+                    ORDER BY last_activity DESC
+                """, (processor_name,))
+                checkpoints = cur.fetchall()
+            
+            # Display processor information
+            console.print(f"\n[bold]Processor: {processor_name}[/bold]")
+            console.print(f"Type: {processor['processor_type']}")
+            console.print(f"Version: {processor['version']}")
+            console.print(f"Status: {processor['status']}")
+            console.print(f"Description: {processor['description'] or 'N/A'}")
+            
+            if processor['produces_event_types']:
+                console.print(f"Produces: {', '.join(processor['produces_event_types'])}")
+            
+            if processor['consumes_event_types']:
+                console.print(f"Consumes: {', '.join(processor['consumes_event_types'])}")
+            
+            # Show checkpoints for automata
+            if checkpoints:
+                console.print("\n[bold]Checkpoints:[/bold]")
+                for checkpoint in checkpoints:
+                    console.print(f"  Last processed: {checkpoint['last_processed_id'] or 'None'}")
+                    console.print(f"  Processed count: {checkpoint['processed_count']}")
+                    console.print(f"  Last activity: {checkpoint['last_activity']}")
+                    if checkpoint['state_data']:
+                        console.print(f"  State: {checkpoint['state_data']}")
+            
+            console.print(f"\nRegistered: {processor['registered_at']}")
+            console.print(f"Last seen: {processor['last_seen']}")
+            console.print(f"Last heartbeat: {processor['last_heartbeat_ts'] or 'Never'}")
+
+
 @automaton.command('list')
 @click.option('--status', '-s', help='Filter by status (development, stable, deprecated)')
 def automaton_list(status: Optional[str]):
@@ -565,17 +703,18 @@ def automaton_list(status: Optional[str]):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             query_parts = [
-                "SELECT automaton_name, description, version, status, "
+                "SELECT processor_name, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
-                "FROM sinex_schemas.automaton_manifests"
+                "FROM sinex_schemas.processor_manifests "
+                "WHERE processor_type = 'automaton'"
             ]
             params = []
             
             if status:
-                query_parts.append("WHERE status = %s")
+                query_parts.append("AND status = %s")
                 params.append(status)
             
-            query_parts.append("ORDER BY automaton_name")
+            query_parts.append("ORDER BY processor_name")
             
             query_sql = " ".join(query_parts)
             cur.execute(query_sql, params)
@@ -608,7 +747,7 @@ def automaton_list(status: Optional[str]):
             heartbeat_text = "Never"
         
         table.add_row(
-            automaton['automaton_name'],
+            automaton['processor_name'],
             automaton['version'],
             automaton['status'],
             Text(heartbeat_text, style=heartbeat_style),
@@ -627,8 +766,8 @@ def automaton_status(automaton_name: str):
         with conn.cursor() as cur:
             # Get automaton manifest
             cur.execute("""
-                SELECT * FROM sinex_schemas.automaton_manifests
-                WHERE automaton_name = %s
+                SELECT * FROM sinex_schemas.processor_manifests
+                WHERE processor_name = %s AND processor_type = 'automaton'
             """, (automaton_name,))
             automaton = cur.fetchone()
             
@@ -669,7 +808,7 @@ def automaton_status(automaton_name: str):
     
     # Display automaton information
     panel_content = []
-    panel_content.append(f"[bold]Automaton:[/bold] {automaton['automaton_name']}")
+    panel_content.append(f"[bold]Automaton:[/bold] {automaton['processor_name']}")
     panel_content.append(f"[bold]Version:[/bold] {automaton['version']}")
     panel_content.append(f"[bold]Status:[/bold] {automaton['status']}")
     panel_content.append(f"[bold]Description:[/bold] {automaton['description'] or 'N/A'}")
@@ -684,8 +823,7 @@ def automaton_status(automaton_name: str):
     if automaton['produces_event_types']:
         console.print("\n[bold]Produces Event Types:[/bold]")
         produces = automaton['produces_event_types']
-        for source, types in produces.items():
-            console.print(f"  [cyan]{source}:[/cyan] {', '.join(types)}")
+        console.print(f"  {', '.join(produces)}")
     
     # Display recent heartbeats
     if heartbeats:
@@ -3381,6 +3519,290 @@ def explore_curate(ctx, time_range: str, source: Optional[str], event_type: Opti
                 
     except Exception as e:
         console.print(f"[red]❌ Curation analysis failed: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.option('--satellite', '-s', help='Satellite name to scan with (e.g., terminal, desktop, system, fs-watcher)')
+@click.option('--all-satellites', is_flag=True, help='Scan with all available satellites')
+@click.option('--since', help='Start time for historical scan (ISO format or relative like "1d")')
+@click.option('--until', help='End time for historical scan (ISO format or relative like "1h")')
+@click.option('--targets', multiple=True, help='Targets to scan (paths, filters, etc.)')
+@click.option('--dry-run', is_flag=True, help='Show what would be scanned without actually doing it')
+@click.option('--estimate', is_flag=True, help='Show scan estimation before execution')
+@click.option('--interactive', is_flag=True, help='Enable interactive mode for decision making')
+@click.option('--max-events', type=int, default=0, help='Maximum events to process (0 = unlimited)')
+@click.option('--timeout', type=int, default=300, help='Timeout in seconds for each satellite scan')
+@click.option('--parallel', is_flag=True, help='Run satellite scans in parallel')
+@click.pass_context
+def scan(ctx, satellite: Optional[str], all_satellites: bool, since: Optional[str], until: Optional[str], 
+         targets: List[str], dry_run: bool, estimate: bool, interactive: bool, max_events: int, 
+         timeout: int, parallel: bool):
+    """Coordinate satellite scan operations for historical data processing.
+    
+    This command acts as a high-level coordinator that invokes satellite binaries
+    directly with scan subcommands, supporting both single satellite and multi-satellite
+    operations with progress tracking and error handling.
+    
+    Examples:
+        exo scan --satellite terminal --since 2024-01-01 --until 2024-01-02
+        exo scan --all-satellites --since 1d --dry-run
+        exo scan --satellite fs-watcher --targets /path/to/logs --estimate
+    """
+    from datetime import datetime, timedelta
+    import concurrent.futures
+    import time
+    import uuid
+    
+    if not satellite and not all_satellites:
+        console.print("[red]Error: Must specify either --satellite or --all-satellites[/red]")
+        sys.exit(1)
+    
+    if satellite and all_satellites:
+        console.print("[red]Error: Cannot specify both --satellite and --all-satellites[/red]")
+        sys.exit(1)
+    
+    # Available satellites with their binary names
+    # Try to find satellites in the nix store first, then fall back to PATH
+    def find_satellite_binary(name):
+        # First try PATH
+        path_binary = shutil.which(name)
+        if path_binary:
+            return path_binary
+        
+        # Then try target directory (for development)
+        target_binary = f"./target/debug/{name}"
+        if os.path.exists(target_binary):
+            return target_binary
+            
+        # Finally try nix build output
+        nix_binary = f"result/bin/{name}"
+        if os.path.exists(nix_binary):
+            return nix_binary
+            
+        return name  # Fallback to original name
+    
+    AVAILABLE_SATELLITES = {
+        'terminal': find_satellite_binary('sinex-terminal-satellite'),
+        'desktop': find_satellite_binary('sinex-desktop-satellite'), 
+        'system': find_satellite_binary('sinex-system-satellite'),
+        'fs-watcher': find_satellite_binary('sinex-fs-watcher')
+    }
+    
+    # Determine which satellites to scan
+    if all_satellites:
+        satellites_to_scan = list(AVAILABLE_SATELLITES.keys())
+    else:
+        if satellite not in AVAILABLE_SATELLITES:
+            console.print(f"[red]Error: Unknown satellite '{satellite}'. Available: {', '.join(AVAILABLE_SATELLITES.keys())}[/red]")
+            sys.exit(1)
+        satellites_to_scan = [satellite]
+    
+    # Log the operation (disabled for now - satellites don't have unified CLI yet)
+    operation_id = None
+    console.print(f"[blue]Note: Operations logging temporarily disabled pending satellite CLI unification[/blue]")
+    
+    # TODO: Re-enable when satellites implement StatefulStreamProcessor with scan subcommand
+    # try:
+    #     with get_db_connection() as conn:
+    #         with conn.cursor() as cur:
+    #             # Use ULID() PostgreSQL function to generate a proper ULID
+    #             cur.execute("""
+    #                 INSERT INTO core.operations_log (
+    #                     operation_id, operation_type, status, invoked_by_user, parameters
+    #                 ) VALUES (ulid(), %s, %s, %s, %s)
+    #                 RETURNING operation_id
+    #             """, (
+    #                 'scan',
+    #                 'started',
+    #                 os.getenv('USER', 'unknown'),
+    #                 json.dumps({
+    #                     'satellites': satellites_to_scan,
+    #                     'since': since,
+    #                     'until': until,
+    #                     'targets': list(targets),
+    #                     'dry_run': dry_run,
+    #                     'estimate': estimate,
+    #                     'interactive': interactive,
+    #                     'max_events': max_events,
+    #                     'timeout': timeout,
+    #                     'parallel': parallel
+    #                 })
+    #             ))
+    #             
+    #             # Get the generated operation_id
+    #             row = cur.fetchone()
+    #             operation_id = str(row[0]) if row else None
+    #             conn.commit()
+    # except Exception as e:
+    #     console.print(f"[yellow]Warning: Could not log operation: {e}[/yellow]")
+    
+    start_time = time.time()
+    
+    def run_satellite_scan(satellite_name: str) -> Dict[str, Any]:
+        """Run scan for a single satellite."""
+        binary_name = AVAILABLE_SATELLITES[satellite_name]
+        cmd = [binary_name, 'scan']
+        
+        # Add time range parameters
+        if since:
+            cmd.extend(['--from', f'timestamp:{since}'])
+        if until:
+            cmd.extend(['--until', until])
+        
+        # Add targets
+        for target in targets:
+            cmd.extend(['--targets', target])
+        
+        # Add flags
+        if dry_run:
+            cmd.append('--dry-run')
+        if interactive:
+            cmd.append('--interactive')
+        if max_events > 0:
+            cmd.extend(['--max-events', str(max_events)])
+        if estimate:
+            cmd.append('--estimate')
+        
+        console.print(f"[blue]Running: {' '.join(cmd)}[/blue]")
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=os.getcwd()
+            )
+            
+            return {
+                'satellite': satellite_name,
+                'success': result.returncode == 0,
+                'returncode': result.returncode,
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'duration': time.time() - start_time
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                'satellite': satellite_name,
+                'success': False,
+                'returncode': -1,
+                'stdout': '',
+                'stderr': f'Timeout after {timeout} seconds',
+                'duration': timeout
+            }
+        except FileNotFoundError:
+            return {
+                'satellite': satellite_name,
+                'success': False,
+                'returncode': -1,
+                'stdout': '',
+                'stderr': f'Satellite binary {binary_name} not found',
+                'duration': 0
+            }
+        except Exception as e:
+            return {
+                'satellite': satellite_name,
+                'success': False,
+                'returncode': -1,
+                'stdout': '',
+                'stderr': f'Error running scan: {e}',
+                'duration': 0
+            }
+    
+    # Execute scans
+    console.print(f"[green]Starting scan coordination for {len(satellites_to_scan)} satellite(s)[/green]")
+    
+    results = []
+    
+    if parallel and len(satellites_to_scan) > 1:
+        # Run satellites in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(satellites_to_scan)) as executor:
+            future_to_satellite = {
+                executor.submit(run_satellite_scan, sat): sat 
+                for sat in satellites_to_scan
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_satellite):
+                satellite_name = future_to_satellite[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    results.append({
+                        'satellite': satellite_name,
+                        'success': False,
+                        'returncode': -1,
+                        'stdout': '',
+                        'stderr': f'Exception in parallel execution: {e}',
+                        'duration': 0
+                    })
+    else:
+        # Run satellites sequentially
+        for satellite_name in satellites_to_scan:
+            with console.status(f"[bold green]Scanning with {satellite_name}..."):
+                result = run_satellite_scan(satellite_name)
+                results.append(result)
+    
+    # Display results
+    console.print("\n" + "="*60)
+    console.print("[bold]Scan Coordination Results[/bold]")
+    console.print("="*60)
+    
+    total_duration = time.time() - start_time
+    successful_scans = sum(1 for r in results if r['success'])
+    failed_scans = len(results) - successful_scans
+    
+    console.print(f"[green]✅ Successful scans: {successful_scans}[/green]")
+    console.print(f"[red]❌ Failed scans: {failed_scans}[/red]")
+    console.print(f"[blue]⏱️  Total duration: {total_duration:.2f} seconds[/blue]")
+    
+    # Show detailed results
+    for result in results:
+        satellite = result['satellite']
+        if result['success']:
+            console.print(f"\n[bold green]✅ {satellite}[/bold green] (completed in {result['duration']:.2f}s)")
+            if result['stdout'].strip():
+                console.print("[dim]Output:[/dim]")
+                console.print(result['stdout'])
+        else:
+            console.print(f"\n[bold red]❌ {satellite}[/bold red] (failed with code {result['returncode']})")
+            if result['stderr'].strip():
+                console.print("[dim]Error:[/dim]")
+                console.print(f"[red]{result['stderr']}[/red]")
+            if result['stdout'].strip():
+                console.print("[dim]Output:[/dim]")
+                console.print(result['stdout'])
+    
+    # Update operation log (disabled for now)
+    # TODO: Re-enable when satellites implement unified CLI
+    # if operation_id:
+    #     try:
+    #         with get_db_connection() as conn:
+    #             with conn.cursor() as cur:
+    #                 cur.execute("""
+    #                     UPDATE core.operations_log 
+    #                     SET status = %s, completed_at = NOW(), 
+    #                         duration_ms = %s, summary = %s
+    #                     WHERE operation_id = %s
+    #                 """, (
+    #                     'completed' if failed_scans == 0 else 'failed',
+    #                     int(total_duration * 1000),
+    #                     json.dumps({
+    #                         'satellites_scanned': len(satellites_to_scan),
+    #                         'successful_scans': successful_scans,
+    #                         'failed_scans': failed_scans,
+    #                         'results': results
+    #                     }),
+    #                     operation_id
+    #                 ))
+    #                 conn.commit()
+    #     except Exception as e:
+    #         console.print(f"[yellow]Warning: Could not update operation log: {e}[/yellow]")
+    
+    # Exit with error if any scans failed
+    if failed_scans > 0:
         sys.exit(1)
 
 

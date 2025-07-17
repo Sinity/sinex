@@ -203,7 +203,7 @@ impl TestDatabase {
         Ok(DatabaseStats {
             event_count: row.event_count.unwrap_or(0),
             agent_count: row.synthesis_count.unwrap_or(0),
-            work_queue_count: row.checkpoint_count.unwrap_or(0) as i64,
+            checkpoint_count: row.checkpoint_count.unwrap_or(0) as i64,
         })
     }
 
@@ -218,7 +218,7 @@ impl TestDatabase {
 pub struct DatabaseStats {
     pub event_count: i64,
     pub agent_count: i64,
-    pub work_queue_count: i64,
+    pub checkpoint_count: i64,
 }
 
 impl Drop for TestDatabase {
@@ -560,8 +560,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             core.entities,
             core.artifacts,
             core.event_clusters,
-            sinex_schemas.work_queue,
-            sinex_schemas.automaton_manifests
+            sinex_schemas.processor_manifests
         CASCADE
     "#,
     )
@@ -587,9 +586,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             "DELETE FROM core.revisions",
             "DELETE FROM core.artifact_tags",
             "DELETE FROM core.artifact_relations",
-            // Delete from work queue
-            "DELETE FROM sinex_schemas.work_queue",
-            "DELETE FROM sinex_schemas.automaton_manifests",
+            "DELETE FROM sinex_schemas.processor_manifests",
             // Finally, delete from primary tables
             "DELETE FROM core.entities",
             "DELETE FROM core.artifacts",
@@ -1040,7 +1037,6 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
             "core.events",
             "core.artifacts",
             "core.event_annotations",
-            "sinex_schemas.work_queue",
         ];
 
         for table in disable_autovacuum_tables {

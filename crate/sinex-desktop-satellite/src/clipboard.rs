@@ -106,7 +106,7 @@ impl ClipboardWatcher {
             .unwrap_or(false);
 
         if !wl_paste_available && !xclip_available {
-            return Err(sinex_satellite_sdk::SatelliteError::EventSource(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(
                 "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring".to_string()
             ));
         }

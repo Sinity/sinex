@@ -1,6 +1,6 @@
 # Sinex: System Architecture & Document Interrelation (SADI) - v0.4
 
-> **📊 IMPLEMENTATION STATUS**: Satellite architecture ✅ **OPERATIONAL** (75%), Message bus 🚧 **ROBUST** (70%), Data substrate 🚧 **MATURE** (65%), Event sources 🚧 **EXPANDING** (45%), Automaton ecosystem 🚧 **ACTIVE** (35%), Gateway & APIs 🚧 **FUNCTIONAL** (60%)
+> **📊 IMPLEMENTATION STATUS**: Satellite architecture ✅ **OPERATIONAL** (80%), Message bus ✅ **ROBUST** (75%), Data substrate ✅ **MATURE** (70%), Event sources 🚧 **EXPANDING** (50%), Automaton ecosystem 🚧 **ACTIVE** (40%), Gateway & APIs 🚧 **FUNCTIONAL** (65%)
 
 **Purpose**
 
@@ -37,7 +37,7 @@ This document serves as the central navigation hub for the Sinex project documen
 ## 🏗️ Core Architecture
 
 ### System Philosophy
-Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences through Redis Streams message bus, PostgreSQL persistence, and deep symmetry between ingestors and automata.
+Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences through Redis Streams message bus, PostgreSQL persistence with unified events table, and StatefulStreamProcessor interface for both ingestors and automata.
 
 ### Technical Stack
 
@@ -54,7 +54,10 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
 - **ULID Primary Keys** - Time-ordered, globally unique ([ADR-001](docs/adr/ADR-001-PrimaryKeyStrategy.md))
 - **Satellite Constellation** - Independent services with unified StatefulStreamProcessor interface ([ADR-010](docs/adr/ADR-010-UnifiedCollectorEventCentricArchitecture.md))
 - **Redis Streams Message Bus** - Real-time event distribution with consumer groups ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
-- **Checkpoint-based Recovery** - Unified state management for ingestors and automata ([ADR-009](docs/adr/ADR-009-ULID-Primary-Key-With-TimescaleDB.md))
+- **Unified Events Table** - Single core.events table with comprehensive provenance tracking
+- **Checkpoint-based Recovery** - Unified state management for processors ([ADR-009](docs/adr/ADR-009-ULID-Primary-Key-With-TimescaleDB.md))
+- **Source Material Registry** - Immutable ground truth preservation with blob_id references
+- **Processor Manifests** - GitOps-driven processor registration and metadata
 - **Terminal Capture** - Layered approach with multiple sources ([ADR-008](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md))
 - **Clock Regression** - Handling time jumps gracefully ([ADR-011](docs/adr/ADR-011-clock-regression-handling.md))
 
@@ -65,13 +68,8 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
 - **[PLAN.md](PLAN.md)** - Development phases and current progress tracking
 
 ### Architecture Documents
-- **[STAD.md](STAD.md)** - High-level system architecture overview
-- **Architecture Modules** - Domain-specific deep dives:
-  - [DataSubstrate_Architecture.md](docs/arch_modules/DataSubstrate_Architecture.md) - Database and storage layer
-  - [IngestionArchitecture_And_TelemetrySources.md](docs/arch_modules/IngestionArchitecture_And_TelemetrySources.md) - Event capture system
-  - [AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md) - AI and processing agents
-  - [UserInteraction_And_Query_Architecture.md](docs/arch_modules/UserInteraction_And_Query_Architecture.md) - Query interfaces
-  - [SystemOperations_And_Integrity_Architecture.md](docs/arch_modules/SystemOperations_And_Integrity_Architecture.md) - Operations and deployment
+- **[STAD.md](STAD.md)** - System Technical Architecture Document (comprehensive overview)
+- **Architecture Modules** - Domain-specific deep dives (see STAD.md for details)
 
 ### Implementation Specifications (TIMs)
 
@@ -113,6 +111,7 @@ Technical Implementation Modules follow a consistent structure:
 
 ### Development Resources
 - **[CLAUDE.md](../CLAUDE.md)** - Development workflows and patterns
+- **[plan.md](../plan.md)** - Unified architecture and implementation guide
 - **[PATHWAYS.md](PATHWAYS.md)** - Where to start contributing
 - **[DEPENDENCIES.md](DEPENDENCIES.md)** - Feature dependency tracking
 - **[MATURITY.md](MATURITY.md)** - Specification maturity levels
@@ -120,37 +119,31 @@ Technical Implementation Modules follow a consistent structure:
 
 ## 🚦 Implementation Status by Component
 
-### ✅ Operational Components (60-85% Complete)
-- **Satellite Architecture** (75%) - Independent services operational, StatefulStreamProcessor interface implemented
-- **Message Bus** (70%) - Redis Streams with consumer groups, checkpoint management working
-- **Data Substrate** (65%) - PostgreSQL + TimescaleDB + ULID, unified events table operational
-- **Gateway & APIs** (60%) - Command/response patterns, CLI integration working
+### Implementation Status Summary
+See [STAD.md](STAD.md) for detailed implementation status. Key highlights:
 
-### 🚧 Partially Implemented (25-60% Complete)
-- **Event Sources** (45%) - Four domain satellites operational, expanding coverage
-- **NixOS Module** (55%) - Satellite orchestration working, observability patterns
-- **Testing Framework** (75%) - Robust test infrastructure with transaction isolation
-- **Git-Annex Integration** (50%) - Basic blob storage with content addressing
+**Operational (70%+ Complete):**
+- Satellite Architecture with StatefulStreamProcessor interface (80%)
+- Redis Streams message bus with consumer groups (75%)
+- Core.events table with comprehensive provenance (70%)
+- Gateway & APIs with command/response patterns (65%)
 
-### 🚧 Active Development (25-40% Complete)
-- **Automaton Ecosystem** (35%) - Processing framework operational, deterministic automata working
-- **Query Interface** (25%) - CLI operational with gateway integration, expanding capabilities
-- **Health Monitoring** (40%) - Journald heartbeat pattern, structured observability
+**In Progress (25-70% Complete):**
+- Event Sources across four domains (50%)
+- Automaton processing ecosystem (40%)
+- Testing framework and operations (60%)
 
-### 🔨 Planned/Early Stage (<25% Complete)
-- **AI/LLM Integration** (10%) - Framework ready, schema designed, integration starting
-- **Knowledge Graph** (15%) - Schema implemented, basic relations, expanding
-- **Advanced Event Sources** (5%) - Browser extension planned, audio/email concepts
-- **Semantic Search** (5%) - pgvector ready, embedding framework designed
-- **Multi-device Sync** (0%) - Architecture planned, not implemented
-- **Web Dashboard** (0%) - Gateway ready for web UI, not built
+**Planned (<25% Complete):**
+- AI/LLM integration framework (15%)
+- Advanced event sources (browser, audio) (5%)
+- Multi-device synchronization (0%)
 
 ## 🔄 Quick Links to Key Components
 
 ### Database Schema
-- [Event Substrate DDL](implemented/infrastructure/TIM-EventSubstrateDDL.md)
-- [Event Schema Registry](implemented/infrastructure/TIM-EventSchemaRegistry.md)
-- [Knowledge Graph Schema](implemented/infrastructure/TIM-KnowledgeGraphSchema.md)
+- [Event Substrate DDL](implemented/infrastructure/TIM-EventSubstrateDDL.md) - Core.events table with provenance
+- [Event Schema Registry](implemented/infrastructure/TIM-EventSchemaRegistry.md) - GitOps schema management
+- [Knowledge Graph Schema](implemented/infrastructure/TIM-KnowledgeGraphSchema.md) - Entities and relations
 
 ### Event Sources
 - [Filesystem Monitoring](implemented/event-sources/TIM-FilesystemMonitoringWatchers.md)
@@ -159,15 +152,15 @@ Technical Implementation Modules follow a consistent structure:
 - [Hyprland IPC](implemented/event-sources/TIM-HyprlandIPCInterface.md)
 
 ### Infrastructure
-- [Event Ingestion Processing](implemented/infrastructure/TIM-EventIngestionProcessing.md)
-- [Agent Manifest Management](implemented/infrastructure/TIM-AgentManifestManagement.md)
-- [Test Framework](implemented/infrastructure/TIM-TestFrameworkInfrastructure.md)
+- [Event Ingestion Processing](implemented/infrastructure/TIM-EventIngestionProcessing.md) - StatefulStreamProcessor architecture
+- [Agent Manifest Management](implemented/infrastructure/TIM-AgentManifestManagement.md) - Processor manifests
+- [Test Framework](implemented/infrastructure/TIM-TestFrameworkInfrastructure.md) - Comprehensive testing infrastructure
 
 ## 📝 Recent Updates
 
-- **2025-07**: Satellite constellation architecture operational - Redis Streams, checkpoint management, unified events table
-- **2025-07**: StatefulStreamProcessor interface implemented with deep symmetry between ingestors and automata
-- **2025-07**: Documentation enhanced to match current implementation reality
+- **2025-07**: Unified architecture implemented - core.events table, StatefulStreamProcessor interface, source material registry, processor manifests
+- **2025-07**: Documentation updated to reflect current implementation reality
+- **2025-07**: Satellite constellation architecture operational with Redis Streams and checkpoint management
 - **2025-01**: Major documentation cleanup and reorganization
 - **2024-12**: Comprehensive TIM restructuring with accurate implementation tracking
 - **2024-11**: NixOS module implementation and VM testing framework

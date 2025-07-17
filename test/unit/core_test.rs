@@ -13,7 +13,6 @@ use chrono::Utc;
 use sinex_core::{
     event_type_constants, sources, CoreError, RawEventBuilder, Result as CoreResult,
 };
-use sinex_satellite_sdk::{EventSource, EventSourceContext};
 use std::io;
 
 // =============================================================================
@@ -389,32 +388,7 @@ async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test EventSource error propagation in async context
-#[derive(Debug)]
-struct FailingEventSource;
 
-// NOTE: EventSource trait has been removed from this architecture
-// This test is disabled as it references obsolete EventSource trait
-// TODO: Replace with StatefulStreamProcessor trait when implementing new event sources
-
-#[sinex_test]
-async fn test_event_source_error_propagation(_ctx: TestContext) -> TestResult {
-    // NOTE: EventSource trait has been removed from this architecture
-    // This test is disabled as it references obsolete EventSource trait
-    // TODO: Replace with StatefulStreamProcessor trait when implementing new event sources
-    return Ok(());
-    let ctx_local = crate::common::event_sources::test_context(json!({}));
-    let result = FailingEventSource::initialize(ctx_local).await;
-
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        CoreError::Configuration(msg) => {
-            pretty_assertions::assert_eq!(msg, "Missing required field")
-        }
-        _ => panic!("Expected Configuration error"),
-    }
-    Ok(())
-}
 
 // =============================================================================
 // RAW EVENT BUILDER EDGE CASES

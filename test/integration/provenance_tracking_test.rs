@@ -120,7 +120,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     
     // Test finding dependent events (events that depend on raw_event_id)
     let dependent_events = sqlx::query!(
-        "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM raw.find_dependent_events($1::uuid) ORDER BY dependency_depth, event_id",
+        "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_dependent_events($1::uuid) ORDER BY dependency_depth, event_id",
         raw_event_id.to_uuid()
     )
     .fetch_all(pool)
@@ -139,7 +139,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     
     // Test finding root events (events that led to meta_synthesis_event_id)
     let root_events = sqlx::query!(
-        "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM raw.find_root_events($1::uuid) ORDER BY dependency_depth DESC, event_id",
+        "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_root_events($1::uuid) ORDER BY dependency_depth DESC, event_id",
         meta_synthesis_event_id.to_uuid()
     )
     .fetch_all(pool)

@@ -1,8 +1,8 @@
 //! Property tests for Redis Streams-based automaton processing
 //!
-//! This module transforms the old work_queue property tests to verify the same
-//! correctness properties using Redis Streams, consumer groups, and the new
-//! satellite architecture.
+//! This module provides property tests for Redis Streams-based automaton processing,
+//! verifying correctness properties including exactly-once processing, ordering
+//! guarantees, and crash recovery via consumer groups.
 //!
 //! Key Properties Tested:
 //! - Exactly-once processing via consumer groups and acknowledgments

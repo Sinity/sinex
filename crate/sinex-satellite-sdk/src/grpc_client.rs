@@ -45,7 +45,7 @@ impl IngestClient {
         } else {
             let error_msg = inner.error.unwrap_or_else(|| "Unknown error".to_string());
             error!("Failed to ingest event: {}", error_msg);
-            Err(SatelliteError::EventSource(error_msg))
+            Err(SatelliteError::Processing(error_msg))
         }
     }
 

@@ -93,7 +93,7 @@ impl ReplayManager {
         let (_query, _params) = self.build_count_query()?;
         
         // TODO: Fix bind_all usage - temporarily hardcoded for compilation
-        let row = sqlx::query("SELECT COUNT(*) FROM raw.events")
+        let row = sqlx::query("SELECT COUNT(*) FROM core.events")
             .fetch_one(&self.pool)
             .await?;
 
@@ -142,7 +142,7 @@ impl ReplayManager {
             let _paginated_query = format!("{} LIMIT {} OFFSET {}", query, self.batch_size, offset);
             
             // TODO: Fix bind_all usage - temporarily hardcoded for compilation
-            let rows = sqlx::query("SELECT id::text, source, event_type, host, payload, payload_schema_id, ts_ingest, ts_orig, ingestor_version FROM raw.events ORDER BY ts_ingest LIMIT 100")
+            let rows = sqlx::query("SELECT event_id::text, source, event_type, host, payload, payload_schema_id::text, ts_ingest, ts_orig, ingestor_version FROM core.events ORDER BY ts_ingest LIMIT 100")
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -215,7 +215,7 @@ impl ReplayManager {
 
     /// Build SQL query for counting events
     fn build_count_query(&self) -> SatelliteResult<(String, Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>)> {
-        let mut query = "SELECT COUNT(*) FROM raw.events".to_string();
+        let mut query = "SELECT COUNT(*) FROM core.events".to_string();
         let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>> = Vec::new();
         let mut conditions = Vec::new();
         let mut param_count = 0;
@@ -234,16 +234,16 @@ impl ReplayManager {
     fn build_replay_query(&self) -> SatelliteResult<(String, Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>)> {
         let mut query = r#"
             SELECT 
-                id::text,
+                event_id::text,
                 source,
                 event_type,
                 host,
                 payload,
-                payload_schema_name,
-                payload_schema_version,
-                blob_id::text,
-                ts_ingest
-            FROM raw.events
+                payload_schema_id::text,
+                ts_ingest,
+                ts_orig,
+                ingestor_version
+            FROM core.events
         "#.to_string();
 
         let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>> = Vec::new();
@@ -452,7 +452,7 @@ impl ReplayManager {
     fn row_to_raw_event(&self, row: sqlx::postgres::PgRow) -> SatelliteResult<RawEvent> {
         use sqlx::Row;
 
-        let id_str: String = row.get("id");
+        let id_str: String = row.get("event_id");
         let id = id_str.parse::<sinex_ulid::Ulid>()
             .map_err(|e| SatelliteError::Database(sqlx::Error::Decode(Box::new(e))))?;
 
@@ -467,7 +467,7 @@ impl ReplayManager {
             ts_ingest: row.get("ts_ingest"),
             ts_orig: row.get("ts_orig"),
             ingestor_version: row.get("ingestor_version"),
-            source_event_ids: None, // Replay is from raw.events, so always None
+            source_event_ids: None, // Replay is from core.events, so always None
         })
     }
 }

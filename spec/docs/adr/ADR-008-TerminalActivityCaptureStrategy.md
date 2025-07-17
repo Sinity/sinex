@@ -1,7 +1,8 @@
 # ADR-008: Terminal Activity Capture Strategy
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     Capturing user activity within terminal emulators is crucial for the Exocortex, as much developer and power-user work occurs in the command line. The goal is to achieve comprehensive capture that includes not just executed commands but also their output, the surrounding terminal session context, and semantic information about the terminal environment itself. Different tools offer varying levels of fidelity and types of data.
 

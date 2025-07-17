@@ -270,7 +270,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             TimeHorizon::Continuous => {
                 // Continuous monitoring (would use file system watcher in real implementation)
                 warnings.push("Continuous filesystem monitoring not implemented in this example".to_string());
-                return Err(crate::SatelliteError::EventSource(
+                return Err(crate::SatelliteError::Processing(
                     "Continuous mode not implemented for filesystem processor example".to_string()
                 ));
             }

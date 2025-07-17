@@ -24,8 +24,8 @@
 //!
 //! ### 🎨 Core (`core/`)
 //! Tests for `sinex-core` crate:
-//! - Event source trait implementations
-//! - Event registry functionality
+//! - Event processing and validation
+//! - Event type system and builders
 //! - Core data structures and utilities
 //! - Configuration parsing and validation
 //!
@@ -86,9 +86,6 @@ pub mod core_test;
 /// Tests for API layer functionality
 pub mod api_test;
 
-/// Tests for configuration validation and management
-// Disabled - references obsolete sinex_collector module
-// pub mod configuration_test;
 
 /// Tests for event type system (replaces EventRegistry tests)
 pub mod event_type_system_test;
@@ -99,9 +96,6 @@ pub mod database_test;
 /// Tests for preflight verification
 pub mod preflight_test;
 
-/// Consolidated terminal unit tests  
-// Note: Disabled due to obsolete API testing - terminal satellite uses different architecture
-// pub mod terminal_test;
 
 /// ULID comprehensive tests
 pub mod ulid_comprehensive_test;

@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L2 - Ready for Implementation
 **Implementation**: 0% (Design complete, implementation not started)
-**Dependencies**: PipeWire system service, audio libraries, EventSource trait, file storage
+**Dependencies**: PipeWire system service, audio libraries, StatefulStreamProcessor trait, file storage
 **Blocks**: Audio data capture, voice recordings, system audio monitoring, multimedia analysis
 
 ## MVP Specification
@@ -11,7 +11,7 @@
 - Basic audio stream capture (microphone input)
 - System audio loopback recording
 - Audio file storage and metadata
-- Integration with EventSource pattern
+- Integration with StatefulStreamProcessor pattern
 
 ## Enhanced Features
 - Advanced audio processing and filtering
@@ -26,7 +26,7 @@
 - [ ] Audio source enumeration
 - [ ] Stream capture implementation
 - [ ] Audio file format handling
-- [ ] EventSource trait implementation
+- [ ] StatefulStreamProcessor trait implementation
 - [ ] Metadata extraction and storage
 - [ ] Configuration management
 - [ ] Error handling and recovery

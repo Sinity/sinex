@@ -51,9 +51,9 @@ This TIM details the infrastructure and tools for comprehensive testing of the E
 - Eliminated database connection timeouts (was 5-10 per run, now 0)
 
 ### Foreign Key Constraint Handling
-- Implemented proper cleanup order respecting FK dependencies (work_queue → raw.events → event_sources)
+- Implemented proper cleanup order respecting FK dependencies (core.events → related tables)
 - Added ULID to UUID casting for foreign key relationships
-- Fixed constraint violations in work_queue and related tables
+- Fixed constraint violations in core.events and related tables
 - Comprehensive test coverage for ULID FK relationships
 
 ### Test Logic Improvements
@@ -83,7 +83,7 @@ A robust test framework is vital for ensuring reliability, performance, and corr
 
 ### 2.2. Custom Synthetic Event Generators (PostgreSQL Direct Ingest) [`openai_sinex_6.md` Sec 11, SA4]
 
-*   **Mechanism:** Rust/Python scripts/apps generate realistic synthetic `raw.events` payloads (using Faker, see Sec 4 below) and insert directly into PostgreSQL `raw.events` table in configurable batches/rates.
+*   **Mechanism:** Rust/Python scripts/apps generate realistic synthetic `core.events` payloads (using Faker, see Sec 4 below) and insert directly into PostgreSQL `core.events` table in configurable batches/rates.
 *   **Rust Example (Conceptual Core from UG Sec 29.1.2):**
     ```rust
     // use rand::{Rng, distributions::Alphanumeric, seq::SliceRandom};
@@ -139,7 +139,7 @@ A robust test framework is vital for ensuring reliability, performance, and corr
     //     }
 
     //     sqlx::query!(
-    //         "INSERT INTO raw.events (id, source, event_type, ts_orig, host, payload) \
+    //         "INSERT INTO core.events (event_id, source, event_type, ts_orig, host, payload) \
     //          SELECT * FROM UNNEST($1::ulid[], $2::text[], $3::text[], $4::timestamptz[], $5::text[], $6::jsonb[])",
     //         &ulids, &sources_vec, &event_types_vec, &ts_origs_vec, &hosts_vec, &payloads_vec
     //     )
@@ -171,7 +171,7 @@ Proactively inject failures to test resilience and recovery.
 
 ## 4. Synthetic Data Generation with Faker [UG Sec 29.3, CR5]
 
-Create realistic (but artificial) data for `raw.events` payloads, PKM notes, entity descriptions.
+Create realistic (but artificial) data for `core.events` payloads, PKM notes, entity descriptions.
 *   **Faker Library:** Python `Faker`, Rust `fake-rs` crate.
 *   **Usage:** Integrate into synthetic event generators (Sec 2.2) to produce varied data for load testing, schema validation, PII detection tests, search relevance benchmarks.
     *   Example Python `Faker` for Hyprland payload from UG Sec 29.3.

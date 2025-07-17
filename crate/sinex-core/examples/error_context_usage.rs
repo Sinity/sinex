@@ -75,7 +75,7 @@ fn main() {
 
     // Example 7: Structured error info for logging
     let error_context = CoreError::database("Query timeout")
-        .with_context("query", "SELECT * FROM raw.events")
+        .with_context("query", "SELECT * FROM core.events")
         .with_context("timeout_seconds", 30)
         .with_context("connection_pool_size", 10);
 

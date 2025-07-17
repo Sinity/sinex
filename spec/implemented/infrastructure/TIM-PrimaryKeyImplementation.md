@@ -43,20 +43,19 @@ This Technical Implementation Module details the use of ULIDs (Universally Uniqu
 
 ### ULID UUID Casting for Foreign Keys
 - Implemented automatic ULID to UUID casting for foreign key relationships
-- Fixed constraint violations in work_queue and related tables where event_id references raw.events
 - Enabled seamless integration between ULID primary keys and UUID foreign keys
 - Added comprehensive test coverage for ULID FK relationships
 
 ### Technical Implementation
 ```rust
 // Cast ULID to UUID when querying foreign key relationships
-let work_items = sqlx::query!(
+let events = sqlx::query!(
     r#"
     SELECT 
-        work_item_id,
         event_id::uuid as "event_id!",
-        status
-    FROM work_queue 
+        source,
+        event_type
+    FROM core.events 
     WHERE event_id = $1::uuid
     "#,
     event_id.to_uuid()  // ULID provides to_uuid() method
@@ -67,11 +66,11 @@ let work_items = sqlx::query!(
 
 ### Database Schema Adjustments
 ```sql
--- Foreign key constraints now properly handle ULID-UUID relationships
-ALTER TABLE work_queue 
-    ADD CONSTRAINT fk_work_queue_event 
-    FOREIGN KEY (event_id) 
-    REFERENCES raw.events(id::uuid);
+-- Foreign key constraints properly handle ULID-UUID relationships
+ALTER TABLE core.event_relations 
+    ADD CONSTRAINT fk_event_relations_from_event 
+    FOREIGN KEY (from_event_id) 
+    REFERENCES core.events(event_id::uuid);
 ```
 
 See `/spec/docs/test-infrastructure-improvements-2025-07.md` for complete details.

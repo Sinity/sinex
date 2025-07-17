@@ -1,7 +1,8 @@
 # ADR-006: NixOS Secrets Management Tool
 
-*   **Status:** Accepted
+*   **Status:** Implemented  
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     The Exocortex system, managed by NixOS, requires a secure method for managing secrets such as API keys (e.g., for LLM providers), database passwords (e.g., for PostgreSQL users if not using peer auth for all local services), and encryption master keys (e.g., for `pgsodium`). These secrets need to be:
     1.  Stored securely (encrypted) within the NixOS configuration Git repository.

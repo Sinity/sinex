@@ -1,4 +1,43 @@
-//! Configuration management for satellite services
+//! Configuration management for satellite services.
+//!
+//! This module provides a hierarchical configuration system with the following precedence:
+//! 1. Command-line arguments (highest priority)
+//! 2. Environment variables
+//! 3. Configuration files (TOML format)
+//! 4. Default values (lowest priority)
+//!
+//! # Configuration Loading
+//! 
+//! All satellite services support both file-based and environment-based configuration:
+//! 
+//! ```rust
+//! use sinex_satellite_sdk::config::SatelliteConfig;
+//! 
+//! // Load from environment variables and defaults
+//! let config = SatelliteConfig::load_from_env("my-service");
+//! 
+//! // Load from TOML file
+//! let config = SatelliteConfig::load_from_file(&"config.toml".into())?;
+//! ```
+//!
+//! # Environment Variables
+//! 
+//! - `SINEX_LOG_LEVEL`: Log level (trace, debug, info, warn, error)
+//! - `SINEX_INGEST_SOCKET`: Unix socket path for ingestd communication
+//! - `SINEX_REDIS_URL`: Redis connection URL
+//! - `DATABASE_URL`: PostgreSQL database connection string
+//! - `SINEX_DB_POOL_SIZE`: Database connection pool size
+//! - `SINEX_WORK_DIR`: Working directory for temporary files
+//! - `SINEX_DRY_RUN`: Enable dry-run mode (true/false)
+//!
+//! # Validation
+//! 
+//! All configuration is validated on load. Common validation rules:
+//! - Service names must be non-empty
+//! - Log levels must be valid (trace, debug, info, warn, error)
+//! - Directory paths must exist or be creatable
+//! - Batch sizes must be greater than 0
+//! - URLs must be well-formed
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,7 +58,15 @@ pub enum ConfigError {
     MissingField(String),
 }
 
-/// Base configuration for all satellite services
+/// Base configuration for all satellite services.
+///
+/// This structure contains common configuration fields shared by all
+/// satellite services (both ingestors and automata). Service-specific
+/// configuration should extend this via `EventSourceConfig` or `AutomatonConfig`.
+///
+/// # Field Defaults
+/// Most fields have sensible defaults provided by corresponding `default_*` functions.
+/// See individual field documentation for specific default values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SatelliteConfig {
     /// Service name (used for logging and identification)
@@ -29,18 +76,39 @@ pub struct SatelliteConfig {
     #[serde(default = "default_log_level")]
     pub log_level: String,
 
-    /// Path to Unix Domain Socket for gRPC communication with ingestd
+    /// Path to Unix Domain Socket for gRPC communication with ingestd.
+    ///
+    /// This socket is used by ingestors to send events to the ingestd service.
+    /// The path must be accessible by the satellite service process.
+    ///
+    /// Default: `/run/sinex/ingest.sock` (see `default_ingest_socket()`)
     #[serde(default = "default_ingest_socket")]
     pub ingest_socket_path: String,
 
-    /// Redis connection URL for message bus
+    /// Redis connection URL for message bus.
+    ///
+    /// Used by automata to consume events from Redis Streams.
+    /// Format: `redis://hostname:port[/db]`
+    ///
+    /// Default: `redis://localhost:6379` (see `default_redis_url()`)
     #[serde(default = "default_redis_url")]
     pub redis_url: String,
 
-    /// Database URL for direct database access (automata only)
+    /// Database URL for direct database access (automata only).
+    ///
+    /// PostgreSQL connection string for automata that need direct database access.
+    /// Format: `postgresql://username:password@hostname:port/database`
+    ///
+    /// This field is optional - not all automata require database access.
+    /// Ingestors typically don't need this as they communicate via gRPC.
     pub database_url: Option<String>,
 
-    /// Database connection pool size
+    /// Database connection pool size.
+    ///
+    /// Maximum number of concurrent database connections to maintain.
+    /// Higher values improve concurrent query performance but consume more resources.
+    ///
+    /// Default: `10` (see `default_pool_size()`)
     #[serde(default = "default_pool_size")]
     pub database_pool_size: u32,
 
@@ -125,7 +193,29 @@ pub struct ReplayConfig {
 }
 
 impl SatelliteConfig {
-    /// Load configuration from file
+    /// Load configuration from file.
+    ///
+    /// Loads and validates configuration from a TOML file. The file is parsed
+    /// and validated according to the configuration schema.
+    ///
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use std::path::PathBuf;
+    /// use sinex_satellite_sdk::config::SatelliteConfig;
+    /// 
+    /// let config = SatelliteConfig::load_from_file(&PathBuf::from("config.toml"))?;
+    /// println!("Loaded config for service: {}", config.service_name);
+    /// ```
+    ///
+    /// Example TOML configuration:
+    /// ```toml
+    /// service_name = "my-ingestor"
+    /// log_level = "info"
+    /// ingest_socket_path = "/run/sinex/ingest.sock"
+    /// redis_url = "redis://localhost:6379"
+    /// dry_run = false
+    /// ```
     pub fn load_from_file(path: &PathBuf) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
@@ -133,7 +223,37 @@ impl SatelliteConfig {
         Ok(config)
     }
 
-    /// Load configuration from environment and defaults
+    /// Load configuration from environment and defaults.
+    ///
+    /// Creates a configuration using environment variables with fallback to
+    /// default values. This is the preferred method for production deployments.
+    ///
+    /// # Environment Variables
+    /// - `SINEX_LOG_LEVEL`: Log level (default: "info")
+    /// - `SINEX_INGEST_SOCKET`: Socket path (default: "/run/sinex/ingest.sock")
+    /// - `SINEX_REDIS_URL`: Redis URL (default: "redis://localhost:6379")
+    /// - `DATABASE_URL`: PostgreSQL URL (optional)
+    /// - `SINEX_DB_POOL_SIZE`: Pool size (default: 10)
+    /// - `SINEX_WORK_DIR`: Work directory (default: system cache dir)
+    /// - `SINEX_DRY_RUN`: Dry run mode (default: false)
+    ///
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use sinex_satellite_sdk::config::SatelliteConfig;
+    /// 
+    /// // Load with defaults
+    /// let config = SatelliteConfig::load_from_env("my-service");
+    /// 
+    /// // With environment variables set:
+    /// // SINEX_LOG_LEVEL=debug
+    /// // SINEX_DRY_RUN=true
+    /// std::env::set_var("SINEX_LOG_LEVEL", "debug");
+    /// std::env::set_var("SINEX_DRY_RUN", "true");
+    /// let config = SatelliteConfig::load_from_env("debug-service");
+    /// assert_eq!(config.log_level, "debug");
+    /// assert!(config.dry_run);
+    /// ```
     pub fn load_from_env(service_name: &str) -> Self {
         Self {
             service_name: service_name.to_string(),

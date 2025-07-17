@@ -54,8 +54,8 @@ impl ImportHistoryQuerier {
                 (completed.payload->>'max_time')::timestamptz as max_time,
                 (completed.payload->>'duration_ms')::bigint as duration_ms,
                 (completed.payload->>'was_duplicate')::boolean as was_duplicate
-            FROM raw.events started
-            LEFT JOIN raw.events completed 
+            FROM core.events started
+            LEFT JOIN core.events completed 
                 ON completed.payload->>'scan_id' = started.payload->>'scan_id'
                 AND completed.event_type = 'scan.completed'
                 AND completed.source = started.source
@@ -109,14 +109,14 @@ impl ImportHistoryQuerier {
                 started.source as source_name,
                 started.ts_ingest as started_at,
                 stopped.ts_ingest as stopped_at
-            FROM raw.events started
-            LEFT JOIN raw.events stopped 
+            FROM core.events started
+            LEFT JOIN core.events stopped 
                 ON stopped.source = started.source
                 AND stopped.event_type = 'sensor.stopped'
                 AND stopped.ts_ingest > started.ts_ingest
                 AND NOT EXISTS (
                     -- No other start after this start but before this stop
-                    SELECT 1 FROM raw.events other_start
+                    SELECT 1 FROM core.events other_start
                     WHERE other_start.source = started.source
                         AND other_start.event_type = 'sensor.started'
                         AND other_start.ts_ingest > started.ts_ingest
@@ -160,8 +160,8 @@ impl ImportHistoryQuerier {
                 (completed.payload->>'events_generated')::bigint as events_generated,
                 (completed.payload->>'duration_ms')::bigint as duration_ms,
                 (completed.payload->>'was_duplicate')::boolean as was_duplicate
-            FROM raw.events completed
-            JOIN raw.events started 
+            FROM core.events completed
+            JOIN core.events started 
                 ON started.payload->>'scan_id' = completed.payload->>'scan_id'
                 AND started.event_type = 'scan.started'
                 AND started.source = completed.source
@@ -222,7 +222,7 @@ impl ImportHistoryQuerier {
     pub async fn get_import_stats(&self, source_name: &str) -> Result<ImportStats> {
         // Get basic scan count
         let total_scans = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM raw.events WHERE source = $1 AND event_type = 'scan.started'",
+            "SELECT COUNT(*) FROM core.events WHERE source = $1 AND event_type = 'scan.started'",
             source_name
         )
         .fetch_one(&self.pool)
@@ -232,7 +232,7 @@ impl ImportHistoryQuerier {
 
         // Get duplicate count
         let duplicate_scans = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM raw.events WHERE source = $1 AND event_type = 'scan.completed' AND payload->>'was_duplicate' = 'true'",
+            "SELECT COUNT(*) FROM core.events WHERE source = $1 AND event_type = 'scan.completed' AND payload->>'was_duplicate' = 'true'",
             source_name
         )
         .fetch_one(&self.pool)
@@ -242,7 +242,7 @@ impl ImportHistoryQuerier {
 
         // Get latest scan time
         let last_scan_completed = sqlx::query_scalar!(
-            "SELECT MAX(ts_ingest) FROM raw.events WHERE source = $1 AND event_type = 'scan.completed'",
+            "SELECT MAX(ts_ingest) FROM core.events WHERE source = $1 AND event_type = 'scan.completed'",
             source_name
         )
         .fetch_one(&self.pool)

@@ -1,7 +1,7 @@
 
 # Sinex Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty (v3.0)
 
-> **⚠️ IMPLEMENTATION STATUS**: This document describes the **vision and aspirational goals** of the Sinex project. Current implementation provides ~25-30% of the described capabilities, with operational satellite constellation architecture, Redis Streams message bus, unified events table, and multiple domain event sources. See individual sections for specific status markers.
+> **⚠️ IMPLEMENTATION STATUS**: This document describes the **vision and aspirational goals** of the Sinex project. Current implementation provides ~40-45% of the described capabilities, with operational satellite constellation architecture, Redis Streams message bus, core.events table with comprehensive provenance, source material registry, processor manifests, and multiple domain event sources. See individual sections for specific status markers.
 
 ## Foreword: The Imperative of Cognitive Sovereignty
 
@@ -135,11 +135,11 @@ The Exocortex transforms the raw, voluminous stream of captured data into struct
 
 * **Conceptual Purpose:** To move beyond a simple archive to an organized, semantically rich understanding of the user's information landscape, where meaning and order emerge iteratively.
 * **Key Conceptual Processes:**
-  * **Promotion:** Raw events are intelligently processed and "promoted" into more structured representations within the Exocortex database.
+  * **Automaton Processing:** Events are intelligently processed by specialized automata into structured representations within the core.events table with comprehensive provenance tracking via source_event_ids.
   * **Layered Enrichment:** Captured data is progressively enriched with additional layers of meaning, such as semantic tags, contextual links to related items, automatically generated summaries, and vector embeddings that capture conceptual similarity for powerful search.
   * **Knowledge Graph Growth:** Named entities (people, projects, topics, etc.) and their relationships are identified and woven into a personal Knowledge Graph, reflecting the user's unique conceptual map and allowing for complex queries across diverse data types.
   * **Real-Time Context Synthesis (Semantic Desktop Stream):** The system aims to synthesize a coherent, real-time model of the user's current desktop context and available actions, enabling more advanced and contextually aware agentic assistance.
-* *Architectural realization: `DataSubstrate_Architecture.md` (Knowledge Rep, Promotion), `AgenticEcosystem_Architecture.md` (Enrichment Agents), `TIM-EmbeddingGenerationModels.md`, `TIM-EntityResolutionTechniques.md`, `TIM-SemanticDesktopStream.md`.*
+* *Architectural realization: `DataSubstrate_Architecture.md` (Knowledge Rep, Processing), `AgenticEcosystem_Architecture.md` (Enrichment Agents), `TIM-EmbeddingGenerationModels.md`, `TIM-EntityResolutionTechniques.md`, `TIM-SemanticDesktopStream.md`.*
 
 ### 2.5. Intelligent Partnership & The Agentic Ecosystem
 
@@ -162,7 +162,7 @@ The Exocortex provides intuitive and powerful ways for the user to access, explo
 * **Conceptual Purpose:** To make the entirety of the captured and structured personal data readily available and actionable, transforming it from a passive store into an active tool for thought and self-discovery.
 * **Interaction Modalities (User Experience Highlights):**
   * **Deep Work Environments:** Seamless integration with tools like Neovim for focused writing, research, and knowledge linking directly within the user's preferred editing environment.
-  * **Universal Access:** A versatile Command-Line Interface (`exo` CLI) for scripting, power-user operations, and integration with other tools.
+  * **Universal Access:** A versatile Command-Line Interface (`exo.py` CLI) for scripting, power-user operations, and integration with other tools via command/response patterns.
   * **Visual Overview:** Dashboards (initially Grafana, with potential for custom Web UIs) for visualizing trends, personal analytics, and system health.
   * **Focused Triage:** An "Inbox Workflow" concept providing a central place to manage and process new information, tasks, and agent suggestions.
 * **The Power of Query (User Experience Highlights):** The ability to ask deep, nuanced questions of the archive, from simple "find this note" to complex contextual recall like "what was I working on when I had insight X?" This includes combining keyword search with semantic (meaning-based) search to find truly relevant information even if exact terms are not used.
@@ -220,9 +220,10 @@ While the initial focus is a robust single-host system, the long-term vision inc
 
 The development of the Exocortex is an ongoing journey, proceeding through iterative phases.
 
-* **MVP & Core Foundation:** The project started with a Minimum Viable Product establishing core capture-store-query loops, evolving through phases that deepened core data capture and foundational tooling (e.g., Phase 2.5).
-* **Current & Next Phases (Illustrative):** Focus continues on enriching semantic capture (PKM integration via Yjs/DB-native, web archiving, embeddings), enhancing user interaction (Neovim plugin, CLI), and expanding the agentic ecosystem.
-* **Friction-Driven Prioritization:** The primary driver for selecting the *next* feature, ingestor, or agent to build is the alleviation of personally felt pain, inefficiency, or missing cognitive leverage in the user's daily workflows. This ensures development effort maximizes immediate personal utility and aligns the system with real-world needs.
+* **MVP & Core Foundation:** The project started with a Minimum Viable Product establishing core capture-store-query loops, evolving through phases that deepened core data capture and foundational tooling.
+* **Current Architecture (2025):** The system now features a unified satellite constellation architecture with StatefulStreamProcessor interface, core.events table with comprehensive provenance tracking, source material registry, processor manifests, Redis Streams message bus, and operational event sources across four domains.
+* **Current & Next Phases:** Focus continues on enriching semantic capture, enhancing user interaction (Neovim plugin, CLI), and expanding the automaton ecosystem for intelligent processing.
+* **Friction-Driven Prioritization:** The primary driver for selecting the *next* feature, processor, or automaton to build is the alleviation of personally felt pain, inefficiency, or missing cognitive leverage in the user's daily workflows. This ensures development effort maximizes immediate personal utility and aligns the system with real-world needs.
 * *CI/CD and Release Engineering underpin this iterative development: `SystemOperations_And_Integrity_Architecture.md`, `TIM-ReleaseEngineeringCICD.md`.*
 
 ### 3.7. Open Horizons & The Spirit of Continuous Exploration
@@ -304,7 +305,7 @@ Essay 3: The Poetics of Data: Finding Narrative and Meaning in Personal Event St
 
 In an age awash with data, we often equate information with understanding, and comprehensive archives with complete memory. Yet, raw data, however voluminous, rarely speaks for itself. It is through narrative—the artful weaving of disparate events into coherent, meaningful stories—that we transform mere information into wisdom, and personal history into a source of identity and guidance. The Sinex Exocortex, with its commitment to universal capture, provides an unparalleled substrate of raw personal data. Its ultimate humanistic value, however, may lie not just in its capacity for perfect recall, but in its potential as a **foundry for personal narrative and a canvas for the poetics of a lived digital life.**
 
-The human mind is a natural storyteller. We make sense of our experiences by arranging them into sequences with causes, effects, turning points, and thematic resonances. A simple chronological log of `raw.events`, while factually accurate, can feel like an undifferentiated stream, lacking the emotional weight or explanatory power of a well-told story. The Exocortex, particularly through its agentic capabilities and its support for meta-cognitive logging, offers tools to bridge this gap.
+The human mind is a natural storyteller. We make sense of our experiences by arranging them into sequences with causes, effects, turning points, and thematic resonances. A simple chronological log of `core.events`, while factually accurate, can feel like an undifferentiated stream, lacking the emotional weight or explanatory power of a well-told story. The Exocortex, particularly through its agentic capabilities and its support for meta-cognitive logging, offers tools to bridge this gap.
 
 Consider the **`meta.narrative_generated` event type**. This is not merely a summarization feature; it is an invitation to engage with one's own data through the lens of narrative construction. An LLM agent, prompted to "tell the story of Project Exocortex's development in May 2025," would not just list git commits and PKM edits. It would be tasked with identifying key `planning.milestone_defined` events, periods of intense activity inferred from high `app.neovim.plugin` event density, significant `meta.friction_logged` blockages, and culminating `meta.insight_captured` breakthroughs. It might weave in `subjective.mood_reported` events to color the emotional arc of that period. The resulting narrative, while AI-assisted, is grounded in the user's actual recorded experience, offering a perspective that is both data-driven and humanly resonant. The user can then interact with this narrative—edit it, annotate it, dispute its interpretations, or use it as a springboard for deeper personal reflection.
 

@@ -75,8 +75,8 @@ impl Default for SystemConfig {
 /// Error types for system satellite
 #[derive(Debug, thiserror::Error)]
 pub enum SystemSatelliteError {
-    #[error("Event source error: {0}")]
-    EventSource(String),
+    #[error("Processing error: {0}")]
+    Processing(String),
     
     #[error("Configuration error: {0}")]
     Configuration(String),
@@ -90,6 +90,6 @@ pub enum SystemSatelliteError {
 
 impl From<SystemSatelliteError> for sinex_satellite_sdk::SatelliteError {
     fn from(err: SystemSatelliteError) -> Self {
-        sinex_satellite_sdk::SatelliteError::EventSource(err.to_string())
+        sinex_satellite_sdk::SatelliteError::Processing(err.to_string())
     }
 }

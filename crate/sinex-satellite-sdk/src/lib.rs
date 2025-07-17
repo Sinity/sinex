@@ -45,10 +45,35 @@ pub use cli::{
     ExportFormat, parse_checkpoint, parse_time_horizon
 };
 
-/// Common CLI arguments for satellite services
+/// Common CLI arguments for satellite services.
+///
+/// This structure provides standardized command-line arguments that all
+/// satellite services can use. It includes common parameters for gRPC
+/// communication, batching, and operational modes.
+///
+/// # Examples
+/// 
+/// ```rust
+/// use clap::Parser;
+/// use sinex_satellite_sdk::SatelliteArgs;
+/// 
+/// // Parse from command line
+/// let args = SatelliteArgs::parse();
+/// 
+/// // Use in service configuration
+/// let config = SatelliteConfig {
+///     service_name: args.service_name.clone(),
+///     ingest_socket_path: args.ingest_socket_path.clone(),
+///     dry_run: args.dry_run,
+///     // ... other fields
+/// };
+/// ```
 #[derive(clap::Parser, Debug, Clone)]
 pub struct SatelliteArgs {
-    /// Socket path for ingestd communication
+    /// Socket path for ingestd communication.
+    ///
+    /// Unix Domain Socket path where ingestd listens for gRPC connections.
+    /// This socket is used by ingestors to submit events for processing.
     #[arg(long, default_value = "/tmp/sinex-ingestd.sock")]
     pub ingest_socket_path: String,
 
@@ -56,7 +81,10 @@ pub struct SatelliteArgs {
     #[arg(long, default_value = "satellite")]
     pub service_name: String,
 
-    /// Event batch size
+    /// Event batch size.
+    ///
+    /// Number of events to accumulate before submitting a batch to ingestd.
+    /// Higher values improve throughput but increase latency and memory usage.
     #[arg(long, default_value = "100")]
     pub batch_size: usize,
 
@@ -68,7 +96,10 @@ pub struct SatelliteArgs {
     #[arg(long)]
     pub work_dir: Option<std::path::PathBuf>,
 
-    /// Enable dry run mode (no actual event ingestion)
+    /// Enable dry run mode (no actual event ingestion).
+    ///
+    /// When enabled, the service will process events but not submit them
+    /// to ingestd. Useful for testing and debugging processing logic.
     #[arg(long)]
     pub dry_run: bool,
 }
@@ -86,7 +117,73 @@ pub use sinex_ulid::Ulid;
 /// Result type for satellite operations
 pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;
 
-/// Common error types for satellite services
+/// Common error types for satellite services.
+///
+/// This enum provides a unified error handling system for all satellite services.
+/// Error types are categorized by their source and expected handling:
+///
+/// # Error Categories
+///
+/// ## Configuration Errors
+/// - `Config`: Invalid configuration values, missing required fields
+/// - **Recovery**: Fix configuration and restart service
+/// - **Typical causes**: Missing environment variables, invalid file paths, malformed TOML
+///
+/// ## Communication Errors
+/// - `Grpc`: gRPC communication failures with ingestd
+/// - `GrpcTransport`: Lower-level transport issues (connection refused, timeout)
+/// - **Recovery**: Retry with backoff, check service health
+/// - **Typical causes**: ingestd not running, socket permission issues, network problems
+///
+/// ## Data Storage Errors
+/// - `Redis`: Redis connection or operation failures
+/// - `Database`: PostgreSQL connection or query failures
+/// - **Recovery**: Retry with backoff, implement circuit breaker
+/// - **Typical causes**: Service unavailable, connection pool exhausted, query timeouts
+///
+/// ## Processing Errors
+/// - `Processing`: Recoverable processing failures (bad input, temporary resource issues)
+/// - `Automaton`: Automaton-specific processing failures
+/// - **Recovery**: Skip/retry individual items, log for investigation
+/// - **Typical causes**: Malformed events, resource exhaustion, business rule violations
+///
+/// ## System Errors
+/// - `Serialization`: JSON/TOML serialization failures
+/// - `Io`: Filesystem and general I/O failures
+/// - `General`: Catch-all for unexpected errors
+/// - **Recovery**: Varies by context, often requires manual intervention
+///
+/// ## Lifecycle Errors
+/// - `Checkpoint`: Checkpoint loading/saving failures
+/// - `Lifecycle`: Service startup/shutdown failures
+/// - **Recovery**: Restart service, investigate system state
+///
+/// # Error Handling Patterns
+///
+/// ```rust
+/// use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
+///
+/// // Recoverable processing error
+/// fn process_event(event: &RawEvent) -> SatelliteResult<()> {
+///     if event.payload.is_null() {
+///         return Err(SatelliteError::Processing(
+///             "Event payload cannot be null".to_string()
+///         ));
+///     }
+///     // ... process event
+///     Ok(())
+/// }
+///
+/// // Non-recoverable configuration error
+/// fn validate_config(config: &Config) -> SatelliteResult<()> {
+///     if config.service_name.is_empty() {
+///         return Err(SatelliteError::Config(
+///             config::ConfigError::MissingField("service_name".to_string())
+///         ));
+///     }
+///     Ok(())
+/// }
+/// ```
 #[derive(thiserror::Error, Debug)]
 pub enum SatelliteError {
     #[error("Configuration error: {0}")]
@@ -113,8 +210,8 @@ pub enum SatelliteError {
     #[error("General error: {0}")]
     General(#[from] anyhow::Error),
 
-    #[error("Event source error: {0}")]
-    EventSource(String),
+    #[error("Processing error: {0}")]
+    Processing(String),
 
     #[error("Automaton error: {0}")]
     Automaton(String),

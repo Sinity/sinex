@@ -1,7 +1,44 @@
-//! Unified checkpoint management for both ingestors and automata
+//! Unified checkpoint management for both ingestors and automata.
 //!
 //! This module implements the unified checkpoint system that supports both
 //! external positions (for ingestors) and internal event IDs (for automata).
+//!
+//! # Architecture
+//!
+//! The checkpoint system provides:
+//! - **Unified Storage**: All checkpoints stored in `core.automaton_checkpoints` table
+//! - **Format Migration**: Automatic migration from legacy (v1) to unified (v2) format
+//! - **Type Safety**: Strongly typed checkpoint variants for different use cases
+//! - **Persistence**: Atomic checkpoint updates with optimistic concurrency
+//!
+//! # Checkpoint Types
+//!
+//! - `External`: For ingestors tracking external system state (file positions, timestamps)
+//! - `Internal`: For automata tracking processed event ULIDs
+//! - `Stream`: For Redis Stream message IDs
+//! - `Timestamp`: For time-based processing resumption
+//!
+//! # Database Schema
+//!
+//! The `core.automaton_checkpoints` table stores:
+//! - `automaton_name`: Processor identifier
+//! - `consumer_group`: Redis consumer group (for automata)
+//! - `consumer_name`: Instance identifier (hostname + PID)
+//! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
+//! - `last_processed_id`: Legacy field for Redis Stream ID (v1 compatibility)
+//!
+//! # Error Handling
+//!
+//! Common error scenarios:
+//! - **Serialization failures**: Corrupt checkpoint data falls back to `Checkpoint::None`
+//! - **Database errors**: Connection failures are propagated as `SatelliteError::Database`
+//! - **Migration failures**: Legacy format migration logged as warnings
+//!
+//! # Performance Considerations
+//!
+//! - Checkpoints are saved atomically using `ON CONFLICT` upserts
+//! - Frequent checkpoint updates are batched for better performance
+//! - Historical checkpoint queries are limited to prevent memory issues
 
 use crate::{stream_processor::Checkpoint, SatelliteResult, SatelliteError};
 use serde::{Deserialize, Serialize};
@@ -9,7 +46,22 @@ use sinex_db::SqlxPgPool as PgPool;
 use sinex_ulid::Ulid;
 use tracing::{debug, info, warn};
 
-/// Unified checkpoint state for both ingestors and automata
+/// Unified checkpoint state for both ingestors and automata.
+///
+/// This structure wraps the unified `Checkpoint` enum with additional metadata
+/// for persistence and monitoring. It supports both current (v2) and legacy (v1)
+/// checkpoint formats with automatic migration.
+///
+/// # Version Evolution
+/// - **Version 1**: Legacy format with `last_processed_id` string field
+/// - **Version 2**: Unified format with strongly-typed `Checkpoint` enum
+///
+/// # Fields
+/// - `checkpoint`: The actual checkpoint data (position, event ID, etc.)
+/// - `processed_count`: Total messages/events processed (for monitoring)
+/// - `last_activity`: When this checkpoint was last updated
+/// - `data`: Processor-specific state (arbitrary JSON)
+/// - `version`: Checkpoint format version for migration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointState {
     /// Unified checkpoint data
@@ -89,7 +141,35 @@ impl From<LegacyCheckpointState> for CheckpointState {
     }
 }
 
-/// Manager for unified checkpoint persistence (both ingestors and automata)
+/// Manager for unified checkpoint persistence (both ingestors and automata).
+///
+/// This manager handles checkpoint storage, retrieval, and migration in the
+/// `core.automaton_checkpoints` table. It supports both ingestors and automata
+/// with automatic format migration from legacy checkpoints.
+///
+/// # Usage Pattern
+/// ```rust
+/// use sinex_satellite_sdk::checkpoint::CheckpointManager;
+/// 
+/// let manager = CheckpointManager::new(
+///     pool,
+///     "my-processor".to_string(),
+///     "default".to_string(),
+///     "hostname-1234".to_string(),
+/// );
+/// 
+/// // Load existing checkpoint (or get default)
+/// let checkpoint = manager.load_checkpoint().await?;
+/// 
+/// // Process events...
+/// 
+/// // Save updated checkpoint
+/// manager.save_checkpoint(&updated_checkpoint).await?;
+/// ```
+///
+/// # Thread Safety
+/// `CheckpointManager` is `Clone` and can be safely shared across threads.
+/// Database operations are atomic and handle concurrent access.
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
     pool: PgPool,
@@ -114,7 +194,22 @@ impl CheckpointManager {
         }
     }
 
-    /// Load checkpoint from database with automatic migration from legacy format
+    /// Load checkpoint from database with automatic migration from legacy format.
+    ///
+    /// This method handles both current (v2) and legacy (v1) checkpoint formats:
+    /// - **Version 2+**: Deserializes `checkpoint_data` JSON field
+    /// - **Version 1**: Migrates from `last_processed_id` string field
+    /// - **No checkpoint**: Returns default `CheckpointState` with `Checkpoint::None`
+    ///
+    /// # Returns
+    /// - `Ok(CheckpointState)`: Successfully loaded or migrated checkpoint
+    /// - `Err(SatelliteError::Database)`: Database connection or query error
+    /// - `Err(SatelliteError::Serialization)`: Corrupt checkpoint data (falls back to None)
+    ///
+    /// # Behavior
+    /// - Legacy checkpoints are automatically migrated and saved in v2 format
+    /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
+    /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
         let row = sqlx::query!(
             r#"
@@ -199,7 +294,24 @@ impl CheckpointManager {
         Ok(checkpoint)
     }
 
-    /// Save checkpoint to database in unified format
+    /// Save checkpoint to database in unified format.
+    ///
+    /// This method atomically saves the checkpoint using an `ON CONFLICT` upsert
+    /// to handle concurrent updates. The checkpoint is serialized to JSON and
+    /// stored in the `checkpoint_data` field.
+    ///
+    /// # Parameters
+    /// - `state`: The checkpoint state to save
+    ///
+    /// # Returns
+    /// - `Ok(())`: Checkpoint successfully saved
+    /// - `Err(SatelliteError::Database)`: Database connection or query error
+    /// - `Err(SatelliteError::Serialization)`: Checkpoint serialization error
+    ///
+    /// # Atomicity
+    /// - Uses `ON CONFLICT` upsert for atomic updates
+    /// - Updates `updated_at` timestamp on each save
+    /// - Maintains backward compatibility with legacy `last_processed_id` field
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
         let checkpoint_id = Ulid::new();
         

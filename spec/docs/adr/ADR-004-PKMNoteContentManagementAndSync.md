@@ -1,7 +1,8 @@
 # ADR-004: PKM Note Content Management & Synchronization Strategy
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     Personal Knowledge Management (PKM) notes, typically Markdown files, are a core data type for the Exocortex. A robust strategy is needed for how their content is stored, versioned, edited, and synchronized, particularly considering user workflows that may involve external editors like Neovim. Key challenges include:
     1.  **Source of Truth:** Should the filesystem (e.g., a directory of Markdown files) or the Exocortex database be the canonical store for note content?

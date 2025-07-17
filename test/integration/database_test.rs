@@ -749,7 +749,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     // Verify checkpoint exists
     let checkpoint = sqlx::query!(
         "SELECT automaton_name, consumer_group, last_processed_id, state_data
-         FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+         FROM core.automaton_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(pool)
@@ -789,7 +789,7 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "UPDATE core.automaton_checkpoints 
          SET last_processed_id = $2, state_data = $3, updated_at = NOW()
-         WHERE event_id = $1::uuid",
+         WHERE id = $1::uuid",
         checkpoint_id.to_uuid(),
         "updated_event",
         json!({"processed_count": 25, "status": "active"})
@@ -799,7 +799,7 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     
     // Verify update
     let checkpoint = sqlx::query!(
-        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(pool)
@@ -1013,7 +1013,7 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
     // Verify checkpoint exists and has expected Redis-compatible structure
     let checkpoint = sqlx::query!(
         "SELECT automaton_name, consumer_group, last_processed_id, state_data
-         FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+         FROM core.automaton_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(pool)
@@ -1064,7 +1064,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
         sqlx::query!(
             "UPDATE core.automaton_checkpoints 
              SET last_processed_id = $2, state_data = $3, updated_at = NOW()
-             WHERE event_id = $1::uuid",
+             WHERE id = $1::uuid",
             checkpoint_id.to_uuid(),
             stream_id,
             json!({"processed_count": count})
@@ -1075,7 +1075,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
     
     // Verify final state
     let final_checkpoint = sqlx::query!(
-        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE event_id = $1::uuid",
+        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(pool)

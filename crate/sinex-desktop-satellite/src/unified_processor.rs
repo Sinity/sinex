@@ -1,8 +1,7 @@
-//! Unified desktop processor implementing StatefulStreamProcessor from Part 16
+//! Unified desktop processor implementing StatefulStreamProcessor
 //!
-//! This module contains the new implementation that replaces the old EventSource-based
-//! DesktopSatellite with a unified processor supporting snapshot, historical, and
-//! continuous scanning modes.
+//! This module implements the desktop satellite processor supporting snapshot, historical, and
+//! continuous scanning modes for desktop events.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -86,8 +85,7 @@ pub struct WindowManagerStatus {
 
 /// Unified desktop processor implementing StatefulStreamProcessor
 ///
-/// This replaces the old EventSource-based DesktopSatellite with a unified
-/// processor that supports snapshot, historical, and continuous scanning modes.
+/// Supports snapshot, historical, and continuous scanning modes for desktop events.
 pub struct DesktopProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,

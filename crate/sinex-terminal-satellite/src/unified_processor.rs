@@ -1,14 +1,12 @@
-//! Unified terminal processor implementing StatefulStreamProcessor from Part 16
+//! Unified terminal processor implementing StatefulStreamProcessor
 //!
-//! This module contains the new implementation that replaces the old EventSource-based
-//! TerminalSatellite with a unified processor supporting snapshot, historical, and
-//! continuous scanning modes.
+//! This module implements the terminal satellite processor supporting snapshot, historical, and
+//! continuous scanning modes for terminal events.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
 use sinex_satellite_sdk::{
     cli::{ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, MissingItem, SourceState},
@@ -22,8 +20,7 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
 
@@ -110,8 +107,7 @@ pub struct AtuinStatus {
 
 /// Unified terminal processor implementing StatefulStreamProcessor
 ///
-/// This replaces the old EventSource-based TerminalSatellite with a unified
-/// processor that supports snapshot, historical, and continuous scanning modes.
+/// Supports snapshot, historical, and continuous scanning modes for terminal events.
 pub struct TerminalProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,

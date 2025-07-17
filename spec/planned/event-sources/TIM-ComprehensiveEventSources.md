@@ -83,12 +83,12 @@ pub struct ProcessTracker {
 }
 
 // Alternative: procfs polling for systems without eBPF
-impl EventSource for ProcessTracker {
-    async fn stream_events(&mut self, tx: EventSender) -> Result<()> {
+impl StatefulStreamProcessor for ProcessTracker {
+    async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs) -> SatelliteResult<()> {
         if let Some(ebpf) = &mut self.ebpf_program {
-            self.stream_ebpf_events(tx).await
+            self.scan_ebpf_events(from, until, args).await
         } else {
-            self.stream_procfs_events(tx).await
+            self.scan_procfs_events(from, until, args).await
         }
     }
 }
@@ -312,21 +312,24 @@ impl SystemPerformanceMonitor {
 **Implementation Strategy**:
 ```rust
 // Plugin-based per-application monitoring
-pub trait ApplicationMonitor: Send + Sync {
+pub trait ApplicationMonitor: StatefulStreamProcessor {
     fn application_name() -> &'static str;
-    async fn monitor_events(&self, tx: EventSender) -> Result<()>;
+    async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs) -> SatelliteResult<()>;
 }
 
 // Example: VSCode integration
 pub struct VSCodeMonitor {
     extension_host: VSCodeExtensionHost,
     workspace_watcher: WorkspaceWatcher,
+    checkpoint_manager: CheckpointManager,
+    redis_client: RedisClient,
 }
 
-impl ApplicationMonitor for VSCodeMonitor {
-    async fn monitor_events(&self, tx: EventSender) -> Result<()> {
+impl StatefulStreamProcessor for VSCodeMonitor {
+    async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs) -> SatelliteResult<()> {
         // Monitor via VSCode extension API
         // Track file operations, debugging sessions, etc.
+        // Process events from checkpoint to time horizon
     }
 }
 ```

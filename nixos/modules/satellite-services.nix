@@ -107,10 +107,11 @@ let
             description = "${sourceConfig.description} Event Source";
             after = [ "sinex-ingestd.service" ];
             requires = [ "sinex-ingestd.service" ];
-            execStart = "${cfg.package}/bin/sinex-${name} --ingest-socket /run/sinex/ingest.sock --batch-size ${toString sourceConfig.batchSize} --batch-timeout ${toString sourceConfig.batchTimeout} --log-level ${cfg.satellite.logLevel}" + 
+            execStart = "${cfg.package}/bin/sinex-${name} --ingest-socket-path /run/sinex/ingest.sock --service-name sinex-${name} --verbose 1 service" + 
               (if sourceConfig.extraArgs != "" then " ${sourceConfig.extraArgs}" else "");
             environment = [
               "RUST_LOG=${cfg.satellite.logLevel}"
+              "DATABASE_URL=${cfg.satellite.database.url}"
             ] ++ sourceConfig.environment;
             memoryLimit = sourceConfig.memoryLimit;
             serviceConfigOverrides = sourceConfig.serviceConfigOverrides or {};
@@ -136,7 +137,7 @@ let
             description = "${automatonConfig.description} Automaton";
             after = [ "postgresql.service" "redis.service" "sinex-ingestd.service" ];
             requires = [ "postgresql.service" "redis.service" ];
-            execStart = "${cfg.package}/bin/sinex-${name} --database-url ${cfg.satellite.database.url} --redis-url ${cfg.satellite.redis.url} --consumer-group ${automatonConfig.consumerGroup} --topics ${concatStringsSep "," automatonConfig.topics} --batch-size ${toString automatonConfig.batchSize} --checkpoint-interval ${toString automatonConfig.checkpointInterval} --log-level ${cfg.satellite.logLevel}";
+            execStart = "${cfg.package}/bin/sinex-${name} --database-url ${cfg.satellite.database.url} --redis-url ${cfg.satellite.redis.url} --consumer-group ${automatonConfig.consumerGroup} --batch-size ${toString automatonConfig.batchSize} --checkpoint-interval ${toString automatonConfig.checkpointInterval} --log-level ${cfg.satellite.logLevel} --ingest-socket-path /run/sinex/ingest.sock";
             environment = [
               "DATABASE_URL=${cfg.satellite.database.url}"
               "SINEX_REDIS_URL=${cfg.satellite.redis.url}"
@@ -148,6 +149,9 @@ let
         in {
           # Terminal command canonicalizer
           sinex-terminal-command-canonicalizer = mkAutomaton "terminal-command-canonicalizer" cfg.satellite.automata.canonicalCommandSynthesizer;
+          
+          # Health aggregator
+          sinex-health-aggregator = mkAutomaton "health-aggregator" cfg.satellite.automata.healthAggregator;
           
           # Additional automata can be added here
         };
@@ -436,6 +440,56 @@ in {
           type = types.listOf types.str;
           default = [ "sinex:events:kitty" "sinex:events:atuin" ];
           description = "Redis Streams topics to consume";
+        };
+
+        batchSize = mkOption {
+          type = types.int;
+          default = 50;
+          description = "Processing batch size";
+        };
+
+        checkpointInterval = mkOption {
+          type = types.int;
+          default = 30;
+          description = "Checkpoint interval in seconds";
+        };
+
+        memoryLimit = mkOption {
+          type = types.str;
+          default = "512M";
+          description = "Memory limit";
+        };
+
+        cpuQuota = mkOption {
+          type = types.str;
+          default = "50%";
+          description = "CPU quota";
+        };
+
+        environment = mkOption {
+          type = types.listOf types.str;
+          default = [];
+          description = "Additional environment variables";
+        };
+      };
+
+      healthAggregator = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable health aggregator automaton";
+        };
+
+        description = mkOption {
+          type = types.str;
+          default = "Health Aggregator";
+          readOnly = true;
+        };
+
+        consumerGroup = mkOption {
+          type = types.str;
+          default = "health-aggregators";
+          description = "Redis Streams consumer group";
         };
 
         batchSize = mkOption {

@@ -1,7 +1,8 @@
 # ADR-007: Large-Scale Vector Search Strategy
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     Semantic search using vector embeddings is a core capability of the Exocortex. As the volume of embeddable content (PKM notes, web archives, event payloads) grows potentially into millions or tens of millions of vectors, the performance (latency, QPS) and scalability of the vector search solution become critical. The default approach is to use `pgvector` within PostgreSQL, which is CPU-bound. For very large scale, GPU-accelerated dedicated vector databases are an option.
 

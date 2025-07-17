@@ -59,9 +59,104 @@
       };
     };
 
-    # Unified Collector configuration
-    unifiedCollector = {
+    # Satellite Architecture (NEW - recommended)
+    satellite = {
       enable = true;
+      logLevel = "info";  # Options: "trace", "debug", "info", "warn", "error"
+      
+      # Database configuration for satellites
+      database = {
+        url = "postgresql:///sinex_dev?host=/run/postgresql";
+      };
+      
+      # Redis configuration for event bus
+      redis = {
+        url = "redis://localhost:6379";
+      };
+      
+      # Core hub services
+      coreServices = {
+        enable = true;
+      };
+      
+      # Ingest daemon configuration
+      ingestd = {
+        batchSize = 1000;
+        batchTimeout = 5;
+      };
+      
+      # Event source satellites
+      eventSources = {
+        # Filesystem watcher
+        filesystem = {
+          enable = true;
+          batchSize = 100;
+          batchTimeout = 5;
+          memoryLimit = "256M";
+          environment = [];
+          extraArgs = "";
+        };
+        
+        # Terminal satellite
+        terminal = {
+          enable = true;
+          batchSize = 100;
+          batchTimeout = 5;
+          memoryLimit = "256M";
+          environment = [];
+          extraArgs = "";
+        };
+        
+        # Desktop satellite (clipboard, window manager)
+        desktop = {
+          enable = true;
+          batchSize = 50;
+          batchTimeout = 5;
+          memoryLimit = "256M";
+          environment = [];
+          extraArgs = "";
+        };
+        
+        # System satellite (dbus, journald)
+        system = {
+          enable = true;
+          batchSize = 200;
+          batchTimeout = 10;
+          memoryLimit = "384M";
+          environment = [];
+          extraArgs = "";
+        };
+      };
+      
+      # Automaton satellites
+      automata = {
+        # Terminal command canonicalizer
+        canonicalCommandSynthesizer = {
+          enable = true;
+          consumerGroup = "canonical-synthesizers";
+          batchSize = 50;
+          checkpointInterval = 30;
+          memoryLimit = "512M";
+          cpuQuota = "50%";
+          environment = [];
+        };
+        
+        # Health aggregator
+        healthAggregator = {
+          enable = true;
+          consumerGroup = "health-aggregators";
+          batchSize = 50;
+          checkpointInterval = 30;
+          memoryLimit = "512M";
+          cpuQuota = "50%";
+          environment = [];
+        };
+      };
+    };
+
+    # Unified Collector configuration (LEGACY - consider migrating to satellite architecture)
+    unifiedCollector = {
+      enable = false;  # Disabled in favor of satellite architecture
       logLevel = "info";  # Options: "trace", "debug", "info", "warn", "error"
       dryRun = false;     # If true, events are logged but not stored
 

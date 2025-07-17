@@ -751,8 +751,8 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
 
             // Create test agent
             sqlx::query(
-                "INSERT INTO sinex_schemas.automaton_manifests (automaton_name, version, description)
-                 VALUES ($1, $2, $3)"
+                "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+                 VALUES ($1, 'automaton', $2, $3)"
             )
             .bind(&agent_name)
             .bind("1.0.0")
@@ -856,7 +856,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 .await
                 .expect("Event cleanup failed");
 
-            sqlx::query("DELETE FROM sinex_schemas.automaton_manifests WHERE automaton_name = $1")
+            sqlx::query("DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'")
                 .bind(&agent_name)
                 .execute(pool)
                 .await

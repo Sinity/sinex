@@ -403,7 +403,6 @@ impl TestContext {
     }
 
     /// Wait for automaton checkpoint to reach expected count
-    /// Replaces the old work_queue waiting pattern
     pub async fn wait_for_automaton_checkpoint(
         &self,
         automaton_name: &str,
@@ -531,18 +530,6 @@ impl TestContext {
         Ok(messages)
     }
 
-    /// Wait for work queue to reach expected count
-    /// Note: Deprecated - use wait_for_automaton_checkpoint instead
-    pub async fn wait_for_work_queue(&self, _expected: usize) -> TestResult {
-        // Legacy compatibility - no-op for now
-        Ok(())
-    }
-
-    /// Wait for work queue to be empty
-    pub async fn wait_for_work_queue_empty(&self) -> TestResult {
-        self.wait_for_work_queue(0).await
-    }
-
     // ===== Test Helpers =====
 
     /// Run a test step with timing and logging
@@ -619,7 +606,7 @@ impl TestContext {
     }
 
     /// Assert that all automata have completed processing
-    /// Replaces assert_work_queue_empty for satellite architecture
+    /// Verifies that all events have been processed by checking checkpoint state
     pub async fn assert_all_automata_idle(&self) -> TestResult {
         // Check if any automata are currently processing
         let active_count = sqlx::query_scalar!(
@@ -640,11 +627,6 @@ impl TestContext {
         Ok(())
     }
 
-    /// Assert work queue is empty (deprecated - use assert_all_automata_idle)
-    pub async fn assert_work_queue_empty(&self) -> TestResult {
-        // Legacy compatibility - use new automata assertion
-        self.assert_all_automata_idle().await
-    }
 
     /// Assert that an event was inserted successfully with context
     pub async fn assert_event_inserted(

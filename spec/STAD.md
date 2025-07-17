@@ -2,14 +2,14 @@
 
 > **📊 IMPLEMENTATION STATUS**:
 >
-> - ✅ **Satellite Architecture** (75%) - Independent satellite services operational, ingestd hub working, gRPC communication active
-> - 🚧 **Message Bus** (70%) - Redis Streams fully operational with consumer groups, checkpoint management, command/response patterns
-> - 🚧 **Data Substrate** (65%) - PostgreSQL + TimescaleDB with ULID keys, work_queue deprecated, provenance tracking
-> - 🚧 **Event Sources** (45%) - Four satellite domains active (filesystem, terminal, desktop, system), expanding coverage
-> - 🚧 **Automaton Ecosystem** (35%) - Processing framework operational, deterministic automata working, agentic layer planned
-> - 🚧 **Gateway & APIs** (60%) - sinex-gateway operational, command/response patterns working, CLI integrated
-> - 🚧 **NixOS Module** (55%) - Satellite orchestration working, observability patterns operational
-> - 🔨 **AI/LLM Integration** (10%) - Framework ready, schema designed, integration in progress
+> - ✅ **Satellite Architecture** (80%) - Independent satellite services operational, StatefulStreamProcessor interface implemented
+> - ✅ **Message Bus** (75%) - Redis Streams fully operational with consumer groups, checkpoint management, command/response patterns
+> - ✅ **Data Substrate** (70%) - PostgreSQL + TimescaleDB with ULID keys, core.events table operational, comprehensive provenance tracking
+> - 🚧 **Event Sources** (50%) - Four satellite domains active (filesystem, terminal, desktop, system), expanding coverage
+> - 🚧 **Automaton Ecosystem** (40%) - Processing framework operational, deterministic automata working, agentic layer planned
+> - 🚧 **Gateway & APIs** (65%) - sinex-gateway operational, command/response patterns working, CLI integrated
+> - 🚧 **NixOS Module** (60%) - Satellite orchestration working, observability patterns operational
+> - 🔨 **AI/LLM Integration** (15%) - Framework ready, schema designed, integration in progress
 
 ## Purpose
 
@@ -47,10 +47,11 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 ┌───▼──────────────────┐  ┌─────────────────────────────────▼───┐ │
 │   Satellite Services  │  │          sinex-ingestd             │ │
 │ ┌─────────────────┐   │  │    Ingestion Hub & Validator       │ │
-│ │ Event Sources   │   │  └─────────────────┬───────────────────┘ │
-│ │ - fs-watcher    │   │                    │                     │
-│ │ - terminal      │   │  ┌─────────────────▼───────────────────┐ │
-│ │ - desktop       │   │  │        Data Substrate               │ │
+│ │ StatefulStream  │   │  └─────────────────┬───────────────────┘ │
+│ │ Processors:     │   │                    │                     │
+│ │ - fs-watcher    │   │  ┌─────────────────▼───────────────────┐ │
+│ │ - terminal      │   │  │        Data Substrate               │ │
+│ │ - desktop       │   │  │ core.events + source_material_registry │ │
 │ │ - system        │   │  │ PostgreSQL + TimescaleDB + Git-Annex│ │
 │ └─────────────────┘   │  └─────────────────────────────────────┘ │
 │ ┌─────────────────┐   │                                          │
@@ -87,8 +88,10 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
   - **pgvector** - Future semantic search capabilities
 
 ### Event Storage
-- **Unified Events Table** (`raw.events`) - Single source of truth for all captured data with provenance tracking
-- **Schema Registry** (`event_payload_schemas`) - Versioned JSON schemas with GitOps management
+- **Unified Events Table** (`core.events`) - Single source of truth for all captured data with comprehensive provenance tracking via source_event_ids
+- **Source Material Registry** (`raw.source_material_registry`) - Immutable ground truth preservation with blob_id references
+- **Processor Manifests** (`sinex_schemas.processor_manifests`) - GitOps-driven processor registration and metadata
+- **Schema Registry** (`sinex_schemas.event_payload_schemas`) - Versioned JSON schemas with GitOps management
 - **Checkpoint System** (`core.automaton_checkpoints`) - Stateful processor recovery with unified interface
 - **Message Bus** - Redis Streams for real-time event distribution with consumer groups
 
@@ -106,7 +109,9 @@ Unified event collection system managing multiple data sources.
 
 ### Satellite Architecture
 - **sinex-ingestd** - Central ingestion hub receiving events via gRPC
+- **StatefulStreamProcessor Interface** - Unified pattern for both ingestors and automata
 - **Event Source Satellites** - Independent services capturing domain-specific data
+- **Automaton Satellites** - Independent services processing events into insights
 - **Satellite SDK** - Shared library providing common infrastructure
 - **Schema Validation** - GitOps-driven validation with version control
 
@@ -141,6 +146,7 @@ Event-driven processing system with distributed workers.
 
 ### Satellite Constellation
 - **Independent Services** - Each satellite runs as separate systemd service
+- **StatefulStreamProcessor Pattern** - Unified scan(from: Checkpoint, until: TimeHorizon) interface
 - **Message Streaming** - Redis Streams for real-time event distribution
 - **Checkpoint Management** - Stateful recovery and replay capabilities
 - **Schema Validation** - GitOps-driven schema registry with version control
@@ -164,9 +170,9 @@ Event-driven processing system with distributed workers.
 Multiple interfaces for data access and exploration.
 
 ### Current Interfaces
-- **CLI** (`exo.py`) - Query events, manage schemas, monitor agents
+- **CLI** (`exo.py`) - Query events, manage schemas, monitor processors with command/response patterns
 - **Direct SQL** - Full database access for power users
-- **Configuration** - TOML-based collector configuration
+- **Configuration** - TOML-based processor configuration
 
 ### Planned Interfaces
 - **Web Dashboard** - Visual exploration and analytics
@@ -174,11 +180,11 @@ Multiple interfaces for data access and exploration.
 - **Query DSL** - Simplified query language
 - **Grafana Dashboards** - Metrics and monitoring
 
-### Current Analytics Limitations (20% of Vision)
-- **Basic Routing** - Mechanical event routing via promotion worker
-- **Health Metrics Only** - System metrics (CPU, memory, event counts)
-- **Simple Queries** - Basic SQL with time/source filtering
-- **No Pattern Detection** - No cross-event correlation or insight generation
+### Current Analytics Limitations (35% of Vision)
+- **Basic Processing** - Mechanical event routing via automaton satellites
+- **Health Metrics Focus** - System metrics (CPU, memory, event counts) with some pattern detection
+- **SQL-Based Queries** - Advanced SQL with time/source filtering via core.events
+- **Limited Pattern Detection** - Basic cross-event correlation, expanding insight generation
 
 ### Planned Analytics Infrastructure (80% Gap)
 See [TIM-AnalyticsInfrastructure.md](planned/infrastructure/TIM-AnalyticsInfrastructure.md) for transformation roadmap including:
@@ -195,7 +201,7 @@ Infrastructure for reliable, secure operation.
 
 ### NixOS Integration
 - **Declarative Module** (`services.sinex`) - Complete system configuration
-- **Systemd Services** - Collector, workers, maintenance jobs
+- **Systemd Services** - Satellite processors, hub services, maintenance jobs
 - **Database Setup** - Automatic migrations and extensions
 - **VM Testing** - Comprehensive integration tests
 
@@ -221,7 +227,7 @@ Infrastructure for reliable, secure operation.
 ## 7. Summary & Next Steps
 
 ### Current State
-Sinex has successfully implemented a sophisticated satellite constellation architecture with operational event collection, real-time message distribution, and processing infrastructure. The system captures events across four major domains (filesystem, terminal, desktop, system) through independent satellite services implementing the StatefulStreamProcessor interface, provides reliable storage in TimescaleDB with Redis Streams for real-time processing, and offers a unified API through the gateway service. The unified events table provides comprehensive provenance tracking while Redis Streams enable scalable, durable event processing.
+Sinex has successfully implemented a sophisticated satellite constellation architecture with operational event collection, real-time message distribution, and processing infrastructure. The system captures events across four major domains (filesystem, terminal, desktop, system) through independent satellite services implementing the StatefulStreamProcessor interface, provides reliable storage in the core.events table with comprehensive provenance tracking via source_event_ids, and offers a unified API through the gateway service with command/response patterns. Redis Streams enable scalable, durable event processing with checkpoint management for stateful recovery. The source material registry preserves immutable ground truth with blob_id references, while processor manifests enable GitOps-driven service management.
 
 ### Near-Term Priorities
 1. **Expand Automaton Ecosystem** - Build specialized processors for different data domains

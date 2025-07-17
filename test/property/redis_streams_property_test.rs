@@ -1,8 +1,8 @@
 //! Property tests for Redis Streams-based event processing
 //! 
-//! This module replaces the old work_queue property tests with tests
-//! that verify the same correctness properties using Redis Streams
-//! and consumer groups.
+//! This module provides property tests for Redis Streams architecture,
+//! verifying correctness properties including event ordering, consumer
+//! group behavior, and duplicate detection.
 
 use crate::common::prelude::*;
 use proptest::prelude::*;

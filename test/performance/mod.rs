@@ -36,5 +36,3 @@ pub mod checkpoint_performance_test;
 /// Resource exhaustion and limit tests
 pub mod resource_exhaustion_test;
 
-/// Satellite architecture performance tests
-pub mod satellite_performance_test;

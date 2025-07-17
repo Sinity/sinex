@@ -172,7 +172,7 @@ impl TerminalCommandCanonicalizer {
         info!(
             event_id = %event_id,
             source = %enrichment_data.source,
-            "Enriched canonical command event in raw.events"
+            "Enriched canonical command event in core.events"
         );
 
         Ok(())

@@ -6,7 +6,6 @@ pub mod config_helpers;
 pub mod constants;
 pub mod directory_manager;
 pub mod error_context;
-pub mod event;
 // event_builders module moved to sinex-events crate
 pub mod event_pipeline;
 pub mod file_watcher;

@@ -3,7 +3,7 @@
 //! Watches the Atuin SQLite database for new command entries with sophisticated
 //! file watching and batch processing capabilities
 
-use crate::SatelliteResult;
+use sinex_satellite_sdk::SatelliteResult;
 use chrono::DateTime;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -66,20 +66,20 @@ impl AtuinWatcher {
     /// Test database connection and verify schema
     fn test_connection(db_path: &PathBuf) -> SatelliteResult<()> {
         if !db_path.exists() {
-            return Err(crate::SatelliteError::EventSource(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(
                 format!("Atuin database not found: {}", db_path.display())
             ));
         }
 
         let conn = Connection::open(db_path)
-            .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to open Atuin DB: {}", e)))?;
+            .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open Atuin DB: {}", e)))?;
         
         // Test query to verify schema
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM history",
             [],
             |row| row.get(0)
-        ).map_err(|e| crate::SatelliteError::EventSource(format!("Failed to query Atuin DB: {}", e)))?;
+        ).map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to query Atuin DB: {}", e)))?;
 
         info!("Connected to Atuin database with {} total entries", count);
         Ok(())
@@ -91,7 +91,7 @@ impl AtuinWatcher {
         
         tokio::task::spawn_blocking(move || -> SatelliteResult<i64> {
             let conn = Connection::open(&db_path)
-                .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to open Atuin DB: {}", e)))?;
+                .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open Atuin DB: {}", e)))?;
             
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM history",
@@ -102,7 +102,7 @@ impl AtuinWatcher {
             Ok(count)
         })
         .await
-        .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to get Atuin count: {}", e)))?
+        .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get Atuin count: {}", e)))?
     }
 
     /// Get the latest timestamp from database to resume from
@@ -111,7 +111,7 @@ impl AtuinWatcher {
         
         tokio::task::spawn_blocking(move || -> SatelliteResult<Option<i64>> {
             let conn = Connection::open(&db_path)
-                .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to open Atuin DB: {}", e)))?;
+                .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open Atuin DB: {}", e)))?;
             
             let result: Result<i64, rusqlite::Error> = conn.query_row(
                 "SELECT MAX(timestamp) FROM history",
@@ -122,11 +122,11 @@ impl AtuinWatcher {
             match result {
                 Ok(timestamp) => Ok(Some(timestamp)),
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(crate::SatelliteError::EventSource(format!("Failed to get last timestamp: {}", e))),
+                Err(e) => Err(sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get last timestamp: {}", e))),
             }
         })
         .await
-        .map_err(|e| crate::SatelliteError::EventSource(format!("Spawn blocking failed: {}", e)))?
+        .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Spawn blocking failed: {}", e)))?
     }
 
     /// Query new commands since last timestamp with proper async handling
@@ -137,7 +137,7 @@ impl AtuinWatcher {
         
         let (entries, max_timestamp) = tokio::task::spawn_blocking(move || -> SatelliteResult<(Vec<AtuinHistoryEntry>, Option<i64>)> {
             let conn = Connection::open(&db_path)
-                .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to open Atuin DB: {}", e)))?;
+                .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open Atuin DB: {}", e)))?;
 
             let query = if last_timestamp.is_some() {
                 "SELECT id, timestamp, duration, exit, command, cwd, session, hostname 
@@ -153,7 +153,7 @@ impl AtuinWatcher {
             };
 
             let mut stmt = conn.prepare(query)
-                .map_err(|e| crate::SatelliteError::EventSource(format!("Failed to prepare query: {}", e)))?;
+                .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to prepare query: {}", e)))?;
 
             let row_mapper = |row: &Row| -> Result<AtuinHistoryEntry, rusqlite::Error> {
                 Ok(AtuinHistoryEntry {
@@ -170,21 +170,21 @@ impl AtuinWatcher {
 
             let entries: Vec<AtuinHistoryEntry> = if let Some(last_ts) = last_timestamp {
                 stmt.query_map([last_ts, batch_size as i64], row_mapper)
-                    .map_err(|e| crate::SatelliteError::EventSource(format!("Query with timestamp failed: {}", e)))?
+                    .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Query with timestamp failed: {}", e)))?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| crate::SatelliteError::EventSource(format!("Row mapping failed: {}", e)))?
+                    .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Row mapping failed: {}", e)))?
             } else {
                 stmt.query_map([batch_size as i64], row_mapper)
-                    .map_err(|e| crate::SatelliteError::EventSource(format!("Query without timestamp failed: {}", e)))?
+                    .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Query without timestamp failed: {}", e)))?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| crate::SatelliteError::EventSource(format!("Row mapping failed: {}", e)))?
+                    .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Row mapping failed: {}", e)))?
             };
 
             let max_timestamp = entries.iter().map(|e| e.timestamp_ns).max();
             Ok((entries, max_timestamp))
         })
         .await
-        .map_err(|e| crate::SatelliteError::EventSource(format!("Spawn blocking failed: {}", e)))??;
+        .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(format!("Spawn blocking failed: {}", e)))??;
 
         let mut events = Vec::new();
         for entry in entries {
@@ -213,7 +213,7 @@ impl AtuinWatcher {
     fn create_event_from_entry(
         &self,
         entry: &AtuinHistoryEntry,
-    ) -> Result<RawEvent, crate::SatelliteError> {
+    ) -> Result<RawEvent, sinex_satellite_sdk::SatelliteError> {
         // Convert nanosecond timestamp to UTC datetime for proper timestamps
         let ts_end = DateTime::from_timestamp_nanos(entry.timestamp_ns);
         
@@ -288,13 +288,13 @@ impl AtuinWatcher {
                 }
             }
         })
-        .map_err(|e| crate::SatelliteError::EventSource(
+        .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(
             format!("Failed to create file watcher: {}", e)
         ))?;
 
         watcher
             .watch(&self.config.db_path, RecursiveMode::NonRecursive)
-            .map_err(|e| crate::SatelliteError::EventSource(
+            .map_err(|e| sinex_satellite_sdk::SatelliteError::Processing(
                 format!("Failed to watch Atuin database: {}", e)
             ))?;
 

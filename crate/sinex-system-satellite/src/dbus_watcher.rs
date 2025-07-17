@@ -68,11 +68,11 @@ impl DbusWatcher {
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to start dbus-monitor: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start dbus-monitor: {}", e))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::EventSource("Failed to get dbus-monitor stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing("Failed to get dbus-monitor stdout".to_string())
             })?;
 
             let reader = BufReader::new(stdout);
@@ -129,11 +129,11 @@ impl DbusWatcher {
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to start dbus-monitor: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start dbus-monitor: {}", e))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::EventSource("Failed to get dbus-monitor stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing("Failed to get dbus-monitor stdout".to_string())
             })?;
 
             let reader = BufReader::new(stdout);
@@ -216,19 +216,19 @@ impl DbusWatcher {
                     result = session_task => {
                         match result {
                             Ok(r) => r,
-                            Err(e) => Err(sinex_satellite_sdk::SatelliteError::EventSource(format!("Session task failed: {}", e))),
+                            Err(e) => Err(sinex_satellite_sdk::SatelliteError::Processing(format!("Session task failed: {}", e))),
                         }
                     }
                     result = system_task => {
                         match result {
                             Ok(r) => r,
-                            Err(e) => Err(sinex_satellite_sdk::SatelliteError::EventSource(format!("System task failed: {}", e))),
+                            Err(e) => Err(sinex_satellite_sdk::SatelliteError::Processing(format!("System task failed: {}", e))),
                         }
                     }
                 }
             }
             _ => {
-                Err(sinex_satellite_sdk::SatelliteError::EventSource(
+                Err(sinex_satellite_sdk::SatelliteError::Processing(
                     format!("Invalid D-Bus buses configuration: {}", self.buses)
                 ))
             }

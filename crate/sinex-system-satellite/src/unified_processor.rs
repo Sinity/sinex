@@ -1,8 +1,7 @@
-//! Unified system processor implementing StatefulStreamProcessor from Part 16
+//! Unified system processor implementing StatefulStreamProcessor
 //!
-//! This module contains the new implementation that replaces the old EventSource-based
-//! SystemSatellite with a unified processor supporting snapshot, historical, and
-//! continuous scanning modes.
+//! This module implements the system satellite processor supporting snapshot, historical, and
+//! continuous scanning modes for system events.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -16,15 +15,14 @@ use sinex_satellite_sdk::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
-    SatelliteError, SatelliteResult,
+    SatelliteResult,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use std::time::Duration;
+use tracing::{info, warn};
 
-use crate::{DbusWatcher, EnhancedDbusWatcher, JournalWatcher, EnhancedJournalWatcher, UdevWatcher, SystemdWatcher, SystemdConfig, DbusConfig, JournalConfig};
+use crate::{EnhancedDbusWatcher, EnhancedJournalWatcher, UdevWatcher, SystemdWatcher};
 
 // Import the existing SystemConfig from the parent module
 pub use crate::SystemConfig;
@@ -83,8 +81,7 @@ pub struct SystemdStatus {
 
 /// Unified system processor implementing StatefulStreamProcessor
 ///
-/// This replaces the old EventSource-based SystemSatellite with a unified
-/// processor that supports snapshot, historical, and continuous scanning modes.
+/// Supports snapshot, historical, and continuous scanning modes for system events.
 pub struct SystemProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,

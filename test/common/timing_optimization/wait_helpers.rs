@@ -7,15 +7,21 @@ pub use sinex_core::wait_helpers::{
     wait_for_event_count,
 };
 
-/// Wait for satellite to establish connection with ingestd
+/// Wait for satellite to establish connection with ingestd.
+///
+/// This function should wait for a satellite service to successfully
+/// connect to the ingestd socket and be ready for event submission.
 pub async fn wait_for_satellite_connection(_socket_path: &str, _timeout_secs: u64) -> anyhow::Result<()> {
-    // TODO: Implement satellite connection waiting
+    // Implementation needed: Check socket connectivity and gRPC health
     todo!("Implement satellite connection wait helper")
 }
 
-/// Wait for events to be processed by ingestd and stored in database
+/// Wait for events to be processed by ingestd and stored in database.
+///
+/// This function should wait for a specific number of events from a given
+/// source to be successfully ingested and stored in the database.
 pub async fn wait_for_satellite_events_ingested(_pool: &sqlx::PgPool, _source: &str, _expected: u64, _timeout_secs: u64) -> anyhow::Result<()> {
-    // TODO: Implement satellite event ingestion waiting
+    // Implementation needed: Query database for event count by source
     todo!("Implement satellite event ingestion wait helper")
 }
 

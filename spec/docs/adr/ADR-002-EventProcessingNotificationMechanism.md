@@ -1,7 +1,9 @@
 # ADR-002: Event Processing Notification/Triggering Mechanism
 
-*   **Status:** Accepted
+*   **Status:** Superseded
 *   **Date:** 2024-03-11
+*   **Superseded By:** Redis Streams Architecture
+*   **Superseded Date:** 2025-07-17
 *   **Context & Problem Statement:**
     After new events are ingested into the `raw.events` table, subsequent processing (promotion to domain tables, enrichment, analysis) needs to be triggered for various agents. The mechanism for notifying these agents about new work must be reliable, performant, and integrate well with the Exocortex architecture. Key considerations include:
     1.  **Decoupling:** Ingestion should be decoupled from processing to handle bursts and allow agents to work at their own pace.
@@ -80,4 +82,26 @@
     *   There will be a baseline polling latency. The frequency of polling is a tunable parameter, balancing responsiveness against database load.
     *   If `LISTEN/NOTIFY` is added for specific agents, those agents will need to manage a PostgreSQL connection suitable for `LISTEN` (e.g., direct connection or session pooling).
     *   The `sinex_router.route_raw_event_to_work_queue` function (or similar logic) is responsible for populating the queue based on agent subscriptions defined in `sinex_schemas.agent_manifests`.
+
+## Current Implementation Status
+
+**SUPERSEDED** - This ADR has been superseded by Redis Streams architecture:
+
+**What Changed:**
+- Moved from PostgreSQL work queue to Redis Streams
+- Implemented Redis consumer groups for reliable processing
+- Added hybrid checkpoint system (Redis + PostgreSQL persistence)
+- Eliminated polling in favor of push-based processing
+
+**Current Architecture:**
+- Events flow: gRPC → PostgreSQL → Redis Streams → Consumer Groups
+- Processors use `StatefulStreamProcessor` trait with Redis stream consumption
+- Automatic retry and dead letter queue handling via Redis
+- Checkpoint persistence in PostgreSQL for durability
+
+**Performance Improvements:**
+- Sub-second event processing latency
+- Horizontal scaling via consumer groups
+- Reduced database load through streaming architecture
+- Real-time processing without polling overhead
 

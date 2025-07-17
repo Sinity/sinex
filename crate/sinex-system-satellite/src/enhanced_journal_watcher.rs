@@ -32,14 +32,14 @@ impl EnhancedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "journalctl not found: {}",
                     e
                 ))
             })?;
 
         if !check.status.success() {
-            return Err(sinex_satellite_sdk::SatelliteError::EventSource(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(
                 "journalctl command failed".to_string(),
             ));
         }
@@ -132,14 +132,14 @@ impl EnhancedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to run journalctl: {}",
                     e
                 ))
             })?;
 
         if !output.status.success() {
-            return Err(sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "journalctl failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             )));
@@ -291,14 +291,14 @@ impl EnhancedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to spawn journalctl: {}",
                     e
                 ))
             })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::EventSource("No stdout".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("No stdout".to_string())
         })?;
 
         let mut reader = BufReader::new(stdout);
@@ -348,7 +348,7 @@ impl EnhancedJournalWatcher {
     /// Parse journal entry with comprehensive metadata extraction
     fn parse_journal_entry(&self, entry: &serde_json::Value) -> SatelliteResult<Option<RawEvent>> {
         let obj = entry.as_object().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::EventSource("Invalid journal entry".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("Invalid journal entry".to_string())
         })?;
 
         // Extract required fields
@@ -356,7 +356,7 @@ impl EnhancedJournalWatcher {
             .get("__CURSOR")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::EventSource("Missing cursor".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing("Missing cursor".to_string())
             })?;
 
         let timestamp_us = obj
@@ -364,7 +364,7 @@ impl EnhancedJournalWatcher {
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<i64>().ok())
             .ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::EventSource("Missing timestamp".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing("Missing timestamp".to_string())
             })?;
 
         let message = obj
@@ -505,7 +505,7 @@ impl EnhancedJournalWatcher {
             }
 
             tokio::fs::write(cursor_file, cursor).await.map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to save cursor: {}",
                     e
                 ))

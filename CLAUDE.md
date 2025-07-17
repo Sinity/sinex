@@ -46,7 +46,7 @@ DECISION_HEURISTICS:
 - Uncertain about impact→create git branch first
 - Long operation→launch Task agent instead of doing directly
 
-ARCH: Satellites(systemd)→ingestd(gRPC:/run/sinex/ingest.sock)→raw.events+Redis(sinex:events)→Automata→synthesis.events
+ARCH: Satellites(systemd)→ingestd(gRPC:/run/sinex/ingest.sock)→core.events+Redis(sinex:events)→Processors→synthesis.events
 
 SATELLITE_TYPES: Ingestors(fs-watcher,terminal-satellite,desktop-satellite,system-satellite), Automata(command-canonicalizer,health-aggregator,pkm-automaton)
 
@@ -130,7 +130,7 @@ rules: ulid.to_uuid(), $1::uuid cast, RETURNING for auto-gen
 ARCH_DETAILS:
 satellites: systemd{ingestors(external→ingestd), automata(redis→processing)}
 hubs: ingestd(/run/sinex/ingest.sock), gateway(HTTP/JSON-RPC), redis(sinex:events)
-DB: raw.events(ULID,hypertable), core.automaton_checkpoints, sinex_schemas.*, conn:postgresql:///sinex_dev?host=/run/postgresql
+DB: core.events(ULID,hypertable), source_material_registry(external_data), operations_log(audit), core.automaton_checkpoints, sinex_schemas.*, conn:postgresql:///sinex_dev?host=/run/postgresql
 redis: XADD→sinex:events→XREADGROUP(consumer_groups)→XACK
 heartbeat: stdout(JSON)→journald→events→health_automaton
 consts: sinex_core::{timeouts,limits,buffers,retry,filesystem}
@@ -169,10 +169,10 @@ sdk: StatefulStreamProcessor,ProcessorCliRunner(processor_main!),CheckpointManag
 bus: Redis(durable,ordered),ConsumerGroups(auto-track),gRPC(high-perf)
 proc: HotlogAutomatonRunner,source_event_ids(provenance),pg_jsonschema
 
-STATUS_2025-07-16:
-done: satellite_constellation,deep_symmetry,redis_streams,journald_heartbeat,checkpoint_hybrid,gRPC,GitOps_schema,checkpoint_persistence_fix,raw_event_provenance,CLI_replay_explore,source_event_ids_impl
-bugs: (none currently identified)
-missing: test_coverage_gaps_from_architecture_migration
+STATUS_2025-07-17:
+done: satellite_constellation,deep_symmetry,redis_streams,journald_heartbeat,checkpoint_hybrid,gRPC,GitOps_schema,checkpoint_persistence_fix,raw_event_provenance,CLI_replay_explore,source_event_ids_impl,plan_md_unified_architecture,processor_manifests,StatefulStreamProcessor_migration
+bugs: backwards_raw_events_references_from_cleanup
+missing: test_coverage_gaps_from_architecture_migration,fix_backwards_schema_references
 reality>vision: redis_streams_mature, sdk_abstractions_solid, checkpoint_hybrid>redis_only, journald>direct_db
 
 CRITICAL: system captures entire digital life→reliability non-negotiable
@@ -182,7 +182,7 @@ RECOVERY_PROCEDURES:
 corrupted_db: pg_dump sinex_dev>/tmp/backup.sql before any destructive ops
 redis_inconsistent: redis-cli FLUSHDB (nuclear option) OR redis-cli --scan --pattern "sinex:*" | xargs redis-cli DEL
 checkpoint_mismatch: UPDATE core.automaton_checkpoints SET last_processed_id=NULL WHERE automaton_name='X'
-event_replay: DELETE FROM synthesis.events WHERE source='X' AND ts_orig BETWEEN Y AND Z; restart automaton
+event_replay: DELETE FROM core.events WHERE source='X' AND ts_orig BETWEEN Y AND Z; restart processor
 service_wedged: systemctl stop sinex-X && pkill -f sinex-X && systemctl start sinex-X
 
 KEY_PATHS:
@@ -220,19 +220,23 @@ events_not_processing:
 5. Check automaton service running
 
 DB_SCHEMA:
-raw.events(id ULID PK, source TEXT, event_type TEXT, ts_orig TIMESTAMPTZ, ts_ingest TIMESTAMPTZ, host TEXT, payload JSONB, source_event_ids ULID[])
+core.events(id ULID PK, source TEXT, event_type TEXT, ts_orig TIMESTAMPTZ, ts_ingest TIMESTAMPTZ, host TEXT, payload JSONB, source_event_ids ULID[], correlation_id ULID, source_material_id ULID, associated_blob_ids ULID[], ingestor_version TEXT, payload_schema_id TEXT)
 core.automaton_checkpoints(id UUID, automaton_name TEXT, consumer_group TEXT, last_processed_id TEXT, state_data JSONB)
-provenance: source_event_ids distinguishes raw(NULL) from synthesis(Vec<ULID>)
+provenance: source_event_ids distinguishes external(NULL) from synthesis(Vec<ULID>), correlation_id for request tracking, source_material_id for external data lifecycle
 
 USEFUL_QUERIES:
 -- Recent events by type
-SELECT ts_orig,source,event_type,payload FROM raw.events WHERE event_type='X' ORDER BY ts_orig DESC LIMIT 20;
+SELECT ts_orig,source,event_type,payload FROM core.events WHERE event_type='X' ORDER BY ts_orig DESC LIMIT 20;
 -- Event throughput
-SELECT source,COUNT(*) as cnt FROM raw.events WHERE ts_ingest > NOW()-'1 hour'::interval GROUP BY source ORDER BY cnt DESC;
+SELECT source,COUNT(*) as cnt FROM core.events WHERE ts_ingest > NOW()-'1 hour'::interval GROUP BY source ORDER BY cnt DESC;
 -- Checkpoint status
 SELECT automaton_name,last_processed_id,processed_count,last_activity FROM core.automaton_checkpoints;
 -- Find events with specific payload content
-SELECT * FROM raw.events WHERE payload @> '{"path":"/some/file"}'::jsonb;
+SELECT * FROM core.events WHERE payload @> '{"path":"/some/file"}'::jsonb;
+-- Find events by correlation
+SELECT * FROM core.events WHERE correlation_id = $1::uuid;
+-- Find source material
+SELECT * FROM source_material_registry WHERE blake3_hash = $1;
 
 TEST_PATTERNS:
 quick_test_one: cargo test -p sinex-core test_name -- --nocapture

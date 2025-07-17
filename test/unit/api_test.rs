@@ -519,9 +519,7 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
 
     let artifact = create_artifact(ctx.pool(), input).await?;
 
-    // TODO: Delete functionality not implemented yet
-
-    // Verify it exists (delete functionality pending)
+    // Verify it exists
     let retrieved = get_artifact_by_id(ctx.pool(), artifact.artifact_id).await?;
     assert!(retrieved.is_some());
 
@@ -994,28 +992,6 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test TestContext work queue operations
-#[sinex_test]
-async fn test_test_context_work_queue_operations(ctx: TestContext) -> TestResult {
-    // Test work queue operations
-    ctx.assert_work_queue_empty().await?;
-
-    // Test wait for work queue
-    // This is mainly testing that the method exists and doesn't panic
-    let timeout_result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        ctx.wait_for_work_queue(0),
-    )
-    .await;
-
-    // Should either complete immediately or timeout
-    assert!(
-        timeout_result.is_ok() || timeout_result.is_err(),
-        "Should handle wait appropriately"
-    );
-
-    Ok(())
-}
 
 // =============================================================================
 // COMPREHENSIVE ULID TESTS

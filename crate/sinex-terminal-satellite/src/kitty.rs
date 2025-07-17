@@ -2,7 +2,7 @@
 //!
 //! Watches for Kitty terminal events and shell integration via Unix socket
 
-use crate::SatelliteResult;
+use sinex_satellite_sdk::SatelliteResult;
 use regex::Regex;
 use serde_json::json;
 use sinex_core::RawEvent;
@@ -122,7 +122,7 @@ impl KittyWatcher {
             }
         }
 
-        Err(crate::SatelliteError::EventSource(format!(
+        Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
             "No accessible Kitty socket found. Tried: {:?}",
             socket_candidates
         )))
@@ -130,30 +130,30 @@ impl KittyWatcher {
 
     async fn send_kitty_command(&self, command: serde_json::Value) -> SatelliteResult<serde_json::Value> {
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            crate::SatelliteError::EventSource("No Kitty socket configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("No Kitty socket configured".to_string())
         })?;
 
         let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to connect to socket: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to socket: {}", e))
         })?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
 
         stream.write_all(framed_cmd.as_bytes()).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to write command: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to write command: {}", e))
         })?;
         stream.flush().await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to flush: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to flush: {}", e))
         })?;
 
         let mut response_buffer = Vec::new();
         stream.read_to_end(&mut response_buffer).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to read response: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to read response: {}", e))
         })?;
 
         let response_str = String::from_utf8(response_buffer).map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Invalid UTF-8 in response: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Invalid UTF-8 in response: {}", e))
         })?;
 
         // Extract JSON from framed response
@@ -161,12 +161,12 @@ impl KittyWatcher {
             if let Some(end) = response_str.rfind('}') {
                 let json_str = &response_str[start..=end];
                 return serde_json::from_str(json_str).map_err(|e| {
-                    crate::SatelliteError::EventSource(format!("Failed to parse JSON: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse JSON: {}", e))
                 });
             }
         }
 
-        Err(crate::SatelliteError::EventSource(
+        Err(sinex_satellite_sdk::SatelliteError::Processing(
             "Could not parse Kitty response as JSON".to_string(),
         ))
     }
@@ -256,7 +256,7 @@ impl KittyWatcher {
         if let Some(text) = response.get("text").and_then(|t| t.as_str()) {
             Ok(text.to_string())
         } else {
-            Err(crate::SatelliteError::EventSource(format!(
+            Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "No text content in Kitty response for extent: {}",
                 extent
             )))

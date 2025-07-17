@@ -313,9 +313,9 @@ impl IngestService {
 
     /// Batch write events to database with dual-log routing
     /// 
-    /// This implements the architectural decision for dual-log database:
-    /// - Raw events (source_event_ids is None) go to raw.events
-    /// - Synthesis events (source_event_ids is Some) go to synthesis.events
+    /// This implements the unified events table architecture:
+    /// - All events go to core.events
+    /// - Raw events have source_event_ids = NULL, synthesis events have source_event_ids populated
     async fn batch_write_to_db(pool: &PgPool, events: &[RawEvent]) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());

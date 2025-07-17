@@ -1,7 +1,8 @@
 # ADR-003: Hyprland Compositor Integration Path
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     The Hyprland Wayland compositor is a rich source of information about the user's desktop activity, including window management, focus changes, input events, and workspace state. The Exocortex needs a robust and comprehensive way to ingest this data. Two primary integration paths exist:
     1.  Utilizing Hyprland's existing Inter-Process Communication (IPC) sockets.

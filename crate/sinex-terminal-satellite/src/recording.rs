@@ -2,7 +2,7 @@
 //!
 //! Monitors for asciinema recording files and tracks session lifecycle
 
-use crate::SatelliteResult;
+use sinex_satellite_sdk::SatelliteResult;
 use serde_json::json;
 use sinex_core::RawEvent;
 use sinex_events::RawEventBuilder;
@@ -54,7 +54,7 @@ impl RecordingWatcher {
         // Ensure recordings directory exists
         if !recordings_dir.exists() {
             fs::create_dir_all(&recordings_dir).await.map_err(|e| {
-                crate::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to create recordings directory {}: {}",
                     recordings_dir.display(),
                     e
@@ -85,14 +85,14 @@ impl RecordingWatcher {
         info!("Setting up automatic asciinema recording for shell sessions");
 
         let home = std::env::var("HOME").map_err(|e| {
-            crate::SatelliteError::EventSource(format!("HOME environment variable not set: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("HOME environment variable not set: {}", e))
         })?;
 
         let home_path = PathBuf::from(&home);
 
         // Create asciinema recordings directory if it doesn't exist
         fs::create_dir_all(&self.recordings_dir).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to create recordings directory: {}",
                 e
             ))
@@ -120,7 +120,7 @@ impl RecordingWatcher {
     async fn setup_fish_integration(&self, home_path: &PathBuf) -> SatelliteResult<()> {
         let fish_config_dir = home_path.join(".config/fish");
         fs::create_dir_all(&fish_config_dir).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to create fish config directory: {}",
                 e
             ))
@@ -135,7 +135,7 @@ impl RecordingWatcher {
         if !shell_config_path.exists() {
             // Create minimal shell config if it doesn't exist
             fs::write(shell_config_path, "").await.map_err(|e| {
-                crate::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to create shell config {}: {}",
                     shell_config_path.display(),
                     e
@@ -145,7 +145,7 @@ impl RecordingWatcher {
 
         // Read current config
         let mut config_content = fs::read_to_string(shell_config_path).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to read shell config {}: {}",
                 shell_config_path.display(),
                 e
@@ -167,7 +167,7 @@ impl RecordingWatcher {
 
         // Write updated config
         fs::write(shell_config_path, config_content).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to write shell config {}: {}",
                 shell_config_path.display(),
                 e
@@ -250,7 +250,7 @@ end
                 record_command = record_command
             ),
             _ => {
-                return Err(crate::SatelliteError::EventSource(format!(
+                return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Unsupported shell: {}",
                     shell_name
                 )))
@@ -266,7 +266,7 @@ end
 
         // Find all recording files
         let paths = glob::glob(&pattern_str).map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Invalid glob pattern {}: {}", pattern_str, e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Invalid glob pattern {}: {}", pattern_str, e))
         })?;
 
         for entry in paths {
@@ -288,7 +288,7 @@ end
 
     async fn process_recording_file(&mut self, path: &PathBuf, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
         let metadata = fs::metadata(path).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to get metadata for {}: {}", path.display(), e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get metadata for {}: {}", path.display(), e))
         })?;
 
         let file_size = metadata.len();
@@ -415,7 +415,7 @@ end
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let file = fs::File::open(path).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to open file {}: {}", path.display(), e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open file {}: {}", path.display(), e))
         })?;
 
         let reader = BufReader::new(file);
@@ -424,10 +424,10 @@ end
         // First line should be the header
         if let Ok(Some(line)) = lines.next_line().await {
             serde_json::from_str(&line).map_err(|e| {
-                crate::SatelliteError::EventSource(format!("Failed to parse header: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse header: {}", e))
             })
         } else {
-            Err(crate::SatelliteError::EventSource("No header found".to_string()))
+            Err(sinex_satellite_sdk::SatelliteError::Processing("No header found".to_string()))
         }
     }
 
@@ -435,7 +435,7 @@ end
         // Simple heuristic: check if file hasn't been modified for a while
         // A more sophisticated approach would parse the file to check for proper ending
         let metadata = fs::metadata(path).await.map_err(|e| {
-            crate::SatelliteError::EventSource(format!("Failed to get metadata: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get metadata: {}", e))
         })?;
 
         if let Ok(modified) = metadata.modified() {

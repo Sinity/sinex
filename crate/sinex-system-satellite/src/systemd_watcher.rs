@@ -156,11 +156,11 @@ impl SystemdWatcher {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to start systemctl: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start systemctl: {}", e))
             })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::EventSource("Failed to get systemctl stdout".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("Failed to get systemctl stdout".to_string())
         })?;
 
         let reader = BufReader::new(stdout);
@@ -202,11 +202,11 @@ impl SystemdWatcher {
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to start journalctl: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start journalctl: {}", e))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::EventSource("Failed to get journalctl stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing("Failed to get journalctl stdout".to_string())
             })?;
 
             let reader = BufReader::new(stdout);

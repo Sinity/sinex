@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 95% (Asciinema and Atuin integration fully working)
-**Dependencies**: asciinema binary, atuin binary, EventSource trait, shell history access
+**Dependencies**: asciinema binary, atuin binary, StatefulStreamProcessor trait, shell history access
 **Blocks**: Terminal session analysis, command pattern recognition, productivity insights
 
 ## MVP Specification

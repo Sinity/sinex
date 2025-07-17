@@ -333,7 +333,7 @@ impl ProcessHeartbeatEmitter {
 
         let event = self.event_factory.create_event(event_type_constants::process::PROCESS_STARTED, payload);
         
-        // Insert event into raw.events (let database generate ts_ingest from ULID)
+        // Insert event into core.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
             INSERT INTO core.events (source, event_type, ts_orig, host, payload)
@@ -372,7 +372,7 @@ impl ProcessHeartbeatEmitter {
 
         let event = self.event_factory.create_event(event_type_constants::process::PROCESS_SHUTDOWN, payload);
         
-        // Insert event into raw.events (let database generate ts_ingest from ULID)
+        // Insert event into core.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
             INSERT INTO core.events (source, event_type, ts_orig, host, payload)
@@ -456,7 +456,7 @@ impl ProcessHeartbeatEmitter {
 
         let event = self.event_factory.create_event(event_type_constants::process::PROCESS_HEARTBEAT, payload);
         
-        // Insert event into raw.events (let database generate ts_ingest from ULID)
+        // Insert event into core.events (let database generate ts_ingest from ULID)
         sqlx::query!(
             r#"
             INSERT INTO core.events (source, event_type, ts_orig, host, payload)

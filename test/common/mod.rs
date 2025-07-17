@@ -17,7 +17,6 @@
 #![allow(dead_code)] // Test utilities may not all be used
 #![allow(unused_variables)] // Test patterns
 
-use sinex_satellite_sdk::EventSourceContext;
 
 // Test prelude for standardized imports
 pub mod prelude;
@@ -36,7 +35,6 @@ pub use crate::common::prelude::*;
 use sinex_core::{event_type_constants, sources, EventFactory};
 use sinex_db::events as db_events;
 use sinex_db::query_helpers::uuid_to_ulid;
-// Satellite architecture - no legacy types needed
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -44,8 +42,6 @@ pub fn test_database_url() -> String {
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
 }
 
-// Satellite architecture testing utilities
-use sinex_satellite_sdk::{IngestClient, EventSourceRunner};
 use tokio::net::UnixListener;
 
 /// Start a test ingestd server for integration tests
@@ -406,8 +402,6 @@ pub mod assertions {
         manifest: &AutomatonManifest,
     ) -> Result<(), anyhow::Error> {
         // NOTE: upsert_automaton_manifest function has been removed from this architecture
-        // This function is disabled as it references obsolete work_queue module
-        // TODO: Replace with Redis streams tests when implementing new work distribution
         assert!(!manifest.automaton_name.is_empty());
         assert!(!manifest.version.is_empty());
         Ok(())
@@ -848,8 +842,6 @@ pub fn create_test_event_with_payload(
 pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     // NOTE: upsert_automaton_manifest function has been removed from this architecture
-    // This function is disabled as it references obsolete work_queue module
-    // TODO: Replace with Redis streams tests when implementing new work distribution
     Ok(())
 }
 
@@ -860,7 +852,7 @@ pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) ->
     insert_event(pool, &event).await
 }
 
-/// Helper to emulate old insert_event_with_validator API signature
+/// Helper to insert events for testing
 #[allow(dead_code)]
 pub async fn insert_event_with_validator(
     pool: &DbPool,
@@ -898,9 +890,6 @@ pub async fn create_agent_with_subscriptions(
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
 
     // NOTE: upsert_automaton_manifest function has been removed from this architecture
-    // This function is disabled as it references obsolete work_queue module
-    // TODO: Replace with Redis streams tests when implementing new work distribution
-
     Ok(())
 }
 
@@ -1377,7 +1366,7 @@ pub mod validation_test_utils;
 /// Schema test utilities
 pub mod schema_test_utils;
 
-// Worker test utilities - TODO: Re-add when worker tests are implemented
+// Worker test utilities (disabled - legacy implementation)
 // pub mod worker_test_utils;
 
 /// Coverage assurance utilities

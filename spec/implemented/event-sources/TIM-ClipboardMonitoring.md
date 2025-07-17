@@ -3,13 +3,13 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 85% (Wayland and X11 core functionality working)
-**Dependencies**: wl-clipboard package, XFIXES extension, EventSource trait
+**Dependencies**: wl-clipboard package, XFIXES extension, StatefulStreamProcessor trait
 **Blocks**: Desktop context analysis, AI-powered clipboard content analysis
 
 ## MVP Specification
 - Event-driven clipboard monitoring on Wayland (wl-paste --watch)
 - Basic X11 clipboard monitoring via XFIXES
-- Raw event logging to raw.events table
+- Raw event logging to core.events table
 - MIME type detection and content capture
 - Primary selection and clipboard distinction
 
@@ -21,10 +21,10 @@
 - Rich context extraction from clipboard metadata
 
 ## Implementation Checklist
-- [x] Database schema (raw.events)
+- [x] Database schema (core.events)
 - [x] Wayland implementation (wl-paste integration)
 - [x] X11 implementation (XFIXES)
-- [x] EventSource trait implementation
+- [x] StatefulStreamProcessor trait implementation
 - [x] MIME type handling
 - [x] Basic testing
 - [ ] INCR protocol completion
@@ -52,11 +52,11 @@ Event-driven clipboard monitoring is vastly more efficient (CPU <0.1%, ~95% less
     2.  Calls `wl-paste --list-types` to get available MIME types on the clipboard.
     3.  Chooses preferred MIME type(s) (e.g., `text/plain;charset=utf-8` first, then `text/html`, then `image/png`).
     4.  Calls `wl-paste --type <chosen_mime_type>` to get the actual content for each desired type.
-    5.  Constructs a `raw.events` payload:
+    5.  Constructs a `core.events` payload:
         *   `source`: `"desktop.wayland.clipboard_monitor"`
         *   `event_type`: `"clipboard_content_changed"` (or `primary_selection_changed`)
         *   `payload`: `{ "selection_type": "clipboard" | "primary", "available_mime_types": ["type1", "type2"], "retrieved_content": {"mime_type1": "data_base64_if_binary_or_text", "mime_type2": "..."}, "source_application_hint": "..." (if obtainable, Wayland makes this hard generally) }`
-    6.  Sends event to `raw.events` (e.g., via `exo log` CLI or direct DB insert).
+    6.  Sends event to `core.events` (e.g., via `exo log` CLI or direct DB insert).
 *   **Payloads & MIME Types [CR4]:** Wayland is MIME type-based. No inherent protocol size limits for data, but apps/compositor might have practical limits or use streaming.
 
 ## 3. X11 Implementation [UG Sec 7.3, CR4]

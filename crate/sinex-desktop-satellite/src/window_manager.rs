@@ -152,7 +152,7 @@ impl WindowManagerWatcher {
             watcher.discover_hyprland_sockets().await?;
             watcher.spawn_cache_cleanup_task();
         } else {
-            return Err(sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Unsupported window manager: {}", wm_type
             )));
         }
@@ -188,7 +188,7 @@ impl WindowManagerWatcher {
         // Get Hyprland instance signature
         let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
             .map_err(|_| {
-                sinex_satellite_sdk::SatelliteError::EventSource(
+                sinex_satellite_sdk::SatelliteError::Processing(
                     "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string()
                 )
             })?;
@@ -196,7 +196,7 @@ impl WindowManagerWatcher {
         // Get XDG_RUNTIME_DIR
         let xdg_runtime = std::env::var("XDG_RUNTIME_DIR")
             .map_err(|_| {
-                sinex_satellite_sdk::SatelliteError::EventSource(
+                sinex_satellite_sdk::SatelliteError::Processing(
                     "XDG_RUNTIME_DIR not set".to_string()
                 )
             })?;
@@ -211,7 +211,7 @@ impl WindowManagerWatcher {
             self.socket_path = Some(event_socket.clone());
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
-            return Err(sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Cannot connect to Hyprland event socket: {}", event_socket
             )));
         }
@@ -335,22 +335,22 @@ impl WindowManagerWatcher {
     async fn connect_to_hyprland_events(&self) -> SatelliteResult<UnixStream> {
         // For Hyprland, socket2 is the event socket
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::EventSource("No Hyprland socket configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing("No Hyprland socket configured".to_string())
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to connect to Hyprland: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to Hyprland: {}", e))
         })
     }
 
     /// Send command to Hyprland (using socket1 for commands)
     async fn _send_hyprland_command(&self, command: &str) -> SatelliteResult<String> {
         let socket_path = self.socket_path.as_ref()
-            .ok_or_else(|| sinex_satellite_sdk::SatelliteError::EventSource("No socket path".to_string()))?
+            .ok_or_else(|| sinex_satellite_sdk::SatelliteError::Processing("No socket path".to_string()))?
             .replace(".socket2.sock", ".socket.sock"); // Use command socket
 
         let mut stream = UnixStream::connect(&socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::EventSource(format!("Failed to connect to command socket: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to command socket: {}", e))
         })?;
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -609,7 +609,7 @@ impl WindowManagerWatcher {
         if self.wm_type == "hyprland" {
             self.stream_hyprland_events(tx).await
         } else {
-            Err(sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Unsupported window manager: {}", self.wm_type
             )))
         }

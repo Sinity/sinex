@@ -93,96 +93,44 @@ The Sinex system establishes relationships between events through explicit datab
 
 ```sql
 -- Find all events that followed a specific event
-SELECT e2.* FROM raw.events e2
-JOIN core.event_relations r ON r.to_event_id = e2.id
+SELECT e2.* FROM core.events e2
+JOIN core.event_relations r ON r.to_event_id = e2.event_id
 WHERE r.from_event_id = $1 AND r.relation_type = 'followed_by';
 
 -- Get complete workflow chain from starting event
 WITH RECURSIVE workflow_chain AS (
-  SELECT id, source, event_type, ts_ingest, 0 as depth
-  FROM raw.events WHERE id = $1
+  SELECT event_id, source, event_type, ts_ingest, 0 as depth
+  FROM core.events WHERE event_id = $1
   UNION ALL
-  SELECT e.id, e.source, e.event_type, e.ts_ingest, w.depth + 1
-  FROM raw.events e
-  JOIN core.event_relations r ON r.to_event_id = e.id
-  JOIN workflow_chain w ON w.id = r.from_event_id
+  SELECT e.event_id, e.source, e.event_type, e.ts_ingest, w.depth + 1
+  FROM core.events e
+  JOIN core.event_relations r ON r.to_event_id = e.event_id
+  JOIN workflow_chain w ON w.event_id = r.from_event_id
   WHERE r.relation_type IN ('followed_by', 'caused_by')
 )
 SELECT * FROM workflow_chain ORDER BY depth, ts_ingest;
 
 -- Find events in the same cluster
-SELECT e.* FROM raw.events e
-JOIN core.event_cluster_members ecm ON ecm.event_id = e.id
+SELECT e.* FROM core.events e
+JOIN core.event_cluster_members ecm ON ecm.event_id = e.event_id
 WHERE ecm.cluster_id = $1
 ORDER BY e.ts_ingest;
 ```
 
-### Programmatic Relationship Creation
+### API Signatures
 
 ```rust
-// Create explicit event relationship
-async fn create_event_relation(
-    pool: &PgPool,
-    from_id: Ulid,
-    to_id: Ulid,
-    relation_type: &str,
-    confidence: f64,
-    detected_by: &str,
-    metadata: Value,
-) -> Result<Ulid> {
-    let relation_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.event_relations 
-         (id, from_event_id, to_event_id, relation_type, confidence, detected_by, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        relation_id.as_uuid(),
-        from_id.as_uuid(),
-        to_id.as_uuid(),
-        relation_type,
-        confidence,
-        detected_by,
-        metadata
-    ).execute(pool).await?;
-    Ok(relation_id)
-}
+// Core event relation management
+async fn create_event_relation(pool: &PgPool, from_id: Ulid, to_id: Ulid, 
+    relation_type: &str, confidence: f64, detected_by: &str, metadata: Value) -> Result<Ulid>;
 
-// Create event cluster for related activities
-async fn create_event_cluster(
-    pool: &PgPool,
-    name: &str,
-    cluster_type: &str,
-    event_ids: &[Ulid],
-    metadata: Value,
-) -> Result<Ulid> {
-    let cluster_id = Ulid::new();
-    let time_start = get_earliest_event_time(pool, event_ids).await?;
-    let time_end = get_latest_event_time(pool, event_ids).await?;
-    
-    // Create cluster
-    sqlx::query!(
-        "INSERT INTO core.event_clusters 
-         (id, name, cluster_type, time_start, time_end, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6)",
-        cluster_id.as_uuid(),
-        name,
-        cluster_type,
-        time_start,
-        time_end,
-        metadata
-    ).execute(pool).await?;
-    
-    // Add members
-    for event_id in event_ids {
-        sqlx::query!(
-            "INSERT INTO core.event_cluster_members (cluster_id, event_id)
-             VALUES ($1, $2)",
-            cluster_id.as_uuid(),
-            event_id.as_uuid()
-        ).execute(pool).await?;
-    }
-    
-    Ok(cluster_id)
-}
+async fn create_event_cluster(pool: &PgPool, name: &str, cluster_type: &str, 
+    event_ids: &[Ulid], metadata: Value) -> Result<Ulid>;
+
+async fn find_related_events(pool: &PgPool, event_id: Ulid, 
+    relation_types: &[&str], max_distance: u32) -> Result<Vec<EventRelation>>;
+
+async fn get_cluster_members(pool: &PgPool, cluster_id: Ulid) -> Result<Vec<Ulid>>;
 ```
 
 ## 4. Performance Considerations and Optimization

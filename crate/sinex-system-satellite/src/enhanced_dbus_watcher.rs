@@ -100,14 +100,14 @@ impl EnhancedDbusWatcher {
         // Establish D-Bus connection
         let (resource, conn) = if bus_type == "session" {
             connection::new_session_sync().map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to connect to session bus: {}",
                     e
                 ))
             })?
         } else {
             connection::new_system_sync().map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::EventSource(format!(
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to connect to system bus: {}",
                     e
                 ))
@@ -124,7 +124,7 @@ impl EnhancedDbusWatcher {
         // Add match rules for signals and method calls
         let signal_rule = MatchRule::new().with_type(MessageType::Signal);
         conn.add_match(signal_rule).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to add signal match rule: {}",
                 e
             ))
@@ -132,7 +132,7 @@ impl EnhancedDbusWatcher {
 
         let method_rule = MatchRule::new().with_type(MessageType::MethodCall);
         conn.add_match(method_rule).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::EventSource(format!(
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Failed to add method call match rule: {}",
                 e
             ))

@@ -15,7 +15,29 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-/// Time horizon defines the scope and mode of scanning operations
+/// Time horizon defines the scope and mode of scanning operations.
+///
+/// This enum controls how a stream processor scans events:
+/// - `Historical`: Bounded scan from checkpoint to a specific end time
+/// - `Continuous`: Unbounded scan for real-time streaming (sensor mode)
+/// - `Snapshot`: Instantaneous state capture for point-in-time analysis
+///
+/// # Examples
+/// ```
+/// use sinex_satellite_sdk::{TimeHorizon, Checkpoint};
+/// use chrono::{DateTime, Utc};
+///
+/// // Historical scan: process events from last checkpoint to noon today
+/// let historical = TimeHorizon::Historical {
+///     end_time: DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z").unwrap().with_timezone(&Utc)
+/// };
+///
+/// // Continuous scan: process events indefinitely from checkpoint
+/// let continuous = TimeHorizon::Continuous;
+///
+/// // Snapshot scan: capture current state only
+/// let snapshot = TimeHorizon::Snapshot;
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TimeHorizon {
     /// Historical scan: Process from checkpoint up to a defined point in the past
@@ -30,17 +52,26 @@ pub enum TimeHorizon {
 }
 
 impl TimeHorizon {
-    /// Check if this is a continuous (streaming) operation
+    /// Check if this is a continuous (streaming) operation.
+    ///
+    /// Returns `true` for `TimeHorizon::Continuous`, which indicates
+    /// unbounded processing that should continue indefinitely.
     pub fn is_continuous(&self) -> bool {
         matches!(self, TimeHorizon::Continuous)
     }
 
-    /// Check if this is a bounded operation
+    /// Check if this is a bounded operation.
+    ///
+    /// Returns `true` for `Historical` and `Snapshot` modes, which have
+    /// defined endpoints and will eventually complete.
     pub fn is_bounded(&self) -> bool {
         matches!(self, TimeHorizon::Historical { .. } | TimeHorizon::Snapshot)
     }
 
-    /// Get the end time if applicable
+    /// Get the end time if applicable.
+    ///
+    /// Returns `Some(end_time)` for `Historical` mode, `None` for other modes.
+    /// Used by processors to determine when to stop processing.
     pub fn end_time(&self) -> Option<DateTime<Utc>> {
         match self {
             TimeHorizon::Historical { end_time } => Some(*end_time),
@@ -49,7 +80,34 @@ impl TimeHorizon {
     }
 }
 
-/// Unified checkpoint representation for both ingestors and automata
+/// Unified checkpoint representation for tracking progress across both ingestors and automata.
+///
+/// Checkpoints enable resumable processing by storing the last processed position.
+/// Different checkpoint types support various data sources:
+/// - `External`: For ingestors tracking external system state (files, logs, etc.)
+/// - `Internal`: For automata tracking processed event IDs in the event stream
+/// - `Stream`: For Redis Stream-based message processing
+/// - `Timestamp`: For time-based processing resumption
+///
+/// # Examples
+/// ```
+/// use sinex_satellite_sdk::Checkpoint;
+/// use sinex_ulid::Ulid;
+/// use chrono::Utc;
+///
+/// // External checkpoint for file position
+/// let file_pos = Checkpoint::external(
+///     serde_json::json!({"file_offset": 1024, "line_number": 42}),
+///     "Processing from line 42 of /var/log/app.log"
+/// );
+///
+/// // Internal checkpoint for event processing
+/// let event_id = Ulid::new();
+/// let internal = Checkpoint::internal(event_id, 150);
+///
+/// // Stream checkpoint for Redis processing
+/// let stream = Checkpoint::stream("1234567890-0", Some(event_id));
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Checkpoint {
     /// No checkpoint - start from beginning
@@ -85,7 +143,28 @@ pub enum Checkpoint {
 }
 
 impl Checkpoint {
-    /// Create a checkpoint from an external position
+    /// Create a checkpoint from an external position.
+    ///
+    /// Used by ingestors to track progress in external systems.
+    /// The position can be any JSON-serializable value representing
+    /// the current state (file offset, timestamp, log line number, etc.).
+    ///
+    /// # Examples
+    /// ```
+    /// use sinex_satellite_sdk::Checkpoint;
+    /// 
+    /// // File position
+    /// let pos = Checkpoint::external(
+    ///     serde_json::json!({"file": "/var/log/app.log", "offset": 1024}),
+    ///     "Processing from byte 1024 of app.log"
+    /// );
+    /// 
+    /// // Database sequence
+    /// let seq = Checkpoint::external(
+    ///     serde_json::json!({"table": "events", "last_id": 12345}),
+    ///     "Last processed event ID: 12345"
+    /// );
+    /// ```
     pub fn external(position: serde_json::Value, description: impl Into<String>) -> Self {
         Self::External {
             position,
@@ -93,7 +172,15 @@ impl Checkpoint {
         }
     }
 
-    /// Create a checkpoint from an event ULID
+    /// Create a checkpoint from an event ULID.
+    ///
+    /// Used by automata to track progress through the internal event stream.
+    /// The event_id represents the last processed event, and message_count
+    /// provides verification and debugging information.
+    ///
+    /// # Parameters
+    /// - `event_id`: ULID of the last successfully processed event
+    /// - `message_count`: Total number of messages processed (for verification)
     pub fn internal(event_id: Ulid, message_count: u64) -> Self {
         Self::Internal {
             event_id,
@@ -101,7 +188,15 @@ impl Checkpoint {
         }
     }
 
-    /// Create a checkpoint from a Redis Stream message ID
+    /// Create a checkpoint from a Redis Stream message ID.
+    ///
+    /// Used for Redis Stream-based processing. The message_id follows
+    /// Redis Stream format (e.g., "1234567890-0"), and event_id
+    /// provides correlation with the internal event stream.
+    ///
+    /// # Parameters
+    /// - `message_id`: Redis Stream message ID (format: "timestamp-sequence")
+    /// - `event_id`: Optional ULID of the corresponding internal event
     pub fn stream(message_id: impl Into<String>, event_id: Option<Ulid>) -> Self {
         Self::Stream {
             message_id: message_id.into(),
@@ -109,7 +204,14 @@ impl Checkpoint {
         }
     }
 
-    /// Create a checkpoint from a timestamp
+    /// Create a checkpoint from a timestamp.
+    ///
+    /// Used for time-based processing resumption. Suitable for sources
+    /// that can be queried by timestamp (logs, database tables, etc.).
+    ///
+    /// # Parameters
+    /// - `timestamp`: The last processed timestamp
+    /// - `metadata`: Optional source-specific metadata for context
     pub fn timestamp(timestamp: DateTime<Utc>, metadata: Option<serde_json::Value>) -> Self {
         Self::Timestamp { timestamp, metadata }
     }
@@ -264,22 +366,80 @@ impl StreamProcessorContext {
     }
 }
 
-/// Unified trait for all stream processors (ingestors and automata)
+/// Unified trait for all stream processors (ingestors and automata).
+///
+/// This trait implements the "Deep Symmetry" architecture where both ingestors
+/// and automata share the same core `scan()` interface, differing only in their
+/// data sources and processing logic.
+///
+/// # Architecture
+/// - **Ingestors**: External World → RawEvent Stream (e.g., file watchers, log parsers)
+/// - **Automata**: RawEvent Stream → DerivedEvent Stream (e.g., command canonicalizers)
+///
+/// # Implementation Notes
+/// - Implementations must be thread-safe (`Send + Sync`)
+/// - The `scan()` method is the core interface - other methods provide metadata
+/// - Checkpointing is handled externally via `StreamProcessorContext`
+/// - Graceful shutdown should be implemented in `shutdown()`
+///
+/// # Examples
+/// ```ignore
+/// use sinex_satellite_sdk::*;
+/// use async_trait::async_trait;
+///
+/// struct MyIngestor;
+///
+/// #[async_trait]
+/// impl StatefulStreamProcessor for MyIngestor {
+///     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+///         // Initialize with context
+///         Ok(())
+///     }
+///
+///     async fn scan(
+///         &mut self,
+///         from: Checkpoint,
+///         until: TimeHorizon,
+///         args: ScanArgs,
+///     ) -> SatelliteResult<ScanReport> {
+///         // Implement scanning logic
+///         Ok(ScanReport::default())
+///     }
+///
+///     fn processor_name(&self) -> &str { "my-ingestor" }
+///     fn processor_type(&self) -> ProcessorType { ProcessorType::Ingestor }
+/// }
+/// ```
 #[async_trait]
 pub trait StatefulStreamProcessor: Send + Sync {
     /// Initialize the processor with the given context
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()>;
 
-    /// Core scan method - the heart of the unified architecture
+    /// Core scan method - the heart of the unified architecture.
     /// 
     /// This method implements the unified interface that replaces both:
     /// - EventSource::start_streaming() + run_scanner() for ingestors
     /// - Automaton event processing for automata
     /// 
-    /// The behavior depends on the TimeHorizon:
-    /// - Historical: Bounded scan from checkpoint to end_time
-    /// - Continuous: Unbounded scan from checkpoint (sensor mode)
-    /// - Snapshot: Instantaneous state capture
+    /// # Parameters
+    /// - `from`: Starting checkpoint (where to resume processing)
+    /// - `until`: Time horizon (how far/long to process)
+    /// - `args`: Additional scan configuration and filters
+    /// 
+    /// # Behavior by TimeHorizon
+    /// - **Historical**: Bounded scan from checkpoint to end_time
+    /// - **Continuous**: Unbounded scan from checkpoint (sensor mode) - should not return
+    /// - **Snapshot**: Instantaneous state capture
+    /// 
+    /// # Error Handling
+    /// - Return `SatelliteError::Processing` for recoverable errors
+    /// - Use `SatelliteError::Lifecycle` for initialization/shutdown issues
+    /// - Database errors are typically non-recoverable
+    /// 
+    /// # Performance Notes
+    /// - Emit events incrementally via `StreamProcessorContext::emit_event()`
+    /// - Use `args.max_events` to limit processing scope
+    /// - Respect `args.dry_run` for testing scenarios
     async fn scan(
         &mut self,
         from: Checkpoint,
