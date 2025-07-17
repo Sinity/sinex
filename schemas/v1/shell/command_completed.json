@@ -1,0 +1,56 @@
+{
+  "$id": "https://sinex.io/schemas/v1/shell/command_completed.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "command_output": {
+      "type": "string"
+    },
+    "completion_timestamp": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "execution_time_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "exit_status": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "output_line_count": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "output_size_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "working_directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "command",
+    "command_output",
+    "completion_timestamp",
+    "output_line_count",
+    "output_size_bytes"
+  ],
+  "title": "CommandCompletedPayload",
+  "type": "object"
+}

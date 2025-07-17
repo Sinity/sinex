@@ -2,13 +2,14 @@
 
 > **📊 IMPLEMENTATION STATUS**:
 >
-> - 🚧 **Core Infrastructure** (45%) - Basic PostgreSQL + TimescaleDB working, needs hardening
-> - 🚧 **Event Sources** (35%) - Four sources operational, many more planned
-> - 🔨 **Processing Pipeline** (25%) - Basic queue works, minimal processing logic
-> - 🚧 **NixOS Module** (40%) - Basic services, needs production features
-> - 🔨 **Query Interface** (15%) - Minimal CLI only
-> - ❌ **AI/LLM Integration** (0%) - Schema only, no implementation
-> - ❌ **Knowledge Graph** (5%) - Schema only, no population logic
+> - ✅ **Satellite Architecture** (80%) - Independent satellite services operational, StatefulStreamProcessor interface implemented
+> - ✅ **Message Bus** (75%) - Redis Streams fully operational with consumer groups, checkpoint management, command/response patterns
+> - ✅ **Data Substrate** (70%) - PostgreSQL + TimescaleDB with ULID keys, core.events table operational, comprehensive provenance tracking
+> - 🚧 **Event Sources** (50%) - Four satellite domains active (filesystem, terminal, desktop, system), expanding coverage
+> - 🚧 **Automaton Ecosystem** (40%) - Processing framework operational, deterministic automata working, agentic layer planned
+> - 🚧 **Gateway & APIs** (65%) - sinex-gateway operational, command/response patterns working, CLI integrated
+> - 🚧 **NixOS Module** (60%) - Satellite orchestration working, observability patterns operational
+> - 🔨 **AI/LLM Integration** (15%) - Framework ready, schema designed, integration in progress
 
 ## Purpose
 
@@ -26,7 +27,7 @@ This System Technical Architecture Document provides a high-level map of Sinex's
 ### Mission
 Sinex is a "sentient archive" that augments human intellect by comprehensively capturing digital experiences, structuring data intelligently, and enabling powerful query and analysis capabilities while maintaining complete user control.
 
-### Architecture Diagram
+### Satellite Constellation Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        User Interfaces                           │
@@ -34,33 +35,46 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 └────────────────────────┬────────────────────────────────────────┘
                          │
 ┌────────────────────────┴────────────────────────────────────────┐
-│                     Query & Analysis Layer                       │
-│         SQL    │    Query DSL    │    Future: AI/LLM            │
+│                      sinex-gateway                               │
+│            API Gateway & Command/Response Handler                │
 └────────────────────────┬────────────────────────────────────────┘
                          │
 ┌────────────────────────┴────────────────────────────────────────┐
-│                    Processing Pipeline                           │
-│    Work Queue    │    Workers    │    Event Routing             │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-┌────────────────────────┴────────────────────────────────────────┐
-│                      Data Substrate                              │
-│    PostgreSQL + TimescaleDB    │    Git-Annex Blobs             │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-┌────────────────────────┴────────────────────────────────────────┐
-│                    Event Collection                              │
-│  Unified Collector  │  Event Sources  │  Schema Validation       │
-└─────────────────────────────────────────────────────────────────┘
+│                   Message Bus (Redis Streams)                    │
+│      Real-time Event Distribution & Consumer Groups              │
+└───┬────────────────────┴────────────────────────────────────┬───┐
+    │                                                        │   │
+┌───▼──────────────────┐  ┌─────────────────────────────────▼───┐ │
+│   Satellite Services  │  │          sinex-ingestd             │ │
+│ ┌─────────────────┐   │  │    Ingestion Hub & Validator       │ │
+│ │ StatefulStream  │   │  └─────────────────┬───────────────────┘ │
+│ │ Processors:     │   │                    │                     │
+│ │ - fs-watcher    │   │  ┌─────────────────▼───────────────────┐ │
+│ │ - terminal      │   │  │        Data Substrate               │ │
+│ │ - desktop       │   │  │ core.events + source_material_registry │ │
+│ │ - system        │   │  │ PostgreSQL + TimescaleDB + Git-Annex│ │
+│ └─────────────────┘   │  └─────────────────────────────────────┘ │
+│ ┌─────────────────┐   │                                          │
+│ │ Automata        │   │──────────────────────────────────────────┘
+│ │ - health        │   │  (Consumer Groups: stream processing)
+│ │ - canonicalizer │   │
+│ │ - analytics     │   │
+│ │ - content       │   │
+│ │ - search        │   │
+│ │ - pkm           │   │
+│ └─────────────────┘   │
+└───────────────────────┘
 ```
 
 ### Key Architectural Principles
-- **Immutable Event Log** - All data preserved in `raw.events`
-- **Time-Ordered Keys** - ULID primary keys for natural ordering
-- **Schema Validation** - JSON Schema enforcement on all events
-- **Distributed Processing** - Lock-free work queue distribution
-- **Local-First** - Complete functionality without cloud dependencies
-- **User Agency** - Full control over data collection and processing
+- **Satellite Constellation** - Independent services orchestrated by systemd/NixOS with StatefulStreamProcessor interface
+- **Redis Streams Message Bus** - Durable, real-time event distribution with consumer groups and checkpointing
+- **Unified Events Table** - Single source of truth with comprehensive provenance tracking
+- **Time-Ordered Keys** - ULID primary keys for natural chronological ordering and distributed generation
+- **GitOps Schema Management** - Version-controlled JSON Schema validation with automatic deployment
+- **Journald Heartbeat Pattern** - Elegant observability through structured logging and systemd integration
+- **Command/Response Architecture** - Asynchronous API patterns with full auditability via message bus
+- **Local-First & User Sovereign** - Complete functionality and control without cloud dependencies
 
 ## 2. Data Substrate Architecture
 
@@ -74,10 +88,12 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
   - **pgvector** - Future semantic search capabilities
 
 ### Event Storage
-- **Immutable Event Log** (`raw.events`) - Source of truth for all captured data
-- **Schema Registry** (`event_payload_schemas`) - Versioned JSON schemas
-- **Work Queue** (`work_queue`) - Distributed event processing ([ADR-002](docs/adr/ADR-002-EventProcessingNotificationMechanism.md))
-- **Routing Cache** - Materialized view for efficient distribution ([ADR-014](docs/adr/ADR-014-routing-cache.md))
+- **Unified Events Table** (`core.events`) - Single source of truth for all captured data with comprehensive provenance tracking via source_event_ids
+- **Source Material Registry** (`raw.source_material_registry`) - Immutable ground truth preservation with blob_id references
+- **Processor Manifests** (`sinex_schemas.processor_manifests`) - GitOps-driven processor registration and metadata
+- **Schema Registry** (`sinex_schemas.event_payload_schemas`) - Versioned JSON schemas with GitOps management
+- **Checkpoint System** (`core.automaton_checkpoints`) - Stateful processor recovery with unified interface
+- **Message Bus** - Redis Streams for real-time event distribution with consumer groups
 
 ### Knowledge Representation (Future)
 - **Knowledge Graph** (`core.entities`, `core.entity_relations`)
@@ -91,11 +107,13 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
 
 Unified event collection system managing multiple data sources.
 
-### Unified Collector
-- **Single Binary** (`sinex-collector`) - Coordinates all event sources
-- **EventSource Trait** - Common interface for all sources
-- **Hot-Reload Config** - Dynamic source management without restart
-- **Schema Validation** - All events validated before storage
+### Satellite Architecture
+- **sinex-ingestd** - Central ingestion hub receiving events via gRPC
+- **StatefulStreamProcessor Interface** - Unified pattern for both ingestors and automata
+- **Event Source Satellites** - Independent services capturing domain-specific data
+- **Automaton Satellites** - Independent services processing events into insights
+- **Satellite SDK** - Shared library providing common infrastructure
+- **Schema Validation** - GitOps-driven validation with version control
 
 ### Current Event Sources (35% System Coverage)
 
@@ -126,32 +144,35 @@ See [TIM-ComprehensiveEventSources.md](planned/event-sources/TIM-ComprehensiveEv
 
 Event-driven processing system with distributed workers.
 
-### Work Queue System
-- **Lock-Free Distribution** - `SELECT FOR UPDATE SKIP LOCKED` pattern
-- **Agent Registration** - Manifests define capabilities and routing
-- **Dead Letter Queue** - Failed event handling and retry logic
-- **Metrics Export** - Prometheus metrics for monitoring
+### Satellite Constellation
+- **Independent Services** - Each satellite runs as separate systemd service
+- **StatefulStreamProcessor Pattern** - Unified scan(from: Checkpoint, until: TimeHorizon) interface
+- **Message Streaming** - Redis Streams for real-time event distribution
+- **Checkpoint Management** - Stateful recovery and replay capabilities
+- **Schema Validation** - GitOps-driven schema registry with version control
 
-### Current Workers
-- **Promotion Worker** - Transforms raw events to structured data
-- **Health Monitor** - Agent heartbeat tracking
+### Current Automata
+- **Analytics Automaton** - Pattern detection and insight generation
+- **Content Automaton** - Document processing and enrichment
+- **Search Automaton** - Query processing and result ranking
+- **PKM Automaton** - Personal knowledge management operations
 
-### Future AI Integration
-- **LLM Integration** - Local (Ollama) and remote models
-- **Prompt Registry** - Versioned prompt management
-- **Entity Resolution** - Identify and link entities across events
-- **Context Synthesis** - Generate meaningful summaries
+### Expanding Automaton Ecosystem
+- **LLM Integration** - Local (Ollama) and remote models for semantic processing
+- **Prompt Registry** - Versioned prompt management with GitOps
+- **Entity Resolution** - Cross-event entity linking and knowledge graph construction
+- **Context Synthesis** - Intelligent summarization and narrative generation
 
-**Detailed Architecture:** [AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md)
+**Detailed Architecture:** [AgenticEcosystem_Architecture.md](docs/arch_modules/AgenticEcosystem_Architecture.md) - Note: "Agentic" refers to AI-powered intelligence; "Automaton" refers to deterministic event processors
 
 ## 5. User Interfaces & Query
 
 Multiple interfaces for data access and exploration.
 
 ### Current Interfaces
-- **CLI** (`exo.py`) - Query events, manage schemas, monitor agents
+- **CLI** (`exo.py`) - Query events, manage schemas, monitor processors with command/response patterns
 - **Direct SQL** - Full database access for power users
-- **Configuration** - TOML-based collector configuration
+- **Configuration** - TOML-based processor configuration
 
 ### Planned Interfaces
 - **Web Dashboard** - Visual exploration and analytics
@@ -159,11 +180,11 @@ Multiple interfaces for data access and exploration.
 - **Query DSL** - Simplified query language
 - **Grafana Dashboards** - Metrics and monitoring
 
-### Current Analytics Limitations (20% of Vision)
-- **Basic Routing** - Mechanical event routing via promotion worker
-- **Health Metrics Only** - System metrics (CPU, memory, event counts)
-- **Simple Queries** - Basic SQL with time/source filtering
-- **No Pattern Detection** - No cross-event correlation or insight generation
+### Current Analytics Limitations (35% of Vision)
+- **Basic Processing** - Mechanical event routing via automaton satellites
+- **Health Metrics Focus** - System metrics (CPU, memory, event counts) with some pattern detection
+- **SQL-Based Queries** - Advanced SQL with time/source filtering via core.events
+- **Limited Pattern Detection** - Basic cross-event correlation, expanding insight generation
 
 ### Planned Analytics Infrastructure (80% Gap)
 See [TIM-AnalyticsInfrastructure.md](planned/infrastructure/TIM-AnalyticsInfrastructure.md) for transformation roadmap including:
@@ -180,7 +201,7 @@ Infrastructure for reliable, secure operation.
 
 ### NixOS Integration
 - **Declarative Module** (`services.sinex`) - Complete system configuration
-- **Systemd Services** - Collector, workers, maintenance jobs
+- **Systemd Services** - Satellite processors, hub services, maintenance jobs
 - **Database Setup** - Automatic migrations and extensions
 - **VM Testing** - Comprehensive integration tests
 
@@ -206,16 +227,16 @@ Infrastructure for reliable, secure operation.
 ## 7. Summary & Next Steps
 
 ### Current State
-Sinex has a solid foundation with working event collection, storage, and processing infrastructure. The system successfully captures filesystem, terminal, clipboard, and window manager events, storing them reliably in a time-series optimized PostgreSQL database.
+Sinex has successfully implemented a sophisticated satellite constellation architecture with operational event collection, real-time message distribution, and processing infrastructure. The system captures events across four major domains (filesystem, terminal, desktop, system) through independent satellite services implementing the StatefulStreamProcessor interface, provides reliable storage in the core.events table with comprehensive provenance tracking via source_event_ids, and offers a unified API through the gateway service with command/response patterns. Redis Streams enable scalable, durable event processing with checkpoint management for stateful recovery. The source material registry preserves immutable ground truth with blob_id references, while processor manifests enable GitOps-driven service management.
 
 ### Near-Term Priorities
-1. **Complete Promotion Worker** - Transform raw events to structured data
-2. **Enhance Query Interface** - Build advanced query capabilities
-3. **Add Event Sources** - Browser history, audio capture
-4. **Performance Optimization** - Database indexing and query tuning
+1. **Expand Automaton Ecosystem** - Build specialized processors for different data domains
+2. **Enhance LLM Integration** - Connect automata with local and remote language models
+3. **Add Event Sources** - Browser extension, audio capture, email integration
+4. **Advanced Query Interface** - Rich CLI and web-based exploration tools
 
 ### Long-Term Vision
-Build towards the full "sentient archive" vision with AI-powered analysis, semantic search, knowledge graph construction, and multi-device synchronization. The modular architecture ensures each component can evolve independently while maintaining system coherence.
+Realize the full "sentient archive" vision through the mature satellite constellation supporting AI-powered analysis, semantic search, knowledge graph construction, and multi-device synchronization. The satellite architecture enables independent evolution of each component while maintaining system coherence through the unified message bus and shared substrate.
 
 ---
 

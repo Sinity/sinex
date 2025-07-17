@@ -83,7 +83,7 @@ If a file's content (based on its BLAKE3 hash) is new or represents a new versio
     *   Returns the `annex_key` (e.g., "SHA256E-s<size>--<hash>.<suffix>").
 2.  **Update `core_blobs`:**
     *   A row is inserted/updated in `core_blobs` with the `annex_key`, the computed `content_blake3_hash`, `mime_type`, `size_bytes`, `original_filenames` (including current path), etc. This provides the link between Exocortex metadata and the physical annexed blob.
-3.  **Event Generation:** An event like `filesystem.file.content_ingested_to_annex` is logged to `raw.events`, containing the `core_blobs.blob_id`, `annex_key`, `content_blake3_hash`, original file path, and `mtime`/`size`.
+3.  **Event Generation:** An event like `filesystem.file.content_ingested_to_annex` is logged to `core.events`, containing the `core_blobs.blob_id`, `annex_key`, `content_blake3_hash`, original file path, and `mtime`/`size`.
 
 ## 4. Deduplication [UG Sec 12.2]
 

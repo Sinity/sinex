@@ -69,8 +69,8 @@ exo explore                   # Visual dashboard-like interface
 
 ### 3.2. `exo query` & `exo find`
     *   `exo query`: Execute simplified Exocortex Query Language (EQL - TBD) or raw SQL.
-        *   `exo query --eql "FROM raw.events WHERE source CONTAINS 'hyprland' AND ts_orig > '1d_ago' LIMIT 10"`
-        *   `exo query --sql "SELECT count(*) FROM core.artifacts WHERE artifact_type = 'pkm_note';"`
+        *   `exo query --eql "FROM core.events WHERE source CONTAINS 'hyprland' AND ts_orig > '1d_ago' LIMIT 10"`
+        *   `exo query --sql "SELECT count(*) FROM core.events WHERE source = 'pkm';"`
     *   `exo find`: Unified search across artifacts, events, entities using keywords, semantic similarity, tags.
         *   `exo find "NixOS flakes" --type pkm_note --tags "tutorial"`
         *   `exo find --semantic-similar-to-text "The core concept of ULIDs" --limit 5`
@@ -127,12 +127,12 @@ exo explore                   # Visual dashboard-like interface
     *   `exo embed find-similar-to-text "query text"`
     *   `exo embed queue-artifact <ARTIFACT_ID>` (for `EmbeddingAgent`)
 
-### 3.12. `exo dlq` *(Enhanced - Phase 1 Priority)*
-    *   Manage `core.dead_letter_queue` - leveraging existing 85% complete DLQ infrastructure.
-    *   `exo dlq list [--status pending_review|failed|resolved]`
-    *   `exo dlq replay <DLQ_ID> [--force]`
-    *   `exo dlq update-status <DLQ_ID> --status resolved_manual`
-    *   `exo dlq stats [--since "1 day ago"]` *(New)*
+### 3.12. `exo processor` *(Enhanced - Phase 1 Priority)*
+    *   Manage processor checkpoints and Redis streams.
+    *   `exo processor list [--status running|stopped]`
+    *   `exo processor checkpoint <PROCESSOR_NAME> [--reset]`
+    *   `exo processor restart <PROCESSOR_NAME>`
+    *   `exo processor stats [--since "1 day ago"]` *(New)*
 
 ### 3.13. `exo system` *(Enhanced - Phase 1 Priority)*
     *   System-level operations - leveraging existing 85% complete monitoring infrastructure.
@@ -143,12 +143,86 @@ exo explore                   # Visual dashboard-like interface
 
 ### 3.14. `exo query` *(Enhanced - Phase 1 Core)*
     *   Advanced query interface with templates and SQL support.
-    *   `exo query --sql "SELECT COUNT(*) FROM raw.events WHERE source = 'fs'"`
+    *   `exo query --sql "SELECT COUNT(*) FROM core.events WHERE source = 'fs'"`
     *   `exo query --time-range "last 2 hours" --source fs --event-type file.created`
     *   `exo query --export-csv /tmp/events.csv --limit 1000` *(New)*
     *   `exo query --template debug-session --params "agent=worker,time=2h"` *(New)*
 
-## 4. Enhanced Shell Completions *(Phase 1 Core Feature)*
+## 4. Query Examples and Common Patterns
+
+### 4.1. Contextual Recall Queries
+
+**Find activity around specific PKM note editing:**
+```bash
+# Find browser tabs and terminal commands active around note editing
+exo query --template activity-around-note --params "note_id=01JZBC...,window=15min"
+```
+
+**Recent activity analysis:**
+```bash
+# Last hour of hyprland window events
+exo recent hyprland --time "1 hour" --type window.focused
+
+# Terminal commands in the last day
+exo recent terminal --time "1 day" --type command.executed
+```
+
+### 4.2. Cross-Domain Correlation
+
+**Find related events by time window:**
+```bash
+# Events 5 minutes before/after a specific event
+exo related --to-event 01JZBC... --context 5m
+
+# All activity during a specific time window
+exo activity --around "2024-01-01T15:30:00" --window 10m
+```
+
+### 4.3. Pattern Analysis
+
+**Error and health monitoring:**
+```bash
+# Agent-specific error analysis
+exo errors --agent sinex-collector --since "2 hours"
+
+# System health patterns
+exo system health --component database --detailed
+```
+
+### 4.4. SQL Query Examples
+
+**Complex event correlation:**
+```sql
+-- Find all events that happened within 5 minutes of a terminal command
+WITH command_events AS (
+    SELECT event_id, ts_orig, payload->>'command' as command
+    FROM core.events 
+    WHERE source = 'terminal-satellite' AND event_type = 'command.executed'
+    AND ts_orig > NOW() - INTERVAL '1 day'
+)
+SELECT e.*, ce.command as related_command
+FROM core.events e
+JOIN command_events ce ON ABS(EXTRACT(EPOCH FROM e.ts_orig - ce.ts_orig)) < 300
+WHERE e.source != 'terminal-satellite'
+ORDER BY e.ts_orig;
+```
+
+**Activity clustering:**
+```sql
+-- Group events by time windows to identify work sessions
+SELECT 
+    DATE_TRUNC('hour', ts_orig) as time_window,
+    source,
+    COUNT(*) as event_count,
+    ARRAY_AGG(DISTINCT event_type) as event_types
+FROM core.events
+WHERE ts_orig > NOW() - INTERVAL '1 week'
+GROUP BY time_window, source
+HAVING COUNT(*) > 10
+ORDER BY time_window DESC;
+```
+
+## 5. Enhanced Shell Completions *(Phase 1 Core Feature)*
 
 ### **Dynamic Database Completion**
 ```python
@@ -159,15 +233,15 @@ from rich.completion import Completer
 class DatabaseCompleter(Completer):
     def get_completions(self, document, complete_event):
         if document.text.endswith('--source '):
-            return query_db("SELECT DISTINCT source FROM raw.events ORDER BY source")
+            return query_db("SELECT DISTINCT source FROM core.events ORDER BY source")
         elif document.text.endswith('--event-type '):
             current_source = extract_source_from_command(document.text)
             return query_db(
-                "SELECT DISTINCT event_type FROM raw.events WHERE source = ? ORDER BY event_type",
+                "SELECT DISTINCT event_type FROM core.events WHERE source = ? ORDER BY event_type",
                 [current_source]
             )
         elif document.text.endswith('--agent '):
-            return query_db("SELECT DISTINCT agent_name FROM sinex_schemas.agent_manifests")
+            return query_db("SELECT DISTINCT automaton_name FROM core.automaton_checkpoints")
 
 # Integration with argparse/click
 @click.option('--source', shell_complete=source_completer)

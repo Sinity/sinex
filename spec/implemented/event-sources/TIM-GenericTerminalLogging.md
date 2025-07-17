@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 95% (Asciinema and Atuin integration fully working)
-**Dependencies**: asciinema binary, atuin binary, EventSource trait, shell history access
+**Dependencies**: asciinema binary, atuin binary, StatefulStreamProcessor trait, shell history access
 **Blocks**: Terminal session analysis, command pattern recognition, productivity insights
 
 ## MVP Specification
@@ -136,7 +136,7 @@ An Exocortex agent (`agent/terminal_session_logger` or `ingestor/asciinema_log_p
 1. **On New `.cast` File Creation (or Initial Detection):**
     * The agent detects a new `.cast` file (e.g., via `inotify` on the directory, or periodic scan). The filename is the `SINEX_TERMINAL_SESSION_ULID`.
     * It parses the header line of the `.cast` file.
-    * Emits `terminal.session.started` event to `raw.events`.
+    * Emits `terminal.session.started` event to `core.events`.
         * `source`: `"agent.terminal_session_logger"`
         * `event_type`: `"session_started"`
         * `payload`: `{ "session_id_ulid": "ULID_from_filename", "recording_tool": "asciinema", "terminal_emulator_name": "kitty" (from header or env), "shell_path": "/bin/zsh" (from header or env), "initial_width": 120, "initial_height": 30, "start_ts_iso": "ISO8601_from_header_timestamp", "pty_device": "/dev/pts/X" (if available from shell wrapper script env) }`
@@ -146,7 +146,7 @@ An Exocortex agent (`agent/terminal_session_logger` or `ingestor/asciinema_log_p
         * `core_blobs.content_annex_key` stores the annex key.
         * `core_blobs.content_blake3_hash` stores BLAKE3 of the `.cast` file.
         * `core_blobs.mime_type` set to `application/x-asciicast` or `application/jsonl`.
-    * Emits `terminal.session.ended` event to `raw.events`.
+    * Emits `terminal.session.ended` event to `core.events`.
         * `source`: `"agent.terminal_session_logger"`
         * `event_type`: `"session_ended"`
         * `payload`: `{ "session_id_ulid": "ULID_from_filename", "duration_seconds": N (calculated from event lines or start/end events), "end_ts_iso": "...", "recording_blob_annex_key": "key_for_cast_file_in_annex", "recording_content_hash_blake3": "hash_of_cast_file" }`
@@ -205,7 +205,7 @@ An agent (`ingestor/atuin_db_reader`, e.g., Rust or Python with SQLite bindings)
     ```
 
 3. **Eventification:** For each new Atuin history entry:
-    * Emit `shell.command.executed_atuin` event to `raw.events`.
+    * Emit `shell.command.executed_atuin` event to `core.events`.
     * `source`: `"ingestor.atuin_db_reader"`
     * `event_type`: `"command_executed"` (or `shell.command.executed_atuin` for clarity)
     * `ts_orig`: Convert Atuin's nanosecond `timestamp` to `TIMESTAMPTZ`.

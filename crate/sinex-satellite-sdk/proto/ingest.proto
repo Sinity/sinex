@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package sinex.ingest;
+
+service IngestService {
+    rpc IngestEvent(RawEvent) returns (IngestResponse);
+    rpc IngestBatch(EventBatch) returns (BatchResponse);
+    rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message RawEvent {
+    string source = 1;
+    string event_type = 2;
+    string host = 3;
+    string payload = 4; // JSON string
+    optional string schema_name = 5;
+    optional string schema_version = 6;
+    optional string blob_id = 7;
+}
+
+message EventBatch {
+    repeated RawEvent events = 1;
+}
+
+message IngestResponse {
+    bool success = 1;
+    optional string error = 2;
+    optional string event_id = 3; // ULID as string
+}
+
+message BatchResponse {
+    bool success = 1;
+    optional string error = 2;
+    repeated string event_ids = 3; // ULIDs as strings
+    uint32 processed_count = 4;
+    uint32 failed_count = 5;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+    bool healthy = 1;
+    string status = 2;
+    optional string message = 3;
+}

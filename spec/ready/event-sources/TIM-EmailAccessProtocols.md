@@ -107,7 +107,7 @@ A Gmail message resource includes:
         *   `current_title = Subject` header
         *   `properties`: `{ "from": "...", "to": ["..."], "cc": ["..."], "date_sent_iso": "...", "thread_id_gmail": "...", "labels_gmail": ["..."] }`
     *   Store extracted plain text or Markdown version in `core_artifact_contents`, linked to the `artifact_id`. `core_artifacts.current_content_id` points here.
-    *   Log `email.message.ingested_gmail` event to `raw.events`. Payload includes `artifact_id`, `content_id`, key headers, and references to any attachment `blob_id`s.
+    *   Log `email.message.ingested_gmail` event to `core.events`. Payload includes `artifact_id`, `content_id`, key headers, and references to any attachment `blob_id`s.
 5.  **Attachment Handling (See Section 2.5).**
 6.  **Watermarking:** Persist the latest `historyId` processed to resume sync efficiently.
 

@@ -1,9 +1,9 @@
-//! Coverage assurance utilities to ensure test streamlining doesn't reduce scope
-//!
-//! This module provides comprehensive test coverage tracking to ensure that
-//! test migrations and streamlining efforts don't inadvertently reduce the
-//! scope of testing. It tracks various dimensions of test coverage including
-//! event types, validation rules, error conditions, and concurrency scenarios.
+// Coverage assurance utilities to ensure test streamlining doesn't reduce scope
+//
+// This module provides comprehensive test coverage tracking to ensure that
+// test migrations and streamlining efforts don't inadvertently reduce the
+// scope of testing. It tracks various dimensions of test coverage including
+// event types, validation rules, error conditions, and concurrency scenarios.
 
 use crate::common::prelude::*;
 use std::collections::{HashMap, HashSet};

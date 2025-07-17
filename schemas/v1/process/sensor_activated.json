@@ -1,0 +1,25 @@
+{
+  "$id": "https://sinex.io/schemas/v1/process/sensor_activated.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "config_hash": {
+      "type": "string"
+    },
+    "sensor": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capabilities",
+    "config_hash",
+    "sensor"
+  ],
+  "title": "SensorActivatedPayload",
+  "type": "object"
+}

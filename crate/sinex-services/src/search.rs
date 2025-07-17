@@ -47,7 +47,7 @@ impl SearchService {
                 ts_ingest,
                 payload,
                 1.0 as score
-            FROM raw.events
+            FROM core.events
             WHERE 1=1
             "#,
         );

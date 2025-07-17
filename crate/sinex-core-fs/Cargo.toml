@@ -1,0 +1,31 @@
+[package]
+name = "sinex-core-fs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core types
+sinex-core-types = { path = "../sinex-core-types" }
+
+# Event support
+sinex-events = { path = "../sinex-events" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# File system watching
+notify = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio-test = "0.4"

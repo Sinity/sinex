@@ -1,18 +1,18 @@
-//! # Concurrency Test Suite
-//!
-//! Comprehensive concurrency and race condition testing.
-//! This module tests system behavior under concurrent access patterns.
-//!
-//! ## Test Categories
-//! - **Race Conditions**: Worker claiming, event causality, data consistency
-//! - **Worker Coordination**: Synchronization, deadlock prevention, resource sharing
-//! - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
-//! - **Memory Concurrency**: Shared state, atomic operations, cache coherency
+// # Concurrency Test Suite
+//
+// Comprehensive concurrency and race condition testing.
+// This module tests system behavior under concurrent access patterns.
+//
+// ## Test Categories
+// - **Race Conditions**: Worker claiming, event causality, data consistency
+// - **Worker Coordination**: Synchronization, deadlock prevention, resource sharing
+// - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
+// - **Memory Concurrency**: Shared state, atomic operations, cache coherency
+
+use crate::common::prelude::*;
 
 use crate::common::events;
-use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_db::events as db_events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
@@ -29,7 +29,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     // Insert event to be claimed
     let event = events::race_test_event("race");
 
-    let inserted = db_events::insert_event_with_validator(pool, &event, None).await?;
+    let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization
@@ -49,9 +49,9 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
         // Try to claim with SELECT FOR UPDATE
         let result = sqlx::query!(
             r#"
-                UPDATE raw.events
+                UPDATE core.events
                 SET payload = payload || '{"claimed_by": 1}'::jsonb
-                WHERE id::uuid = $1::uuid
+                WHERE event_id::uuid = $1::uuid
                 AND NOT (payload ? 'claimed_by')
                 "#,
             event_id.to_uuid()
@@ -72,9 +72,9 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
         // Try to claim at exact same time
         let result = sqlx::query!(
             r#"
-                UPDATE raw.events
+                UPDATE core.events
                 SET payload = payload || '{"claimed_by": 2}'::jsonb
-                WHERE id::uuid = $1::uuid
+                WHERE event_id::uuid = $1::uuid
                 AND NOT (payload ? 'claimed_by')
                 "#,
             event_id.to_uuid()
@@ -96,7 +96,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 
     // Check final state
     let final_state = sqlx::query!(
-        "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+        "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
     .fetch_one(pool)
@@ -149,7 +149,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
             let handle = tokio::spawn(async move {
                 // Check if parent has been processed
                 let parent_check = sqlx::query!(
-                    "SELECT payload->>'processed' as processed FROM raw.events WHERE id::uuid = $1::uuid",
+                    "SELECT payload->>'processed' as processed FROM core.events WHERE event_id::uuid = $1::uuid",
                     parent_id.to_uuid()
                 )
                 .fetch_one(&pool_clone)
@@ -173,7 +173,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         sqlx::query!(
-            "UPDATE raw.events SET payload = payload || '{\"processed\": \"true\"}'::jsonb WHERE id::uuid = $1::uuid",
+            "UPDATE core.events SET payload = payload || '{\"processed\": \"true\"}'::jsonb WHERE event_id::uuid = $1::uuid",
             parent_event.id.to_uuid()
         )
         .execute(pool)
@@ -302,13 +302,13 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
                 // Try to increment counter atomically
                 let update_result = sqlx::query!(
                     r#"
-                    UPDATE raw.events 
+                    UPDATE core.events 
                     SET payload = jsonb_set(
                         payload, 
                         '{counter}', 
                         ((payload->>'counter')::int + 1)::text::jsonb
                     )
-                    WHERE id::uuid = $1::uuid
+                    WHERE event_id::uuid = $1::uuid
                     "#,
                     event_id.to_uuid()
                 )
@@ -341,7 +341,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
 
     // Check final counter value
     let final_state = sqlx::query!(
-        "SELECT payload->>'counter' as counter FROM raw.events WHERE id::uuid = $1::uuid",
+        "SELECT payload->>'counter' as counter FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
     .fetch_one(pool)
@@ -389,7 +389,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
             None,
         );
 
-        db_events::insert_event_with_validator(pool, &event, None)
+        sinex_db::insert_event_with_validator(pool, &event, None)
             .await
             .unwrap();
         event_ids.push(event.id);
@@ -419,9 +419,9 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
                 // Attempt to claim with SELECT FOR UPDATE
                 let claim_result = sqlx::query!(
                     r#"
-                    UPDATE raw.events
+                    UPDATE core.events
                     SET payload = payload || jsonb_build_object('claimed_by', $2::text, 'claim_time', $3::text)
-                    WHERE id::uuid = $1::uuid
+                    WHERE event_id::uuid = $1::uuid
                     AND NOT (payload ? 'claimed_by')
                     "#,
                     event_id.to_uuid(),
@@ -438,7 +438,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
 
                             // Check if another worker also claimed (race condition)
                             let verify_result = sqlx::query!(
-                                "SELECT payload->>'claimed_by' as claimer FROM raw.events WHERE id::uuid = $1::uuid",
+                                "SELECT payload->>'claimed_by' as claimer FROM core.events WHERE event_id::uuid = $1::uuid",
                                 event_id.to_uuid()
                             ).fetch_one(&pool_clone).await;
 
@@ -538,7 +538,7 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
 
             // Try to claim first event
             let claim1_result = sqlx::query!(
-                "UPDATE raw.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE id::uuid = $1::uuid",
+                "UPDATE core.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE event_id::uuid = $1::uuid",
                 first_id.to_uuid(),
                 worker_id.to_string()
             )
@@ -551,7 +551,7 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
 
                 // Try to claim second event
                 let claim2_result = sqlx::query!(
-                    "UPDATE raw.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE id::uuid = $1::uuid",
+                    "UPDATE core.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE event_id::uuid = $1::uuid",
                     second_id.to_uuid(),
                     worker_id.to_string()
                 )
@@ -648,10 +648,10 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
                 // Try to claim next available work item
                 let claim_result = sqlx::query!(
                     r#"
-                    UPDATE raw.events 
+                    UPDATE core.events 
                     SET payload = payload || jsonb_build_object('claimed_by', $1::text, 'start_time', $2::text)
-                    WHERE id::uuid IN (
-                        SELECT id::uuid FROM raw.events 
+                    WHERE event_id::uuid IN (
+                        SELECT event_id::uuid FROM core.events 
                         WHERE source = 'load_balance_test' 
                         AND NOT (payload ? 'claimed_by')
                         ORDER BY (payload->>'priority')::int DESC
@@ -763,7 +763,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
 
             // Read initial value
             let initial_read = sqlx::query!(
-                "SELECT payload->>'value' as value FROM raw.events WHERE id::uuid = $1::uuid",
+                "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
                 event_id.to_uuid()
             )
             .fetch_one(&mut *tx)
@@ -782,7 +782,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
             // Update based on initial read
             let new_value = initial_value + tx_id;
             sqlx::query!(
-                "UPDATE raw.events SET payload = jsonb_set(payload, '{value}', $2::text::jsonb) WHERE id::uuid = $1::uuid",
+                "UPDATE core.events SET payload = jsonb_set(payload, '{value}', $2::text::jsonb) WHERE event_id::uuid = $1::uuid",
                 event_id.to_uuid(),
                 new_value.to_string()
             )
@@ -792,7 +792,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
 
             // Read again to check consistency
             let final_read = sqlx::query!(
-                "SELECT payload->>'value' as value FROM raw.events WHERE id::uuid = $1::uuid",
+                "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
                 event_id.to_uuid()
             )
             .fetch_one(&mut *tx)
@@ -835,10 +835,10 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
 
     // Check final state
     let final_state = sqlx::query!(
-        "SELECT payload->>'value' as value FROM raw.events WHERE id::uuid = $1::uuid",
+        "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     println!(
@@ -887,7 +887,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
 
                 // Try to acquire exclusive lock
                 let lock_result = sqlx::query!(
-                    "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid FOR UPDATE",
+                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid FOR UPDATE",
                     event_id.to_uuid()
                 )
                 .fetch_one(&pool_clone)
@@ -912,7 +912,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
                         tokio::time::sleep(Duration::from_millis(20)).await;
 
                         sqlx::query!(
-                            "UPDATE raw.events SET payload = jsonb_set(payload, '{lock_count}', ((payload->>'lock_count')::int + 1)::text::jsonb) WHERE id::uuid = $1::uuid",
+                            "UPDATE core.events SET payload = jsonb_set(payload, '{lock_count}', ((payload->>'lock_count')::int + 1)::text::jsonb) WHERE event_id::uuid = $1::uuid",
                             event_id.to_uuid()
                         )
                         .execute(&pool_clone)
@@ -946,10 +946,10 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
 
     // Check final lock count
     let final_state = sqlx::query!(
-        "SELECT payload->>'lock_count' as lock_count FROM raw.events WHERE id::uuid = $1::uuid",
+        "SELECT payload->>'lock_count' as lock_count FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     let final_lock_count: i32 = final_state

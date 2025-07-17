@@ -283,7 +283,7 @@ ORDER BY n_distinct DESC;
 
 -- Explain plan for slow query
 EXPLAIN (ANALYZE, BUFFERS) 
-SELECT * FROM raw.events 
+SELECT * FROM core.events 
 WHERE source = 'filesystem' 
   AND ts_ingest > NOW() - INTERVAL '1 hour';
 ```
@@ -294,13 +294,13 @@ WHERE source = 'filesystem'
 ```sql
 -- Common helpful indexes
 CREATE INDEX CONCURRENTLY idx_events_source_ts 
-  ON raw.events(source, ts_ingest DESC);
+  ON core.events(source, ts_ingest DESC);
 
 CREATE INDEX CONCURRENTLY idx_events_type_ts 
-  ON raw.events(event_type, ts_ingest DESC);
+  ON core.events(event_type, ts_ingest DESC);
 
 CREATE INDEX CONCURRENTLY idx_events_payload_gin 
-  ON raw.events USING gin(payload);
+  ON core.events USING gin(payload);
 
 -- Monitor index usage
 SELECT 
@@ -350,7 +350,7 @@ psql $DATABASE_URL -c "
     AVG(EXTRACT(EPOCH FROM (ts_ingest - ts_orig))) as avg_lag_seconds,
     MAX(EXTRACT(EPOCH FROM (ts_ingest - ts_orig))) as max_lag_seconds,
     COUNT(*) as events
-  FROM raw.events
+  FROM core.events
   WHERE ts_ingest > NOW() - INTERVAL '10 minutes'
     AND ts_orig IS NOT NULL
   GROUP BY source
@@ -488,7 +488,7 @@ WITH duplicates AS (
     event_type,
     payload,
     COUNT(*) as count
-  FROM raw.events
+  FROM core.events
   WHERE ts_ingest > NOW() - INTERVAL '1 hour'
   GROUP BY source, event_type, payload
   HAVING COUNT(*) > 1
@@ -501,7 +501,7 @@ SELECT
   ts_orig,
   ts_ingest,
   source
-FROM raw.events
+FROM core.events
 WHERE ts_ingest > NOW() - INTERVAL '1 hour'
   AND ts_orig > ts_ingest  -- Original after ingestion?
 LIMIT 10;
@@ -593,7 +593,7 @@ sudo nix-collect-garbage -d
 # 4. Database cleanup
 psql $DATABASE_URL -c "
   -- Remove old metrics (safe)
-  DELETE FROM raw.events
+  DELETE FROM core.events
   WHERE source LIKE 'sinex.metrics.%'
     AND ts_ingest < NOW() - INTERVAL '7 days';
 
@@ -603,22 +603,22 @@ psql $DATABASE_URL -c "
     AND created_at < NOW() - INTERVAL '30 days';
 
   -- Vacuum to reclaim space
-  VACUUM FULL ANALYZE raw.events;"
+  VACUUM FULL ANALYZE core.events;"
 ```
 
 #### Long-term Solutions
 ```sql
 -- Enable compression (TimescaleDB)
-ALTER TABLE raw.events SET (
+ALTER TABLE core.events SET (
   timescaledb.compress,
   timescaledb.compress_segmentby = 'source',
   timescaledb.compress_orderby = 'ts_ingest DESC'
 );
 
-SELECT add_compression_policy('raw.events', INTERVAL '7 days');
+SELECT add_compression_policy('core.events', INTERVAL '7 days');
 
 -- Implement retention policy
-SELECT add_retention_policy('raw.events', INTERVAL '1 year');
+SELECT add_retention_policy('core.events', INTERVAL '1 year');
 
 -- For metrics specifically
 SELECT add_retention_policy('metrics.collector_events', INTERVAL '30 days');
@@ -807,7 +807,7 @@ journalctl -u sinex-* --since "10 minutes ago" | grep -i error
 
 # Database checks
 psql $DATABASE_URL -c "SELECT version();"
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';"
 
 # Reset stuck queue
 psql $DATABASE_URL -c "UPDATE sinex_schemas.work_queue SET status = 'pending' WHERE status = 'processing' AND started_at < NOW() - INTERVAL '1 hour';"

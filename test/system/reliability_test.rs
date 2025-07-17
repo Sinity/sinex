@@ -1,28 +1,31 @@
-//! # System Reliability Testing
-//!
-//! Tests that verify the system can handle production-like scenarios
-//! and maintains reliability under various operational conditions:
-//! - Network partitions and reconnection
-//! - Disk full scenarios
-//! - High load sustained operation
-//! - Graceful degradation verification
-//!
-//! ## Test Categories
-//!
-//! - **Operational Scenarios**: Startup, shutdown, and configuration management
-//! - **Production Reliability**: Database failures, resource limits, and monitoring
-//! - **Resource Exhaustion**: Memory usage, connection limits, and transaction handling
-//! - **Fault Tolerance**: System behavior under adverse conditions
-//!
-//! ## Performance Expectations
-//!
-//! - **Individual tests**: 60-300 seconds (comprehensive system testing)
-//! - **Resource usage**: High CPU/memory usage, significant database load
-//! - **Dependencies**: Full system integration with external services
+// # System Reliability Testing
+//
+// Tests that verify the system can handle production-like scenarios
+// and maintains reliability under various operational conditions:
+// - Network partitions and reconnection
+// - Disk full scenarios
+// - High load sustained operation
+// - Graceful degradation verification
+//
+// ## Test Categories
+//
+// - **Operational Scenarios**: Startup, shutdown, and configuration management
+// - **Production Reliability**: Database failures, resource limits, and monitoring
+// - **Resource Exhaustion**: Memory usage, connection limits, and transaction handling
+// - **Fault Tolerance**: System behavior under adverse conditions
+//
+// ## Performance Expectations
+//
+// - **Individual tests**: 60-300 seconds (comprehensive system testing)
+// - **Resource usage**: High CPU/memory usage, significant database load
+// - **Dependencies**: Full system integration with external services
+
+use crate::common::prelude::*;
 
 use crate::common::database_pool::acquire_test_database;
-use crate::common::prelude::*;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sinex_events::{EventFactory, services, event_types};
+use sinex_ulid::Ulid;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
@@ -62,7 +65,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
@@ -70,7 +73,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
@@ -104,39 +107,38 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
-        // Add some existing data
+        // Add some existing checkpoint data
+        let checkpoint_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
-                 VALUES ($1, $2, $3)",
+            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+                 VALUES ($1::uuid, $2, $3, $4)",
+            checkpoint_id.to_uuid(),
             "existing_agent",
-            "1.0.0",
-            "Pre-existing agent for startup test"
+            "startup_event_123",
+            json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
         )
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         // Insert some events
         for i in 0..10 {
-            crate::common::insert_event_with_validator(
-                &pool,
-                "startup.test",
+            let mut event = EventFactory::new("startup.test").create_event(
                 "existing_data",
-                "localhost",
-                json!({"sequence": i, "startup_test": true}),
-                None,
-                Some("1.0.0"),
-                None,
-            )
-            .await?;
+                json!({"sequence": i, "startup_test": true})
+            );
+            event.host = "localhost".to_string();
+            event.ingestor_version = "1.0.0".to_string();
+            
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
         // Simulate restart by running migrations again
         run_migrations(&pool).await?;
 
         // Verify data integrity after restart - use timing utilities for better reliability
-        let agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+        let checkpoint_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -146,17 +148,20 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
                 .await
                 .unwrap_or(0);
 
-        Ok::<(i64, i64), anyhow::Error>((agent_count, event_count))
+        Ok::<(i64, i64), anyhow::Error>((checkpoint_count, event_count))
     })
     .await;
 
     match existing_data_startup {
-        Ok(Ok((agent_count, event_count))) => {
+        Ok(Ok((checkpoint_count, event_count))) => {
             println!("  ✓ Startup with existing data succeeded");
-            println!("    Agents preserved: {}", agent_count);
+            println!("    Checkpoints preserved: {}", checkpoint_count);
             println!("    Events preserved: {}", event_count);
 
-            assert!(agent_count >= 1, "Existing agents should be preserved");
+            assert!(
+                checkpoint_count >= 1,
+                "Existing checkpoints should be preserved"
+            );
             assert!(event_count >= 10, "Existing events should be preserved");
         }
         Ok(Err(e)) => {
@@ -188,12 +193,12 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
                 vec![0u8; 32], // Invalid checksum
                 0
             )
-            .execute(&*pool)
+            .execute(pool)
             .await
             .ok(); // Ignore errors if table doesn't exist
 
             // Try to run migrations with corrupted state
-            let migration_result = sqlx::migrate!("./migrations").run(&*pool).await;
+            let migration_result = sqlx::migrate!("./migrations").run(pool).await;
 
             match migration_result {
                 Ok(()) => {
@@ -267,8 +272,9 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             if let Ok(mut tx) = pool.begin().await {
                 // Start transaction with some work
                 sqlx::query!(
-                    "INSERT INTO raw.events (id, source, event_type, host, payload)
-                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                    "INSERT INTO core.events (
+            event_id, source, event_type, host, payload)
+                     VALUES ($1::uuid, $2, $3, $4, $5)",
                     Ulid::new().to_uuid(),
                     "shutdown.test",
                     "active_transaction",
@@ -386,17 +392,14 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         let long_operation = tokio::spawn(async move {
             // Simulate long-running batch operation
             for i in 0..1000 {
-                crate::common::insert_event_with_validator(
-                    &pool,
-                    "interrupted.shutdown",
+                let mut event = EventFactory::new("interrupted.shutdown").create_event(
                     "long_operation",
-                    "localhost",
-                    json!({"batch_item": i, "operation": "long_running"}),
-                    None,
-                    Some("1.0.0"),
-                    None,
-                )
-                .await?;
+                    json!({"batch_item": i, "operation": "long_running"})
+                );
+                event.host = "localhost".to_string();
+                event.ingestor_version = "1.0.0".to_string();
+                
+                sinex_db::insert_event_with_validator(&pool, &event, None).await?;
 
                 // Simulate work with small delays
                 if i % 100 == 0 {
@@ -473,7 +476,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
     // Cleanup
     sqlx::query!(
-        "DELETE FROM raw.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
+        "DELETE FROM core.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
     .execute(pool)
     .await
@@ -814,7 +817,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT schema_name FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .flatten()
@@ -824,7 +827,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT table_name FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .flatten()
@@ -833,7 +836,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let extensions: Vec<String> = sqlx::query_scalar!(
             "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
         )
-        .fetch_all(&*pool)
+        .fetch_all(pool)
         .await
         .unwrap_or_default();
 
@@ -887,12 +890,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&*pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&*pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
 
@@ -924,37 +927,36 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
-        // Insert test data before migration
+        // Insert test checkpoint data before migration
+        let migration_checkpoint_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
-                 VALUES ($1, $2, $3)",
+            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+                 VALUES ($1::uuid, $2, $3, $4)",
+            migration_checkpoint_id.to_uuid(),
             "migration_test_agent",
-            "1.0.0",
-            "Agent for testing data preservation"
+            "migration_event_456",
+            json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
         )
-        .execute(&*pool)
+        .execute(pool)
         .await?;
 
         // Insert test events
         let test_events = 50;
         for i in 0..test_events {
-            crate::common::insert_event_with_validator(
-                &pool,
-                "migration.safety",
+            let mut event = EventFactory::new("migration.safety").create_event(
                 "data_preservation",
-                "localhost",
-                json!({"sequence": i, "migration_test": true}),
-                None,
-                Some("1.0.0"),
-                None,
-            )
-            .await?;
+                json!({"sequence": i, "migration_test": true})
+            );
+            event.host = "localhost".to_string();
+            event.ingestor_version = "1.0.0".to_string();
+            
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
         // Record initial state - use timing utilities for consistency
-        let initial_agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+        let initial_checkpoint_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -970,17 +972,17 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         .unwrap_or(0);
 
         println!(
-            "    Initial state: {} agents, {} events",
-            initial_agent_count, initial_event_count
+            "    Initial state: {} checkpoints, {} events",
+            initial_checkpoint_count, initial_event_count
         );
 
         // Run migrations again (simulating upgrade)
         run_migrations(&pool).await?;
 
         // Verify data preservation - use timing utilities for reliability
-        let final_agent_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
-                .fetch_one(&*pool)
+        let final_checkpoint_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -995,19 +997,18 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         .await
         .unwrap_or(0);
 
-        // Verify data integrity
-        let agent_data: Option<String> = sqlx::query_scalar!(
-            "SELECT description FROM sinex_schemas.agent_manifests
-                 WHERE agent_name = 'migration_test_agent'"
+        // Verify checkpoint data integrity
+        let checkpoint_data: Option<serde_json::Value> = sqlx::query_scalar!(
+            "SELECT state_data FROM core.automaton_checkpoints
+                 WHERE automaton_name = 'migration_test_agent'"
         )
-        .fetch_optional(&*pool)
-        .await?
-        .flatten();
+        .fetch_optional(pool)
+        .await?;
 
         let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
-            "SELECT payload FROM raw.events WHERE source = 'migration.safety' LIMIT 1"
+            "SELECT payload FROM core.events WHERE source = 'migration.safety' LIMIT 1"
         )
-        .fetch_optional(&*pool)
+        .fetch_optional(pool)
         .await?;
 
         Ok::<
@@ -1016,39 +1017,59 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
                 i64,
                 i64,
                 i64,
-                Option<String>,
+                Option<serde_json::Value>,
                 Option<serde_json::Value>,
             ),
             anyhow::Error,
         >((
-            initial_agent_count,
+            initial_checkpoint_count,
             initial_event_count,
-            final_agent_count,
+            final_checkpoint_count,
             final_event_count,
-            agent_data,
+            checkpoint_data,
             sample_event,
         ))
     })
     .await;
 
     match data_preservation_test {
-        Ok(Ok((init_agents, init_events, final_agents, final_events, agent_desc, event_data))) => {
+        Ok(Ok((
+            init_checkpoints,
+            init_events,
+            final_checkpoints,
+            final_events,
+            checkpoint_data,
+            event_data,
+        ))) => {
             println!("  ✓ Data preservation test completed");
-            println!("    Agents: {} -> {}", init_agents, final_agents);
+            println!(
+                "    Checkpoints: {} -> {}",
+                init_checkpoints, final_checkpoints
+            );
             println!("    Events: {} -> {}", init_events, final_events);
 
             pretty_assertions::assert_eq!(
-                init_agents,
-                final_agents,
-                "Agent count should be preserved"
+                init_checkpoints,
+                final_checkpoints,
+                "Checkpoint count should be preserved"
             );
             pretty_assertions::assert_eq!(
                 init_events,
                 final_events,
                 "Event count should be preserved"
             );
-            assert!(agent_desc.is_some(), "Agent data should be preserved");
+            assert!(
+                checkpoint_data.is_some(),
+                "Checkpoint data should be preserved"
+            );
             assert!(event_data.is_some(), "Event data should be preserved");
+
+            if let Some(checkpoint_json) = checkpoint_data {
+                assert!(
+                    checkpoint_json.get("description").is_some(),
+                    "Checkpoint content should be preserved"
+                );
+            }
 
             if let Some(event_json) = event_data {
                 assert!(
@@ -1077,9 +1098,9 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Simulate a migration error by attempting invalid operation
         let invalid_migration_result = sqlx::query!(
-            "CREATE TABLE raw.events (id UUID PRIMARY KEY)" // This should fail - table exists
+            "CREATE TABLE core.events (id UUID PRIMARY KEY)" // This should fail - table exists
         )
-        .execute(&*pool)
+        .execute(pool)
         .await;
 
         // Migration should fail gracefully
@@ -1131,14 +1152,16 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
-    // Create test agent
+    // Create test checkpoint for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
+    let degradation_checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO sinex_schemas.agent_manifests (agent_name, version, description)
-         VALUES ($1, $2, $3)",
+        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+         VALUES ($1::uuid, $2, $3, $4)",
+        degradation_checkpoint_id.to_uuid(),
         agent_name,
-        "1.0.0",
-        "Graceful degradation test"
+        "degradation_test_event",
+        json!({"version": "1.0.0", "description": "Graceful degradation test"})
     )
     .execute(pool)
     .await?;
@@ -1175,34 +1198,31 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     let pool3 = pool.clone();
 
     // Define async functions for each operation
-    async fn event_test(pool: DbPool) -> Result<(), anyhow::Error> {
-        let _event = crate::common::insert_event_with_validator(
-            &pool,
-            "degradation.test",
+    async fn event_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
+        let mut event = EventFactory::new("degradation.test").create_event(
             "connection_exhaustion",
-            "localhost",
-            json!({"test": "degraded_mode"}),
-            None,
-            Some("1.0.0"),
-            None,
-        )
-        .await?;
+            json!({"test": "degraded_mode"})
+        );
+        event.host = "localhost".to_string();
+        event.ingestor_version = "1.0.0".to_string();
+        
+        let _event = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         Ok(())
     }
 
-    async fn health_test(pool: DbPool) -> Result<(), anyhow::Error> {
+    async fn health_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
         Ok(())
     }
 
-    async fn agent_test(pool: DbPool) -> Result<(), anyhow::Error> {
-        let _agent_check =
-            sqlx::query!("SELECT agent_name FROM sinex_schemas.agent_manifests LIMIT 1")
-                .fetch_one(&pool)
+    async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
+        let _checkpoint_check =
+            sqlx::query!("SELECT automaton_name FROM core.automaton_checkpoints LIMIT 1")
+                .fetch_one(pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())
@@ -1243,8 +1263,8 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         }
     }
 
-    // Test agent operation
-    let operation = timeout(Duration::from_secs(2), agent_test(pool3));
+    // Test checkpoint operation
+    let operation = timeout(Duration::from_secs(2), checkpoint_test(pool3));
     match operation.await {
         Ok(Ok(_)) => {
             println!("  Operation 2 succeeded unexpectedly");
@@ -1264,18 +1284,16 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Verify system recovery
     let recovery_start = Instant::now();
+    let mut event = EventFactory::new("degradation.test").create_event(
+        "recovery_test",
+        json!({"recovered": true})
+    );
+    event.host = "localhost".to_string();
+    event.ingestor_version = "1.0.0".to_string();
+    
     let recovery_test = timeout(
         Duration::from_secs(5),
-        crate::common::insert_event_with_validator(
-            pool,
-            "degradation.test",
-            "recovery_test",
-            "localhost",
-            json!({"recovered": true}),
-            None,
-            Some("1.0.0"),
-            None,
-        ),
+        sinex_db::insert_event_with_validator(pool, &event, None),
     )
     .await;
 
@@ -1312,12 +1330,12 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'degradation.test'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'degradation.test'")
         .execute(pool)
         .await
         .ok();
     sqlx::query!(
-        "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
+        "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         agent_name
     )
     .execute(pool)
@@ -1394,17 +1412,14 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         tokio::spawn(async move {
             let mut processed = 0;
             while let Some(event_data) = rx.recv().await {
-                let result = crate::common::insert_event_with_validator(
-                    &pool,
-                    "resource.monitoring",
+                let mut event = EventFactory::new("resource.monitoring").create_event(
                     "memory_load_test",
-                    "localhost",
-                    event_data,
-                    None,
-                    Some("1.0.0"),
-                    None,
-                )
-                .await;
+                    event_data
+                );
+                event.host = "localhost".to_string();
+                event.ingestor_version = "1.0.0".to_string();
+                
+                let result = sinex_db::insert_event_with_validator(&pool, &event, None).await;
 
                 if result.is_ok() {
                     processed += 1;
@@ -1497,7 +1512,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 let mut conn = pool.acquire().await?;
 
                 // Perform a quick operation
-                sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.agent_manifests")
+                sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
                     .fetch_one(&mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
@@ -1581,7 +1596,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup
-    sqlx::query!("DELETE FROM raw.events WHERE source = 'resource.monitoring'")
+    sqlx::query!("DELETE FROM core.events WHERE source = 'resource.monitoring'")
         .execute(pool)
         .await
         .ok();
@@ -1605,8 +1620,9 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
         // Try to insert many events in a single transaction
         for i in 0..1000 {
             sqlx::query!(
-                "INSERT INTO raw.events (id, source, event_type, host, payload)
-                     VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                "INSERT INTO core.events (
+            event_id, source, event_type, host, payload)
+                     VALUES ($1::uuid, $2, $3, $4, $5)",
                 Ulid::new().to_uuid(),
                 "exhaustion.test",
                 "large_transaction",
@@ -1661,8 +1677,9 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
                 // Each transaction inserts a small batch
                 for j in 0..10 {
                     sqlx::query!(
-                        "INSERT INTO raw.events (id, source, event_type, host, payload)
-                             VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
+                        "INSERT INTO core.events (
+            event_id, source, event_type, host, payload)
+                             VALUES ($1::uuid, $2, $3, $4, $5)",
                         Ulid::new().to_uuid(),
                         format!("concurrent.tx.{}", i),
                         "concurrent_test",
@@ -1745,7 +1762,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
     // Cleanup all test data
     sqlx::query!(
-        "DELETE FROM raw.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
+        "DELETE FROM core.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
     .execute(pool)
     .await

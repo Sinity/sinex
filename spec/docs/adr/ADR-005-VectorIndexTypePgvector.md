@@ -1,7 +1,8 @@
 # ADR-005: Vector Index Type for `pgvector`
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     The Exocortex will use the `pgvector` extension in PostgreSQL for storing and searching vector embeddings (e.g., in `artifact_embeddings`). `pgvector` supports several index types for Approximate Nearest Neighbor (ANN) search. The choice of index type significantly impacts query speed, recall accuracy, build time, memory usage, and how well the index handles dynamic data (inserts/updates/deletes). The two primary contenders are HNSW (Hierarchical Navigable Small World) and IVFFlat (Inverted File with Flat Compression).
 

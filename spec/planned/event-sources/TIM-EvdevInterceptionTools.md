@@ -36,7 +36,7 @@ The Interception Tools suite (`intercept`, `uinput`, `udevmon`) provides user-sp
 *   **`uinput` [OR2]:** Reads `intercept`-formatted events from `stdin`, creates a virtual input device via `/dev/uinput`, injects events. Used for remapping output.
 *   **`udevmon` [OR2]:** Daemon monitoring `udev` for device hotplug. Starts/stops `intercept`/`uinput` pipelines based on YAML config.
     *   **`udevmon.yaml` for Exocortex Logging (Conceptual, from UG Sec 6.2.2):**
-        A custom Exocortex tool `sinex_evdev_to_raw_events_ingestor` (Rust binary using `libevdev` or parsing `intercept` output) converts `evdev` events to JSON and sends to `raw.events`.
+        A custom Exocortex tool `sinex_evdev_to_raw_events_ingestor` (Rust binary using `libevdev` or parsing `intercept` output) converts `evdev` events to JSON and sends to `core.events`.
         ```yaml
         # Example /etc/interception/udevmon.yaml or user-specific config
         # This job starts the custom ingestor when a keyboard is plugged in.
@@ -75,7 +75,7 @@ The Interception Tools suite (`intercept`, `uinput`, `udevmon`) provides user-sp
         *   Minimal `evdev` reader component (e.g., `interception-tools` plugin, or small C/Rust binary using `libevdev`). Runs with minimal privileges (e.g., only access to specific keyboard `evdev` node if possible).
         *   Heavily sandboxed (seccomp, AppArmor).
         *   Forwards raw data via secure local IPC (permissioned UNIX socket) to an unprivileged Exocortex agent (e.g., `EvdevEventProcessorAgent`).
-        *   This processor agent parses, (attempts context filtering if enabled), structures for `raw.events`, and inserts into DB. It has NO direct `evdev` access.
+        *   This processor agent parses, (attempts context filtering if enabled), structures for `core.events`, and inserts into DB. It has NO direct `evdev` access.
     2.  **User Opt-In & Clear Persistent Notification (Mandatory):** `evdev` capture disabled by default. Visible UI indicator when active.
     3.  **Prefer Higher-Level Input Capture (Default):** Use Hyprland IPC (TIM-HyprlandIPCInterface), AT-SPI2 (TIM-ATSPI2Integration), app-specific ingestors as primary sources. `evdev` is supplemental/fallback.
     4.  **Context-Aware Filtering (Best-Effort, Unreliable):** The `EvdevEventProcessorAgent` might *attempt* to suppress logging when password fields are active (correlating with AT-SPI2/Hyprland focus data). **Not a primary security control.**
@@ -102,8 +102,8 @@ This specific implementation pattern was chosen for simplicity and leveraging ex
     *   Reads journal entries (e.g., using `sd-journal` crate).
     *   Filters for entries from `udevmon` or the specific `intercept` job related to keyboard events (e.g., based on `_SYSTEMD_UNIT` or a specific `SYSLOG_IDENTIFIER` set for the `intercept` command).
     *   Parses the JSON line from the journal message.
-    *   Constructs a `raw.events` payload (source `desktop.input.evdev_keyboard`, event_type `key_pressed` or `key_event`).
-    *   Inserts into `raw.events` table.
+    *   Constructs a `core.events` payload (source `desktop.input.evdev_keyboard`, event_type `key_pressed` or `key_event`).
+    *   Inserts into `core.events` table.
 
 This decouples direct `evdev` reading (by the sandboxed plugin) from database interaction (by the `journald_bridge` agent).
 

@@ -1,6 +1,6 @@
 # Sinex CLI - RPC Integration Guide
 
-The Sinex CLI (`exo.py`) has been migrated to use the sinex-host RPC server instead of direct database connections. This provides better security, performance, and maintainability.
+The Sinex CLI (`exo.py`) has been migrated to use the sinex-gateway RPC server instead of direct database connections. This provides better security, performance, and maintainability.
 
 ## Quick Start
 
@@ -144,7 +144,7 @@ Try using --use-db flag for direct database access
 ```
 
 **Resolution**:
-1. Start the sinex-host RPC server
+1. Start the sinex-gateway RPC server
 2. Use `--use-db` flag for direct database access
 3. Check RPC URL configuration
 
@@ -247,7 +247,7 @@ python3 -m pytest test/integration/cli/test_exo_cli.py -v
 ### Common Issues
 
 1. **"RPC server not responding"**
-   - Check if sinex-host is running: `systemctl status sinex-host`
+   - Check if sinex-gateway is running: `systemctl status sinex-gateway`
    - Verify RPC URL: `echo $SINEX_RPC_URL`
    - Test connectivity: `curl http://127.0.0.1:9999` (should return method not allowed)
 
@@ -282,7 +282,7 @@ The RPC integration provides a foundation for:
 - **Web interface**: Browser-based event exploration
 - **API access**: RESTful endpoints for integration
 - **Real-time features**: WebSocket streaming of events
-- **Multi-user access**: Shared sinex-host instance
+- **Multi-user access**: Shared sinex-gateway instance
 - **Advanced caching**: Redis-backed query caching
 
-For the latest updates, see the sinex-host RPC server documentation.
+For the latest updates, see the sinex-gateway RPC server documentation.

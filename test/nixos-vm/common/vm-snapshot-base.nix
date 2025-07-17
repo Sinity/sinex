@@ -72,7 +72,7 @@
       
       if systemctl is-active postgresql > /dev/null; then
         echo "Database connection: $(sudo -u postgres psql -d sinex -t -c 'SELECT 1' 2>/dev/null || echo 'failed')"
-        echo "Event count: $(sudo -u postgres psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events' 2>/dev/null || echo 'unknown')"
+        echo "Event count: $(sudo -u postgres psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events' 2>/dev/null || echo 'unknown')"
       fi
       
       echo "=== Verification Complete ==="

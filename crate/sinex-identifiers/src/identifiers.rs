@@ -50,7 +50,7 @@ crate::define_identifier!(
 );
 
 crate::define_identifier!(
-    AgentName,
+    AutomatonName,
     validators::combine_and(
         validators::not_empty,
         validators::alphanumeric_with_separators("_-")

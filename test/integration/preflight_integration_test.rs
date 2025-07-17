@@ -1,11 +1,12 @@
-//! Preflight Integration Tests - Full pipeline verification testing
+// Preflight Integration Tests - Full pipeline verification testing
 
 use crate::common::prelude::*;
-use serde_json::{json, Value};
+
+use crate::common::prelude::*;
+use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::process::Command;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -27,7 +28,7 @@ async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> TestResul
     // Run each phase individually to properly measure timing
     let phase_names = vec![
         "Database",
-        "Extensions", 
+        "Extensions",
         "Migrations",
         "Configuration",
         "Resources",
@@ -38,18 +39,20 @@ async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> TestResul
     for phase_name in phase_names {
         println!("Running verification phase: {}", phase_name);
         let phase_start = Instant::now();
-        
+
         let result = match phase_name {
             "Database" => sinex_preflight::database::verify_database_connectivity().await,
             "Extensions" => sinex_preflight::database::verify_postgresql_extensions().await,
             "Migrations" => sinex_preflight::database::verify_migration_readiness().await,
-            "Configuration" => sinex_preflight::configuration::verify_configuration_generation().await,
+            "Configuration" => {
+                sinex_preflight::configuration::verify_configuration_generation().await
+            }
             "Resources" => sinex_preflight::resources::verify_system_resources().await,
             "Services" => sinex_preflight::services::verify_service_dependencies().await,
             "Integration" => sinex_preflight::verification::verify_end_to_end_integration().await,
             _ => unreachable!(),
         };
-        
+
         let phase_duration = phase_start.elapsed();
 
         match result {
@@ -178,17 +181,31 @@ async fn test_preflight_pipeline_timeout_handling(ctx: TestContext) -> TestResul
     // Test that each phase completes within reasonable time
     let timeout_duration = Duration::from_secs(30);
 
-    let phases = vec![
-        "Database",
-        "Resources", 
-        "Configuration",
-    ];
+    let phases = vec!["Database", "Resources", "Configuration"];
 
     for phase_name in phases {
         let result = match phase_name {
-            "Database" => timeout(timeout_duration, sinex_preflight::database::verify_database_connectivity()).await,
-            "Resources" => timeout(timeout_duration, sinex_preflight::resources::verify_system_resources()).await,
-            "Configuration" => timeout(timeout_duration, sinex_preflight::configuration::verify_configuration_generation()).await,
+            "Database" => {
+                timeout(
+                    timeout_duration,
+                    sinex_preflight::database::verify_database_connectivity(),
+                )
+                .await
+            }
+            "Resources" => {
+                timeout(
+                    timeout_duration,
+                    sinex_preflight::resources::verify_system_resources(),
+                )
+                .await
+            }
+            "Configuration" => {
+                timeout(
+                    timeout_duration,
+                    sinex_preflight::configuration::verify_configuration_generation(),
+                )
+                .await
+            }
             _ => unreachable!(),
         };
 
@@ -482,9 +499,18 @@ async fn test_error_aggregation_across_phases(_ctx: TestContext) -> TestResult {
     env::set_var("DATABASE_URL", "postgresql://localhost:5432/test_errors");
 
     let phases = vec![
-        ("Configuration", sinex_preflight::configuration::verify_configuration_generation().await),
-        ("Resources", sinex_preflight::resources::verify_system_resources().await),
-        ("Services", sinex_preflight::services::verify_service_dependencies().await),
+        (
+            "Configuration",
+            sinex_preflight::configuration::verify_configuration_generation().await,
+        ),
+        (
+            "Resources",
+            sinex_preflight::resources::verify_system_resources().await,
+        ),
+        (
+            "Services",
+            sinex_preflight::services::verify_service_dependencies().await,
+        ),
     ];
 
     let mut all_messages = Vec::new();

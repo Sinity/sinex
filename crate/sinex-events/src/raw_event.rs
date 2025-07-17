@@ -1,6 +1,6 @@
 //! Raw Event Types and Builders
 //!
-//! This module contains the core RawEvent struct and RawEventBuilder, which are
+//! This module contains the core RawEvent struct, which is
 //! the fundamental building blocks for all events in the Sinex system.
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,12 @@ pub type JsonValue = serde_json::Value;
 
 /// Raw event structure
 ///
-/// This is the canonical event structure used throughout the system.
+/// This is the canonical event structure used throughout the system for both
+/// raw observations and synthesized events. The distinction is made via the
+/// source_event_ids field:
+/// - Raw Event: source_event_ids is None
+/// - Synthesis Event: source_event_ids is Some(Vec<Ulid>)
+///
 /// NOTE: This struct uses ULID directly. When using with SQLX queries,
 /// use type overrides like: `id::uuid as "id: _"` for proper type inference
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -27,6 +32,22 @@ pub struct RawEvent {
     pub ingestor_version: Option<String>,
     pub payload_schema_id: Option<Ulid>,
     pub payload: JsonValue,
+
+    /// Provenance field for event synthesis
+    /// - None: This is a raw event from an ingestor
+    /// - Some(Vec<Ulid>): This is a synthesis event derived from the listed events
+    pub source_event_ids: Option<Vec<Ulid>>,
+
+    /// External source material reference
+    pub source_material_id: Option<Ulid>,
+    pub source_material_offset_start: Option<i64>,
+    pub source_material_offset_end: Option<i64>,
+    /// Immutable anchor byte offset within source material
+    /// Unlike source_material_offset_start, this value never changes
+    pub anchor_byte: Option<i64>,
+
+    /// Array of associated blob IDs (screenshots, recordings, etc.)
+    pub associated_blob_ids: Option<Vec<Ulid>>,
 }
 
 impl RawEvent {
@@ -34,98 +55,35 @@ impl RawEvent {
     pub fn ts_ingest_from_ulid(&self) -> Timestamp {
         self.id.timestamp()
     }
-}
 
-/// Builder for creating RawEvent instances
-pub struct RawEventBuilder {
-    id: Option<Ulid>,
-    source: String,
-    event_type: String,
-    payload: JsonValue,
-    ts_orig: OptionalTimestamp,
-    host: Option<String>,
-    ingestor_version: Option<String>,
-    payload_schema_id: Option<Ulid>,
-}
-
-impl RawEventBuilder {
-    pub fn new(
-        source: impl Into<String>,
-        event_type: impl Into<String>,
-        payload: JsonValue,
-    ) -> Self {
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
-            payload,
-            ts_orig: None,
-            host: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-        }
+    /// Check if this is a raw event (no source events)
+    pub fn is_raw_event(&self) -> bool {
+        self.source_event_ids.is_none()
     }
 
-    pub fn with_orig_timestamp(mut self, ts: Timestamp) -> Self {
-        self.ts_orig = Some(ts);
-        self
+    /// Check if this is a synthesis event (has source events)
+    pub fn is_synthesis_event(&self) -> bool {
+        self.source_event_ids.is_some()
     }
 
-    /// Alias for with_orig_timestamp for compatibility
-    pub fn with_timestamp(self, ts: Timestamp) -> Self {
-        self.with_orig_timestamp(ts)
-    }
-
-    /// Set a specific ID for the event (useful for testing)
-    pub fn with_id(mut self, id: Ulid) -> Self {
-        self.id = Some(id);
-        self
-    }
-
-    pub fn with_host(mut self, host: impl Into<String>) -> Self {
-        self.host = Some(host.into());
-        self
-    }
-
-    pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
-        self.ingestor_version = Some(version.into());
-        self
-    }
-
-    pub fn with_payload_schema_id(mut self, id: Ulid) -> Self {
-        self.payload_schema_id = Some(id);
-        self
-    }
-
-    pub fn build(self) -> RawEvent {
-        let id = self.id.unwrap_or_default();
-        let hostname = self
-            .host
-            .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
-
-        RawEvent {
-            id,
-            source: self.source,
-            event_type: self.event_type,
-            ts_ingest: chrono::Utc::now(),
-            ts_orig: self.ts_orig,
-            host: hostname,
-            ingestor_version: self.ingestor_version,
-            payload_schema_id: self.payload_schema_id,
-            payload: self.payload,
-        }
+    /// Get the source event IDs if this is a synthesis event
+    pub fn get_source_event_ids(&self) -> Option<&[Ulid]> {
+        self.source_event_ids.as_deref()
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EventFactory;
     use serde_json::json;
 
     #[test]
-    fn test_raw_event_builder_basic() {
+    fn test_event_factory_basic() {
         let payload = json!({"key": "value"});
-        let event = RawEventBuilder::new("test-source", "test.event", payload.clone()).build();
+        let factory = EventFactory::new("test-source");
+        let event = factory.create_event("test.event", payload.clone());
 
         assert_eq!(event.source, "test-source");
         assert_eq!(event.event_type, "test.event");
@@ -136,19 +94,19 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_event_builder_with_optional_fields() {
+    fn test_event_factory_with_optional_fields() {
         let payload = json!({"data": 42});
         let test_id = Ulid::new();
         let test_schema_id = Ulid::new();
         let test_timestamp = chrono::Utc::now();
 
-        let event = RawEventBuilder::new("fs", "file.created", payload.clone())
-            .with_id(test_id)
-            .with_host("test-host")
-            .with_ingestor_version("1.0.0")
-            .with_payload_schema_id(test_schema_id)
-            .with_orig_timestamp(test_timestamp)
-            .build();
+        let factory = EventFactory::new("fs");
+        let mut event = factory.create_event("file.created", payload.clone());
+        event.id = test_id;
+        event.host = "test-host".to_string();
+        event.ingestor_version = Some("1.0.0".to_string());
+        event.payload_schema_id = Some(test_schema_id);
+        event.ts_orig = Some(test_timestamp);
 
         assert_eq!(event.id, test_id);
         assert_eq!(event.source, "fs");
@@ -161,12 +119,12 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_event_timestamp_from_ulid() {
+    fn test_event_factory_timestamp_from_ulid() {
         let test_id = Ulid::new();
         let payload = json!({"test": true});
-        let event = RawEventBuilder::new("test", "test.event", payload)
-            .with_id(test_id)
-            .build();
+        let factory = EventFactory::new("test");
+        let mut event = factory.create_event("test.event", payload);
+        event.id = test_id;
 
         // The ts_ingest_from_ulid should return the same timestamp as the ULID
         let ulid_timestamp = event.ts_ingest_from_ulid();
@@ -175,9 +133,10 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_event_serialization() {
+    fn test_event_factory_serialization() {
         let payload = json!({"serialization": "test"});
-        let event = RawEventBuilder::new("serialization", "test.serialize", payload).build();
+        let factory = EventFactory::new("serialization");
+        let event = factory.create_event("test.serialize", payload);
 
         // Test serialization
         let serialized = serde_json::to_string(&event).expect("Should serialize");

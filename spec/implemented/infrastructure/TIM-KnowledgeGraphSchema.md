@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 85% (Tables defined with embeddings support, indexes created)
-**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `core.artifacts`, `core.tags`, `raw.events` tables
+**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `core.artifacts`, `core.tags`, `core.events` tables
 **Blocks**: Entity resolution, relationship discovery, knowledge graph queries, semantic search, AI-assisted knowledge extraction
 
 ## MVP Specification
@@ -30,7 +30,7 @@
 - [x] Trigger setup for automatic timestamp updates
 - [x] JSONB properties support for flexible entity metadata
 - [x] Vector similarity indexes (HNSW) for semantic search
-- [ ] Foreign key constraints to `core.artifacts`, `core.tags`, `raw.events`
+- [ ] Foreign key constraints to `core.artifacts`, `core.tags`, `core.events`
 - [ ] Entity management API (create, merge, link, resolve duplicates)
 - [ ] Basic graph traversal and path-finding queries
 - [ ] Entity extraction agents for automatic knowledge graph population
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS core.entities (
     -- Optional Foreign Keys to link this entity to its primary source if it represents another core object
     source_artifact_id      ULID NULLABLE, -- REFERENCES core.artifacts(artifact_id) ON DELETE SET NULL, -- Add FK after core.artifacts is defined
     source_tag_id           ULID NULLABLE, -- REFERENCES core.tags(tag_id) ON DELETE SET NULL,           -- Add FK after core.tags is defined
-    source_raw_event_id     ULID NULLABLE, -- REFERENCES raw.events(id) ON DELETE SET NULL,              -- Add FK after raw.events is defined (e.g., for derived entities like activity_segment)
+    source_raw_event_id     ULID NULLABLE, -- REFERENCES core.events(id) ON DELETE SET NULL,              -- Add FK after core.events is defined (e.g., for derived entities like activity_segment)
 
     created_at_ts_orig      TIMESTAMPTZ NULLABLE,   -- Original creation timestamp from source, if applicable
     last_event_ts_orig      TIMESTAMPTZ NULLABLE,   -- Timestamp of the last raw.event directly relevant to this entity's concept
@@ -116,7 +116,7 @@ FOR EACH ROW EXECUTE FUNCTION core.set_updated_at_trigger_func_generic();
 -- Add FKs after referenced tables are confirmed to exist
 -- ALTER TABLE core.entities ADD CONSTRAINT fk_entities_source_artifact FOREIGN KEY (source_artifact_id) REFERENCES core.artifacts(artifact_id) ON DELETE SET NULL;
 -- ALTER TABLE core.entities ADD CONSTRAINT fk_entities_source_tag FOREIGN KEY (source_tag_id) REFERENCES core.tags(tag_id) ON DELETE SET NULL;
--- ALTER TABLE core.entities ADD CONSTRAINT fk_entities_source_event FOREIGN KEY (source_raw_event_id) REFERENCES raw.events(id) ON DELETE SET NULL;
+-- ALTER TABLE core.entities ADD CONSTRAINT fk_entities_source_event FOREIGN KEY (source_raw_event_id) REFERENCES core.events(id) ON DELETE SET NULL;
 ```
 
 ## 2. `core.entity_relations` Table

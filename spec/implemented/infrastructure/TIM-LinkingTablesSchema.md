@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 90% (Tables defined, indexes created, triggers configured)
-**Dependencies**: `pgx_ulid` extension, `raw.events`, `core.artifacts`, `core.entities` tables
+**Dependencies**: `pgx_ulid` extension, `core.events`, `core.artifacts`, `core.entities` tables
 **Blocks**: Link resolution agents, relationship discovery, cross-reference queries
 
 ## MVP Specification
@@ -34,13 +34,13 @@
 - [ ] Tests for relationship operations and queries
 - [ ] Performance optimization for large-scale link traversal
 
-*   **Purpose:** Provides the canonical Data Definition Language (DDL) for tables that explicitly store links or relationships between Exocortex objects: `event_relations` (for semantic links involving `raw.events`) and `core_artifact_links` (primarily for links parsed from the content of `core.artifacts` like PKM notes).
+*   **Purpose:** Provides the canonical Data Definition Language (DDL) for tables that explicitly store links or relationships between Exocortex objects: `event_relations` (for semantic links involving `core.events`) and `core_artifact_links` (primarily for links parsed from the content of `core.artifacts` like PKM notes).
 *   **Source:** Derived from original Vision Document Appendix A and conceptual descriptions in Vision Part V.3.1.
-*   **Dependencies:** `pgx_ulid` extension. Relies on `raw.events`, `core.artifacts`, `core.entities` tables being defined. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.
+*   **Dependencies:** `pgx_ulid` extension. Relies on `core.events`, `core.artifacts`, `core.entities` tables being defined. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.
 
 ## 1. `event_relations` Table
 
-Stores rich, typed, semantic links where at least one participant is typically a `raw.events` entry. It can also link events to artifacts or entities, or artifacts to other artifacts/entities if the relation is primarily event-driven or contextually derived rather than embedded in content.
+Stores rich, typed, semantic links where at least one participant is typically a `core.events` entry. It can also link events to artifacts or entities, or artifacts to other artifacts/entities if the relation is primarily event-driven or contextually derived rather than embedded in content.
 
 ```sql
 CREATE TABLE IF NOT EXISTS event_relations (

@@ -18,11 +18,13 @@ rand = { workspace = true }
 lazy_static = "1.4"
 proptest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 
 [features]
 default = ["sqlx"]
 sqlx = ["dep:sqlx"]
 arbitrary = ["dep:proptest", "dep:serde_json"]
+schema = ["dep:schemars"]
 
 [dev-dependencies]
 proptest = { workspace = true }

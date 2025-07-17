@@ -1,9 +1,10 @@
 # ADR-001: Primary Key Strategy for Core Tables
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11 (Updated to reflect `pgx_ulid` adoption)
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
-    The Sinnix Exocortex requires a robust and efficient primary key strategy for its core database tables, especially for high-volume, time-ordered data like `raw.events`. The chosen strategy must address:
+    The Sinnix Exocortex requires a robust and efficient primary key strategy for its core database tables, especially for high-volume, time-ordered data like `core.events`. The chosen strategy must address:
     1.  **Index Efficiency:** Minimize B-tree index bloat and fragmentation.
     2.  **Time-Ordering:** Keys should be time-sortable.
     3.  **Global Uniqueness:** Support client-side generation and potential distribution.

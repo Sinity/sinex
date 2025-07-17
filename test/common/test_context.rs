@@ -1,36 +1,43 @@
-//! Unified test context for Sinex tests
-//!
-//! Provides a comprehensive testing context that encapsulates:
-//! - Database connection using the universal pool system
-//! - Event builder factories for consistent event creation
-//! - Timing helpers to eliminate flaky sleeps
-//! - Common test utilities in one ergonomic interface
-//!
-//! # Usage
-//! ```rust
-//! use crate::common::test_context::TestContext;
-//!
-//! #[sinex_test]
-//! async fn my_test(ctx: TestContext) -> TestResult {
-//!     let event = ctx.filesystem_event("/test/file");
-//!     ctx.insert_event(&event).await?;
-//!     ctx.wait_for_event_count(1).await?;
-//!     Ok(())
-//! }
-//! ```
+// Unified test context for Sinex tests
+//
+// Provides a comprehensive testing context that encapsulates:
+// - Database connection using the universal pool system
+// - Event builder factories for consistent event creation
+// - Timing helpers to eliminate flaky sleeps
+// - Common test utilities in one ergonomic interface
+//
+// # Usage
+// ```rust
+// use crate::common::test_context::TestContext;
+//
+// #[sinex_test]
+// async fn my_test(ctx: TestContext) -> TestResult {
+//     let event = ctx.filesystem_event("/test/file");
+//     ctx.insert_event(&event).await?;
+//     ctx.wait_for_event_count(1).await?;
+//     Ok(())
+// }
+// ```
 
-use crate::common::database_pool::TestDatabase;
-// Event builders moved to sinex-core
-use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+
 use crate::common::prelude::*;
+use crate::common::database_pool::TestDatabase;
+use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+use sinex_core_types::DbPoolRef;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
-    wait_for_work_queue_count,
 };
 use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use redis::aio::MultiplexedConnection;
+use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle, StreamMessage};
+use sinex_satellite_sdk::checkpoint::CheckpointState;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+
+// Event builders moved to sinex-events
 
 /// Event builder factory for fluent API access
 pub struct EventBuilderFactory;
@@ -105,16 +112,18 @@ pub struct TestContext {
     start_time: Instant,
     /// Track events created in this test
     created_events: Arc<Mutex<Vec<Ulid>>>,
+    /// Redis connection for stream testing
+    redis_client: Option<redis::Client>,
 }
 
 impl TestContext {
     /// Create a new test context with default configuration
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> AnyhowResult<Self> {
         Self::with_config(TestConfig::default()).await
     }
 
     /// Create a new test context with custom configuration
-    pub async fn with_config(config: TestConfig) -> Result<Self> {
+    pub async fn with_config(config: TestConfig) -> AnyhowResult<Self> {
         let db = crate::common::database_pool::acquire_test_database().await?;
 
         Ok(Self {
@@ -122,21 +131,23 @@ impl TestContext {
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            redis_client: None,
         })
     }
 
     /// Create a test context with a managed database (used by #[sinex_test])
-    pub async fn with_managed_database(db: TestDatabase, config: TestConfig) -> Result<Self> {
+    pub async fn with_managed_database(db: TestDatabase, config: TestConfig) -> AnyhowResult<Self> {
         Ok(Self {
             db,
             config,
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            redis_client: None,
         })
     }
 
     /// Get the database pool
-    pub fn pool(&self) -> &DbPool {
+    pub fn pool(&self) -> DbPoolRef<'_> {
         self.db.pool()
     }
 
@@ -171,11 +182,51 @@ impl TestContext {
         &self.config
     }
 
+    /// Get a temporary work directory for this test
+    pub fn work_dir(&self) -> std::path::PathBuf {
+        let dir = std::path::PathBuf::from("/tmp/sinex-test").join(&self.config.test_name);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    // ===== Redis Operations =====
+
+    /// Get or create Redis connection
+    pub async fn redis(&self) -> AnyhowResult<MultiplexedConnection> {
+        let client = match &self.redis_client {
+            Some(client) => client.clone(),
+            None => {
+                let redis_url = std::env::var("REDIS_URL")
+                    .unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string());
+                redis::Client::open(redis_url)?
+            }
+        };
+        Ok(client.get_multiplexed_async_connection().await?)
+    }
+
+    /// Get Redis client (for compatibility with test code)
+    pub fn redis_client(&self) -> AnyhowResult<redis::Client> {
+        match &self.redis_client {
+            Some(client) => Ok(client.clone()),
+            None => {
+                let redis_url = std::env::var("REDIS_URL")
+                    .unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string());
+                Ok(redis::Client::open(redis_url)?)
+            }
+        }
+    }
+
+    /// Initialize Redis client for testing
+    pub fn with_redis_url(mut self, redis_url: &str) -> AnyhowResult<Self> {
+        self.redis_client = Some(redis::Client::open(redis_url)?);
+        Ok(self)
+    }
+
     // ===== Database Operations =====
 
     /// Insert an event into the database
     pub async fn insert_event(&self, event: &RawEvent) -> TestResult {
-        sinex_db::events::insert_event_with_validator(self.pool(), event, None).await?;
+        sinex_db::insert_event_with_validator(self.pool(), event, None).await?;
         self.created_events.lock().await.push(event.id);
         Ok(())
     }
@@ -189,28 +240,18 @@ impl TestContext {
     }
 
     /// Query recent events
-    pub async fn query_events(&self) -> Result<Vec<DbRawEvent>> {
+    pub async fn query_events(&self) -> AnyhowResult<Vec<DbRawEvent>> {
         crate::common::get_recent_events(self.pool(), 1000).await
     }
 
     /// Query events by source
-    pub async fn query_events_by_source(&self, source: &str) -> Result<Vec<DbRawEvent>> {
+    pub async fn query_events_by_source(&self, source: &str) -> AnyhowResult<Vec<DbRawEvent>> {
         crate::common::get_events_by_type(self.pool(), source, 1000).await
     }
 
     /// Get count of events
-    pub async fn event_count(&self) -> Result<i64> {
-        // Debug: verify which database we're querying
-        let db_name = sqlx::query_scalar!("SELECT current_database()")
-            .fetch_one(self.pool())
-            .await?
-            .unwrap_or_else(|| "unknown".to_string());
-        eprintln!("  [event_count] Querying database: {}", db_name);
-
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
-            .fetch_one(self.pool())
-            .await?;
-        Ok(count.unwrap_or(0))
+    pub async fn event_count(&self) -> AnyhowResult<i64> {
+        EventQueries::count_all_events(self.pool()).await
     }
 
     /// Get count of events created in this test
@@ -219,35 +260,8 @@ impl TestContext {
     }
 
     /// Get an event by ID
-    pub async fn get_event_by_id(&self, id: Ulid) -> Result<Option<DbRawEvent>> {
-        let event = sqlx::query!(
-            r#"SELECT 
-                id::uuid as "id!",
-                source,
-                event_type,
-                payload,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id::uuid
-            FROM raw.events WHERE id::uuid = $1"#,
-            id.to_uuid()
-        )
-        .fetch_optional(self.pool())
-        .await?
-        .map(|row| DbRawEvent {
-            id: uuid_to_ulid(row.id),
-            source: row.source,
-            event_type: row.event_type,
-            payload: row.payload,
-            ts_ingest: row.ts_ingest.expect("ts_ingest should not be null"),
-            ts_orig: row.ts_orig,
-            host: row.host,
-            ingestor_version: row.ingestor_version,
-            payload_schema_id: row.payload_schema_id.map(uuid_to_ulid),
-        });
-        Ok(event)
+    pub async fn get_event_by_id(&self, id: Ulid) -> AnyhowResult<Option<DbRawEvent>> {
+        EventQueries::get_event_by_id(self.pool(), id).await
     }
 
     // ===== Event Building =====
@@ -300,10 +314,11 @@ impl TestContext {
     pub async fn wait_for_event_count(&self, expected: usize) -> TestResult {
         wait_for_event_count(
             self.pool(),
-            expected as i64,
-            self.config.default_timeout.as_secs(),
+            expected,
+            self.config.default_timeout,
         )
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 
@@ -324,13 +339,12 @@ impl TestContext {
     pub async fn wait_for_condition<F, Fut>(&self, condition: F) -> TestResult
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<bool>>,
+        Fut: std::future::Future<Output = AnyhowResult<bool>>,
     {
         wait_for_condition_or_timeout(condition, self.config.default_timeout.as_secs())
             .await
             .map_err(|e| {
-                Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, e))
-                    as Box<dyn std::error::Error>
+                std::io::Error::new(std::io::ErrorKind::TimedOut, e).into()
             })
     }
 
@@ -343,20 +357,13 @@ impl TestContext {
         // If events are still being created, wait a bit more
         let new_count = self.event_count().await?;
         if new_count > initial_count {
-            // Use a more robust approach for closure capture
-            let pool = self.pool().clone();
             let final_count = new_count;
-
-            let pool_clone = pool.clone();
             let mut attempt = 0;
             let max_attempts = 10;
 
             while attempt < max_attempts {
                 tokio::time::sleep(Duration::from_millis(5)).await;
-                let count = sqlx::query_scalar!("SELECT COUNT(*) FROM raw.events")
-                    .fetch_one(&pool_clone)
-                    .await
-                    .map(|c| c.unwrap_or(0))
+                let count = EventQueries::count_all_events(self.pool()).await
                     .unwrap_or(0);
 
                 if count == final_count {
@@ -369,29 +376,138 @@ impl TestContext {
         Ok(())
     }
 
-    /// Wait for work queue to reach expected count
-    pub async fn wait_for_work_queue(&self, expected: usize) -> TestResult {
-        wait_for_work_queue_count(
-            self.pool(),
-            expected as i64,
-            self.config.default_timeout.as_secs(),
-        )
-        .await?;
-        Ok(())
+    /// Wait for automaton checkpoint to reach expected count
+    pub async fn wait_for_automaton_checkpoint(
+        &self,
+        automaton_name: &str,
+        expected_count: u64,
+    ) -> TestResult {
+        use std::time::Instant;
+        let timeout = self.config.default_timeout;
+        let start = Instant::now();
+        
+        loop {
+            let checkpoint = CheckpointQueries::get_latest(self.pool(), automaton_name)
+                .await?
+                .map(|cp| cp.processed_count);
+            
+            if let Some(count) = checkpoint {
+                if count >= expected_count {
+                    return Ok(());
+                }
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for automaton {} to reach count {}",
+                        automaton_name, expected_count
+                    ),
+                ).into());
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
-    /// Wait for work queue to be empty
-    pub async fn wait_for_work_queue_empty(&self) -> TestResult {
-        self.wait_for_work_queue(0).await
+    /// Wait for Redis stream to contain expected number of messages
+    pub async fn wait_for_redis_stream_length(
+        &self,
+        stream_key: &str,
+        expected: usize,
+    ) -> TestResult {
+        use redis::AsyncCommands;
+        
+        let mut conn = self.redis().await?;
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let len: usize = conn.xlen::<_, usize>(stream_key).await.unwrap_or(0);
+            if len >= expected {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for {} messages in Redis stream {}, got {}",
+                        expected, stream_key, len
+                    ),
+                ).into());
+            }
+            
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Publish event to Redis stream
+    pub async fn publish_to_redis_stream(
+        &self,
+        stream_key: &str,
+        event: &RawEvent,
+    ) -> AnyhowResult<String> {
+        use redis::AsyncCommands;
+        
+        let mut conn = self.redis().await?;
+        let event_json = serde_json::to_string(event)?;
+        
+        let message_id: String = conn
+            .xadd(
+                stream_key,
+                "*",
+                &[
+                    ("event", event_json),
+                    ("source", event.source.clone()),
+                    ("event_type", event.event_type.clone()),
+                    ("id", event.id.to_string()),
+                ],
+            )
+            .await?;
+            
+        Ok(message_id)
+    }
+
+    /// Consume from Redis stream using consumer group
+    pub async fn consume_from_redis_stream(
+        &self,
+        stream_key: &str,
+        group_name: &str,
+        consumer_name: &str,
+    ) -> AnyhowResult<Vec<StreamMessage>> {
+        use redis::AsyncCommands;
+        
+        let mut conn = self.redis().await?;
+        
+        // Ensure consumer group exists
+        let _: Result<String, redis::RedisError> = conn
+            .xgroup_create(stream_key, group_name, "$")
+            .await;
+        
+        // Use xread for simplified testing since xreadgroup signature is different
+        let result: Vec<(String, Vec<(String, String)>)> = conn
+            .xread(&[(stream_key, "0")], &[])
+            .await?;
+        
+        let mut messages = Vec::new();
+        for (_stream, stream_messages) in result {
+            for (id, fields) in stream_messages {
+                messages.push(StreamMessage { id, fields: fields.into_iter().collect() });
+            }
+        }
+        
+        Ok(messages)
     }
 
     // ===== Test Helpers =====
 
     /// Run a test step with timing and logging
-    pub async fn run_step<F, Fut, T>(&self, step_name: &str, f: F) -> Result<T>
+    pub async fn run_step<F, Fut, T>(&self, step_name: &str, f: F) -> AnyhowResult<T>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
+        Fut: std::future::Future<Output = AnyhowResult<T>>,
     {
         if self.config.verbose {
             println!("[{}] Starting: {}", self.test_name(), step_name);
@@ -427,7 +543,7 @@ impl TestContext {
                 .with_context("actual_count", count)
                 .with_context("test_context", &self.config.test_name)
                 .build();
-            return Err(Box::new(error));
+            return Err(error.into());
         }
         Ok(())
     }
@@ -441,7 +557,7 @@ impl TestContext {
                     .with_event_id(id)
                     .with_context("test_context", &self.config.test_name)
                     .build();
-                Err(Box::new(error))
+                Err(error.into())
             }
         }
     }
@@ -455,33 +571,36 @@ impl TestContext {
                 .with_context("actual_count", actual)
                 .with_context("test_context", &self.config.test_name)
                 .build();
-            return Err(Box::new(error));
+            return Err(error.into());
         }
         Ok(())
     }
 
-    /// Assert work queue is empty
-    pub async fn assert_work_queue_empty(&self) -> TestResult {
-        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM sinex_schemas.work_queue")
-            .fetch_one(self.pool())
+    /// Assert that all automata have completed processing
+    /// Verifies that all events have been processed by checking checkpoint state
+    pub async fn assert_all_automata_idle(&self) -> TestResult {
+        // Check if any automata are currently processing using centralized queries
+        let active_count = CheckpointQueries::count_active(self.pool(), Duration::from_secs(5))
             .await?
             .unwrap_or(0);
-
-        if count != 0 {
-            let error = CoreError::validation("Work queue is not empty")
-                .with_context("actual_count", count)
+        
+        if active_count > 0 {
+            let error = CoreError::validation("Automata still active")
+                .with_context("active_count", active_count)
                 .with_context("test_context", &self.config.test_name)
                 .build();
-            return Err(Box::new(error));
+            return Err(error.into());
         }
+        
         Ok(())
     }
+
 
     /// Assert that an event was inserted successfully with context
     pub async fn assert_event_inserted(
         &self,
         event: &RawEvent,
-    ) -> Result<Ulid, Box<dyn std::error::Error>> {
+    ) -> AnyhowResult<Ulid> {
         assert_event_inserted_with_context(self.pool(), event, &self.config.test_name).await
     }
 
@@ -530,7 +649,7 @@ impl TestContext {
         &self,
         source: &str,
         count: usize,
-    ) -> Result<Vec<Ulid>, Box<dyn std::error::Error>> {
+    ) -> AnyhowResult<Vec<Ulid>> {
         let events = self.create_event_batch(source, count);
         let mut ids = Vec::new();
 
@@ -565,10 +684,161 @@ impl TestContext {
             .timestamp(timestamp)
             .build()
     }
+
+    // ===== Satellite Architecture Support =====
+
+    /// Start a test ingestd server
+    pub async fn start_test_ingestd(&self) -> AnyhowResult<TestIngestdHandle> {
+        crate::common::satellite_test_utils::start_test_ingestd_with_config(
+            self,
+            crate::common::satellite_test_utils::TestIngestdConfig::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Start a test satellite with configuration
+    pub async fn start_test_satellite(
+        &self,
+        config: sinex_satellite_sdk::config::SatelliteConfig,
+    ) -> AnyhowResult<TestSatelliteHandle> {
+        crate::common::satellite_test_utils::TestSatelliteHandle::start(config, self.pool().clone())
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Start a test automaton of specified type
+    pub async fn start_test_automaton(&self, automaton_type: &str) -> AnyhowResult<TestAutomatonHandle> {
+        crate::common::satellite_test_utils::TestAutomatonHandle::start(
+            automaton_type,
+            self.pool().clone(),
+            self.redis().await?,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Wait for checkpoint to reach expected progress
+    pub async fn wait_for_checkpoint_progress(
+        &self,
+        automaton_name: &str,
+        expected_count: u64,
+    ) -> TestResult {
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let checkpoint = CheckpointQueries::get_latest(self.pool(), automaton_name)
+                .await?
+                .map(|cp| cp.processed_count);
+            
+            if let Some(count) = checkpoint {
+                if count >= expected_count {
+                    return Ok(());
+                }
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for automaton {} to reach count {}",
+                        automaton_name, expected_count
+                    ),
+                ).into());
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Verify automaton checkpoint state
+    pub async fn verify_checkpoint(
+        &self,
+        automaton_name: &str,
+    ) -> AnyhowResult<CheckpointState> {
+        let checkpoint = CheckpointQueries::get_latest(self.pool(), automaton_name)
+            .await?;
+
+        match checkpoint {
+            Some(row) => {
+                // Use the unified checkpoint format if available (version 2+)
+                if row.checkpoint_version >= 2 && row.checkpoint_data.is_some() {
+                    let checkpoint_data = row.checkpoint_data.unwrap();
+                    let checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint = 
+                        serde_json::from_value(checkpoint_data).unwrap_or(
+                            sinex_satellite_sdk::stream_processor::Checkpoint::None
+                        );
+                    
+                    Ok(sinex_satellite_sdk::checkpoint::CheckpointState {
+                        checkpoint,
+                        processed_count: row.processed_count as u64,
+                        last_activity: row.last_activity,
+                        data: row.state_data,
+                        version: row.checkpoint_version as u32,
+                    })
+                } else {
+                    // Legacy format (version 1) - convert Redis Stream message ID
+                    let checkpoint = if let Some(id) = row.last_processed_id {
+                        sinex_satellite_sdk::stream_processor::Checkpoint::Stream {
+                            message_id: id,
+                            event_id: None,
+                        }
+                    } else {
+                        sinex_satellite_sdk::stream_processor::Checkpoint::None
+                    };
+                    
+                    Ok(sinex_satellite_sdk::checkpoint::CheckpointState {
+                        checkpoint,
+                        processed_count: row.processed_count as u64,
+                        last_activity: row.last_activity,
+                        data: row.state_data,
+                        version: row.checkpoint_version as u32,
+                    })
+                }
+            },
+            None => Ok(CheckpointState::default()),
+        }
+    }
+
+
+    /// Wait for event type to appear in database
+    pub async fn wait_for_event_type(&self, event_type: &str, count: usize) -> TestResult {
+        let timeout = self.config.default_timeout;
+        let start = std::time::Instant::now();
+        
+        loop {
+            let query = QueryBuilder::select()
+                .where_clause("event_type = $1")
+                .params(vec![QueryParam::String(event_type.to_string())])
+                .build();
+                
+            let actual_count = EventQueries::count_events_with_query(self.pool(), &query)
+                .await? as usize;
+            
+            if actual_count >= count {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Timeout waiting for {} events of type {}, got {}",
+                        count, event_type, actual_count
+                    ),
+                ).into());
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 // Re-export for convenience
 pub use sinex_db::RawEvent as DbRawEvent;
+
+// Import needed types for satellite architecture
 
 /// Performance metrics for test execution
 #[derive(Debug, Clone)]

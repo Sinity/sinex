@@ -30,7 +30,7 @@ Neovim is a primary power-user interface for the Exocortex (Vision Doc Part V.1.
     *   `$/exocortex/resolveLink`: `params: {uri: DocumentUri, position: Position}`. LS returns resolved target info (`artifact_id`, title, preview).
     *   `$/exocortex/getBacklinks`: `params: {uri: DocumentUri}`. LS returns list of backlinks.
     *   `$/exocortex/getRelatedArtifacts`: `params: {uri: DocumentUri, queryText?: string}`. LS returns semantically similar or contextually related items.
-    *   `$/exocortex/logRawEvent`: `params: {source: string, event_type: string, payload: object}`. LS writes event to `raw.events`.
+    *   `$/exocortex/logRawEvent`: `params: {source: string, event_type: string, payload: object}`. LS writes event to `core.events`.
     *   `$/exocortex/pkmNoteLoad`: `params: {artifact_id: string}`. LS returns Yjs state vector / initial Markdown for note.
     *   `$/exocortex/pkmNoteSaveYjsUpdates`: `params: {artifact_id: string, yjs_updates_b64: string[]}`. LS persists Yjs updates.
 *   **Custom LS Notifications (LS sends, Neovim plugin handles):**

@@ -1,17 +1,17 @@
 use crate::common::prelude::*;
+use sinex_events::{EventFactory, services, event_types};
+use crate::common::mocks::EventSourceContext;
 use crate::common::resources;
 use crate::common::timing_optimization::{EventCounter, TestSynchronizer};
-use sinex_core::{CoreError, EventSource, EventSourceContext};
-use sinex_db::models::QueueStatus;
+use sinex_core_types::{CoreError, EventSource, EventSourceContext};
+// QueueStatus removed - work queue architecture replaced by hotlog streams
 use sqlx::PgPool;
-use std::collections::VecDeque;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::fs::OpenOptions;
 use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 
 // =============================================================================
@@ -30,8 +30,8 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event =
-                RawEventBuilder::new("fast_producer", "test.event", json!({"test": true})).build();
+            let event = EventFactory::new("fast_producer")
+                .create_event("test.event", json!({"test": true}));
 
             gen_count.fetch_add(1, Ordering::Relaxed);
 
@@ -117,18 +117,17 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
         type Config = ();
         const SOURCE_NAME: &'static str = "crashing_source";
 
-        async fn initialize(_ctx: EventSourceContext) -> Result<Self, CoreError> {
+        async fn initialize(_ctx: EventSourceContext) -> AnyhowResult<Self, CoreError> {
             Ok(Self {
                 crash_after: 50,
                 events_sent: Arc::new(AtomicU64::new(0)),
             })
         }
 
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<(), CoreError> {
             for i in 0..100 {
-                let event =
-                    RawEventBuilder::new("crashing", "test", json!({"test": true, "seq": i}))
-                        .build();
+                let event = EventFactory::new("crashing")
+                    .create_event("test", json!({"test": true, "seq": i}));
                 if tx.send(event).await.is_err() {
                     break;
                 }
@@ -215,7 +214,7 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
         type Config = serde_json::Value;
         const SOURCE_NAME: &'static str = "configurable";
 
-        async fn initialize(source_ctx: EventSourceContext) -> Result<Self, CoreError> {
+        async fn initialize(source_ctx: EventSourceContext) -> AnyhowResult<Self, CoreError> {
             let interval_ms = source_ctx
                 .config
                 .get("interval_ms")
@@ -230,10 +229,10 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
             })
         }
 
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<(), CoreError> {
             loop {
-                let event =
-                    RawEventBuilder::new("test", "config.test", json!({"test": true})).build();
+                let event = EventFactory::new("test")
+                    .create_event("config.test", json!({"test": true}));
                 if tx.send(event).await.is_err() {
                     return Ok(());
                 }
@@ -536,7 +535,7 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
 
 /// Test transaction rollback scenarios
 #[sinex_test]
-async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyhow::Error> {
+async fn test_transaction_rollback_behavior(ctx: TestContext) -> AnyhowResult<(), anyhow::Error> {
     let successful_commits = Arc::new(AtomicU64::new(0));
     let rollbacks = Arc::new(AtomicU64::new(0));
 
@@ -598,10 +597,10 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
         pool: &DbPool,
         counter: &Arc<AtomicU64>,
         errors: &Arc<AtomicU64>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> AnyhowResult<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(pool),
+            sqlx::query("SELECT 1").fetch_one(&pool),
         )
         .await
         {
@@ -686,7 +685,7 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
         data: &[u8],
         attempts: &Arc<AtomicU64>,
         failures: &Arc<AtomicU64>,
-    ) -> Result<(), std::io::Error> {
+    ) -> AnyhowResult<(), std::io::Error> {
         attempts.fetch_add(1, Ordering::Relaxed);
 
         let file_path = path.join(format!("event_{}.dat", attempts.load(Ordering::Relaxed)));
@@ -758,7 +757,7 @@ async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
         path: &PathBuf,
         attempts: &Arc<AtomicU64>,
         denials: &Arc<AtomicU64>,
-    ) -> Result<String, std::io::Error> {
+    ) -> AnyhowResult<String, std::io::Error> {
         attempts.fetch_add(1, Ordering::Relaxed);
 
         match fs::read_to_string(path) {
@@ -851,7 +850,7 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
         delay_ms: u64,
         timeout_ms: u64,
         stats: &TimeoutStats,
-    ) -> Result<(), String> {
+    ) -> AnyhowResult<(), String> {
         stats.record_attempt();
 
         let operation = async {
@@ -1191,127 +1190,3 @@ async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test work item recovery from orphaned workers
-#[sinex_test]
-async fn test_orphaned_work_recovery(_ctx: TestContext) -> TestResult {
-    #[derive(Debug, Clone)]
-    struct WorkItem {
-        id: Ulid,
-        assigned_to: Option<String>,
-        status: QueueStatus,
-        attempts: u32,
-        last_attempt: Option<Instant>,
-    }
-
-    let work_queue = Arc::new(tokio::sync::RwLock::new(vec![
-        WorkItem {
-            id: Ulid::new(),
-            assigned_to: None,
-            status: QueueStatus::Pending,
-            attempts: 0,
-            last_attempt: None,
-        },
-        WorkItem {
-            id: Ulid::new(),
-            assigned_to: None,
-            status: QueueStatus::Pending,
-            attempts: 0,
-            last_attempt: None,
-        },
-        WorkItem {
-            id: Ulid::new(),
-            assigned_to: None,
-            status: QueueStatus::Pending,
-            attempts: 0,
-            last_attempt: None,
-        },
-    ]));
-
-    let queue_clone = work_queue.clone();
-    let orphan_worker = tokio::spawn(async move {
-        {
-            let mut queue = queue_clone.write().await;
-            for item in queue.iter_mut().take(2) {
-                item.assigned_to = Some("orphan-worker".to_string());
-                item.status = QueueStatus::Processing;
-                item.last_attempt = Some(Instant::now());
-                item.attempts += 1;
-            }
-        }
-
-        panic!("Simulated worker crash!");
-    });
-
-    let queue_clone = work_queue.clone();
-    let recovery_worker = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let orphan_timeout = Duration::from_millis(800);
-        let mut recovered = 0;
-
-        {
-            let mut queue = queue_clone.write().await;
-            for item in queue.iter_mut() {
-                if let Some(last_attempt) = item.last_attempt {
-                    if item.status == QueueStatus::Processing
-                        && last_attempt.elapsed() > orphan_timeout
-                    {
-                        println!("Recovering orphaned work item: {:?}", item.id);
-                        item.status = QueueStatus::Pending;
-                        item.assigned_to = None;
-                        recovered += 1;
-                    }
-                }
-            }
-        }
-
-        {
-            let mut queue = queue_clone.write().await;
-            for item in queue.iter_mut() {
-                if item.status == QueueStatus::Pending {
-                    item.assigned_to = Some("recovery-worker".to_string());
-                    item.status = QueueStatus::Processing;
-                    item.last_attempt = Some(Instant::now());
-                }
-            }
-        }
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        {
-            let mut queue = queue_clone.write().await;
-            for item in queue.iter_mut() {
-                if item.assigned_to == Some("recovery-worker".to_string()) {
-                    item.status = QueueStatus::Succeeded;
-                }
-            }
-        }
-
-        recovered
-    });
-
-    let _ = orphan_worker.await;
-    let recovered_count = recovery_worker.await.unwrap();
-
-    let queue = work_queue.read().await;
-    let completed = queue
-        .iter()
-        .filter(|item| item.status == QueueStatus::Succeeded)
-        .count();
-    let orphaned = queue
-        .iter()
-        .filter(|item| item.assigned_to == Some("orphan-worker".to_string()))
-        .count();
-
-    println!("\nWork recovery test results:");
-    println!("  Total items: {}", queue.len());
-    println!("  Recovered items: {}", recovered_count);
-    println!("  Completed items: {}", completed);
-    println!("  Still orphaned: {}", orphaned);
-
-    pretty_assertions::assert_eq!(recovered_count, 2, "Should have recovered 2 orphaned items");
-    pretty_assertions::assert_eq!(completed, 3, "All items should eventually complete");
-    pretty_assertions::assert_eq!(orphaned, 0, "No items should remain orphaned");
-
-    Ok(())
-}

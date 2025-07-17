@@ -127,7 +127,7 @@ For keyword-based search, approximating BM25-like ranking.
     -- GIN fastupdate=on (default) is generally fine for dynamic tables.
     -- Consider fastupdate=off for append-heavy tables if index size/query speed is paramount over insert speed.
     ```
-*   Similar `tsvector` columns and GIN indexes can be created for `raw.events.payload` (if indexing specific JSONB text fields) or `core.entities` (for `canonical_label`, `description`).
+*   Similar `tsvector` columns and GIN indexes can be created for `core.events.payload` (if indexing specific JSONB text fields) or `core.entities` (for `canonical_label`, `description`).
 
 ### 3.3. Ranking Functions
 

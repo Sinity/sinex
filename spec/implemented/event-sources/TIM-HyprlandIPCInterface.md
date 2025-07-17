@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 90% (Core IPC integration working, state snapshots implemented)
-**Dependencies**: Hyprland compositor, unix sockets, hyprctl binary, EventSource trait
+**Dependencies**: Hyprland compositor, unix sockets, hyprctl binary, StatefulStreamProcessor trait
 **Blocks**: Desktop context analysis, window-based activity correlation, workspace insights
 
 ## MVP Specification
@@ -49,34 +49,11 @@ Hyprland's IPC sockets provide a rich, text-based stream of compositor events an
   * **Command/Query Socket (`socket1`):** `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket.sock`
   * **Event Broadcast Socket (`socket2`):** `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock`
 * **Access [OR2]:** Sockets are owned by the user running Hyprland. Exocortex ingestors running as the same user can access them.
-* **Rust Implementation (Path Discovery):**
-
+* **API Signature:**
     ```rust
-    use std::env;
-    use std::path::PathBuf;
-
-    fn get_hyprland_socket_paths() -> Result<(PathBuf, PathBuf), String> {
-        let xdg_runtime_dir = env::var("XDG_RUNTIME_DIR")
-            .map_err(|e| format!("XDG_RUNTIME_DIR not set: {}", e))?;
-        let instance_signature = env::var("HYPRLAND_INSTANCE_SIGNATURE")
-            .map_err(|e| format!("HYPRLAND_INSTANCE_SIGNATURE not set: {}", e))?;
-
-        let base_path = PathBuf::from(xdg_runtime_dir)
-            .join("hypr")
-            .join(instance_signature);
-
-        let socket1_path = base_path.join(".socket.sock");
-        let socket2_path = base_path.join(".socket2.sock");
-
-        if !socket1_path.exists() {
-            return Err(format!("Hyprland command socket not found at {:?}", socket1_path));
-        }
-        if !socket2_path.exists() {
-            return Err(format!("Hyprland event socket not found at {:?}", socket2_path));
-        }
-        Ok((socket1_path, socket2_path))
-    }
+    fn get_hyprland_socket_paths() -> Result<(PathBuf, PathBuf), String>
     ```
+    Discovers socket paths using `XDG_RUNTIME_DIR` and `HYPRLAND_INSTANCE_SIGNATURE` environment variables.
 
 ## 3. IPC Protocol Details [UG Sec 4.1.2]
 
@@ -89,27 +66,11 @@ Hyprland's IPC sockets provide a rich, text-based stream of compositor events an
   * **Command:** A Hyprland dispatcher command (e.g., `dispatch exec kitty`).
   * **Keyword:** A Hyprland keyword for querying state (e.g., `activewindow`, `monitors`, `workspaces`, `clients`).
 * **Response:** Plain text for regular commands/keywords, JSON string for `j/` prefixed queries.
-* **Rust `socket1` Client Example (Simplified Send/Receive):**
-
+* **API Signature:**
     ```rust
-    use tokio::net::UnixStream;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    // Assuming socket1_path is obtained from get_hyprland_socket_paths()
-
-    // async fn query_hyprland_socket1(socket1_path: &PathBuf, command: &str) -> Result<String, std::io::Error> {
-    //     let mut stream = UnixStream::connect(socket1_path).await?;
-    //     stream.write_all(command.as_bytes()).await?;
-    //     stream.write_all(b"\n").await?; // Ensure newline terminated
-
-    //     let mut response = String::new();
-    //     stream.read_to_string(&mut response).await?;
-    //     Ok(response)
-    // }
-
-    // Example usage:
-    // let clients_json_str = query_hyprland_socket1(&socket1_path, "j/clients").await?;
-    // let active_window_info_str = query_hyprland_socket1(&socket1_path, "activewindow").await?;
+    async fn query_hyprland_socket1(socket1_path: &PathBuf, command: &str) -> Result<String, std::io::Error>
     ```
+    Sends command to socket1 and returns response. Supports JSON output with `j/` prefix.
 
 ### 3.2. Event Socket Protocol (`socket2`) [CR2, OR2, SR1]
 
@@ -119,47 +80,11 @@ Hyprland's IPC sockets provide a rich, text-based stream of compositor events an
   * `DATA`: Comma-separated values specific to the event type.
   * Example: `activewindowv2>>0x123abc`
 * **Encoding:** UTF-8.
-* **Rust `socket2` Client Example (Simplified Listener):**
-
+* **API Signature:**
     ```rust
-    use tokio::net::UnixStream;
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    // Assuming socket2_path is obtained
-
-    // pub async fn listen_hyprland_socket2(socket2_path: &PathBuf) -> Result<(), std::io::Error> {
-    //     let stream = UnixStream::connect(socket2_path).await?;
-    //     let mut reader = BufReader::new(stream);
-    //     let mut line_buffer = String::new();
-
-    //     loop {
-    //         line_buffer.clear();
-    //         match reader.read_line(&mut line_buffer).await {
-    //             Ok(0) => { // EOF, stream closed
-    //                 println!("Hyprland event stream closed.");
-    //                 break;
-    //             }
-    //             Ok(_) => {
-    //                 let trimmed_line = line_buffer.trim();
-    //                 if !trimmed_line.is_empty() {
-    //                     // TODO: Parse event_name and data, then emit to Exocortex raw.events
-    //                     // Example parsing:
-    //                     // if let Some((event_name, event_data_str)) = trimmed_line.split_once(">>") {
-    //                     //    println!("Event: {}, Data: {}", event_name, event_data_str);
-    //                     //    // Further parse event_data_str based on event_name //                     // } else {
-    //                     //    eprintln!("Malformed event line: {}", trimmed_line);
-    //                     // }
-    //                 }
-    //             }
-    //             Err(e) => {
-    //                 eprintln!("Error reading from Hyprland event stream: {}", e);
-    //                 // Implement reconnection logic or error handling
-    //                 break;
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
+    async fn listen_hyprland_socket2(socket2_path: &PathBuf) -> Result<(), std::io::Error>
     ```
+    Continuously reads newline-terminated events from socket2 in format `EVENTNAME>>DATA\n`.
 
 ## 4. Reliability Considerations [UG Sec 4.1.3]
 
@@ -170,7 +95,7 @@ Hyprland's IPC sockets provide a rich, text-based stream of compositor events an
 
 ## 5. Key Event Types and Payload Structures (from `socket2`) [UG Sec 4.1.4, CR2]
 
-The Hyprland ingestor must parse these events and their comma-separated data payloads. (Also refer to Primary Document Appendix B for JSON schema examples for the resulting `raw.events` payload).
+The Hyprland ingestor must parse these events and their comma-separated data payloads. These events are processed through the StatefulStreamProcessor interface and stored in `core.events`.
 
 * `workspace>>WORKSPACENAME`
 * `focusedmon>>MONITORNAME,WORKSPACENAME`
@@ -195,7 +120,7 @@ The Hyprland ingestor must parse these events and their comma-separated data pay
 * `windowtitle>>WINDOWADDRESS` (Signals title changed. Ingestor should then query `hyprctl -j clients` for full details of this `WINDOWADDRESS` to get the new title.)
 
 **Ingestor Strategy for Rich Payloads:**
-When an event from `socket2` provides only a `WINDOWADDRESS` (e.g., `activewindowv2`, `windowtitle`), the ingestor should make a subsequent asynchronous call to `hyprctl -j clients` (via `socket1`), find the entry for that `WINDOWADDRESS`, and extract full details (class, title, PID, geometry, workspace, monitor, floating/fullscreen state, etc.) to populate the `raw.events.payload`.
+When an event from `socket2` provides only a `WINDOWADDRESS` (e.g., `activewindowv2`, `windowtitle`), the ingestor should make a subsequent asynchronous call to `hyprctl -j clients` (via `socket1`), find the entry for that `WINDOWADDRESS`, and extract full details (class, title, PID, geometry, workspace, monitor, floating/fullscreen state, etc.) to populate the `core.events.payload`.
 A local cache of window states (keyed by `WINDOWADDRESS`) can be maintained by the ingestor, updated by `openwindow`, `closewindow`, `movewindowv2`, etc., and from `hyprctl clients` responses. This can reduce redundant `hyprctl` calls, but the cache must be carefully managed for consistency.
 
 ## 6. Minimum Hyprland Version Requirements [UG Sec 4.1.5, CR2]

@@ -188,8 +188,8 @@ in
     };
     
     # Enhanced Sinex service definitions with pre-flight verification
-    systemd.services.sinex-unified-collector = mkOverride 500 {
-      description = "Sinex Unified Event Collector (with Pre-Flight Verification)";
+    systemd.services.sinex-ingestd = mkOverride 500 {
+      description = "Sinex Ingestion Daemon (with Pre-Flight Verification)";
       wantedBy = [ "multi-user.target" ];
       after = [ "postgresql.service" "network-online.target" "sinex-preflight.service" ];
       wants = [ "network-online.target" ];
@@ -291,7 +291,7 @@ in
           
           # Wait for service to be ready (systemd notify)
           for i in {1..30}; do
-            if systemctl show -p SubState --value sinex-unified-collector | grep -q "running"; then
+            if systemctl show -p SubState --value sinex-ingestd | grep -q "running"; then
               echo "✓ Service is running"
               break
             fi
@@ -350,8 +350,8 @@ in
         '';
         
         # Copy existing service configuration
-        Restart = cfg.unifiedCollector.restart.policy;
-        RestartSec = cfg.unifiedCollector.restart.baseDelay;
+        Restart = cfg.satellite.restart.policy;
+        RestartSec = cfg.satellite.restart.baseDelay;
         StartLimitIntervalSec = 300;
         StartLimitBurst = 3;
         
@@ -377,30 +377,30 @@ in
         LockPersonality = true;
         SystemCallFilter = [ "@system-service" "~@privileged" ];
         
-        ReadWritePaths = lib.optionals cfg.unifiedCollector.dlq.enable [
-          cfg.unifiedCollector.dlq.failureStoragePath
+        ReadWritePaths = lib.optionals cfg.satellite.dlq.enable [
+          cfg.satellite.dlq.failureStoragePath
         ] ++ [
           cfg.directories.state
           cfg.directories.logs
         ];
         
-        ExecStart = "${cfg.package}/bin/sinex-collector";
+        ExecStart = "${cfg.package}/bin/sinex-ingestd";
         
         Environment = [
           "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
-          "RUST_LOG=${cfg.unifiedCollector.logLevel}"
-        ] ++ lib.optionals cfg.unifiedCollector.dlq.enable [
-          "SINEX_DLQ_BASE=${cfg.unifiedCollector.dlq.failureStoragePath}"
-          "SINEX_LOG_BASE=${cfg.unifiedCollector.dlq.failureStoragePath}"
+          "RUST_LOG=${cfg.satellite.logLevel}"
+        ] ++ lib.optionals cfg.satellite.dlq.enable [
+          "SINEX_DLQ_BASE=${cfg.satellite.dlq.failureStoragePath}"
+          "SINEX_LOG_BASE=${cfg.satellite.dlq.failureStoragePath}"
         ];
       };
     };
     
     # Enhanced promotion worker with pre-flight verification
-    systemd.services.sinex-promo-worker = mkIf cfg.promoWorker.enable (mkOverride 500 {
-      description = "Sinex Promotion Worker (with Pre-Flight Verification)";
+    systemd.services.sinex-gateway = mkIf cfg.gateway.enable (mkOverride 500 {
+      description = "Sinex API Gateway (with Pre-Flight Verification)";
       wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" "sinex-unified-collector.service" "sinex-preflight.service" ];
+      after = [ "postgresql.service" "sinex-ingestd.service" "sinex-preflight.service" ];
       requires = [ "postgresql.service" "sinex-preflight.service" ];
       
       serviceConfig = {
@@ -467,13 +467,13 @@ in
         
         ReadWritePaths = [ ];
         
-        ExecStart = "${cfg.package}/bin/sinex-promo-worker --agent-name=default-worker";
+        ExecStart = "${cfg.package}/bin/sinex-gateway rpc-server";
         
         Environment = [
           "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
-          "RUST_LOG=${cfg.unifiedCollector.logLevel}"
-          "POLL_INTERVAL=${toString cfg.promoWorker.pollInterval}"
-          "BATCH_SIZE=${toString cfg.promoWorker.batchSize}"
+          "RUST_LOG=${cfg.satellite.logLevel}"
+          "POLL_INTERVAL=${toString cfg.gateway.pollInterval}"
+          "BATCH_SIZE=${toString cfg.gateway.batchSize}"
         ];
       };
     });
@@ -519,8 +519,8 @@ in
               
               local component_name=""
               case "$service" in
-                sinex-unified-collector) component_name="unified-collector" ;;
-                sinex-promo-worker) component_name="default-worker" ;;
+                sinex-ingestd) component_name="unified-collector" ;;
+                sinex-gateway) component_name="default-worker" ;;
               esac
               
               if [ -n "$component_name" ]; then
@@ -546,19 +546,19 @@ in
           COLLECTOR_WAS_ACTIVE=false
           WORKER_WAS_ACTIVE=false
           
-          if systemctl is-active sinex-unified-collector >/dev/null 2>&1; then
+          if systemctl is-active sinex-ingestd >/dev/null 2>&1; then
             COLLECTOR_WAS_ACTIVE=true
           fi
           
-          if systemctl is-active sinex-promo-worker >/dev/null 2>&1; then
+          if systemctl is-active sinex-gateway >/dev/null 2>&1; then
             WORKER_WAS_ACTIVE=true
           fi
           
           # Preserve data if requested
-          if [ "${toString cfg.update.preserveData}" = "1" ] && [ -d "${cfg.unifiedCollector.dlq.failureStoragePath}" ]; then
+          if [ "${toString cfg.update.preserveData}" = "1" ] && [ -d "${cfg.satellite.dlq.failureStoragePath}" ]; then
             echo "Preserving DLQ data..."
-            BACKUP_DIR="${cfg.unifiedCollector.dlq.failureStoragePath}.backup-$(date +%Y%m%d-%H%M%S)"
-            cp -a "${cfg.unifiedCollector.dlq.failureStoragePath}" "$BACKUP_DIR" || true
+            BACKUP_DIR="${cfg.satellite.dlq.failureStoragePath}.backup-$(date +%Y%m%d-%H%M%S)"
+            cp -a "${cfg.satellite.dlq.failureStoragePath}" "$BACKUP_DIR" || true
           fi
           
           # Graceful shutdown
@@ -566,14 +566,14 @@ in
           
           if [ "$WORKER_WAS_ACTIVE" = "true" ]; then
             echo "Stopping promotion worker..."
-            systemctl stop sinex-promo-worker
+            systemctl stop sinex-gateway
           fi
           
           sleep 5
           
           if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
             echo "Stopping collector with ${toString cfg.update.gracePeriod}s grace period..."
-            systemctl stop sinex-unified-collector
+            systemctl stop sinex-ingestd
             sleep ${toString cfg.update.gracePeriod}
           fi
           
@@ -582,7 +582,7 @@ in
           
           if [ "$COLLECTOR_WAS_ACTIVE" = "true" ]; then
             echo "Starting collector..."
-            if ! systemctl start sinex-unified-collector; then
+            if ! systemctl start sinex-ingestd; then
               echo "ERROR: Failed to start collector!" >&2
               exit 1
             fi
@@ -591,9 +591,9 @@ in
           
           if [ "$WORKER_WAS_ACTIVE" = "true" ]; then
             echo "Starting promotion worker..."
-            if ! systemctl start sinex-promo-worker; then
+            if ! systemctl start sinex-gateway; then
               echo "ERROR: Failed to start worker!" >&2
-              [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-unified-collector
+              [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-ingestd
               exit 1
             fi
           fi
@@ -616,11 +616,11 @@ in
             
             ALL_HEALTHY=true
             
-            if [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && ! check_health sinex-unified-collector; then
+            if [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && ! check_health sinex-ingestd; then
               ALL_HEALTHY=false
             fi
             
-            if [ "$WORKER_WAS_ACTIVE" = "true" ] && ! check_health sinex-promo-worker; then
+            if [ "$WORKER_WAS_ACTIVE" = "true" ] && ! check_health sinex-gateway; then
               ALL_HEALTHY=false
             fi
             
@@ -638,14 +638,14 @@ in
             echo "Initiating rollback due to health check failure..."
             
             # Stop failed services
-            [ "$WORKER_WAS_ACTIVE" = "true" ] && systemctl stop sinex-promo-worker || true
-            [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-unified-collector || true
+            [ "$WORKER_WAS_ACTIVE" = "true" ] && systemctl stop sinex-gateway || true
+            [ "$COLLECTOR_WAS_ACTIVE" = "true" ] && systemctl stop sinex-ingestd || true
             
             # Restore data if preserved
             if [ -n "''${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
               echo "Restoring DLQ data..."
-              rm -rf "${cfg.unifiedCollector.dlq.failureStoragePath}"
-              mv "$BACKUP_DIR" "${cfg.unifiedCollector.dlq.failureStoragePath}"
+              rm -rf "${cfg.satellite.dlq.failureStoragePath}"
+              mv "$BACKUP_DIR" "${cfg.satellite.dlq.failureStoragePath}"
             fi
             
             ${optionalString preflightCfg.recordResults ''

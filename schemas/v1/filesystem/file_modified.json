@@ -1,0 +1,29 @@
+{
+  "$id": "https://sinex.io/schemas/v1/filesystem/file_modified.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "modification_type": {
+      "type": "string"
+    },
+    "modified_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "size": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "modification_type",
+    "modified_at",
+    "path",
+    "size"
+  ],
+  "title": "FileModifiedPayload",
+  "type": "object"
+}

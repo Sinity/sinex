@@ -78,7 +78,7 @@ def get_sources_with_counts() -> List[Tuple[str, int]]:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT source, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     GROUP BY source
                     ORDER BY count DESC
                 """)
@@ -95,7 +95,7 @@ def get_event_types_with_counts(source: Optional[str] = None) -> List[Tuple[str,
                 if source:
                     cur.execute("""
                         SELECT event_type, COUNT(*) as count
-                        FROM raw.events
+                        FROM core.events
                         WHERE source = %s
                         GROUP BY event_type
                         ORDER BY count DESC
@@ -103,7 +103,7 @@ def get_event_types_with_counts(source: Optional[str] = None) -> List[Tuple[str,
                 else:
                     cur.execute("""
                         SELECT event_type, COUNT(*) as count
-                        FROM raw.events
+                        FROM core.events
                         GROUP BY event_type
                         ORDER BY count DESC
                     """)
@@ -119,7 +119,7 @@ def get_hosts_with_counts() -> List[Tuple[str, int]]:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT host, COUNT(*) as count
-                    FROM raw.events
+                    FROM core.events
                     WHERE host IS NOT NULL
                     GROUP BY host
                     ORDER BY count DESC
@@ -168,7 +168,7 @@ def get_sample_events(source: Optional[str] = None, event_type: Optional[str] = 
                 
                 cur.execute(f"""
                     SELECT source, event_type, ts_ingest, payload
-                    FROM raw.events
+                    FROM core.events
                     {where_clause}
                     ORDER BY ts_ingest DESC
                     LIMIT %s

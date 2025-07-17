@@ -1,17 +1,20 @@
-//! # Attack Simulation Test Suite
-//!
-//! Comprehensive attack simulation tests consolidating all attack-related adversarial tests.
-//! This module simulates various attack vectors and validates system resilience.
-//!
-//! ## Test Categories
-//! - **Time-based Attacks**: DST changes, clock regression, ULID timing attacks
-//! - **Configuration Attacks**: Config file manipulation, symlink attacks
-//! - **JSON Attacks**: Circular references, billion laughs, expansion attacks
-//! - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
+// # Attack Simulation Test Suite
+//
+// Comprehensive attack simulation tests consolidating all attack-related adversarial tests.
+// This module simulates various attack vectors and validates system resilience.
+//
+// ## Test Categories
+// - **Time-based Attacks**: DST changes, clock regression, ULID timing attacks
+// - **Configuration Attacks**: Config file manipulation, symlink attacks
+// - **JSON Attacks**: Circular references, billion laughs, expansion attacks
+// - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::resources;
-use sinex_collector::config::{CollectorConfig, ConfigManager};
+// DEPRECATED: CollectorConfig no longer exists after modernization to environment-only configuration
+// use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_db::validation::EventValidator;
 use chrono::{Duration, FixedOffset, LocalResult, TimeZone, Utc};
 use std::fs;
@@ -175,6 +178,11 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> TestResult {
 // =============================================================================
 // Configuration Attack Tests
 // =============================================================================
+
+/*
+DEPRECATED: The following configuration attack tests use the old CollectorConfig::load_from_file
+architecture which has been modernized to environment-only configuration. These tests are preserved
+for reference but are commented out as they no longer compile with the current codebase.
 
 /// Test configuration file replaced with symlink attack
 #[sinex_test(timeout_ms = 10000)]
@@ -373,6 +381,7 @@ script = "__import__('os').system('rm -rf /')"
     
     Ok(())
 }
+*/
 
 // =============================================================================
 // JSON Attack Tests

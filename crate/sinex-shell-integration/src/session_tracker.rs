@@ -78,7 +78,7 @@ impl SessionTracker {
         &mut self,
         session_id: Option<String>,
         shell_info: &ShellInfo,
-    ) -> sinex_core::Result<String> {
+    ) -> sinex_core_types::Result<String> {
         let session_id =
             session_id.unwrap_or_else(|| format!("session-{}", sinex_ulid::Ulid::new()));
 
@@ -114,7 +114,7 @@ impl SessionTracker {
     }
 
     /// End a shell session
-    pub async fn end_session(&mut self, session_id: &str) -> sinex_core::Result<()> {
+    pub async fn end_session(&mut self, session_id: &str) -> sinex_core_types::Result<()> {
         let mut sessions = self.sessions.write().await;
 
         if let Some(session) = sessions.get_mut(session_id) {
@@ -140,7 +140,7 @@ impl SessionTracker {
         session_id: &str,
         command: &str,
         working_directory: Option<&str>,
-    ) -> sinex_core::Result<()> {
+    ) -> sinex_core_types::Result<()> {
         let mut sessions = self.sessions.write().await;
 
         if let Some(session) = sessions.get_mut(session_id) {
@@ -201,7 +201,7 @@ impl SessionTracker {
     pub async fn cleanup_old_sessions(
         &mut self,
         max_age: chrono::Duration,
-    ) -> sinex_core::Result<usize> {
+    ) -> sinex_core_types::Result<usize> {
         let cutoff_time = chrono::Utc::now() - max_age;
         let mut sessions = self.sessions.write().await;
 
@@ -234,7 +234,7 @@ impl SessionTracker {
     pub async fn mark_inactive_sessions(
         &mut self,
         inactivity_threshold: chrono::Duration,
-    ) -> sinex_core::Result<usize> {
+    ) -> sinex_core_types::Result<usize> {
         let cutoff_time = chrono::Utc::now() - inactivity_threshold;
         let mut sessions = self.sessions.write().await;
 
@@ -261,7 +261,7 @@ impl SessionTracker {
     }
 
     /// Update session activity timestamp
-    pub async fn update_activity(&mut self, session_id: &str) -> sinex_core::Result<()> {
+    pub async fn update_activity(&mut self, session_id: &str) -> sinex_core_types::Result<()> {
         let mut sessions = self.sessions.write().await;
 
         if let Some(session) = sessions.get_mut(session_id) {

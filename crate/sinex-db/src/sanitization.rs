@@ -1,7 +1,7 @@
 use crate::security::{SecurityError, SecurityValidator};
 use anyhow::Result;
 use serde_json::Value;
-use sinex_core::RawEvent;
+use sinex_events::RawEvent;
 use std::borrow::Cow;
 
 /// Event sanitization service that modifies events before storage
@@ -135,16 +135,15 @@ impl EventSanitizer {
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_core::RawEventBuilder;
+    use sinex_events::EventFactory;
 
     #[test]
     fn test_path_traversal_sanitization() {
-        let mut event = RawEventBuilder::new(
-            "../../../etc/passwd",
+        let factory = EventFactory::new("../../../etc/passwd");
+        let mut event = factory.create_event(
             "security.test",
             json!({"path": "../../sensitive/file.txt"}),
-        )
-        .build();
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -160,12 +159,11 @@ mod tests {
 
     #[test]
     fn test_null_byte_sanitization() {
-        let mut event = RawEventBuilder::new(
-            "test\0source",
+        let factory = EventFactory::new("test\0source");
+        let mut event = factory.create_event(
             "security.test",
             json!({"data": "test\0value"}),
-        )
-        .build();
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -176,12 +174,11 @@ mod tests {
 
     #[test]
     fn test_sql_injection_preserved() {
-        let mut event = RawEventBuilder::new(
-            "security.test",
+        let factory = EventFactory::new("security.test");
+        let mut event = factory.create_event(
             "sql.injection",
             json!({"query": "'; DROP TABLE events; --"}),
-        )
-        .build();
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(!was_modified);

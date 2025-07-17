@@ -18,7 +18,7 @@ let
         if after:
             where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM raw.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -61,7 +61,7 @@ let
         return statuses
 
     def stats():
-        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'"
+        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)

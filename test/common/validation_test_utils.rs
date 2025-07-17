@@ -1,12 +1,17 @@
-//! Validation test utilities
-//!
-//! This module provides comprehensive utilities for testing event validation
-//! logic, including assertion helpers, test data generators, and performance
-//! benchmarking tools.
+// Validation test utilities
+//
+// This module provides comprehensive utilities for testing event validation
+// logic, including assertion helpers, test data generators, and performance
+// benchmarking tools.
 
 use crate::common::prelude::*;
-use sinex_db::validation::{EventValidator, ValidationError};
+use sinex_db::integrity::{
+    checkpoint_verification, malformed_detection, ulid_verification, IntegrityTestConfig,
+    IntegrityTester,
+};
+use sinex_db::validation::{DataIntegrityValidator, EventValidator, ValidationError};
 use sinex_db::RawEvent;
+use sinex_ulid::Ulid;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {
@@ -44,7 +49,7 @@ pub fn create_test_validator() -> EventValidator {
 }
 
 /// Create a test event validator loaded from database
-pub async fn create_test_validator_from_db(pool: &DbPool) -> Result<EventValidator> {
+pub async fn create_test_validator_from_db(pool: &DbPool) -> AnyhowResult<EventValidator> {
     EventValidator::load_from_db(pool).await
 }
 
@@ -55,6 +60,18 @@ pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventVal
     // The actual EventValidator doesn't support adding custom rules via public API
     // Custom rules are hardcoded in the validator's constructor
     EventValidator::new()
+}
+
+/// Create a test data integrity validator
+pub async fn create_test_integrity_validator(
+    pool: &DbPool,
+) -> AnyhowResult<DataIntegrityValidator> {
+    DataIntegrityValidator::new(pool.clone()).await
+}
+
+/// Create an integrity tester for comprehensive validation
+pub async fn create_test_integrity_tester(pool: &DbPool) -> AnyhowResult<IntegrityTester> {
+    IntegrityTester::new(pool.clone()).await
 }
 
 /// Validation rule for testing purposes
@@ -197,7 +214,7 @@ pub mod assertions {
     pub fn assert_validation_passes(
         validator: &EventValidator,
         event: &RawEvent,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         match validator.validate(event) {
             Ok(()) => Ok(()),
             Err(e) => anyhow::bail!(
@@ -214,7 +231,7 @@ pub mod assertions {
         validator: &EventValidator,
         event: &RawEvent,
         check: F,
-    ) -> Result<()>
+    ) -> AnyhowResult<()>
     where
         F: Fn(&ValidationError) -> bool,
     {
@@ -243,7 +260,7 @@ pub mod assertions {
     pub fn assert_validation_chain_fails<T>(
         chain: ValidationChain<T>,
         expected_error_substring: &str,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         if chain.is_valid() {
             anyhow::bail!("Expected validation chain to fail, but it was valid");
         }
@@ -265,7 +282,7 @@ pub mod assertions {
     /// Assert multi-validator behavior (new abstraction)
     pub fn assert_multi_validator_accumulates_errors(
         validators: Vec<ValidationChain<String>>,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         let multi_validator = MultiValidator::new();
 
         for chain in validators {
@@ -283,7 +300,7 @@ pub mod assertions {
     pub fn assert_validation_fails_unknown_type(
         validator: &EventValidator,
         event: &RawEvent,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| {
             matches!(e, ValidationError::UnknownEventType { .. })
         })
@@ -294,7 +311,7 @@ pub mod assertions {
         validator: &EventValidator,
         event: &RawEvent,
         expected_field: &str,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| match e {
             ValidationError::MissingField { field } => field == expected_field,
             _ => false,
@@ -306,7 +323,7 @@ pub mod assertions {
         validator: &EventValidator,
         event: &RawEvent,
         expected_field: &str,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         assert_validation_fails_with(validator, event, |e| match e {
             ValidationError::InvalidType { field, .. } => field == expected_field,
             _ => false,
@@ -416,7 +433,7 @@ pub mod performance {
         event: RawEvent,
         concurrent_tasks: usize,
         operations_per_task: usize,
-    ) -> Result<Duration> {
+    ) -> AnyhowResult<Duration> {
         use tokio::task;
 
         let validator = Arc::new(validator);
@@ -504,7 +521,7 @@ pub mod integration {
     use super::*;
 
     /// Test validation with database schemas
-    pub async fn test_with_database_schemas(pool: &DbPool) -> Result<(), anyhow::Error> {
+    pub async fn test_with_database_schemas(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
 
         // Test various events
@@ -536,7 +553,7 @@ pub mod integration {
     }
 
     /// Test validation performance in realistic scenarios
-    pub async fn performance_integration_test(pool: &DbPool) -> Result<(), anyhow::Error> {
+    pub async fn performance_integration_test(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         let validator = create_test_validator_from_db(pool).await?;
         let events = generators::validation_test_events()
             .into_iter()

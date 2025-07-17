@@ -1,7 +1,9 @@
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use serde_json::json;
 use sinex_db::validation::{EventValidator, ValidationError};
+use sinex_events::{EventFactory, services, event_types};
 
 /// Property tests for schema validation functionality
 ///
@@ -147,12 +149,13 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
 }
 
 #[tokio::test]
-async fn test_event_validator_normal_payloads() -> Result<(), anyhow::Error> {
+async fn test_event_validator_normal_payloads() -> AnyhowResult<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
     )| {
-        let event = RawEventBuilder::new(source, event_type, payload).build();
+        let factory = EventFactory::new(&source);
+        let event = factory.create_event(&event_type, payload);
         let validator = EventValidator::new();
 
         // Validation should not panic and should return a consistent result
@@ -190,12 +193,13 @@ async fn test_event_validator_normal_payloads() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test]
-async fn test_event_validator_security_payloads() -> Result<(), anyhow::Error> {
+async fn test_event_validator_security_payloads() -> AnyhowResult<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_problematic_payload()
     )| {
-        let event = RawEventBuilder::new(source, event_type, payload).build();
+        let factory = EventFactory::new(&source);
+        let event = factory.create_event(&event_type, payload);
         let validator = EventValidator::new();
 
         // Validation should handle problematic payloads safely
@@ -213,12 +217,13 @@ async fn test_event_validator_security_payloads() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test]
-async fn test_raw_event_validation_consistency() -> Result<(), anyhow::Error> {
+async fn test_raw_event_validation_consistency() -> AnyhowResult<(), anyhow::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
     )| {
-        let event = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
+        let factory = EventFactory::new(&source);
+        let event = factory.create_event(&event_type, payload.clone());
         let validator = EventValidator::new();
 
         // Validation should be deterministic - same event should always get same result
@@ -247,7 +252,7 @@ async fn test_raw_event_validation_consistency() -> Result<(), anyhow::Error> {
 
 /// Test schema evolution and backward compatibility
 #[tokio::test]
-async fn test_schema_evolution_properties() -> Result<(), anyhow::Error> {
+async fn test_schema_evolution_properties() -> AnyhowResult<(), anyhow::Error> {
     proptest!(|(
         base_payload in arb_event_payload(),
         additional_fields in prop::collection::hash_map(
@@ -263,11 +268,11 @@ async fn test_schema_evolution_properties() -> Result<(), anyhow::Error> {
         let validator = EventValidator::new();
 
         // Create base event
-        let base_event = RawEventBuilder::new(
-            "test_source",
+        let factory = EventFactory::new("test_source");
+        let base_event = factory.create_event(
             "test.evolution",
             base_payload.clone()
-        ).build();
+        );
 
         // Create evolved event with additional fields
         let mut evolved_payload = base_payload.clone();
@@ -285,11 +290,10 @@ async fn test_schema_evolution_properties() -> Result<(), anyhow::Error> {
             evolved_payload = Value::Object(new_obj);
         }
 
-        let evolved_event = RawEventBuilder::new(
-            "test_source",
+        let evolved_event = factory.create_event(
             "test.evolution",
             evolved_payload
-        ).build();
+        );
 
         // Validation should handle both versions gracefully
         let base_result = validator.validate(&base_event);
@@ -335,7 +339,7 @@ fn test_validation_chain_properties() {
         min_lengths in prop::collection::vec(0usize..=20, 1..=10),
         max_lengths in prop::collection::vec(5usize..=50, 1..=10)
     )| {
-        use sinex_core::ValidationChain;
+        use sinex_core_types::ValidationChain;
 
         for (i, test_string) in test_strings.iter().enumerate() {
             let min_len = min_lengths[i % min_lengths.len()];
@@ -385,7 +389,7 @@ fn test_validation_chain_numeric_properties() {
         min_values in prop::collection::vec(any::<i64>(), 1..=10),
         max_values in prop::collection::vec(any::<i64>(), 1..=10)
     )| {
-        use sinex_core::ValidationChain;
+        use sinex_core_types::ValidationChain;
 
         for (i, &test_number) in test_numbers.iter().enumerate() {
             let min_val = min_values[i % min_values.len()];
@@ -428,9 +432,8 @@ fn test_validation_chain_numeric_properties() {
 // Schema Loading and Persistence Properties
 // =============================================================================
 
-#[tokio::test]
-async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
     proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
@@ -470,7 +473,7 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                     name,
                     version,
                     schema_def
-                ).execute(pool).await;
+                ).execute(&pool).await;
 
                 if result.is_ok() {
                     created_schemas.push((name.clone(), version.clone()));
@@ -483,14 +486,14 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
             // Test that schemas are accessible
             for (name, version) in &created_schemas {
                 // Create an event that should validate against this schema
-                let event = RawEventBuilder::new(
-                    "test_source",
+                let factory = EventFactory::new("test_source");
+                let event = factory.create_event(
                     name,
                     json!({
                         "test_field": "valid_value",
                         "version": version
                     })
-                ).build();
+                );
 
                 let result = validator.validate(&event);
 
@@ -511,15 +514,6 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
                 }
             }
 
-            // Cleanup
-            for (name, version) in created_schemas {
-                let _ = sqlx::query!(
-                    "DELETE FROM sinex_schemas.event_payload_schemas WHERE event_source = 'test_source' AND event_type = $1 AND schema_version = $2",
-                    name,
-                    version
-                ).execute(pool).await;
-            }
-
             Ok(())
         })?
     });
@@ -531,7 +525,7 @@ async fn test_schema_persistence_properties() -> Result<(), anyhow::Error> {
 // =============================================================================
 
 #[tokio::test]
-async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
+async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
     let validator = EventValidator::new();
 
     let long_source = "x".repeat(1000);
@@ -563,7 +557,8 @@ async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
     ];
 
     for (source, event_type, payload) in edge_cases {
-        let event = RawEventBuilder::new(source, event_type, payload).build();
+        let factory = EventFactory::new(source);
+        let event = factory.create_event(event_type, payload);
 
         // Should not panic
         let _result = validator.validate(&event);
@@ -579,9 +574,8 @@ async fn test_event_validator_edge_cases() -> Result<(), anyhow::Error> {
 // Integration Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_event_validator_database_integration() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Test loading validator from empty database
@@ -590,7 +584,8 @@ async fn test_event_validator_database_integration() -> Result<(), anyhow::Error
         .expect("Should be able to load from empty database");
 
     // Should be able to create events and validate them
-    let event = RawEventBuilder::new("test_source", "test.event", json!({"key": "value"})).build();
+    let factory = EventFactory::new("test_source");
+    let event = factory.create_event("test.event", json!({"key": "value"}));
 
     // Validation should not fail (no schema means fallback to hardcoded rules)
     let result = validator.validate(&event);
@@ -631,7 +626,8 @@ fn test_validation_performance_properties() {
                 "type": "performance_test"
             });
 
-            let event = RawEventBuilder::new("test_source", "test.event", large_payload).build();
+            let factory = EventFactory::new("test_source");
+            let event = factory.create_event("test.event", large_payload);
 
             // Measure validation time
             let start = std::time::Instant::now();
@@ -675,27 +671,24 @@ mod unit_tests {
         let validator = EventValidator::new();
 
         // Test filesystem events that should have hardcoded validation
-        let valid_fs_event = RawEventBuilder::new(
-            "fs",
-            "file.created",
+        let fs_factory = EventFactory::new(sources::FS);
+        let valid_fs_event = fs_factory.create_event(
+            event_types::filesystem::FILE_CREATED,
             json!({
                 "path": "/home/user/test.txt",
                 "size": 1024,
                 "timestamp": "2024-06-20T10:00:00Z"
             }),
-        )
-        .build();
+        );
 
-        let invalid_fs_event = RawEventBuilder::new(
-            "fs",
-            "file.created",
+        let invalid_fs_event = fs_factory.create_event(
+            event_types::filesystem::FILE_CREATED,
             json!({
                 // Missing required fields or invalid data
                 "path": "",
                 "size": -1
             }),
-        )
-        .build();
+        );
 
         // Test validation results
         let valid_result = validator.validate(&valid_fs_event);
@@ -750,7 +743,7 @@ mod unit_tests {
 
     #[test]
     fn test_validation_chain_basic_functionality() {
-        use sinex_core::ValidationChain;
+        use sinex_core_types::ValidationChain;
 
         // Test successful validation
         let result = ValidationChain::validate("hello", "test")
@@ -772,7 +765,7 @@ mod unit_tests {
 
     #[test]
     fn test_validation_error_types() {
-        use sinex_core::ValidationChain;
+        use sinex_core_types::ValidationChain;
 
         // Test different error types
         let empty_error = ValidationChain::validate("", "test")

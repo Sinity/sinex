@@ -1,38 +1,38 @@
 use crate::models::{Artifact, CreateArtifactInput};
-use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use crate::queries::ArtifactQueries;
+use crate::query_helpers::uuid_to_ulid;
 use crate::DbPoolRef;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
 use sinex_ulid::Ulid;
-use sqlx::types::Uuid;
+use sqlx::FromRow;
+
+/// Database record structure for artifacts
+#[derive(Debug, FromRow)]
+pub struct ArtifactRecord {
+    pub id: sqlx::types::Uuid,
+    pub artifact_type: String,
+    pub title: String,
+    pub source_url: Option<String>,
+    pub original_path: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub checksum: Option<String>,
+    pub metadata: JsonValue,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_from_event_id: Option<sqlx::types::Uuid>,
+    pub blob_id: Option<sqlx::types::Uuid>,
+}
 
 /// Create a new artifact following the exact same pattern as add_to_work_queue
+#[sinex_macros::auto_db_metrics(operation = "create_artifact")]
 pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) -> Result<Artifact> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
-    let created_from_event_uuid: Option<Uuid> = input.created_from_event_id.map(ulid_to_uuid);
-    let blob_uuid: Option<Uuid> = input.blob_id.map(ulid_to_uuid);
 
-    let record = sqlx::query!(
-        r#"
-        INSERT INTO core.artifacts (
-            "type", title, source_url, original_path, mime_type, 
-            size_bytes, checksum, metadata, created_from_event_id, blob_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid)
-        RETURNING 
-            id::uuid as "id!",
-            "type" as "artifact_type!",
-            title as "title!",
-            source_url,
-            original_path,
-            mime_type,
-            size_bytes,
-            checksum,
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            deleted_at,
-            created_from_event_id::uuid as "created_from_event_id",
-            blob_id::uuid as "blob_id"
-        "#,
+    let record = ArtifactQueries::insert_artifact_full(
         input.artifact_type,
         input.title,
         input.source_url,
@@ -41,11 +41,12 @@ pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) ->
         input.size_bytes,
         input.checksum,
         metadata,
-        created_from_event_uuid,
-        blob_uuid
+        input.created_from_event_id,
+        input.blob_id,
     )
-    .fetch_one(pool)
-    .await?;
+    .fetch_one::<ArtifactRecord>(pool)
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to create artifact: {}", e))?;
 
     Ok(Artifact {
         artifact_id: uuid_to_ulid(record.id),
@@ -70,32 +71,10 @@ pub async fn get_artifact_by_id(
     pool: DbPoolRef<'_>,
     artifact_id: Ulid,
 ) -> Result<Option<Artifact>> {
-    let artifact_uuid: Uuid = ulid_to_uuid(artifact_id);
-
-    let record = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!",
-            "type" as "artifact_type!",
-            title as "title!",
-            source_url,
-            original_path,
-            mime_type,
-            size_bytes,
-            checksum,
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            deleted_at,
-            created_from_event_id::uuid as "created_from_event_id",
-            blob_id::uuid as "blob_id"
-        FROM core.artifacts 
-        WHERE id::uuid = $1 AND deleted_at IS NULL
-        "#,
-        artifact_uuid
-    )
-    .fetch_optional(pool)
-    .await?;
+    let record = ArtifactQueries::get_by_id(artifact_id)
+        .fetch_optional::<ArtifactRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get artifact by ID: {}", e))?;
 
     Ok(record.map(|r| Artifact {
         artifact_id: uuid_to_ulid(r.id),
@@ -117,32 +96,10 @@ pub async fn get_artifact_by_id(
 
 /// Get recent artifacts
 pub async fn get_recent_artifacts(pool: DbPoolRef<'_>, limit: i64) -> Result<Vec<Artifact>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!",
-            "type" as "artifact_type!",
-            title as "title!",
-            source_url,
-            original_path,
-            mime_type,
-            size_bytes,
-            checksum,
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            deleted_at,
-            created_from_event_id::uuid as "created_from_event_id",
-            blob_id::uuid as "blob_id"
-        FROM core.artifacts 
-        WHERE deleted_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT $1
-        "#,
-        limit
-    )
-    .fetch_all(pool)
-    .await?;
+    let records = ArtifactQueries::get_recent(Some(limit), None)
+        .fetch_all::<ArtifactRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get recent artifacts: {}", e))?;
 
     let artifacts = records
         .into_iter()

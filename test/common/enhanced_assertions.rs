@@ -1,10 +1,10 @@
-//! Enhanced test assertions using new abstractions
-//!
-//! This module provides assertion helpers that leverage ValidationChain, ErrorContext,
-//! and other new abstractions to provide richer test failures and better debugging experience.
+// Enhanced test assertions using new abstractions
+//
+// This module provides assertion helpers that leverage ValidationChain, ErrorContext,
+// and other new abstractions to provide richer test failures and better debugging experience.
 
 use crate::common::prelude::*;
-use sinex_core::ErrorContext;
+use sinex_core_types::ErrorContext;
 use std::fmt::Debug;
 use std::future::Future;
 
@@ -26,7 +26,7 @@ where
             .with_context("actual", format!("{:?}", left))
             .build();
 
-        return Err(Box::new(error));
+        return Err(error.into());
     }
     Ok(())
 }
@@ -39,7 +39,7 @@ pub fn assert_with_context(condition: bool, message: &str, context: &str) -> Tes
             .with_operation("assert_with_context")
             .build();
 
-        return Err(Box::new(error));
+        return Err(error.into());
     }
     Ok(())
 }
@@ -49,7 +49,7 @@ pub async fn assert_event_inserted_with_context(
     pool: &DbPool,
     event: &RawEvent,
     test_context: &str,
-) -> Result<Ulid, Box<dyn std::error::Error>> {
+) -> AnyhowResult<Ulid> {
     match insert_event(pool, event).await {
         Ok(id) => Ok(id),
         Err(e) => {
@@ -61,7 +61,7 @@ pub async fn assert_event_inserted_with_context(
                 .with_source(e)
                 .build();
 
-            Err(Box::new(error))
+            Err(error.into())
         }
     }
 }
@@ -71,19 +71,16 @@ pub async fn assert_completes_within<F, T>(
     operation: F,
     timeout: Duration,
     operation_name: &str,
-) -> Result<T, Box<dyn std::error::Error>>
+) -> AnyhowResult<T>
 where
-    F: Future<Output = Result<T, Box<dyn std::error::Error>>>,
+    F: Future<Output = Result<T, anyhow::Error>>,
 {
     match tokio::time::timeout(timeout, operation).await {
         Ok(result) => result,
         Err(_) => {
-            let error = ErrorContext::new(CoreError::Other("Operation timed out".to_string()))
-                .with_operation(operation_name)
-                .with_context("timeout_duration", format!("{:?}", timeout))
-                .build();
+            let error = CoreError::Unknown(format!("Operation '{}' timed out after {:?}", operation_name, timeout));
 
-            Err(Box::new(error))
+            Err(error.into())
         }
     }
 }
@@ -100,7 +97,7 @@ where
             .with_context("errors", errors.join("; "))
             .build();
 
-        return Err(Box::new(error));
+        return Err(error.into());
     }
     Ok(())
 }
@@ -118,7 +115,7 @@ where
             .with_context("expected_error", expected_error_substring)
             .build();
 
-        return Err(Box::new(error));
+        return Err(error.into());
     }
 
     let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
@@ -130,7 +127,7 @@ where
             .with_context("actual_errors", combined_errors)
             .build();
 
-        return Err(Box::new(error));
+        return Err(error.into());
     }
 
     Ok(())
@@ -146,12 +143,9 @@ where
     T: Send,
 {
     sender.send_or_log(value, context).await.map_err(|e| {
-        let error = ErrorContext::new(CoreError::Other("Channel send failed".to_string()))
-            .with_context("channel_context", context)
-            .with_source(e)
-            .build();
+        let error = CoreError::Unknown(format!("Channel send failed in context '{}': {}", context, e));
 
-        Box::new(error) as Box<dyn std::error::Error>
+        error.into()
     })
 }
 
@@ -175,7 +169,7 @@ where
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .build();
 
-            Err(Box::new(error))
+            Err(error.into())
         }
         (true, false) => {
             let error = CoreError::validation("Expected channel send to succeed but it failed")
@@ -183,15 +177,15 @@ where
                 .with_source(result.unwrap_err())
                 .build();
 
-            Err(Box::new(error))
+            Err(error.into())
         }
     }
 }
 
-/// Assert configuration validation using ConfigExtractor
+/// Assert configuration validation - DEPRECATED (was used for file-based config)
 pub fn assert_config_valid(
     config: &ConfigValue,
-    validator: impl Fn(&ConfigValue) -> Result<()>,
+    validator: impl Fn(&ConfigValue) -> AnyhowResult<()>,
     config_name: &str,
 ) -> TestResult {
     validator(config).map_err(|e| {
@@ -200,15 +194,15 @@ pub fn assert_config_valid(
             .with_source(e)
             .build();
 
-        Box::new(error) as Box<dyn std::error::Error>
+        error.into()
     })
 }
 
 /// Assert that configuration extraction succeeds
 pub fn assert_config_extraction<T>(
-    extraction_result: Result<T>,
+    extraction_result: anyhow::Result<T>,
     field_path: &str,
-) -> Result<T, Box<dyn std::error::Error>>
+) -> AnyhowResult<T>
 where
     T: Debug,
 {
@@ -218,7 +212,7 @@ where
             .with_source(e)
             .build();
 
-        Box::new(error) as Box<dyn std::error::Error>
+        error.into()
     })
 }
 
@@ -227,7 +221,7 @@ pub async fn assert_database_state<F, T>(
     pool: &DbPool,
     checker: F,
     description: &str,
-) -> Result<T, Box<dyn std::error::Error>>
+) -> AnyhowResult<T>
 where
     F: Future<Output = Result<T, sqlx::Error>>,
 {
@@ -237,7 +231,7 @@ where
             .with_source(e)
             .build();
 
-        Box::new(error) as Box<dyn std::error::Error>
+        error.into()
     })
 }
 
@@ -294,7 +288,7 @@ impl TestAssertionBatch {
                 .with_context("failures", self.errors.join(" | "))
                 .build();
 
-            Err(Box::new(error))
+            Err(error.into())
         }
     }
 }
